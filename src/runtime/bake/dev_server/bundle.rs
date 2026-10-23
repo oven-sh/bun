@@ -501,6 +501,9 @@ impl DevServer {
         // Clear the current bundle
         debug_assert!(self.current_bundle.is_none());
         self.emit_visualizer_message_if_needed();
+        // The bundle that just finished made the resolver read the configuration files of the
+        // directories it went to.
+        self.sync_config_files();
 
         // If there were pending requests, begin another bundle.
         if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {

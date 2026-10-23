@@ -4,7 +4,7 @@ import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Client, Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -1924,5 +1924,581 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(500);
     await dev.write("styles.css", `body { color: blue; }`);
     expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+
+// A "tsconfig.json" is not a module of the graph. The modules are built from what the resolver
+// reads from it. When that changes, the server bundles each route again on its next request,
+// as a server that starts does, and reloads the pages.
+//
+// Every save below has the same length, so it is one write with no truncation after it: the
+// server never reads a file that is half the old one.
+const config = (value: object) => JSON.stringify(value).padEnd(200);
+const aliasTo = (target: string) => config({ compilerOptions: { paths: { "@/t": [target] } } });
+const writeConfig = (dev: Dev, file: string, contents: string, options: { errors?: string[] } = {}) =>
+  dev.write(file, contents, { dedent: false, ...options });
+/**
+ * Resolves when the page that loads again has its socket: a frame before that is the first one
+ * of the socket. A test that uses it uses it for each reload, so that each one waits for the
+ * line of its own page.
+ */
+async function expectReloadAndSocket(c: Client, cb: () => Promise<void>) {
+  const loaded = c.waitForPageLoad();
+  await c.expectReload(cb);
+  await loaded;
+}
+const doesNotParse = (contents: string) => contents.replace("}}}", "}} ");
+const unresolvedAlias = 'app.ts:1:19: error: Could not resolve: "@/t". Maybe you need to "bun install"?';
+const jsxModule = `
+  const one = () => "one";
+  const two = () => "two";
+  const React = { createElement: () => "React.createElement" };
+`;
+const jsxFactory = (factory?: string) => config({ compilerOptions: { jsx: "react", jsxFactory: factory } });
+
+const aliasFiles = {
+  "t1.ts": `export const t = "t1";`,
+  "t2.ts": `export const t = "t2";`,
+  "app.ts": `
+    import { t } from "@/t";
+    import.meta.hot.accept();
+    console.log(t);
+  `,
+  "index.html": emptyHtmlFile({ scripts: ["./app.ts"] }),
+};
+
+devTest("tsconfig.json: an edit of paths reloads the page with the new target", {
+  files: { ...aliasFiles, "tsconfig.json": aliasTo("./t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2");
+    // A later save of the importer keeps the new target.
+    await dev.patch("app.ts", { find: "console.log(t)", replace: "console.log(t + ' again')" });
+    await c.expectMessage("t2 again");
+    // A new page load has it too.
+    await using c2 = await dev.client("/");
+    await c2.expectMessage("t2 again");
+  },
+});
+
+devTest("tsconfig.json: a save that changes nothing the resolver reads does not reload the page", {
+  files: { ...aliasFiles, "tsconfig.json": aliasTo("./t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    await expectReloadAndSocket(c, async () => {
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2");
+    await c.expectNoWebSocketActivity(async () => {
+      // The same bytes, then an option for the type checker, then other whitespace.
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+      const typeChecked = { compilerOptions: { strict: true, paths: { "@/t": ["./t2.ts"] } } };
+      await writeConfig(dev, "tsconfig.json", config(typeChecked));
+      await writeConfig(dev, "tsconfig.json", JSON.stringify(typeChecked, null, 2).padEnd(200));
+    });
+    await dev.patch("app.ts", { find: "console.log(t)", replace: "console.log(t + ' again')" });
+    await c.expectMessage("t2 again");
+  },
+});
+
+devTest("tsconfig.json: one that does not parse keeps the last configuration", {
+  files: { ...aliasFiles, "tsconfig.json": aliasTo("./t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    // As an editor that saves while the file is typed.
+    await c.expectNoWebSocketActivity(async () => {
+      await writeConfig(dev, "tsconfig.json", doesNotParse(aliasTo("./t2.ts")));
+    });
+    const parseError = /Expected "}" but found end of file/;
+    await dev.output.waitForLine(parseError);
+    await dev.patch("app.ts", { find: "console.log(t)", replace: "console.log(t + ' again')" });
+    await c.expectMessage("t1 again");
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2 again");
+    // Each save has more than one file event. What is wrong with the file is said once.
+    expect(dev.output.lines.filter(line => parseError.test(line))).toHaveLength(1);
+  },
+});
+
+devTest("tsconfig.json: one that does not parse is taken once it parses, also after its directory was read again", {
+  files: {
+    "tsconfig.json": jsxFactory("one"),
+    "widget.tsx": `
+      ${jsxModule}
+      export const widget = <div />;
+    `,
+    "src/tsconfig.json": aliasTo("./t2.ts"),
+    "src/t1.ts": `export const t = "t1";`,
+    "src/t2.ts": `export const t = "t2";`,
+    "src/app.ts": `
+      import { t } from "@/t";
+      import { widget } from "../widget";
+      console.log(t + " " + widget);
+    `,
+    "src/index.html": emptyHtmlFile({ scripts: ["./app.ts"] }),
+  },
+  async test(dev) {
+    const before = await clientBundle(dev);
+    expect(before).toContain(`"t2"`);
+    expect(before).toContain(`one("div"`);
+    await writeConfig(dev, "src/tsconfig.json", doesNotParse(aliasTo("./t2.ts")));
+    // The one above it changes, so every directory below it is read again. The directory of
+    // the file that does not parse gets nothing then, as when a server starts with it.
+    await writeConfig(dev, "tsconfig.json", jsxFactory("two"));
+    expect((await dev.fetch("/")).status).toBe(500);
+    // It parses again, with what it had.
+    await writeConfig(dev, "src/tsconfig.json", aliasTo("./t2.ts"));
+    const after = await clientBundle(dev);
+    expect(after).toContain(`"t2"`);
+    expect(after).toContain(`two("div"`);
+  },
+});
+
+devTest("tsconfig.json: an edit that adds the alias of a failed import loads the page", {
+  files: { ...aliasFiles, "tsconfig.json": config({ compilerOptions: {} }) },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [unresolvedAlias] });
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t1.ts"));
+    });
+    await c.expectMessage("t1");
+  },
+});
+
+devTest("tsconfig.json: an edit before the first request", {
+  files: { ...aliasFiles, "tsconfig.json": aliasTo("./t1.ts") },
+  async test(dev) {
+    // The runtime read the file when it loaded the script that starts the server, and the
+    // server watches it from its start.
+    await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+    await using c = await dev.client("/");
+    await c.expectMessage("t2");
+  },
+});
+
+devTest("tsconfig.json: an edit in one batch with a source file", {
+  files: { ...aliasFiles, "tsconfig.json": aliasTo("./t1.ts") },
+  async test(dev) {
+    expect(await clientBundle(dev)).toContain(`"t1"`);
+    {
+      await using batch = await dev.batchChanges();
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+      await dev.patch("app.ts", { find: "console.log(t)", replace: "console.log(t + ' again')" });
+    }
+    const bundle = await clientBundle(dev);
+    expect(bundle).toContain(`"t2"`);
+    expect(bundle).toContain("again");
+    expect(bundle).not.toContain(`"t1"`);
+  },
+});
+
+// Nothing of the root directory is bundled in the tests below, so no watched file is beside
+// the tsconfig.json: only its own watch item reports it. `dev.write` waits for the server to
+// see the file, which a server that does not watch it never does.
+const sourcesInSrc = {
+  "src/t1.ts": `export const t = "t1";`,
+  "src/t2.ts": `export const t = "t2";`,
+  "src/app.ts": aliasFiles["app.ts"],
+  "src/index.html": emptyHtmlFile({ scripts: ["./app.ts"] }),
+};
+
+devTest("tsconfig.json: one that does not parse when the server starts is watched", {
+  files: { ...sourcesInSrc, "tsconfig.json": doesNotParse(aliasTo("./src/t1.ts")) },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: ["src/" + unresolvedAlias] });
+    await c.expectReload(async () => {
+      fs.writeFileSync(dev.join("tsconfig.json"), aliasTo("./src/t1.ts"));
+    });
+    await c.expectMessage("t1");
+  },
+});
+
+devTest("tsconfig.json: a save that replaces the file, three times", {
+  files: { ...sourcesInSrc, "tsconfig.json": aliasTo("./src/t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    // The watcher loses a file when another one is renamed over it.
+    for (const target of ["t2", "t1", "t2"]) {
+      await c.expectReload(async () => {
+        fs.writeFileSync(dev.join("next.json"), aliasTo(`./src/${target}.ts`));
+        fs.renameSync(dev.join("next.json"), dev.join("tsconfig.json"));
+      });
+      await c.expectMessage(target);
+    }
+  },
+});
+
+devTest("tsconfig.json: a save that empties the file before it writes", {
+  files: { ...sourcesInSrc, "tsconfig.json": aliasTo("./src/t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    // An empty file is a save in progress, not a configuration.
+    await c.expectReload(async () => {
+      const file = fs.openSync(dev.join("tsconfig.json"), "w");
+      fs.writeSync(file, aliasTo("./src/t2.ts"));
+      fs.closeSync(file);
+    });
+    await c.expectMessage("t2");
+  },
+});
+
+devTest("tsconfig.json: with every source in another directory", {
+  files: {
+    ...sourcesInSrc,
+    "tsconfig.json": aliasTo("./src/t1.ts"),
+    "src/app.ts": `
+      import { inLib } from "./lib/in-lib";
+      import.meta.hot.accept();
+      console.log(inLib);
+    `,
+    // The directory of this module copied the configuration of the root.
+    "src/lib/in-lib.ts": `
+      import { t } from "@/t";
+      export const inLib = "lib " + t;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("lib t1");
+    await c.expectReload(async () => {
+      fs.writeFileSync(dev.join("tsconfig.json"), aliasTo("./src/t2.ts"));
+    });
+    await c.expectMessage("lib t2");
+  },
+});
+
+devTest("tsconfig.json: one that is removed keeps what it gave until it is written again", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: { ...sourcesInSrc, "tsconfig.json": aliasTo("./src/t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    // As a checkout of another branch does, for a moment.
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.delete("tsconfig.json");
+    });
+    await dev.patch("src/app.ts", { find: "console.log(t)", replace: "console.log(t + ' again')" });
+    await c.expectMessage("t1 again");
+    // The file has no watch item while it is not there.
+    await c.expectReload(async () => {
+      fs.writeFileSync(dev.join("tsconfig.json"), aliasTo("./src/t2.ts"));
+    });
+    await c.expectMessage("t2 again");
+  },
+});
+
+devTest("tsconfig.json: one that is removed and written again at once", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: { ...sourcesInSrc, "tsconfig.json": aliasTo("./src/t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    await c.expectReload(async () => {
+      fs.unlinkSync(dev.join("tsconfig.json"));
+      fs.writeFileSync(dev.join("tsconfig.json"), aliasTo("./src/t2.ts"));
+    });
+    await c.expectMessage("t2");
+  },
+});
+
+devTest("tsconfig.json: one above the directory of the server", {
+  // The watcher of Windows reports nothing outside the directory of the server.
+  skip: ["win32"],
+  cwd: "web",
+  files: {
+    "tsconfig.json": config({
+      compilerOptions: { jsx: "react", jsxFactory: "one", paths: { "@/t": ["./web/t1.ts"] } },
+    }),
+    "web/t1.ts": `export const t = "t1";`,
+    "web/t2.ts": `export const t = "t2";`,
+    "web/app.tsx": `
+      import { t } from "@/t";
+      import { widget } from "../shared/widget";
+      import.meta.hot.accept();
+      console.log(t + " " + widget);
+    `,
+    // Not below the directory of the server, and with the same tsconfig.json.
+    "shared/widget.tsx": `
+      ${jsxModule}
+      export const widget = <div />;
+    `,
+    "web/index.html": emptyHtmlFile({ scripts: ["./app.tsx"] }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1 one");
+    await c.expectReload(async () => {
+      fs.writeFileSync(
+        dev.join("tsconfig.json"),
+        config({ compilerOptions: { jsx: "react", jsxFactory: "two", paths: { "@/t": ["./web/t2.ts"] } } }),
+      );
+    });
+    await c.expectMessage("t2 two");
+  },
+});
+
+devTest("tsconfig.json: an edit of a file it extends", {
+  files: {
+    ...aliasFiles,
+    "tsconfig.json": JSON.stringify({ extends: "./config/middle.json" }),
+    "config/middle.json": config({ extends: "./base.json" }),
+    "config/base.json": aliasTo("../t1.ts"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    // No bundled file is in this directory either.
+    await c.expectReload(async () => {
+      fs.writeFileSync(dev.join("config/base.json"), aliasTo("../t2.ts"));
+    });
+    await c.expectMessage("t2");
+    // The file in the middle now has paths of its own, which replace those of the base.
+    await c.expectReload(async () => {
+      fs.writeFileSync(dev.join("config/middle.json"), aliasTo("../t1.ts"));
+    });
+    await c.expectMessage("t1");
+  },
+});
+
+devTest("tsconfig.json: an edit that moves the options to a file it extends", {
+  files: { ...aliasFiles, "tsconfig.json": aliasTo("./t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("t1");
+    fs.writeFileSync(dev.join("base.json"), aliasTo("./t1.ts"));
+    // The options are the same. The file that gives them is another one.
+    await expectReloadAndSocket(c, async () => {
+      await writeConfig(dev, "tsconfig.json", config({ extends: "./base.json" }));
+    });
+    await c.expectMessage("t1");
+    await expectReloadAndSocket(c, async () => {
+      fs.writeFileSync(dev.join("base.json"), aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2");
+    // One that does not parse keeps the last configuration here too.
+    await c.expectNoWebSocketActivity(async () => {
+      await writeConfig(dev, "base.json", doesNotParse(aliasTo("./t1.ts")));
+    });
+    await dev.patch("app.ts", { find: "console.log(t)", replace: "console.log(t + ' again')" });
+    await c.expectMessage("t2 again");
+  },
+});
+
+devTest("tsconfig.json: an edit that extends a file that does not parse yet", {
+  files: {
+    ...aliasFiles,
+    "tsconfig.json": aliasTo("./t1.ts"),
+    "base.json": doesNotParse(aliasTo("./t2.ts")),
+  },
+  async test(dev) {
+    // A page that has a build error logs it.
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("t1");
+    // What a server that starts with these files does: it takes nothing from the file that
+    // does not parse, and the import that needs it fails.
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", config({ extends: "./base.json" }), { errors: [unresolvedAlias] });
+    });
+    await c.expectReload(async () => {
+      await writeConfig(dev, "base.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2");
+  },
+});
+
+devTest("jsconfig.json: an edit of paths reloads the page with the new target", {
+  files: { ...aliasFiles, "jsconfig.json": aliasTo("./t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    await c.expectReload(async () => {
+      await writeConfig(dev, "jsconfig.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2");
+  },
+});
+
+devTest("tsconfig.json: an edit and a removal of jsxFactory", {
+  files: {
+    "tsconfig.json": jsxFactory("one"),
+    "app.tsx": `
+      ${jsxModule}
+      import.meta.hot.accept();
+      console.log(<div />);
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["./app.tsx"] }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", jsxFactory("two"));
+    });
+    await c.expectMessage("two");
+    // The transpiler keeps a copy of the JSX options of the root tsconfig.json.
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", jsxFactory());
+    });
+    await c.expectMessage("React.createElement");
+  },
+});
+
+devTest("tsconfig.json: a server with a framework still answers after an edit", {
+  framework: minimalFramework,
+  files: {
+    "tsconfig.json": aliasTo("./t1.ts"),
+    "t1.ts": `export const t = "t1";`,
+    "t2.ts": `export const t = "t2";`,
+    "routes/index.ts": `
+      import { serverManifest } from "bun:bake/server";
+      import { t } from "@/t";
+      export default function (req, meta) {
+        return new Response(typeof serverManifest + " " + t);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("object t1");
+    await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+    // The modules of its server runtime are the ones it loaded: it takes the edit when it
+    // starts again, and takes no part of it before.
+    await dev.fetch("/").equals("object t1");
+    await dev.patch("routes/index.ts", { find: '" " + t', replace: '" " + t + "!"' });
+    await dev.fetch("/").equals("object t1!");
+  },
+});
+
+devTest("tsconfig.json: an edit also reaches what the runtime resolves after it", {
+  files: {
+    ...aliasFiles,
+    "tsconfig.json": aliasTo("./t1.ts"),
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: { "/": html },
+        fetch(req) {
+          // The resolver of the runtime and the one of the bundler have one directory cache.
+          return new Response(Bun.resolveSync("@/t", import.meta.dir));
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    expect(await dev.fetch("/resolve").text()).toEndWith("t1.ts");
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2");
+    expect(await dev.fetch("/resolve").text()).toEndWith("t2.ts");
+  },
+});
+
+devTest("tsconfig.json: an edit of paths reaches an importer in node_modules", {
+  files: {
+    ...aliasFiles,
+    "tsconfig.json": aliasTo("./t1.ts"),
+    "app.ts": `
+      import { fromPackage } from "a-package";
+      import.meta.hot.accept();
+      console.log(fromPackage);
+    `,
+    "node_modules/a-package/package.json": JSON.stringify({ name: "a-package", main: "./index.js" }),
+    "node_modules/a-package/index.js": `
+      import { t } from "@/t";
+      export const fromPackage = "package " + t;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("package t1");
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("package t2");
+  },
+});
+
+devTest("tsconfig.json: an edit loads from a barrel file only what its importers need now", {
+  files: {
+    "tsconfig.json": config({ compilerOptions: { paths: { "@/which": ["./one.ts"] } } }),
+    "one.ts": `export { one as value } from "barrel";`,
+    "two.ts": `export { two as value } from "barrel";`,
+    "app.ts": `
+      import { value } from "@/which";
+      console.log(value);
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["./app.ts"] }),
+    "node_modules/barrel/package.json": JSON.stringify({ name: "barrel", main: "./index.js", sideEffects: false }),
+    "node_modules/barrel/index.js": `
+      export { one } from "./one.js";
+      export { two } from "./two.js";
+    `,
+    "node_modules/barrel/one.js": `export const one = "only one";`,
+    "node_modules/barrel/two.js": `export const two = "only two";`,
+  },
+  async test(dev) {
+    const before = await clientBundle(dev);
+    expect(before).toContain("only one");
+    expect(before).not.toContain("only two");
+    await writeConfig(dev, "tsconfig.json", config({ compilerOptions: { paths: { "@/which": ["./two.ts"] } } }));
+    // As for a server that starts with this file.
+    const after = await clientBundle(dev);
+    expect(after).toContain("only two");
+    expect(after).not.toContain("only one");
+  },
+});
+
+devTest("tsconfig.json: a new one nearer to the importer takes over", {
+  // The other watchers do not name the file that appears in a directory.
+  skip: ["darwin", "win32"],
+  files: { ...sourcesInSrc, "tsconfig.json": aliasTo("./src/t1.ts") },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t1");
+    await c.expectReload(async () => {
+      await writeConfig(dev, "src/tsconfig.json", aliasTo("./t2.ts"));
+    });
+    await c.expectMessage("t2");
+  },
+});
+
+devTest("tsconfig.json: an edit while a stylesheet has an error keeps the stylesheet of the page", {
+  files: {
+    ...aliasFiles,
+    "tsconfig.json": aliasTo("./t1.ts"),
+    "styles.css": `.box { color: red; }`,
+    "index.html": emptyHtmlFile({ styles: ["./styles.css"], scripts: ["./app.ts"], body: `<div class="box"></div>` }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectMessage("t1");
+    await c.style(".box").color.expect.toBe("red");
+    const cssError = "styles.css:1:22: error: Unexpected end of input";
+    await dev.write("styles.css", `.box { color: red; }}`, { errors: [cssError] });
+    await c.expectReload(async () => {
+      await writeConfig(dev, "tsconfig.json", aliasTo("./t2.ts"), { errors: [cssError] });
+    });
+    await c.expectReload(async () => {
+      await dev.write("styles.css", `.box { color: blue; }`);
+    });
+    await c.expectMessage("t2");
+    await c.style(".box").color.expect.toBe("#00f");
   },
 });

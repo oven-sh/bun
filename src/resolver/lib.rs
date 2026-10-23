@@ -12,6 +12,7 @@
 // `fs_full`; the inline `pub mod fs` below remains the canonical type surface
 // (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
 // EntriesOption, Implementation) and re-exports from `fs_full`.
+pub mod config_inputs;
 pub mod data_url;
 pub mod dir_info;
 pub mod error;
@@ -31,6 +32,7 @@ pub use error::Result as CrateResult;
 
 /// Re-export real `GlobalCache`.
 pub use bun_options_types::global_cache::GlobalCache;
+pub use config_inputs::ConfigCursor;
 /// Re-export real `DataURL`.
 pub use data_url::DataURL;
 /// Re-export real `DirInfo`.
@@ -886,6 +888,9 @@ pub mod fs {
         }
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
+        }
+        pub(crate) fn clear_not_found(&mut self) -> usize {
+            self.inner().clear_not_found()
         }
     }
 

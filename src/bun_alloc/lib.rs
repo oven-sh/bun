@@ -2312,6 +2312,152 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
+
+    /// Removes every present entry whose value satisfies `pred`. Not-found
+    /// markers carry no value and stay. Returns how many were removed. The
+    /// values stay allocated: the map never frees a slot.
+    pub fn remove_where(&mut self, mut pred: impl FnMut(&ValueType) -> bool) -> usize {
+        let _guard = self.mutex.lock();
+        let mut doomed: Vec<HashKeyType> = Vec::new();
+        for (&hash, &index) in &self.index {
+            if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
+                continue;
+            }
+            let value: &ValueType = if index.is_overflow() {
+                self.overflow_list.at_index_mut(index)
+            } else {
+                // SAFETY: a non-sentinel, non-overflow index was assigned by
+                // `put`, which initialized this slot via `.write()`.
+                unsafe { self.backing_buf[index.index() as usize].assume_init_ref() }
+            };
+            if pred(value) {
+                doomed.try_reserve(1).unwrap_or_else(|_| out_of_memory());
+                doomed.push(hash);
+            }
+        }
+        for hash in &doomed {
+            self.index.remove(hash);
+        }
+        doomed.len()
+    }
+
+    /// Drops every not-found marker. Returns how many there were.
+    pub fn clear_not_found(&mut self) -> usize {
+        let _guard = self.mutex.lock();
+        let before = self.index.len();
+        self.index
+            .retain(|_, index| index.index() != NOT_FOUND.index());
+        before - self.index.len()
+    }
+
+    /// How many values [`put`](Self::put) has stored. A value keeps its slot when its key is
+    /// unlinked, so this only grows.
+    pub fn slot_count(&self) -> u32 {
+        let _guard = self.mutex.lock();
+        u32::from(self.backing_buf_used) + self.overflow_list.len()
+    }
+
+    /// The value in slot `slot`, where slots are numbered in the order [`put`](Self::put) first
+    /// filled them. `None` at or past [`slot_count`](Self::slot_count).
+    pub fn at_slot(&mut self, slot: u32) -> Option<&mut ValueType> {
+        let _guard = self.mutex.lock();
+        let inline = u32::from(self.backing_buf_used);
+        if slot < inline {
+            // SAFETY: `put` initialized every slot below `backing_buf_used`.
+            return Some(unsafe { self.backing_buf[slot as usize].assume_init_mut() });
+        }
+        if slot - inline >= self.overflow_list.len() {
+            return None;
+        }
+        Some(
+            self.overflow_list
+                .at_index_mut(IndexType::new(slot - inline, true)),
+        )
+    }
+}
+
+#[cfg(test)]
+mod bss_map_tests {
+    use super::*;
+
+    /// Two inline slots, so the third value is the first of the overflow list.
+    type Map = BSSMapInner<u32, 2, true>;
+
+    fn map_of(keys: &[&[u8]]) -> Box<Map> {
+        let mut map = Box::<Map>::new_zeroed();
+        // SAFETY: the storage is zeroed, aligned and not shared, which is what `init_at` asks
+        // for. It writes every field that `assume_init` needs: `backing_buf` is `MaybeUninit`.
+        let mut map = unsafe {
+            Map::init_at(map.as_mut_ptr());
+            map.assume_init()
+        };
+        for (value, key) in keys.iter().enumerate() {
+            let mut result = map.get_or_put(key).unwrap();
+            map.put(&mut result, value as u32).unwrap();
+        }
+        map
+    }
+
+    #[test]
+    fn slots_are_numbered_in_put_order_across_the_inline_buffer() {
+        let mut map = map_of(&[b"/a", b"/b", b"/c", b"/d"]);
+        assert_eq!(map.slot_count(), 4);
+        for slot in 0..4 {
+            assert_eq!(map.at_slot(slot).copied(), Some(slot));
+        }
+        assert_eq!(map.at_slot(4), None);
+
+        let mut map = map_of(&[b"/a"]);
+        assert_eq!(map.slot_count(), 1);
+        assert_eq!(map.at_slot(0).copied(), Some(0));
+        assert_eq!(map.at_slot(1), None);
+
+        assert_eq!(map_of(&[]).slot_count(), 0);
+        assert_eq!(map_of(&[]).at_slot(0), None);
+    }
+
+    #[test]
+    fn remove_where_unlinks_keys_and_keeps_slots() {
+        let mut map = map_of(&[b"/a", b"/b", b"/c", b"/d"]);
+        let missing = map.get_or_put(b"/missing").unwrap();
+        map.mark_not_found(missing);
+        let _ = map.get_or_put(b"/unassigned").unwrap();
+
+        // One inline value and one overflow value.
+        assert_eq!(map.remove_where(|value| *value == 1 || *value == 3), 2);
+        assert_eq!(map.get(b"/a").copied(), Some(0));
+        assert_eq!(map.get(b"/b"), None);
+        assert_eq!(map.get(b"/c").copied(), Some(2));
+        assert_eq!(map.get(b"/d"), None);
+        assert!(matches!(
+            map.get_or_put(b"/missing").unwrap().status,
+            ItemStatus::NotFound
+        ));
+        assert!(matches!(
+            map.get_or_put(b"/unassigned").unwrap().status,
+            ItemStatus::Unknown
+        ));
+
+        assert_eq!(map.slot_count(), 4);
+        assert_eq!(map.at_slot(1).copied(), Some(1));
+        assert_eq!(map.at_slot(3).copied(), Some(3));
+
+        // A key that is put again takes a new slot.
+        let mut result = map.get_or_put(b"/b").unwrap();
+        map.put(&mut result, 9).unwrap();
+        assert_eq!(map.slot_count(), 5);
+        assert_eq!(map.at_slot(4).copied(), Some(9));
+        assert_eq!(map.remove_where(|_| false), 0);
+        assert_eq!(map.remove_where(|_| true), 3);
+
+        // Only the marker goes: a key that was asked for and has no value yet stays.
+        assert_eq!(map.clear_not_found(), 1);
+        assert_eq!(map.clear_not_found(), 0);
+        assert!(matches!(
+            map.get_or_put(b"/missing").unwrap().status,
+            ItemStatus::Unknown
+        ));
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

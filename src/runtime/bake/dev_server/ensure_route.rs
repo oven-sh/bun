@@ -195,7 +195,10 @@ pub(super) fn ensure_route_is_bundled(
                     }
                 }
 
-                // Prepare a bundle with just this route.
+                // Prepare a bundle with just this route. A configuration file can have changed
+                // with no file event: the runtime read those of the project before the server
+                // watched them.
+                dev.sync_config_files();
                 let mut entry_points = EntryPointList::empty();
                 dev.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)?;
 

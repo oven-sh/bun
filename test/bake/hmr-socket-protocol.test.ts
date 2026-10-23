@@ -19,9 +19,17 @@
 //   - "s" with topic `M` arms a timer. Its handler left the fired timer marked
 //     active, so closing the socket removed it from the timer heap a second time:
 //     `assert!(self.root == v)`, or a different timer dropped on a canary build.
+//
+// The last three tests are for the "tsconfig.json" files that the server
+// watches. A page loads again when it gets the version frame ("V") a second
+// time, and that is how the server takes a page to what such a file gives now.
+// They run one at a time, after the tests above: each test above starts a
+// server within its timeout, next to the servers of the others.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -496,3 +504,235 @@ test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
     expect(await res.text(), dev.stderr()).toBe("fallback");
   },
 );
+
+/** The script of the page at `path`, as the server serves it now. */
+async function scriptOfPage(port: number, path = "/") {
+  while (true) {
+    const html = await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
+    const src = html.match(/src="([^"]+\.js)"/)?.[1];
+    expect(src, html).toBeString();
+    const script = await (await fetch(`http://127.0.0.1:${port}${src}`)).text();
+    // The route was bundled again after the page was served. A browser loads the page again.
+    if (!script.startsWith("try{location.reload()}")) return script;
+  }
+}
+
+/** Connects a new socket, and resolves once the server sent it `count` version frames. */
+async function versionFramesOfNewSocket(port: number, count: number) {
+  let frames = 0;
+  const done = Promise.withResolvers<number>();
+  using hmr = await connectHmr(
+    port,
+    id => {
+      if (id === "V" && ++frames === count) done.resolve(frames);
+    },
+    err => done.reject(err),
+  );
+  return await done.promise;
+}
+
+test("a tsconfig.json that gives the resolver something new sends the version frame again", async () => {
+  const aliasTo = (target: string, strict: boolean) =>
+    JSON.stringify({ compilerOptions: { strict, paths: { "@/which": [target] } } });
+  using dir = tempDir("hmr-socket-config", {
+    "index.html": indexHtml,
+    "other.html": indexHtml,
+    "entry.ts": `import { which } from "@/which";\nconsole.log(which);`,
+    "server.ts": /* ts */ `
+      import index from "./index.html";
+      import other from "./other.html";
+      const server = Bun.serve({
+        port: 0,
+        development: { hmr: true, console: false },
+        routes: { "/": index, "/other": other },
+      });
+      console.log("PORT=" + server.port);
+    `,
+    "tsconfig.json": aliasTo("./one.ts", false),
+    "one.ts": `export const which = "one";`,
+    "two.ts": `export const which = "two";`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const dev = watchDevServer(proc);
+  const port = await dev.port;
+
+  const keys: string[] = [];
+  let frame = Promise.withResolvers<void>();
+  using hmr = await connectHmr(
+    port,
+    (id, body) => {
+      if (id !== "V") return;
+      keys.push(new TextDecoder().decode(body));
+      frame.resolve();
+    },
+    err => frame.reject(err),
+  );
+  async function versionFrame() {
+    await frame.promise;
+    frame = Promise.withResolvers<void>();
+  }
+
+  // Every socket gets the frame when it connects. This one also gets the hot updates.
+  await versionFrame();
+  hmr.ws.send("she");
+  expect(await scriptOfPage(port)).toContain(`"one"`);
+  expect(await scriptOfPage(port, "/other")).toContain(`"one"`);
+
+  // The resolver does not read "strict". The server takes the saves in order, so a frame
+  // for the first one would be there before the frame for the second one.
+  const tsconfig = join(String(dir), "tsconfig.json");
+  writeFileSync(tsconfig, aliasTo("./one.ts", true));
+  writeFileSync(tsconfig, aliasTo("./two.ts", true));
+  await versionFrame();
+  // No route is bundled again yet, so a page that connects now was served before the change.
+  expect(await versionFramesOfNewSocket(port, 2), dev.stderr()).toBe(2);
+  expect(await scriptOfPage(port)).toContain(`"two"`);
+  expect(await scriptOfPage(port, "/other")).toContain(`"two"`);
+
+  writeFileSync(tsconfig, aliasTo("./two.ts", false));
+  writeFileSync(tsconfig, aliasTo("./one.ts", false));
+  await versionFrame();
+  // Until a page asks for its route, no page has modules to patch: a save of a module
+  // sends no hot update. One would come before the frame of the save that follows it.
+  const framesBefore = hmr.received.length;
+  writeFileSync(join(String(dir), "entry.ts"), `import { which } from "@/which";\nconsole.log(which, "saved");`);
+  writeFileSync(tsconfig, aliasTo("./two.ts", true));
+  await versionFrame();
+  expect(hmr.received.slice(framesBefore)).toEqual(["V"]);
+  const script = await scriptOfPage(port);
+  expect(script).toContain(`"two"`);
+  expect(script).toContain(`"saved"`);
+
+  // The key is the one of the first frame: a page takes another key for another server.
+  expect(keys).toEqual([keys[0], keys[0], keys[0], keys[0]]);
+});
+
+// The resolver fills a directory once for each path to it, and the same "tsconfig.json" can
+// give each path something else: below "node_modules" its "extends" is not read.
+test.skipIf(isWindows)(
+  "a workspace package behind a link gets the version frame again only when its tsconfig.json gives something new",
+  async () => {
+    const factory = (name: string) => JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: name } });
+    const entry = (saves: number) => `import { ui } from "@repo/ui";\nconsole.log(ui, ${saves});`;
+    using dir = tempDir("hmr-socket-workspace", {
+      "index.html": indexHtml,
+      "entry.ts": entry(0),
+      "server.ts": serverTs,
+      "tsconfig.base.json": factory("one"),
+      "packages/ui/tsconfig.json": JSON.stringify({ extends: "../../tsconfig.base.json" }),
+      "packages/ui/package.json": JSON.stringify({ name: "@repo/ui", main: "./index.ts" }),
+      "packages/ui/index.ts": `export { ui } from "./button";\nexport { name } from "@repo/name";`,
+      "packages/ui/button.tsx": `const one = () => "one";\nconst two = () => "two";\nexport const ui = <div />;`,
+      // No module of this package is resolved from its own directory.
+      "packages/name/tsconfig.json": JSON.stringify({ extends: "../../tsconfig.base.json" }),
+      "packages/name/package.json": JSON.stringify({ name: "@repo/name", main: "./index.ts" }),
+      "packages/name/index.ts": `export const name = "name";`,
+      "node_modules/@repo/.keep": "",
+    });
+    for (const name of ["ui", "name"]) {
+      symlinkSync(`../../packages/${name}`, join(String(dir), "node_modules", "@repo", name), "dir");
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = watchDevServer(proc);
+    const port = await dev.port;
+
+    // Resolves for a version frame, and for a hot update that has the last save of the entry.
+    let saves = 0;
+    let hotUpdates = 0;
+    let frame = Promise.withResolvers<void>();
+    using hmr = await connectHmr(
+      port,
+      (id, body) => {
+        if (id === "u" && new TextDecoder().decode(body).includes(`ui, ${saves})`)) hotUpdates++;
+        else if (id !== "V") return;
+        frame.resolve();
+      },
+      err => frame.reject(err),
+    );
+    async function nextFrame() {
+      await frame.promise;
+      frame = Promise.withResolvers<void>();
+    }
+    const versionFrames = () => hmr.received.filter(id => id === "V").length;
+    /** Saves the entry, and resolves for its hot update or for a version frame more than `frames`. */
+    async function saveEntry(frames: number) {
+      hotUpdates = 0;
+      writeFileSync(join(String(dir), "entry.ts"), entry(++saves));
+      while (hotUpdates === 0 && versionFrames() === frames) await nextFrame();
+    }
+    await nextFrame();
+    hmr.ws.send("she");
+    expect(await scriptOfPage(port)).toContain(`one("div"`);
+
+    // With no configuration file edited, a save of a module is a hot update. A version
+    // frame for the bundle of the page, or of the first save, would come before the hot
+    // update of the second save.
+    await saveEntry(1);
+    await saveEntry(1);
+    expect(versionFrames(), dev.stderr()).toBe(1);
+
+    writeFileSync(join(String(dir), "tsconfig.base.json"), factory("two"));
+    while (versionFrames() < 2) await nextFrame();
+    expect(await scriptOfPage(port)).toContain(`two("div"`);
+    // One frame for one edit: a second one would come before this hot update.
+    await saveEntry(2);
+    expect(versionFrames(), dev.stderr()).toBe(2);
+  },
+);
+
+// A configuration file is watched by its path, so its watch item has no file descriptor.
+test.skipIf(!isLinux)("a server that stopped does not close the watch item of a tsconfig.json", async () => {
+  using dir = tempDir("hmr-socket-stop", {
+    "index.html": indexHtml,
+    "entry.ts": `console.log("entry");`,
+    "tsconfig.json": "{}",
+    "server.ts": /* ts */ `
+      import html from "./index.html";
+      import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+      const server = Bun.serve({
+        port: 0,
+        development: { hmr: true, console: false },
+        routes: { "/": html },
+      });
+      const page = await (await fetch(server.url)).text();
+      await (await fetch(new URL(page.match(/src="([^"]+\.js)"/)[1], server.url))).text();
+      const watcherRuns = () =>
+        readdirSync("/proc/self/task").some(task => {
+          try {
+            return readFileSync("/proc/self/task/" + task + "/comm", "utf8").trim() === "File Watcher";
+          } catch {
+            return false;
+          }
+        });
+      if (!watcherRuns()) throw new Error("the watcher has no thread with this name");
+      await server.stop(true);
+      // The thread of the watcher ends when it wakes for an event, and closes its items then.
+      writeFileSync("entry.ts", "console.log('saved');");
+      while (watcherRuns()) await Bun.sleep(1);
+      console.log("stopped");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("assertion failed");
+  expect(stdout).toBe("stopped\n");
+  expect(exitCode).toBe(0);
+});

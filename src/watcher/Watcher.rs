@@ -306,7 +306,10 @@ impl Watcher {
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
-                        let _ = bun_sys::close(fd);
+                        // An item that was added by its path has no descriptor.
+                        if fd.is_valid() {
+                            let _ = bun_sys::close(fd);
+                        }
                     }
                 }
                 true
@@ -379,7 +382,9 @@ impl Watcher {
         if close_descriptors {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
-                let _ = bun_sys::close(fd);
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
             }
         }
         false
@@ -641,8 +646,15 @@ impl Watcher {
         self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
+            // No item owns a descriptor that was opened above for a directory that gets none.
+            let close_opened = || {
+                if !stored_fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
+            };
             let mut buf = bun_paths::path_buffer_pool::get();
             if file_path.len() >= buf.len() {
+                close_opened();
                 return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
             }
             let path: &ZStr = if CLONE_FILE_PATH
@@ -665,7 +677,8 @@ impl Watcher {
 
             self.platform
                 .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?
+                .map_err(|e| e.with_path(file_path))
+                .inspect_err(|_| close_opened())?
         };
 
         self.watchlist.append_assume_capacity(WatchItem {
@@ -691,6 +704,7 @@ impl Watcher {
         hash: HashType,
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
+        watch_directory: bool,
     ) -> sys::Result<FdOwnership> {
         // RAII guard: `lock_guard()` holds the
         // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
@@ -704,8 +718,9 @@ impl Watcher {
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
         let mut parent_watch_item: Option<WatchItemIndex> = None;
-        let autowatch_parent_dir =
-            feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
+        let autowatch_parent_dir = watch_directory
+            && feature_flags::WATCH_DIRECTORIES
+            && self.is_eligible_directory(parent_dir);
         if autowatch_parent_dir {
             let watchlist_slice = self.watchlist.slice();
 
@@ -822,6 +837,25 @@ impl Watcher {
     /// - true if the file is successfully added to the watchlist or already watched
     /// - false if the file cannot be opened or added to the watchlist
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
+        self.add_file_by_path(file_path, true)
+    }
+
+    /// [`add_file_by_path_slow`](Self::add_file_by_path_slow) without a watch item for the
+    /// directory of the file. A directory item reports every write to every file of the
+    /// directory. That is unwanted for a file in a directory that holds nothing else to watch.
+    /// On Windows a file outside the top-level directory cannot be watched, and is not added.
+    pub fn add_file_by_path_without_directory(&mut self, file_path: &[u8]) -> bool {
+        #[cfg(windows)]
+        {
+            use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+            if is_parent_or_equal(self.top_level_dir(), file_path) == ParentEqual::Unrelated {
+                return false;
+            }
+        }
+        self.add_file_by_path(file_path, false)
+    }
+
+    fn add_file_by_path(&mut self, file_path: &[u8], watch_directory: bool) -> bool {
         if file_path.is_empty() {
             return false;
         }
@@ -858,7 +892,14 @@ impl Watcher {
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         let fd: Fd = Fd::INVALID;
 
-        let res = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, None);
+        let res = self.add_file_to_watchlist::<true>(
+            fd,
+            file_path,
+            hash,
+            Fd::INVALID,
+            None,
+            watch_directory,
+        );
         match res {
             Ok(ownership) => {
                 // Not adopted (another thread won the add race); close the
@@ -884,6 +925,25 @@ impl Watcher {
         hash: HashType,
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
+    ) -> sys::Result<FdOwnership> {
+        self.add_file_to_watchlist::<CLONE_FILE_PATH>(
+            fd,
+            file_path,
+            hash,
+            dir_fd,
+            package_json,
+            true,
+        )
+    }
+
+    fn add_file_to_watchlist<const CLONE_FILE_PATH: bool>(
+        &mut self,
+        fd: Fd,
+        file_path: &[u8],
+        hash: HashType,
+        dir_fd: Fd,
+        package_json: Option<&'static PackageJSON>,
+        watch_directory: bool,
     ) -> sys::Result<FdOwnership> {
         // This must lock due to concurrent transpiler
         self.mutex.lock();
@@ -912,6 +972,7 @@ impl Watcher {
             hash,
             dir_fd,
             package_json,
+            watch_directory,
         );
         self.mutex.unlock();
         r

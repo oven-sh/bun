@@ -51,6 +51,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(vm_handle, options.vm.handle());
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
+        w!(config_files, Default::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
         w!(
             server_register_update_callback,
@@ -529,6 +530,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // after that line.
     dev.scan_initial_routes()?;
 
+    // The runtime read the configuration files of the project when it loaded the script that
+    // starts this server.
+    dev.take_config_changes(&[], &[]);
+
     debug_assert!(dev.magic == Magic::Valid);
 
     Ok(dev)
@@ -573,6 +578,7 @@ impl Drop for DevServer {
                 server_register_update_callback: _,
                 bun_watcher: _,
                 directory_watchers: _,
+                config_files: _,
                 watcher_atomics: _,
                 testing_batch_events: _,
                 generation: _,

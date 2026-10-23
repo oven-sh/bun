@@ -7418,10 +7418,16 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                let circular = kind == JSType::ErrorInstance
-                    && (value == error_instance || formatter.visited_contains(value));
-                if kind == JSType::ErrorInstance && !prev_had_errors && !circular {
-                    if field.eq_ascii(b"cause") {
+                let is_error = kind == JSType::ErrorInstance;
+                let circular =
+                    is_error && (value == error_instance || formatter.visited_contains(value));
+                let is_cause = is_error && field.eq_ascii(b"cause");
+                // The queue prints no members of an AggregateError. The render in place does.
+                if is_error
+                    && !circular
+                    && (!prev_had_errors || (is_cause && !value.is_aggregate_error(global_ref)))
+                {
+                    if is_cause {
                         saw_cause = true;
                     }
                     value.protect();
@@ -7431,7 +7437,7 @@ impl VirtualMachine {
                     || value.is_primitive()
                     || kind.is_string_like()
                 {
-                    if circular && field.eq_ascii(b"cause") {
+                    if circular && is_cause {
                         saw_cause = true;
                     }
                     if !*recorded && !value.is_primitive() {

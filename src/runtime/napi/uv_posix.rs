@@ -1306,26 +1306,17 @@ const _: () = assert!(core::mem::size_of::<UvWork>() <= UV_WORK_T_SIZE);
 /// that never call `uv_cancel` ignore the status. The V8 API would also still enter JS.
 struct UvWorkJob;
 
-/// The queued request, counted in its loop's `work_in_flight` until `then` or a release unrun.
+/// The queued request, counted in its loop's `work_in_flight` until the job completes or is released unrun.
 struct QueuedUvWork {
     req: JsPtr<UvWork>,
-    counted: bool,
-}
-
-impl QueuedUvWork {
-    /// JS thread. The request is alive: the addon keeps it until `after_work_cb` has run.
-    fn uncount(&mut self) {
-        if core::mem::replace(&mut self.counted, false) {
-            // SAFETY: as above; the loop lives as long as its VM, which releases jobs first.
-            let loop_ = unsafe { &*(*self.req.as_ptr()).loop_ };
-            loop_.work_in_flight.set(loop_.work_in_flight.get() - 1);
-        }
-    }
+    loop_: JsPtr<UvLoop>,
 }
 
 impl Drop for QueuedUvWork {
     fn drop(&mut self) {
-        self.uncount();
+        // SAFETY: JS thread; the loop lives as long as its VM, which releases its jobs first.
+        let loop_ = unsafe { &*self.loop_.as_ptr() };
+        loop_.work_in_flight.set(loop_.work_in_flight.get() - 1);
     }
 }
 
@@ -1357,10 +1348,8 @@ impl JobContext for UvWorkJob {
         Some(done)
     }
 
-    fn then(mut work: QueuedUvWork, _: (), cx: &JsThread<'_>) -> JsResult<()> {
+    fn then(work: QueuedUvWork, _: (), cx: &JsThread<'_>) -> JsResult<()> {
         let req = work.req.as_ptr();
-        // Before the callback, which usually frees the request.
-        work.uncount();
         // SAFETY: same as `run`. `state` doesn't change after the job is posted.
         let (state, after_work_cb) =
             unsafe { ((*req).state.load(Ordering::SeqCst), (*req).after_work_cb) };
@@ -1424,7 +1413,8 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     let work = QueuedUvWork {
         // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).
         req: unsafe { JsPtr::new(req_ref) },
-        counted: true,
+        // SAFETY: the loop is a field of the VM's runtime state (fn contract).
+        loop_: unsafe { JsPtr::new(loop_ref) },
     };
     Job::<UvWorkJob>::schedule(&cx, work, ());
     0

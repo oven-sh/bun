@@ -15,6 +15,7 @@ test("exists", () => {
   expect(typeof ErrorEvent !== "undefined").toBe(true);
   expect(typeof CloseEvent !== "undefined").toBe(true);
   expect(typeof MessageEvent !== "undefined").toBe(true);
+  expect(typeof PromiseRejectionEvent !== "undefined").toBe(true);
   expect(typeof TextEncoder !== "undefined").toBe(true);
   expect(typeof WebSocket !== "undefined").toBe(true);
   expect(typeof Blob !== "undefined").toBe(true);
@@ -491,6 +492,7 @@ describe("new.target.prototype", () => {
     ["MessageEvent", MessageEvent, ["message"]],
     ["PerformanceMark", PerformanceMark, ["mark"]],
     ["PerformanceObserver", PerformanceObserver, [() => {}]],
+    ["PromiseRejectionEvent", PromiseRejectionEvent, ["unhandledrejection", { promise: Promise.resolve() }]],
     ["TextEncoder", TextEncoder, []],
     ["URL", URL, ["http://example.com/"]],
     ["URLPattern (pattern, base)", URLPattern, ["/a", "http://example.com/"]],

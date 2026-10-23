@@ -33,6 +33,7 @@ enum EventInterface {
     ErrorEventInterfaceType = 58,
     EventInterfaceType = 59,
     MessageEventInterfaceType = 67,
+    PromiseRejectionEventInterfaceType = 72,
 };
 
 } // namespace WebCore

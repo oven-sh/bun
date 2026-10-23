@@ -155,6 +155,7 @@ public:
     IsoSubspace* m_subspaceForAbortController { nullptr };
     IsoSubspace* m_subspaceForAbortSignal { nullptr };
     IsoSubspace* m_subspaceForErrorEvent { nullptr };
+    IsoSubspace* m_subspaceForPromiseRejectionEvent { nullptr };
     IsoSubspace* m_subspaceForEvent { nullptr };
     IsoSubspace* m_subspaceForEventTarget { nullptr };
     IsoSubspace* m_subspaceForEventEmitter { nullptr };

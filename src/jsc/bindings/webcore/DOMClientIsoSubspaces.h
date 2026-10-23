@@ -166,6 +166,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForAbortController { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForAbortSignal { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForErrorEvent { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForPromiseRejectionEvent { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForEvent { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForEventTarget { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForEventEmitter { nullptr };

@@ -30,11 +30,25 @@ extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObjec
 namespace Bun {
 using namespace JSC;
 
+#if OS(WINDOWS)
+static constexpr bool hostHasTwoSeparators = true;
+#else
+static constexpr bool hostHasTwoSeparators = false;
+#endif
+
 std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
 {
     if (!hasCompiledModules())
         return std::nullopt;
-    return AOT::findModule(path);
+    std::optional<AOT::ModuleID> found = AOT::findModule(path);
+    if (found || !hostHasTwoSeparators)
+        return found;
+    // A file of an executable is `B:/~BUN/root/a.ts`, one that runs in place `C:\\a.ts`, and a program spells either with the other separator.
+    if (path.contains('\\'))
+        found = AOT::findModule(makeStringByReplacingAll(path, '\\', '/'));
+    if (!found && path.contains('/'))
+        found = AOT::findModule(makeStringByReplacingAll(path, '/', '\\'));
+    return found;
 }
 
 static std::optional<AOT::ModuleID> compiledModuleForRequest(const String& path, bool hasImportAttributes)
@@ -527,7 +541,7 @@ JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return 
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return {}; }
 ASCIILiteral adviceToKeepFunctionSource() { return ""_s; }
-JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path)
+JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable)
 {
     return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable."_s));
 }

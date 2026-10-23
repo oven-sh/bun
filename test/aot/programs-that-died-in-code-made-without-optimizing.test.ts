@@ -1,6 +1,6 @@
 // In a very large program the functions that are not hot are compiled without optimizing, by a generator of its own with an arm for each processor.
 // `--aot-testing=GenerateAllCodeDirectly` compiles every function that way. ./joined-programs.ts tries it on three groups of programs in a run, others for each
-// commit. The programs here have died in such a group, so every run takes them.
+// commit. The programs here have died or answered wrongly that way, so every run takes them.
 //
 // No machine that runs one of these lanes can be asked afterwards, so where a program dies this test prints what is needed to read the fault: what the executable
 // said, the code of the program's own functions, and the code around each place of the stack that lies in compiled code. A line `CODE <name> <offset> <bytes in hexadecimal>`.
@@ -15,6 +15,14 @@ const programs = [
   "type-rules/loop-bounds-that-arrive-boxed.ts",
   "structural-types/typed-arrays-are-read-past-their-end-into-an-int32.ts",
   "typed-objects/null-checks-of-narrow-references.ts",
+  "language/a-value-of-32-bits-feeds-a-phi-of-64-bits-in-the-same-frame-slot.ts",
+  "language/equalities-joined-by-or-and-switches-within-64-values.ts",
+  "language/int32-read-once-used-variously.ts",
+  "language/switch-cases-share-targets.ts",
+  "language/the-copies-at-the-end-of-a-block-outnumber-the-registers.ts",
+  "language/untyped-value-vs-many-integers.js",
+  "structural-types/a-switch-over-a-sparse-enum-gets-numbers-that-wrap-around-to-a-member.ts",
+  "structural-types/enum-typed-fields-elements-and-variables-hold-any-number.ts",
 ];
 
 function codeOf(executable: Buffer) {

@@ -85,6 +85,9 @@ pub(crate) fn describe_checker_queries(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
+    if !bun_aot::engine::has_compiler() {
+        return Ok(JSValue::UNDEFINED);
+    }
     let session = Session::new();
     let entry_argument = frame.argument(0).to_utf8(global)?;
     let requested_threads = match frame.argument(1) {

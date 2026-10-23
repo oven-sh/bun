@@ -2291,7 +2291,7 @@ test("run-time RegExps are never compiled, however hot: they run on a flat progr
     WORDS: "c[o]ld,h[o]t,l[o]ng",
   });
   expect(stdout).toBe("foo,bar999 foo,bar\n2\n");
-  const lines = stderr.split("\n");
+  const lines = stderr.split(/\r?\n/);
   const whatHappenedTo = (word: string) =>
     lines.flatMap((line, i) =>
       line.endsWith(`${word}/"`) ? [line.slice(0, line.indexOf(" this regular expression")), lines[i + 1]] : [],

@@ -80,6 +80,7 @@ if (Bun.isMainThread) {
 } else {
   addEventListener("message", (event: MessageEvent<number>) => {
     postMessage("spins");
-    postMessage("left with " + spins[event.data](-1));
+    // A loop of four thousand million rounds ends within seconds, and a slow machine takes longer than that to start thirty-two Workers.
+    for (;;) spins[event.data](-1);
   });
 }

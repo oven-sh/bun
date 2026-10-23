@@ -97,6 +97,11 @@ const compilerFlags = [
   "-DBUN_HARDENED=1",
   "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
+function patchesOfAllocator(cfg: Config): string[] {
+  const patches = mimalloc.patches ?? [];
+  return typeof patches === "function" ? patches(cfg) : patches;
+}
+
 const rustFlags = [
   "-Crelocation-model=pie",
   "--cfg=bun_hardened",
@@ -119,7 +124,16 @@ test("--hardened=on gives every C and C++ source, every crate and the link its m
   expect(flags.rust).toEqual(expect.arrayContaining(rustFlags));
   expect(flags.link).toEqual(expect.arrayContaining(linkFlags));
   expect(flags.allocator).toContain("MI_SECURE=1");
-  expect(mimalloc.patches).toContain("patches/mimalloc/secure-guard-pages-are-protected.patch");
+  expect(patchesOfAllocator(cfg)).toContain("patches/mimalloc/secure-guard-pages-are-protected.patch");
+});
+
+test("only a build with the ahead-of-time compiler patches what the allocator does in every free", () => {
+  using dir = tempDir("build-allocator-patches", {});
+  const forCompiler = ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"];
+  const withCompiler = patchesOfAllocator(linuxConfig({ aot: true }, String(dir)));
+  const withoutCompiler = patchesOfAllocator(linuxConfig({ aot: false }, String(dir)));
+  expect(withCompiler).toEqual(expect.arrayContaining(forCompiler));
+  expect(withoutCompiler).toEqual(withCompiler.filter(patch => !forCompiler.includes(patch)));
 });
 
 test("a build without --hardened has none of them", () => {

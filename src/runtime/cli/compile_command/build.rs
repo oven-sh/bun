@@ -40,6 +40,9 @@ struct ProductInputs<'p> {
 pub(crate) fn compile_to_executable(
     request: &mut CompileRequest<'_, '_>,
 ) -> Result<CompileOutcome, CompileFailure> {
+    if !has_compiler() {
+        return Err(CompileFailure::NoCompiler);
+    }
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
     bun_jsc::initialize(bun_jsc::InitializeOptions {

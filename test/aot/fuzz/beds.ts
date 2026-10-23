@@ -101,7 +101,7 @@ async function textUpToTheLimit(stream: ReadableStream<Uint8Array>) {
 
 export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>): Promise<Run> {
   // No core files, and a limit on processor time and on memory behind the limit on wall time.
-  const limited = ["/bin/sh", "-c", `ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
+  const limited = process.platform === "win32" ? cmd : ["/bin/sh", "-c", `ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
   await using child = Bun.spawn({ cmd: limited, cwd, env: { ...environment, ...more }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
   const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
@@ -248,10 +248,14 @@ export class ProductBed implements Bed {
     modes.push({ name: "hot-and-nothing-inlined", flags: ["--aot-heat=everything-is-hot", "--aot-disable=InlineCalls"] });
     modes.push({ name: "no-flow-results", flags: ["--aot-disable=flow-results"] });
     modes.push({ name: "hot-without-flow-results", flags: ["--aot-heat=everything-is-hot", "--aot-disable=flow-results"] });
-    // In a very large program what is neither hot nor warm is generated directly, without the optimizing back end. A small program never takes that road by itself. Three ways onto it.
+    // In a very large program what is neither hot nor warm is generated directly, without the optimizing back end. A small program never takes that road by itself.
+    // all-code-direct hands the generator code that was optimized by its true heat, which no build of a user does. counts-as-very-large is the rule itself, cold-and-very-large the rule with nothing left hot or warm.
+    // Cold alone generates nothing directly: it is a mode of the optimizing back end.
     modes.push({ name: "all-code-direct", flags: ["--aot-testing=GenerateAllCodeDirectly"] });
     modes.push({ name: "every-function-cold", flags: ["--aot-heat=everything-is-cold"] });
     modes.push({ name: "counts-as-very-large", flags: ["--aot-limit=MaxWarmCodeValues:1"] });
+    modes.push({ name: "cold-and-very-large", flags: ["--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"] });
+    if (program.extension === "ts") modes.push({ name: "erased-cold-and-very-large", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"] });
     if (program.extension === "ts") modes.push({ name: "erased-and-cold", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold"] });
     modes.push({ name: "direct-and-validated", flags: ["--aot-testing=GenerateAllCodeDirectly", "--aot-validate"] });
     modes.push({ name: "direct-and-proofs-checked", flags: ["--aot-testing=GenerateAllCodeDirectly,CheckProofsAtRunTime"] });

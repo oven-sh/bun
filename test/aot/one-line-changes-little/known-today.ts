@@ -61,6 +61,7 @@ export const knownInLibrary: Readonly<Record<string, string>> = {
   "promise-new": "bytes of code 233648 -> 300288",
   "top-level-await": "bytes of code 233648 -> 301152",
   "response-json": "bytes of code 233648 -> 301488",
+  ...(process.platform === "win32" && { "process-binding": "bytes of code 233648 -> 299328" }),
 };
 
 /** accesses free | tested | by name, calls direct | guarded | unknown, bytes of code of the program; alone: 66 | 15 | 9, 35 | 0 | 0, 8,715 */

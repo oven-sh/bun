@@ -286,7 +286,7 @@ export const cases: Record<string, Record<string, string>> = {
   },
   "filename-dirname-url-of-each-module": {
     "main.mjs": "const say = (...v) => console.log(...v.map(x => typeof x === \"function\" ? \"fn:\" + x.name : typeof x === \"symbol\" ? String(x) : typeof x === \"object\" && x !== null ? JSON.stringify(x) : String(x))); const tryit = f => { try { return f(); } catch (e) { return e.constructor.name; } }; import l from \"./sub/lib.cjs\"; import * as e from \"./sub/esm.mjs\"; say(l, e, import.meta.main);\n",
-    "sub/esm.mjs": "const tail = s => String(s).split(\"/\").slice(-2).join(\"/\"); export const u = tail(import.meta.url), d = tail(import.meta.dir), f = import.meta.file, m = import.meta.main, p = tail(import.meta.path), dn = tail(import.meta.dirname), fn = tail(import.meta.filename);\n",
+    "sub/esm.mjs": "const tail = s => String(s).split(/[\\\\/]/).slice(-2).join(\"/\"); export const u = tail(import.meta.url), d = tail(import.meta.dir), f = import.meta.file, m = import.meta.main, p = tail(import.meta.path), dn = tail(import.meta.dirname), fn = tail(import.meta.filename);\n",
     "sub/lib.cjs": "const p = require(\"node:path\"); exports.f = p.basename(__filename); exports.d = p.basename(__dirname);\n",
   },
   "globals-do-not-leak": {

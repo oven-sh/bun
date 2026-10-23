@@ -24,10 +24,13 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
-  patches: [
+  // What the two `hand-out-` patches add is switched on only while the ahead-of-time compiler runs, and costs every
+  // free a test: a build without the compiler leaves them out.
+  patches: cfg => [
     "patches/mimalloc/new-oom-hook.patch",
-    "patches/mimalloc/hand-out-last-freed.patch",
-    "patches/mimalloc/hand-out-resident-slices.patch",
+    ...(cfg.aot
+      ? ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"]
+      : []),
     "patches/mimalloc/secure-guard-pages-are-protected.patch",
     "patches/mimalloc/out-of-memory-is-no-corruption.patch",
   ],

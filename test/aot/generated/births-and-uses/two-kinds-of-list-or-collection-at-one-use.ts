@@ -3,13 +3,13 @@
 // read only behind that switch. The generators that give every use one birth have no such place.
 //
 // A site is a use, the kind it is hot with, the kind that comes then, and the road by which the value gets to the use. Every site has functions and classes of its own. A program holds the sites of one
-// road and one pair of kinds, a hundred or two, so that nothing but those two births decides what the compiler believes at its uses. One site a program would be three million programs.
+// road and one pair of kinds, a hundred or two, so that nothing but those two births decides what the compiler believes at its uses. One site a program would be more than three million programs.
 import known from "./known-to-differ.json";
 import onceWrong from "./once-wrong.json";
 
 type Program = { name: string; file: string; text: string };
 
-// The letter says which uses make sense for a kind: L an array, K like an array, T a typed array, V a DataView, B a buffer, M a Map, S a Set, W weak, I an iterator, H a collection of the host, X none of them.
+// The letter says which uses make sense for a kind: L an array, K like an array, T a typed array, V a DataView, B a buffer, M a Map, S a Set, W weak, I an iterator, H a collection of the host, Y what only for await can walk, X none of them.
 export const kinds: Record<string, [string, string]> = {
   integers: ["L", "[5, 6, 7]"],
   fractions: ["L", "[1.5, 2.5, 3.5]"],
@@ -203,6 +203,20 @@ export const kinds: Record<string, [string, string]> = {
   formData: ["H", "form()"],
   noFormData: ["H", "new FormData()"],
 
+  asyncGenerator: ["Y", "(async function* () { yield 1; yield 2; yield 3; })()"],
+  asyncGeneratorOfPairs: ["Y", '(async function* () { yield ["a", 1]; yield ["b", 2]; })()'],
+  asyncGeneratorOfNothing: ["Y", "(async function* () {})()"],
+  asyncGeneratorThatThrows: ["Y", '(async function* () { yield 1; throw new RangeError("from the generator"); })()'],
+  asyncGeneratorThatCleansUp: ["Y", "(async function* () { try { yield 1; yield 2; yield 3; } finally { closed++; } })()"],
+  asyncGeneratorOfList: ["Y", "(async function* () { yield* [1, 2]; yield* new Set([3]); })()"],
+  asyncByHand: ["Y", "asyncCounter(3)"],
+  asyncByHandWithReturn: ["Y", "asyncCounter(3, true)"],
+  stream: ["Y", "new ReadableStream({ start(controller) { controller.enqueue(1); controller.enqueue(2); controller.close(); } })"],
+  emptyStream: ["Y", "new ReadableStream({ start(controller) { controller.close(); } })"],
+  promises: ["L", "[Promise.resolve(1), 2, Promise.resolve(3)]"],
+  setOfPromises: ["S", "new Set([Promise.resolve(1), 2])"],
+  thenables: ["L", "[{ then(resolve) { resolve(1); } }, 2]"],
+
   text: ["X", '"abcd"'],
   emptyText: ["X", '""'],
   rope: ["X", '"ab".repeat(3) + String(7)'],
@@ -268,10 +282,58 @@ export const uses: Record<string, [string, string]> = {
   newHeaders: ["LMIH", "return new Headers(v);"],
   groupBy: ["LKTSI", 'return Map.groupBy(v, each => typeof each);'],
   recordGroupBy: ["LKTSI", "return Object.groupBy(v, each => typeof each);"],
-  iteratorFrom: ["LKTMSIH", "return Iterator.from(v).toArray();"],
+  iteratorFrom: ["LKTMSIH", "return Iterator.from(v).take(5).toArray();"],
   helperOfWalk: ["LTMSIH", "return v[Symbol.iterator]().map(each => [each]).take(2).toArray();"],
   unionWith: ["SM", "return new Set([1, 9]).union(v);"],
   isSubset: ["SM", "return new Set([1]).isSubsetOf(v);"],
+
+  // A plus: the use takes two values, v and w, each of either kind.
+  spreadOfBoth: ["+LKTMSIH", "return [...v, ...w];"],
+  concatOfBoth: ["+L", "return v.concat(w);"],
+  pushAllOfOther: ["+L", "v.push(...w); return v;"],
+  zipByIndex: ["+LKT", "const r = []; for (let i = 0; i < v.length && i < w.length; i++) r.push(v[i], w[i]); return r;"],
+  zipToLongest: ["+LKT", "const r = []; for (let i = 0; i < v.length || i < w.length; i++) r.push(v[i], w[i]); return r;"],
+  zipByWalk: ["+LKTMSIH", "const other = w[Symbol.iterator](), r = []; for (const each of v) r.push(each, other.next().value); return r;"],
+  copyFromOther: ["+LKT", "for (let i = 0; i < w.length; i++) v[i] = w[i]; return v;"],
+  setFromOther: ["+TM", "v.set(w, 1); return v;"],
+  walkOfBoth: ["+LKTMSIH", "let n = 0; for (const each of v) for (const inner of w) n++; return n;"],
+  sumOfBoth: ["+LKT", "let s = 0; for (let i = 0; i < v.length; i++) s += v[i]; for (let i = 0; i < w.length; i++) s += w[i]; return s;"],
+  lengthsOfBoth: ["+LKTMSH", "return [v.length ?? v.size, w.length ?? w.size, v.length === w.length];"],
+  longerOfBoth: ["+LKT", "const longer = v.length > w.length ? v : w; return [longer[0], longer.length];"],
+  firstThatHasAny: ["+LKTMSH", "const chosen = (v.length ?? v.size) ? v : w; const r = []; for (const each of chosen) r.push(each); return r;"],
+  swapOfBoth: ["+LKTMSIHVBW", "[v, w] = [w, v]; return [v, w];"],
+  swappedThenWalked: ["+LKTMSIH", "[v, w] = [w, v]; const r = []; for (const each of v) r.push(each); return r;"],
+  firstsOfBoth: ["+LKTMSIH", "const [[a], [b]] = [v, w]; return [a, b];"],
+  mapOfBoth: ["+LKTMSIH", "const r = new Map(), other = w[Symbol.iterator](); for (const each of v) r.set(each, other.next().value); return r;"],
+  sameValue: ["+LKTMSIHVBW", "return [v === w, v == w, Object.is(v, w)];"],
+  keptBoth: ["+LKTMSIHVBW", "const r = { one: v, other: w }; return [r.one === v, r.other === w];"],
+  otherInFirst: ["+LMS", "(v.push ?? v.add ?? v.set).call(v, w, w); return v;"],
+  includesOther: ["+LMS", "return [v.includes?.(w), v.has?.(w)];"],
+  everyInOther: ["+LTS", "let n = 0; for (const each of v) if (w.includes?.(each) ?? w.has?.(each)) n++; return n;"],
+  // A star: the use stands in an async function only.
+  fillByForAwait: ["*LKTMSIHY", "const r = []; for await (const each of v) r.push(each); return r;"],
+  countByForAwait: ["*LKTMSIHY", "let n = 0; for await (const each of v) n++; return n;"],
+  leaveForAwait: ["*LKTMSIHY", "let kept; for await (const each of v) { kept = each; break; } return [kept, closed];"],
+  throwInForAwait: ["*LKTMSIHY", 'try { for await (const each of v) throw new SyntaxError("mine"); } catch (e) { return [e.name, closed]; } return "none";'],
+  pairsByForAwait: ["*LMIHY", "const r = []; for await (const [k, w] of v) r.push(k, w); return r;"],
+  keepLastByForAwait: ["*LKTMSIHY", "let kept; for await (const each of v) kept = [each]; return kept[0];"],
+  twoWalksByForAwait: ["*LKTMSIHY", "const r = []; for await (const each of v) r.push(each); for await (const each of v) r.push(each); return r;"],
+  arrayFromAsync: ["*LKTMSIHY", "return await Array.fromAsync(v);"],
+  arrayFromAsyncMapped: ["*LKTMSIHY", "return await Array.fromAsync(v, each => [each]);"],
+  awaitEach: ["*LKTMSIH", "const r = []; for (const each of v) r.push(await each); return r;"],
+  awaitInIndexLoop: ["*LKT", "let s = 0; for (let i = 0; i < v.length; i++) s += await v[i]; return s;"],
+  awaitBetweenReads: ["*LKTMSH", "const before = v.length ?? v.size; await null; return [before, v.length ?? v.size];"],
+  awaitBetweenStores: ["*LKT", "v[0] = 8; await null; v[1] = 9; return v;"],
+  awaitInSpread: ["*LKTMSIH", "return [await 0, ...v, await 9];"],
+  promiseAll: ["*LKTMSIH", "return await Promise.all(v);"],
+  promiseAllSettled: ["*LKTMSIH", "return (await Promise.allSettled(v)).map(each => each.status);"],
+  promiseRace: ["*LKTMSIH", "return await Promise.race([Promise.race(v), late()]);"],
+  promiseAny: ["*LKTMSIH", "return await Promise.any(v);"],
+  handedOnAsync: ["*LKTMSIHY", "const r = []; for await (const each of (async function* () { yield* v; })()) r.push(each); return r;"],
+  nextOfAsync: ["*Y", "return await v.next?.();"],
+  returnOfAsync: ["*Y", "return [await v.return?.(4), await v.next?.(), closed];"],
+  readerOfStream: ["*Y", "const reader = v.getReader(); return [await reader.read(), await reader.read(), await reader.read()];"],
+  typeOfAsync: ["*Y", "return [typeof v, typeof v[Symbol.asyncIterator], typeof v[Symbol.iterator], Object.prototype.toString.call(v)];"],
 
   walkOfEntries: ["LTMSH", "const r = []; for (const each of v.entries()) r.push(each); return r;"],
   walkOfKeys: ["LTMSH", "const r = []; for (const each of v.keys()) r.push(each); return r;"],
@@ -534,6 +596,8 @@ function cleared(c) { c.clear(); return c; }
 function started(it, steps = 1) { for (let i = 0; i < steps; i++) it.next(); return it; }
 function form() { const f = new FormData(); f.append("a", "1"); f.append("b", "2"); f.append("a", "3"); return f; }
 function counter(most, hasReturn) { let n = 0; const it = { next() { return n < most ? { done: false, value: ++n } : { done: true, value: undefined }; }, [Symbol.iterator]() { return this; } }; if (hasReturn) it.return = function () { closed++; n = most; return {}; }; return it; }
+function late() { return new Promise(resolve => setTimeout(resolve, 1, "late")); }
+function asyncCounter(most, hasReturn) { let n = 0; const it = { next() { return Promise.resolve(n < most ? { done: false, value: ++n } : { done: true, value: undefined }); }, [Symbol.asyncIterator]() { return this; } }; if (hasReturn) it.return = function () { closed++; n = most; return Promise.resolve({}); }; return it; }
 function showList(r, depth) { const n = r.length; let s = ""; for (let i = 0; i < n; i++) { if (n > 48 && i === 8) { s += ",.." + n + ".."; i = n - 8; } s += (i ? "," : "") + (i in r ? show(r[i], depth + 1) : "hole"); } return s; }
 function show(r, depth = 0) {
   if (r === undefined) return "undefined";
@@ -560,6 +624,7 @@ function show(r, depth = 0) {
     if (r instanceof WeakMap || r instanceof WeakSet) return tag + "(" + r.has(key) + "," + r.has(other) + ")" + named;
     if (r instanceof URLSearchParams || r instanceof Headers || r instanceof FormData) return tag + "{" + showList(Array.from(r), depth) + "}" + named;
     if (r instanceof Error) return r.name + ": " + r.message;
+    if (r instanceof Promise || typeof r[Symbol.asyncIterator] === "function") return tag + named;
     if (typeof r.next === "function") { const rest = []; for (let i = 0; i < 12; i++) { const step = r.next(); if (step.done) break; rest.push(step.value); } return tag + " with " + showList(rest, depth) + " left"; }
     let indexed = "";
     for (const k of Reflect.ownKeys(r)) if (typeof k === "string" && (k === "length" || String(k >>> 0) === k)) { const d = Reflect.getOwnPropertyDescriptor(r, k); indexed += " " + k + ":" + ("value" in d ? show(d.value, depth + 1) : "accessor"); }
@@ -584,6 +649,7 @@ const typedHead = (
     ["function cleared(c) {", "function cleared<T extends { clear(): void }>(c: T): T {"],
     ["function started(it, steps = 1) {", "function started<T extends { next(): any }>(it: T, steps = 1): T {"],
     ["function counter(most, hasReturn) { let n = 0; const it = {", "function counter(most: number, hasReturn?: boolean) { let n = 0; const it: { next(): { done: boolean; value: number | undefined }; [Symbol.iterator](): any; return?(): {} } = {"],
+    ["function asyncCounter(most, hasReturn) { let n = 0; const it = {", "function asyncCounter(most: number, hasReturn?: boolean) { let n = 0; const it: { next(): Promise<{ done: boolean; value: number | undefined }>; [Symbol.asyncIterator](): any; return?(): Promise<{}> } = {"],
     ["function showList(r, depth) {", "function showList(r: any, depth: number): string {"],
     ["function show(r, depth = 0) {", "function show(r: any, depth = 0): string {"],
     ['"length").get;', '"length")!.get!;'],
@@ -591,7 +657,7 @@ const typedHead = (
   ] as const
 ).reduce((text, [untyped, typed]) => text.replace(untyped, typed), head).replaceAll(/^(?!$)/gm, "// @ts-ignore\n");
 
-// How the value gets from its birth to its use. `@` is the number of the site, A and B are the two births, USE the body of the use.
+// How the value gets from its birth to its use. `@` is the number of the site, A and B are the two births, USE the body of the use. What stands between « and » is there in the TypeScript form only.
 const given = `let last@ = ""; for (let n = 0; n < 20; n++) last@ = attempt@(A);
 console.log("NAME, hot:", last@);
 for (let n = 0; n < 3; n++) console.log("NAME, then:", attempt@(B));
@@ -603,7 +669,22 @@ for (let n = 0; n < 3; n++) console.log("NAME, then:", attempt@(1));
 console.log("NAME, again:", attempt@(0));
 `;
 const attempt = (call: string, argument = "Both@") => `function attempt@(v«: ${argument}») { try { return show(${call}); } catch (e) { return "threw " + e.name; } }\n`;
-export const roads: Record<string, { text: string; onlyWalks?: boolean; needs?: string }> = {
+const [givenAsync, chosenAsync] = [given, chosen].map(text => text.replaceAll("attempt@(", "await attempt@("));
+const attemptAsync = (call: string, argument = "Both@") => `async function attempt@(v«: ${argument}») { try { return show(await ${call}); } catch (e) { return "threw " + e.name; } }\n`;
+const givenTwo = `let last@ = ""; for (let n = 0; n < 20; n++) last@ = attempt@(A, A);
+console.log("NAME, hot:", last@);
+console.log("NAME, then:", attempt@(A, B));
+console.log("NAME, then:", attempt@(B, A));
+console.log("NAME, then:", attempt@(B, B));
+console.log("NAME, again:", attempt@(A, A));
+`;
+const chosenTwo = `let last@ = ""; for (let n = 0; n < 20; n++) last@ = attempt@(0);
+console.log("NAME, hot:", last@);
+for (let n = 1; n < 4; n++) console.log("NAME, then:", attempt@(n));
+console.log("NAME, again:", attempt@(0));
+`;
+const attemptTwo = (call: string) => `function attempt@(v«: Both@», w«: Both@») { try { return show(${call}); } catch (e) { return "threw " + e.name; } }\n`;
+export const roads: Record<string, { text: string; onlyWalks?: boolean; needs?: string; isAsync?: boolean; isOfTwo?: boolean }> = {
   // The value is an argument of the function that uses it.
   handed: { text: "function use@(v«: Both@») { USE }\n" + attempt("use@(v)") + given },
   // The value is a member of an object that the caller of the use is given.
@@ -639,6 +720,14 @@ export const roads: Record<string, { text: string; onlyWalks?: boolean; needs?: 
   variableOfModule: { text: "let current@«: Both@ | null» = null;\nfunction use@() { const v = current@; USE }\n" + attempt("(current@ = v, use@())") + given },
   // The value waits in a generator that has stopped.
   acrossYield: { text: "function* use@(v«: Both@») { yield 0; USE }\nfunction ask@(v«: Both@») { const steps = use@(v); steps.next(); return steps.next().value; }\n" + attempt("ask@(v)") + given },
+  // The value waits in an async function that has stopped.
+  acrossAwait: { isAsync: true, text: "async function use@(v«: Both@») { await null; USE }\n" + attemptAsync("use@(v)") + givenAsync },
+  memberAcrossAwait: { isAsync: true, text: "class Holder@ { «held: Both@; »constructor(held«: Both@») { this.held = held; } }\nasync function use@(v«: Both@») { USE }\nasync function ask@(holder«: Holder@») { await null; return use@(holder.held); }\n" + attemptAsync("ask@(new Holder@(v))") + givenAsync },
+  heldAcrossAwait: { isAsync: true, text: "async function ask@(which«: number») { const v = which === 0 ? A : B; await null; USE }\n" + attemptAsync("ask@(v)", "number") + chosenAsync },
+  // Two values at one use, each of either kind.
+  twoHanded: { isOfTwo: true, text: "function use@(v«: Both@», w«: Both@») { USE }\n" + attemptTwo("use@(v, w)") + givenTwo },
+  twoMembers: { isOfTwo: true, text: "class Holder@ { «one: Both@; other: Both@; »constructor(one«: Both@», other«: Both@») { this.one = one; this.other = other; } }\nfunction use@(v«: Both@», w«: Both@») { USE }\nfunction ask@(holder«: Holder@») { return use@(holder.one, holder.other); }\n" + attemptTwo("ask@(new Holder@(v, w))") + givenTwo },
+  twoHeld: { isOfTwo: true, text: "function ask@(which«: number») { let v«: Both@» = which & 1 ? B : A, w«: Both@» = which & 2 ? B : A; USE }\n" + attempt("ask@(v)", "number") + chosenTwo },
   // The value is what a callback of a built-in is given.
   callback: { text: "function ask@(list«: Both@[]») { return list.map(v => { USE })[0]; }\n" + attempt("ask@([v])") + given },
   // What is walked is what a method of a member answers.
@@ -649,13 +738,14 @@ export const roads: Record<string, { text: string; onlyWalks?: boolean; needs?: 
 };
 
 // The kinds that differ for the compiler or for a fast path of the run time. A sweep by hand may choose among all of them.
-const usualFirst = ["integers", "fractions", "records", "holes", "given", "bytes", "doubles", "tracking", "view", "map", "set", "weakMap", "valuesOfList", "entriesOfMap", "generator", "params"];
+const usualFirst = ["integers", "fractions", "records", "holes", "given", "bytes", "doubles", "tracking", "view", "map", "set", "weakMap", "valuesOfList", "entriesOfMap", "generator", "params", "asyncGenerator", "stream"];
 const usualSecond = [
   "integers", "fractions", "texts", "mixed", "emptyList", "holes", "holesOfFractions", "onlyHoles", "sparse", "stretched", "frozen", "getterAtOne", "child", "ownWalk", "inherits", "noParent", "pushed",
   "like", "given", "givenStrict", "bytes", "words", "doubles", "bigWords", "buffer", "tracking", "trackingShrunk", "outOfBounds", "detached", "shared", "growing",
   "view", "trackingView", "viewOutOfBounds", "detachedView", "memory", "resizableMemory", "sharedMemory", "map", "emptyMap", "mapWithGaps", "childOfMap", "set", "emptySet", "weakMap", "weakSet",
   "valuesOfList", "entriesOfList", "valuesOfBytes", "entriesOfMap", "valuesOfSet", "letters", "generator", "generatorThatCleansUp", "helperMapped", "byHandWithReturn", "walkable",
   "params", "headers", "formData", "entriesOfParams", "text", "nothing", "missing", "record", "proxyOfList", "integer",
+  "asyncGenerator", "asyncGeneratorThatCleansUp", "asyncByHandWithReturn", "stream", "promises",
 ];
 
 type Choice = { sitesOfAProgram?: number; sumsOfASite?: number; first?: string[]; second?: string[]; roads?: string[]; uses?: string[]; oneIn?: number; which?: number; alone?: string[] };
@@ -665,7 +755,7 @@ function usesThatFit(r: string, a: string, b: string, among: string[]) {
   if (a === b || (road.needs && (!road.needs.includes(kinds[a][0]) || !(road.needs + "X").includes(kinds[b][0])))) return [];
   // Behind entries() and the like the value is an iterator whatever the collection is.
   const letter = road.onlyWalks ? "I" : kinds[a][0];
-  return among.filter(u => uses[u][0].includes(letter));
+  return among.filter(u => uses[u][0].includes(letter) && (road.isAsync || !uses[u][0].startsWith("*")) && !!road.isOfTwo === uses[u][0].startsWith("+"));
 }
 
 // How hot a function is held to be is its place among the program's own code: the hottest fifth is hot. A site that shares its program with others is among the hottest, as it is when it is alone, only beside
@@ -697,20 +787,20 @@ export function programs(isTyped?: boolean, choice: Choice = {}): Program[] {
   const differs = Object.keys(choice.alone ? {} : ((known as Record<string, Record<string, string>>)[title(isTyped)] ?? {}));
   const alone = new Set([...differs, ...(choice.alone ?? (onceWrong as Record<string, string[]>)[title(isTyped)] ?? [])]);
   const made: Program[] = [];
-  // The arguments of a function that is not strict are tied to its parameters, and such a function cannot stand in a module.
-  const fileOf = (a: string, b: string) => (isTyped ? "program.ts" : /^given(?!Strict)/.test(a) || /^given(?!Strict)/.test(b) ? "program.cjs" : "program.mjs");
+  // The arguments of a function that is not strict are tied to its parameters, and such a function cannot stand in a module. An await outside every function can stand nowhere else.
+  const fileOf = (a: string, b: string, r: string) => (isTyped ? "program.ts" : !roads[r].isAsync && (/^given(?!Strict)/.test(a) || /^given(?!Strict)/.test(b)) ? "program.cjs" : "program.mjs");
   for (const r of choice.roads ?? Object.keys(roads)) for (const a of choice.first ?? usualFirst) for (const b of choice.second ?? usualSecond) {
     const fitting = usesThatFit(r, a, b, choice.uses ?? Object.keys(uses)).filter(u => !differs.includes(`${r}-${a}-${b}-${u}`));
     for (let from = 0, part = 1; from < fitting.length; from += sitesOfAProgram, part++) {
       const name = `${r}-${a}-${b}` + (sitesOfAProgram === 1 ? "-" + fitting[from] : fitting.length > sitesOfAProgram ? "-" + part : "");
       if (oneIn !== 1 && Number(BigInt(Bun.hash(name)) % BigInt(oneIn)) !== which) continue;
       const sites = fitting.slice(from, from + sitesOfAProgram);
-      made.push({ name, file: fileOf(a, b), get text() { return textOf(r, a, b, sites, sumsOfASite, isTyped); } });
+      made.push({ name, file: fileOf(a, b, r), get text() { return textOf(r, a, b, sites, sumsOfASite, isTyped); } });
     }
   }
   for (const name of alone) {
     const [r, a, b, u] = name.split("-");
-    made.push({ name, file: fileOf(a, b), get text() { return textOf(r, a, b, [u], 0, isTyped); } });
+    made.push({ name, file: fileOf(a, b, r), get text() { return textOf(r, a, b, [u], 0, isTyped); } });
   }
   return made;
 }

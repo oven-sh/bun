@@ -158,6 +158,17 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
     expect(exitCode).not.toBe(0);
     expect(stderr).toContain("Segmentation fault at address 0x18\n");
     expect(stderr.split("\n")).toContain("Build ID: " + id);
+    // What the processor held: the planted instruction itself, and no value that says where anything was loaded.
+    expect(stderr).toMatch(/^Code at rip: 8b 04 25 18 00 00 00( [0-9a-f]{2})*$/m);
+    const registers = stderr.match(/^Registers:((?: r[a-z0-9]+=\S+){17})$/m)?.[1];
+    expect(registers).toBeString();
+    for (const [, name, value] of registers!.matchAll(/ (\w+)=(\S+)/g)) {
+      expect(`${name}=${value}`).toMatch(
+        /=(0x[0-9a-f]{1,8}|0x[0-9a-f]{13,16}|code\+0x[0-9a-f]+|stack[+-]0x[0-9a-f]+|address\.\.[0-9a-f]{3})$/,
+      );
+    }
+    expect(registers).toMatch(/ rsp=stack\+0x0 /);
+    expect(registers).toMatch(/ rip=code\+0x[0-9a-f]+$/);
     const link = stderr.match(/^ (\S*\/\d+\.\d+\.\d+\/\S+)$/m)?.[1];
     expect(link).toBeString();
     const printed = framesOf(stderr.slice(stderr.indexOf("Compiled JavaScript on the stack:\n")));
@@ -170,6 +181,19 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
     });
     return printed;
   }
+
+  test("a Bun without compiled code prints no registers", async () => {
+    using dir = tempDir("aot-crash-in-compiled-code", {
+      "fault.js": `require("bun:internal-for-testing").crash_handler.segfault();`,
+    });
+    const { stderr, exitCode } = await run([bunExe(), "fault.js"], String(dir), {
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    });
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("Segmentation fault at address");
+    expect(stderr).not.toContain("Registers:");
+    expect(stderr).not.toContain("Code at rip:");
+  });
 
   test("in a function: the function and all its callers, by name, file, line and column", async () => {
     using dir = tempDir("aot-crash-in-compiled-code", files);

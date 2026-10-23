@@ -181,7 +181,7 @@ fn compute_program_path(
     entry_point_index: Option<usize>,
 ) -> Vec<u8> {
     if runs_in_place {
-        return native_path.to_vec();
+        return with_separators_of_host(native_path, cfg!(windows));
     }
     if let Some(index) = entry_point_index {
         return compute_module_path(paths, &paths.entry_point_names[index]);
@@ -190,6 +190,15 @@ fn compute_program_path(
         Some(relative_path) => compute_module_path(paths, &relative_path),
         None => compute_module_path(paths, native_path),
     }
+}
+
+/// The compiler writes `C:/a/b.ts`. `bun run` names that file `C:\a\b.ts`, and so does whoever asks for a module by its path.
+pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> Vec<u8> {
+    let to_host = |&byte: &u8| match byte {
+        b'/' if is_windows => b'\\',
+        _ => byte,
+    };
+    native_path.iter().map(to_host).collect()
 }
 
 /// What the executable prints for a file at run time: its path from the project's folder, with forward slashes.
@@ -223,7 +232,8 @@ fn fits_path_buffer(path: &[u8]) -> bool {
 fn compute_module_path(paths: &PathOptions, relative_path: &[u8]) -> Vec<u8> {
     let mut path = paths.module_prefix.clone();
     append_sanitized_path(&mut path, relative_path);
-    path
+    // `__dirname` in an executable for Windows is `B:\~BUN\root`, and a program compares what it joins to that with the path of a module.
+    with_separators_of_host(&path, paths.module_prefix.starts_with(b"B:/"))
 }
 
 fn append_sanitized_path(output: &mut Vec<u8>, relative_path: &[u8]) {
@@ -339,6 +349,28 @@ mod tests {
             maps,
         };
         compute_public_path(&context, &input).into_vec()
+    }
+
+    #[test]
+    fn a_module_of_an_executable_for_windows_has_backslashes() {
+        let paths = PathOptions {
+            module_prefix: b"B:/~BUN/root/".to_vec(),
+            ..path_options()
+        };
+        assert_eq!(
+            compute_module_path(&paths, b"../lib/a.ts"),
+            b"B:\\~BUN\\root\\_.._\\lib\\a.ts"
+        );
+        assert_eq!(
+            compute_module_path(&path_options(), b"../lib/a.ts"),
+            b"/$bunfs/root/_.._/lib/a.ts"
+        );
+    }
+
+    #[test]
+    fn a_path_gets_the_separators_of_the_host() {
+        assert_eq!(with_separators_of_host(b"C:/a/b.ts", true), b"C:\\a\\b.ts");
+        assert_eq!(with_separators_of_host(b"/a/b.ts", false), b"/a/b.ts");
     }
 
     fn module_paths<'a>(public_path: &'a [u8], display_path: &'a [u8]) -> ModulePaths<'a> {

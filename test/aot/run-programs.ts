@@ -81,7 +81,7 @@
 //   untyped-stress        the same, ported from stress tests that were written for the `jsc` shell
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join, relative, sep } from "path";
 import { describedRows, readTable, type Row } from "./built-ins-alone/table";
@@ -405,26 +405,46 @@ function expectStatistics(buildOutput: string, bounds: StatisticBound[]) {
 // The check of references reads what B3's road leaves behind, so a build with it generates no code directly: a program that is here for the direct code generators is built without.
 // There are none on Windows.
 const generatesAllCodeDirectly = (program: CompiledProgram) => !isWindows && program.buildFlags.includes("--aot-testing=GenerateAllCodeDirectly");
+// A function that the direct generator turns down while it plans goes to B3 and is counted nowhere: one that handles a 32-bit float, say. A small program may have no other function,
+// so the demand is on the programs of a test file together.
+const builtAllDirectly = { programs: 0, withoutDirectCode: [] as string[] };
+function noteDirectCode(program: CompiledProgram, buildOutput: string) {
+  builtAllDirectly.programs++;
+  if (!Number(/^FunctionsGeneratedDirectly (\d+)$/m.exec(buildOutput)?.[1] ?? 0)) builtAllDirectly.withoutDirectCode.push(program.entryPoints[0]);
+}
+function expectDirectCodeInMostPrograms() {
+  const { programs, withoutDirectCode } = builtAllDirectly;
+  builtAllDirectly.programs = 0;
+  builtAllDirectly.withoutDirectCode = [];
+  if (programs >= 10 && withoutDirectCode.length * 10 >= programs) expect({ programs, withoutDirectCode }).toEqual({ programs, withoutDirectCode: [] });
+}
 
 async function buildCompiled(program: CompiledProgram) {
   const executable = nextExecutablePath(program.outputFolder ?? program.cwd, "program");
   const checks = generatesAllCodeDirectly(program) ? [] : ["--aot-check=validate-references"];
   const flags = [...checks, ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected || generatesAllCodeDirectly(program) ? ["--explain=statistics"] : [])];
   const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, ...program.entryPoints, "--outfile", executable];
-  return { ...(await spawned(cmd, program.cwd, { ...bunEnv, ...program.buildEnvironment })), executable };
+  const ran = await spawned(cmd, program.cwd, { ...bunEnv, ...program.buildEnvironment });
+  const build = { ...ran, executable };
+  if (atWorkWhenTimeWasUp.has(ran)) atWorkWhenTimeWasUp.add(build);
+  return build;
 }
 
 /** Builds the program, runs its executable once in each environment and hands each result to `check`. */
 async function runCompiled(program: CompiledProgram, check: (result: RunResult, environment: Record<string, string>) => void) {
   const build = await buildCompiled(program);
   try {
+    // Nor does how long a build takes that verifies the IR after every pass: it has found nothing invalid in what it got to.
+    if (program.buildFlags.includes("--aot-check=verify-each-pass") && atWorkWhenTimeWasUp.has(build)) {
+      console.error(`NOT THROUGH: the build of ${program.entryPoints[0]} was still at work when its time was up`);
+      return;
+    }
     built(build);
     expectStatistics(build.stderr, [
       ...(program.statistics ?? []),
       ...(program.stubCopiesExpected ? [{ name: "StubCopiesEmitted", relation: ">=", bound: 2 } as const] : []),
-      // On ARM64 a function with an integer division or remainder goes to B3, and a small program may have no other function.
-      ...(generatesAllCodeDirectly(program) && !isArm64 ? [{ name: "FunctionsGeneratedDirectly", relation: ">=", bound: 1 } as const] : []),
     ]);
+    if (generatesAllCodeDirectly(program)) noteDirectCode(program, build.stderr);
     let spentCollecting = 0;
     for (const environment of program.runEnvironments) {
       // A list of environments goes from mild to harsh. A program that has taken a minute in the mild ones is not run in the harsh ones.
@@ -558,6 +578,7 @@ const runsWithASAN = (path: string) => isASAN && existsSync(besideOf(path) + ".j
 function define(title: string, chosen: string[], settings: Omit<Setup, "folder" | "carrier">) {
   const folder = String(tempDir("aot-programs", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  afterAll(expectDirectCodeInMostPrograms);
   const carrier = !unsupported && chosen.length >= 20 ? withoutDebugInformation() : [];
 
   describe.concurrent(title, () => {

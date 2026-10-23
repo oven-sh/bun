@@ -92,8 +92,9 @@ fn evaluate_class(
     let values = members::define_members(lowering, head, &plan);
     lowering.set_position(node.start);
     let class_object = lowering.builder.finish_class(head.value, head.layout);
-    if let Some(inner) = inner {
-        scope::initialize_binding(lowering, Binding::Symbol(inner), node.name, class_object);
+    let inner = inner.map(Binding::Symbol);
+    if let (Some(inner), false) = (inner, has_class_decorators) {
+        scope::initialize_binding(lowering, inner, node.name, class_object);
     }
 
     let static_name = find_static_name(lowering.file, name);
@@ -114,6 +115,10 @@ fn evaluate_class(
         ClassTransform::None | ClassTransform::Legacy => StandardDecorationResult::default(),
     };
     lowering.set_position(node.start);
+    if let (Some(inner), true) = (inner, has_class_decorators) {
+        let decorated = decoration.decorated_class.unwrap_or(class_object);
+        scope::initialize_binding(lowering, inner, node.name, decorated);
+    }
     if !plan.static_elements.is_empty() {
         let initializer = fields::declare_static_initializer(lowering.file, class);
         let arguments = EntryArguments {

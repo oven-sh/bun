@@ -13,7 +13,7 @@ Lanes that look elsewhere than the default one. Several at once find more than o
 
 ```sh
 stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 60"   # a collection at every n-th allocation that leaves the fast path, full or young, drawn anew for every batch: one interval is blind to what another sees
-.. --as-a-user --no-attribution --modes every-function-cold,erased-and-cold,counts-as-very-large $stress --fenced   # the code of the direct generator, which a small program never gets by itself: in a very large one it is most of the code
+.. --as-a-user --no-attribution --modes cold-and-very-large,erased-cold-and-very-large,counts-as-very-large $stress --fenced   # the code of the direct generator, which a small program never gets by itself: in a very large one it is most of the code
 .. --validate --modes all-code-direct,direct-and-proofs-checked,direct-and-validated                                  # the same with the verifiers on
 .. --modes default,every-function-hot,all-code-direct --fail-predictions 1,2,7   # the general road behind every test, taken though the value would have passed: the answer must not change
 .. --as-a-user --no-attribution --modes every-function-hot,erased-and-hot $stress   # what a user builds, everything hot, under collector stress

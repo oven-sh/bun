@@ -30,7 +30,9 @@ const errorsOfBuild = (said: string) =>
     .map(match => `${match[2].replaceAll("\\", "/").replace(/^.*\/(?=packages\/)/, "")}:${match[3]} ${match[1]}`)
     .sort();
 const errorsOfCheck = (said: string) =>
-  [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+  [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)]
+    .map(match => `${match[1].replaceAll("\\", "/")}:${match[2]} ${match[3]}`)
+    .sort();
 
 const right = "packages/right/src/right.test.ts";
 const wrong = "packages/wrong/src/wrong.test.ts";

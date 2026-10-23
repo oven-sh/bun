@@ -77,7 +77,10 @@ fn collect_output_files(
     let mut output_files = Vec::with_capacity(entry_count + embedded.len());
     let mut entry_points = Vec::with_capacity(entry_count);
     for (index, entry) in entry_paths.into_iter().enumerate() {
-        let dest_path = names.file_name(&entry.public_path);
+        // The files of an executable are named with forward slashes on every host.
+        let mut graph_path = entry.public_path.clone();
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut graph_path);
+        let dest_path = names.file_name(&graph_path);
         output_files.push(create_entry_file(
             dest_path,
             &entry.source_path,

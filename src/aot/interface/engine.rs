@@ -5,10 +5,16 @@ use bun_trim::UsedFeatures;
 
 pub use self::shared::{
     EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
-    describe_difference_of_runtime, has_compiler, image_alignment, relocate_image,
+    describe_difference_of_runtime, image_alignment, relocate_image,
 };
 use crate::Opaque;
 use crate::linked;
+
+/// Known when Bun is compiled if it is built without the compiler, so that nothing behind the question is linked.
+#[inline(always)]
+pub fn has_compiler() -> bool {
+    !cfg!(feature = "absent") && shared::has_compiler()
+}
 
 pub struct EngineResult(pub Opaque);
 

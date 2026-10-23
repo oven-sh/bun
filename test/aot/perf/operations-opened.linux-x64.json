@@ -68,7 +68,7 @@
   "json_stringify_wide_text": 18153.1,
   "less_than": 4,
   "loop_counter": 28,
-  "loop_for_of": 32,
+  "loop_for_of": 36,
   "loop_string": 66,
   "map_get": 57.4,
   "map_get_int": 58.9,

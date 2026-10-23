@@ -10,7 +10,7 @@ bench = false
 doctest = false
 
 [dependencies]
-bun_aot_interface.workspace = true
+bun_aot_interface = { workspace = true, features = ["absent"] }
 bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_sema.workspace = true

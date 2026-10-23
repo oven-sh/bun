@@ -12,7 +12,8 @@ function parts() {
     rope: ["string", '("abcdefgh" + one) + ("ijklmnop" + one)'], ropeWide: ["string", '("abcdefgh" + one) + "\\u65e5\\u672c"'], ropeDeep: ["string", '(() => { let t = ""; for (let i = 0; i < 20; i++) t += "ab" + i; return t; })()'],
     substring: ["string", '("xxabcdefghijklmnopqrstuvwxyzxx" + one).substring(2, 24)'], sliceOfLiteral: ["string", '"xxabcdxx".slice(2, 6)'], atom: ["string", "Object.keys({ abcd: 1 })[0]"], charOf: ["string", '"abcd"[one]'],
     fromBuffer: ["string", 'Buffer.from("abcd").toString()'], fromBufferWide: ["string", 'Buffer.from("\\u65e5\\u672c").toString()'], decoded: ["string", "new TextDecoder().decode(new Uint8Array([97, 98, 99]))"], parsed: ["string", "JSON.parse('\"abcd\"')§S"],
-    fromCharCode: ["string", "String.fromCharCode(96 + one, 98)"], ofNumber: ["string", "String(one + 122)"], template: ["string", "`a${one}c`"], joined: ["string", '["a", "b", "c"].join("")'], upper: ["string", '"abcd".toUpperCase()'], boxedString: ["boxed", 'new String("abcd")'],
+    fromCharCode: ["string", "String.fromCharCode(96 + one, 98)"], ofNumber: ["string", "String(one + 122)"], template: ["string", "`a${one}c`"], joined: ["string", '["a", "b", "c"].join("")'], upper: ["string", '"abcd".toUpperCase()'], platform: ["string", "process.platform"], href: ["string", 'new URL("http://a.example/b").href'], decodedWide: ["string", 'new TextDecoder("utf-16le").decode(new Uint8Array([97, 0, 229, 101]))'], fromLatin: ["string", 'Buffer.from([97, 233]).toString("latin1")'], toBase64: ["string", 'Buffer.from("abcd").toString("base64")'], headerValue: ["string", 'new Headers({ k: "abcd" }).get("k")§Q'], formatted: ["string", '(1234.5).toLocaleString("en")'], matchedGroup: ["string", '/x(abcd)y/.exec("xabcdy")§Q[1]'], replaced: ["string", '"xbcd".replace("x", "a")'], padded: ["string", '"abcd".padEnd(6, "*")'],
+    boxedString: ["boxed", 'new String("abcd")'],
     stringWalk: ["walk", '"abcd"[Symbol.iterator]()'], ropeWalk: ["walk", '(("abcdefgh" + one) + "ij")[Symbol.iterator]()'], generatorWalk: ["walk", "(function* () { yield 1; yield 2; })()"], matches: ["walk", '"abab".matchAll(/a/g)'], segments: ["walk", 'new Intl.Segmenter("en").segment("ab")[Symbol.iterator]()'],
     // numbers
     integer: ["number", "7"], zero: ["number", "0"], negative: ["number", "-5"], minusThree: ["number", "-3"], largest32: ["number", "2147483647"], least32: ["number", "-2147483648"], fraction: ["number", "2.5"], notANumber: ["number", "NaN"], minusZero: ["number", "-0"], infinite: ["number", "Infinity"],
@@ -66,6 +67,9 @@ function parts() {
     usedBehindTheLoop: "const w = other(); let a = v, before = w; for (let i = 0; i < 3; i++) { before = a; a = i === 1 ? w : v; } return [before, a, typeof before === typeof a];",
     whileWithTwoExits: "const w = other(); let a = v, b = w, i = 0; while (true) { if (i === 2 && typeof a === typeof b) return [a, b, i]; if (i === 5) break; const t = a; a = b; b = t; i++; } return [b, a, i];",
     chainOfCopies: "const w = other(); let a = v, b = w, c = v, d = w; for (let i = 0; i < 3; i++) { d = c; c = b; b = a; a = d; } return [a, b, c, d];",
+    // through calls
+    tenArguments: 'const w = other(); return tenOf(v, w, 1, 2.5, v, w, "x", null, v, w);', tenArgumentsTwice: 'const w = other(); return [tenOf(v, w, 1, 2.5, v, w, "x", null, v, w), tenOf(w, v, 2.5, 1, w, v, null, "x", w, v)];', fewerArguments: "return tenOf(v);", moreArguments: "const w = other(); return twoOf(v, w, v, w);", defaulted: "return defaultsOf(undefined, v);", defaultedByIt: "return defaultsOf(v);", restOf: "const w = other(); return restOf(v, w, v);", argumentsOf: "const w = other(); return argumentsOf(v, w);",
+    tailTurns: "return tailOf(5, v);", tailSwaps: "return tailSwap(5, v, other());", deepReturn: "return deepOf(4, v);", spreadArguments: "const w = other(); return tenOf(...[v, w], ...[w, v]);", applyArguments: "const w = other(); return tenOf.apply(null, [v, w, v]);", callWithThis: "const w = other(); return thisOf.call(v, w);", methodOfTwo: "const w = other(); const holder = { held: v, read: readOf }; return holder.read(w);",
     // comparison
     sameAsItself: "return v === v;", differsFromItself: "return v !== v;", looseSeven: "return v == 7;", strictSeven: "return v === 7;", strictText: 'return v === "abcd";', looseText: 'return v == "7";', lessThanFive: "return v < 5;", atLeastText: 'return v >= "b";', lessThanItself: "return v < v;", atMostItself: "return v <= v;", isNothing: "return v == null;", isMissing: "return v === undefined;", isNull: "return v === null;", looseBig: "return v == 10n;", lessBig: "return v < 10n;", looseTrue: "return v == true;", strictTrue: "return v === true;",
     switchOn: 'switch (v) { case 7: return "seven"; case "abcd": return "text"; case null: return "null"; case true: return "true"; case 10n: return "big"; case undefined: return "undefined"; default: return "other"; }', ifChain: 'if (v === "abcd") return 1; if (v === "a") return 2; if (v === 7) return 3; if (v === null) return 4; if (v === 2.5) return 5; return 0;', textChain: 'return v === "abcd" || v === "a" || v === "123" || v === "";', includes: 'return [7, "abcd", null, NaN, 10n, true].includes(v);', indexOf: 'return [7, "abcd", null, NaN, 10n, true].indexOf(v);', setHas: "const s = new Set([v]); return [s.has(v), s.size];", mapGet: 'const m = new Map([[v, 1], ["abcd", 2], [7, 3], [0, 4]]); return [m.get(v), m.size];', sorted: 'return [v, 3, "b", v].sort().length;',
@@ -90,12 +94,24 @@ function parts() {
     walkCall: "const r = []; for (const each of v(1)) r.push(each); return r;", spreadCall: "return [...v(1)];", callTwice: "return [v(1), v(2)];", callResultMember: "return v(1)?.length;", callInLoop: "let r; for (let i = 0; i < 3; i++) r = v(i); return r;", callWithItself: "return typeof v(v);", newMember: "return new v(1).a;", keepAndCall: "const kept = { f: v }; return kept.f === v && kept.f(1);",
     filterWith: "return [0, 1, 2].filter(v);", findWith: "return [0, 1, 2].find(v);", findIndexWith: "return [0, 1, 2].findIndex(v);", someWith: "return [0, 1].some(v);", everyWith: "return [1, 2].every(v);", reduceWith: "return [1, 2, 3].reduce(v);", reduceFrom: "return [1, 2, 3].reduce(v, 10);", forEachWith: "return [1, 2].forEach(v);", flatMapWith: "return [1, 2].flatMap(v);", fromWith: "return Array.from({ length: 2 }, v);", fromListWith: "return Array.from([1, 2], v);", toSortedWith: "return [3, 1, 2].toSorted(v);",
     mapForEachWith: 'return new Map([["a", 1]]).forEach(v);', setForEachWith: "return new Set([1]).forEach(v);", parseWith: 'return JSON.parse("[1]", v);', chainWith: "return [1, 2, 3].map(v).filter(v).length;", mapThenJoin: 'return [1, 2].map(v).join("-");', typedMapWith: "return new Uint8Array([1, 2]).map(v);", replaceAllWith: 'return "aba".replaceAll("a", v);', entriesMapWith: "return Object.entries({ a: 1 }).map(v);", groupWith: "return Object.keys(Object.groupBy([1, 2], v));",
+    // a method of a built-in borrowed for it
+    borrowedMap: "return Array.prototype.map.call(v, each => each);", borrowedWhole: "const seen = []; Array.prototype.forEach.call(v, (each, index, whole) => seen.push(typeof whole, whole[index], whole === v)); return seen;", borrowedFilter: "return Array.prototype.filter.call(v, (each, index, whole) => whole.length > index);", borrowedReduce: 'return Array.prototype.reduce.call(v, (sum, each, index, whole) => sum + typeof whole + whole.length, "");', borrowedFind: "return Array.prototype.find.call(v, (each, index, whole) => typeof whole === \"object\");", borrowedSome: "return Array.prototype.some.call(v, (each, index, whole) => whole[index] === each);",
+    borrowedIndexOf: 'return Array.prototype.indexOf.call(v, "b");', borrowedJoin: 'return Array.prototype.join.call(v, "-");', borrowedSlice: "return Array.prototype.slice.call(v, 1);", borrowedAt: "return Array.prototype.at.call(v, 0);", borrowedIncludes: 'return Array.prototype.includes.call(v, "a");', borrowedKeys: "return [...Array.prototype.keys.call(v)];", borrowedEntries: "return [...Array.prototype.entries.call(v)];", borrowedConcat: "const r = Array.prototype.concat.call(v, 1); return [r.length, typeof r[0]];",
+    borrowedValueOf: "const r = Object.prototype.valueOf.call(v); return [typeof r, r === v];", borrowedHasOwn: 'return Object.prototype.hasOwnProperty.call(v, "length");', borrowedIsEnumerable: "return Object.prototype.propertyIsEnumerable.call(v, 0);", borrowedIsPrototypeOf: "return Object.prototype.isPrototypeOf.call(v, v);", borrowedToLocale: "return typeof Object.prototype.toLocaleString.call(v);",
+    borrowedTextSlice: "return String.prototype.slice.call(v, 1);", borrowedTextAt: "return String.prototype.at.call(v, 0);", borrowedTextConcat: 'return String.prototype.concat.call(v, "x");', borrowedTrim: "return String.prototype.trim.call(v);", borrowedCharCode: "return String.prototype.charCodeAt.call(v, 0);", borrowedTextValueOf: "return String.prototype.valueOf.call(v);", borrowedToFixed: "return Number.prototype.toFixed.call(v, 1);", borrowedNumberValueOf: "return Number.prototype.valueOf.call(v);", borrowedBooleanValueOf: "return Boolean.prototype.valueOf.call(v);", borrowedSymbolText: "return Symbol.prototype.toString.call(v);", borrowedBigText: "return BigInt.prototype.toString.call(v);",
+    borrowedCall: "return Function.prototype.call.call(v, null, 1);", borrowedApply: "return Function.prototype.apply.call(v, null, [1]);", borrowedBind: "return Function.prototype.bind.call(v, null, 1)();", borrowedTime: "return Date.prototype.getTime.call(v);", borrowedTest: 'return RegExp.prototype.test.call(v, "a");', borrowedErrorText: "return Error.prototype.toString.call(v);", borrowedThen: "return typeof Promise.prototype.then.call(v, each => each);",
+    reflectedMap: "return Reflect.apply(Array.prototype.map, v, [(each, index, whole) => typeof whole]);", reflectedValueOf: "return typeof Reflect.apply(Object.prototype.valueOf, v, []);", reflectedSlice: "return Reflect.apply(String.prototype.slice, v, [1]);", calledMap: "return Function.prototype.call.call(Array.prototype.map, v, (each, index, whole) => typeof whole);", boundMap: "return Array.prototype.map.bind(v)((each, index, whole) => typeof whole);", keptMethod: "const map = Array.prototype.map; return map.call(v, (each, index, whole) => whole[index]);",
     // thrown and caught
     throwCatch: "try { throw v; } catch (e) { return e; }", throwCatchSame: "try { throw v; } catch (e) { return e === v || e !== e; }", throwCatchMessage: "try { throw v; } catch (e) { return e.message; }", throwCatchPattern: "try { throw v; } catch ({ message, name }) { return [message, name]; }", throwCatchKind: 'try { throw v; } catch (e) { return e instanceof Error ? e.name : typeof e; }', throwFromHelper: "try { thrower(v); } catch (e) { return e; }", throwFinally: 'let n = 0; try { try { throw v; } finally { n++; } } catch (e) { return [n, e]; }', rethrow: "try { try { throw v; } catch (e) { throw e; } } catch (e) { return e; }", throwOut: "throw v;", asCause: 'return new Error("w", { cause: v }).cause;', asMessage: "return new Error(v).message;", generatorThrow: "const g = (function* () { try { yield 1; } catch (e) { yield e; } })(); g.next(); return g.throw(v).value;", generatorReturn: "const g = (function* () { yield 1; })(); g.next(); return g.return(v).value;", yielded: "return [...(function* () { yield v; yield v; })()];",
+    changedBeforeThrow: "let a = v, b = 0; try { b = 1; a = other(); thrower(a); b = 2; } catch (e) { return [a, b, e === a || e !== e]; }", finallySeesChange: "let a = v, seen; try { a = other(); thrower(1); } catch (e) { a = [a]; } finally { seen = a; } return seen;", returnThroughFinally: "let a = v; try { return a; } finally { a = other(); }", finallyOverrides: 'try { throw v; } finally { return "finally"; }',
+    leaveThroughFinally: "let a = v, n = 0; for (let i = 0; i < 4; i++) { try { if (i === 2) break; a = other(); } finally { n++; } } return [a, n];", continueThroughFinally: "let a = v, n = 0; for (let i = 0; i < 4; i++) { try { if (i & 1) continue; a = other(); } finally { n++; } } return [a, n];", thrownInCatch: "let a = v; try { try { thrower(a); } catch (e) { a = other(); thrower([e, a]); } } catch (e) { return [a, e]; }", thrownInFinally: "let a = v; try { try { thrower(1); } finally { a = other(); thrower(a); } } catch (e) { return [a, e === a || e !== e]; }",
+    thrownFromDeep: "const deep = (n§N, x§A)§A => (n ? deep(n - 1, x) : thrower(x)); let a = v, b = other(); try { deep(3, a); } catch (e) { return [a, b, e === a || e !== e]; }", thrownInEachTurn: "let a = v, b = other(), n = 0; for (let i = 0; i < 4; i++) { try { thrower(i & 1 ? a : b); } catch (e) { [a, b] = [b, e]; n++; } } return [a, b, n];", thrownByARead: "let a = v, b = other(); try { return [a.x.y, b]; } catch (e) { return [a, b, e instanceof TypeError]; }", thrownByACall: "let a = v, b = other(); try { return [a(b), 1]; } catch (e) { return [a, b, e instanceof TypeError]; }",
+    walkLeftByThrow: "let a = v, closed = 0; const walk = (function* () { try { yield 1; yield 2; } finally { closed++; } })(); try { for (const each of walk) thrower(a); } catch (e) { return [closed, e === a || e !== e]; }", patternThrows: "let a = v; try { const { x: { y } } = a; return y; } catch (e) { return [a, e instanceof TypeError]; }", spreadThrows: "let a = v, b = other(); try { return [...a, b].length; } catch (e) { return [a, b, e instanceof TypeError]; }",
   };
   const waits: Record<string, string> = {
     await: "return await v;", awaitTwice: "const a = await v; const b = await v; return [a, b];", awaitTry: 'try { return await v; } catch (e) { return ["caught", e]; }', awaitFinally: "let n = 0; try { return await v; } finally { n++; } ", awaitPlus: "return (await v) + 1;", awaitTemplate: "return `<${await v}>`;", awaitTypeOf: "return typeof (await v);", awaitLength: "return (await v)?.length;", awaitCall: "return (await v)?.(1);", awaitTruth: 'return (await v) ? "yes" : "no";',
     awaitCallOfIt: "return await v(1);", awaitCallTwice: "return [await v(1), await v(2)];", awaitCallTry: 'try { return await v(1); } catch (e) { return ["caught", e instanceof Error ? e.name : e]; }', forAwaitCall: "const l = []; for await (const x of v(1)) l.push(x); return l;", thenOfCall: "return v(1).then(x => [x]);",
+    keptAcrossAwait: "const a = v, b = other(); await null; return [a, b];", swappedAcrossAwaits: "let a = v, b = other(); for (let i = 0; i < 3; i++) { await null; [a, b] = [b, a]; } return [a, b];", changedBetweenAwaits: "let a = v; await null; const b = a; a = other(); await null; return [a, b];", thrownBehindAwait: "let a = v, b = other(); try { await null; thrower(a); } catch (e) { return [a, b, e === a || e !== e]; }", awaitInFinallyKeeps: "let a = v; try { thrower(1); } catch (e) { a = [a]; } finally { await null; } return a;", sixAcrossAwait: "let a = v, b = other(), c = 1, d = 2.5, e = v, f = other(); await null; [a, b, c, d, e, f] = [f, a, b, c, d, e]; await null; return [a, b, c, d, e, f];", yieldedBetween: "const g = (function* (x§A, y§A) { yield x; yield y; yield x; })(v, other()); return [...g];", asyncYieldedBetween: "const r = []; for await (const each of (async function* (x§A, y§A) { yield x; await null; yield y; })(typeof v, other())) r.push(each); return r;",
     returnIt: "return v;", returnInTry: 'try { return v; } catch (e) { return "caught"; }', thenOf: 'return v.then(x => ["then", x], e => ["failed", e]);', catchOf: 'return v.catch(e => ["caught", e]);', finallyOf: "return v.finally(() => {});", resolve: "return Promise.resolve(v);", resolveSame: "return Promise.resolve(v) === v;", resolveThen: 'return Promise.resolve(v).then(x => ["then", x], e => ["failed", e]);', reject: 'return Promise.reject(v).catch(e => ["caught", e === v || e !== e]);', awaitReject: 'try { await Promise.reject(v); } catch (e) { return ["caught", e === v || e !== e]; }',
     allOf: "return Promise.all([v, 2]);", allSettled: "return Promise.allSettled([v, 2]);", race: "return Promise.race([v]);", any: "return Promise.any([v]);", forAwait: "const l = []; for await (const x of [v, 2]) l.push(x); return l;", newPromise: "return new Promise(r => r(v));", asExecutor: "return new Promise(v);", thenWith: "return Promise.resolve(1).then(v);", catchWith: "return Promise.reject(1).catch(v);", finallyWith: "return Promise.resolve(1).finally(v);", thenReturns: "return Promise.resolve(1).then(() => v);", yieldAwait: "const g = (async function* () { yield v; })(); return (await g.next()).value;", asyncThrow: "throw v;", awaitInLoop: "let t = []; for (let i = 0; i < 2; i++) t.push(await v); return t;", microtask: "return new Promise(r => queueMicrotask(() => r(typeof v)));",
   };
@@ -137,6 +153,18 @@ const shapes: Record<string, (g: string, a: string, b: string) => string> = {
   finallyBetween: (g, a, b) => `let n = 0; try { if (${g}) return ${a}; } finally { n++; } return ${b};`,
   keptInABox: (g, a, b) => `let kept = null; for (let i = 0; i < 4; i++) if (i === 2) kept = { held: ${g} ? ${a} : ${b} }; return kept;`,
 };
+// Every read of a kind at once, each held in a local of its own until the end: many values of many forms live together, around a loop, across a call and across a throw.
+const calm = (reads: string[]) => reads.filter(read => !/§[GZ]|Reflect\.|toISOString|await /.test(read)).slice(0, 12);
+function allHeld(fill: (names: string[]) => string, count: number): [string, string, boolean][] {
+  const names = Array.from({ length: count }, (_, i) => `r${i}`);
+  const declared = names.map(name => name + "§A").join(", ");
+  const turned = `for (let i = 0; i < 3; i++) { const t§A = r0; ${names.slice(1).map((name, i) => `r${i} = ${name};`).join(" ")} r${count - 1} = t; }`;
+  return [
+    ["allHeld", `let ${declared}; ${fill(names)} ${turned} return [${names.join(", ")}];`, false],
+    ["allHeldAcrossACall", `let ${declared}; ${fill(names)} const w = show(other()); ${turned} return [${names.join(", ")}, w];`, false],
+    ["allHeldAcrossAThrow", `let ${declared}, s; ${fill(names)} try { thrower(r0); } catch (e) { s = e === r0 || e !== e; } return [${names.join(", ")}, s];`, false],
+  ];
+}
 /** The reads behind their tests for a pair of kinds: [name, body, does it wait]. */
 function guarded(first: string, second: string, shift: number): [string, string, boolean][] {
   const made: [string, string, boolean][] = [];
@@ -146,6 +174,8 @@ function guarded(first: string, second: string, shift: number): [string, string,
       made.push([`read${i}`, `return ${a};`, a.includes("await ")]);
       made.push([`readInLoop${i}`, `let r; for (let i = 0; i < 4; i++) r = ${a}; return r;`, a.includes("await ")]);
     });
+    const reads = calm(kinds[first].reads);
+    made.push(...allHeld(names => names.map((name, i) => `${name} = ${reads[i]};`).join(" "), reads.length));
     return made;
   }
   const amongObjects = ["thenable", "boxed", "walk"].includes(first) && ["thenable", "boxed", "walk"].includes(second);
@@ -159,6 +189,8 @@ function guarded(first: string, second: string, shift: number): [string, string,
     if (waits && shape === "inClosure") continue;
     made.push([`${shape}${i}`, shapes[shape](g, a, b), waits]);
   }
+  const [calmAs, calmBs] = [calm(as), calm(bs)], held = Math.max(calmAs.length, calmBs.length);
+  made.push(...allHeld(names => `if (${g}) { ${names.map((name, i) => `${name} = ${calmAs[i % calmAs.length]};`).join(" ")} } else { ${names.map((name, i) => `${name} = ${calmBs[i % calmBs.length]};`).join(" ")} }`, held));
   // No test at all: the program says which kind it is, and is wrong for the other. A cast does nothing and `!` checks nothing, so the read does what it does in JavaScript.
   const said = (read: string, kind: string) => read.replace(/(?<![\w"])(?<!(?<!\.\.)\.)v\b/g, `(v§<${typeNames[kind]}>)`);
   for (const [kind, reads] of [[tested, as], [rest, bs]] as [string, string[]][]) if (typeNames[kind]) reads.forEach((read, i) => made.push([`said${kind === tested ? "First" : "Second"}${i}`, `return ${said(read, kind)};`, read.includes("await ")]));
@@ -175,8 +207,9 @@ const takenOfAnyType = new Set("allOf allSettled and andThenOfTwo any asCause as
 const ordersTexts = new Set(["lessOfTwo", "atMostOfTwo"]);
 // The first use of each group, and the kinds that the group means something to.
 const groups: Record<string, string> = {
-  plusOne: "string number bigint boolean null undefined date boxed", sumOfTwo: "all", charCodeAt: "string boxed number bigint date pattern", hasLength: "all", call0: "function", throwCatch: "all", await: "promise thenable function",
+  plusOne: "string number bigint boolean null undefined date boxed", sumOfTwo: "all", charCodeAt: "string boxed number bigint date pattern", hasLength: "all", call0: "function", borrowedMap: "all", throwCatch: "all", await: "promise thenable function",
 };
+// An Error has own properties that hold the place in the source; under plain Bun how many there are differs from run to run, so ownNames is not asked of an error.
 const testsTruth = new Set("and andThenOfTwo truth truthInLoop whileTruthy or orOfTwo not awaitTruth".split(" "));
 const head = `process.on("unhandledRejection", () => {});
 const one = Date.now() > 0 ? 1 : 2;
@@ -184,6 +217,16 @@ const madeOnce = ((k§T) => (a§A) => [k, a])("once");
 function declared(a§A, b§A) { return [a, b]; }
 class Declared { §Fa constructor(a§A) { this.a = a; } }
 function thrower(v§A) { throw v; }
+function tenOf(a§R, b§R, c§R, d§R, e§R, f§R, g§R, h§R, i§R, j§R) { return [j, i, h, g, f, e, d, c, b, a]; }
+function twoOf(a§A, b§A) { return [b, a]; }
+function defaultsOf(a§A = 1, b§A = a) { return [a, b]; }
+function restOf(a§A, ...rest§D) { return [rest.length, rest[1], a]; }
+function argumentsOf(a§R, b§R) { return [arguments.length, arguments[1], arguments[0]]; }
+function tailOf(n§N, kept§A)§A { return n ? tailOf(n - 1, n & 1 ? kept : [kept][0]) : kept; }
+function tailSwap(n§N, a§A, b§A)§A { return n ? tailSwap(n - 1, b, a) : [a, b]; }
+function deepOf(n§N, x§A)§A { return n ? [deepOf(n - 1, x)][0] : x; }
+function thisOf(§Yx§A) { return [this, x]; }
+function readOf(§Yx§A) { return [this.held, x]; }
 async function late(turns§N) { for (let i = 0; i < turns; i++) await null; return "late"; }
 async function timed(started§A, limit§N) {
   let turns = 0, settled = false;
@@ -194,7 +237,7 @@ async function timed(started§A, limit§N) {
 function show(r§A, depth = 0)§T {
   if (r === null) return "null";
   if (r === undefined) return "undefined";
-  if (typeof r === "string" && /=>|function|class |native code|return|yield/.test(r)) return "string that holds the text of a function";
+  if (typeof r === "string" && /=>|function|class |native code|return|yield|constructor\\(/.test(r)) return "string that holds the text of a function";
   if (typeof r === "string") { let t = "string " + r.length + ":"; for (let i = 0; i < r.length && i < 40; i++) t += r.charCodeAt(i).toString(16) + "."; return t; }
   if (typeof r === "number") return Object.is(r, -0) ? "-0" : "number " + r;
   if (typeof r === "bigint") return "big " + r;
@@ -322,16 +365,23 @@ const runsOnce = (u: string, body: string, A: string, W: Form, copies: number) =
 // A mark is nothing in JavaScript and an annotation in TypeScript. V is the type of the two births together, as the checker infers it.
 const marks: Record<string, string> = {
   V: ": V", N: ": number", B: ": boolean", A: ": any", T: ": string", L: ": string[]", H: ": Holder", C: " as const", W: "this: V", Y: "this: any, ", X: ": { kind: 0; other: V } | { kind: 1; held: V }",
-  M: " as { absent?: undefined }", Z: " as any", E: " as Error", S: " as string", U: " as number", P: "<number>", G: " as Function", O: ": (value: number) => void", J: ": (reason: any) => void", I: ": Awaited<V>", Q: "!",
+  M: " as { absent?: undefined }", Z: " as any", E: " as Error", S: " as string", U: " as number", P: "<number>", G: " as Function", O: ": (value: number) => void", J: ": (reason: any) => void", I: ": Awaited<V>", Q: "!", R: "?: any", D: ": any[]",
   Fa: "a: any;", Fq: "q: any;", Fh: "held: V;", K: "catch (caught) { const v = caught as V;",
 };
 const marked = (text: string, typed: boolean) => text.replace(/§<(\w+)>/g, (_, type) => (typed ? ` as ${type}` : "")).replace(/§(F[aqh]|[A-Z])/g, (_, mark) => (typed ? marks[mark] : mark === "K" ? "catch (v) {" : ""));
 // A function that never runs may put another callee in the place of the use: what the use is given is anything until the call is resolved, and of two kinds from then on.
 const veil = (u: string) => `function veil_${u}() { use_${u} = new Proxy(use_${u}, {}); }\nif (one === 2) veil_${u}();\n`;
-/** Every run takes one program in a hundred: a program holds some hundreds of places. */
-export const oneIn = 100;
+/** Every run takes one program in two hundred: a program holds some hundreds of places. */
+export const oneIn = 200;
+// Every use in one function: each is a block of its own, its answer is held in a local until the end, and what it throws is caught around it. One value has hundreds of uses and hundreds of locals live together.
+function joinedInOne(name: string, every: [string, string, boolean][]): [string, string, boolean] {
+  // But those that hold an inner function with statements of its own.
+  const uses = every.filter(([, body]) => !/=>\s*\{|\bfunction\b/.test(body));
+  const blocks = uses.map(([, body], k) => `try { L${k}: { ${body.replace(/\breturn ([^;]+);/g, (_, answer) => `{ r${k} = ${answer}; break L${k}; }`)} } } catch (e) { r${k} = thrown(e); }`);
+  return [name, `let ${uses.map((_, k) => `r${k}`).join(", ")}; ${blocks.join(" ")} return [${uses.map((_, k) => `r${k}`).join(", ")}];`, uses.some(([, , waits]) => waits)];
+}
 /** which: "first" | "second" | "across" | "within", or all. onePlace: a program for every use. wanted: the names to make. */
-export function programs(typed = false, { which = "", turns = 60, onePlace = false, ballast = 8, veiled = false, hidden = false, half = false, only = /./, wanted = (name: string) => true } = {}) {
+export function programsWith(typed = false, { which = "", turns = 60, onePlace = false, ballast = 8, veiled = false, hidden = false, half = false, only = /./, joined = false, wanted = (name: string) => true } = {}) {
   const { births, uses, waits } = parts();
   const made: { name: string; file: string; readonly text: string }[] = [];
   const one = onePlace, T = turns, order = Object.keys(births);
@@ -350,10 +400,11 @@ export function programs(typed = false, { which = "", turns = 60, onePlace = fal
         if (Object.hasOwn(groups, u)) [meant, taken] = [groups[u] === "all" || [births[a][0], births[b][0]].some(kind => groups[u].split(" ").includes(kind)), 0];
         return meant || taken++ < 3;
       };
-      const all: [string, string, boolean][] = [...Object.entries(uses).filter(means).map(([u, body]): [string, string, boolean] => [u, body, false]), ...Object.entries(waits).filter(means).map(([u, body]): [string, string, boolean] => [u, body, true])].filter(([u]) => !(ordersTexts.has(u) && [births[a][0], births[b][0]].includes("function"))).filter(([u]) => !typed || (takenOfAnyType.has(u) && !(isAlwaysTrue && testsTruth.has(u)) && !(r === "awaited" && u.endsWith("OfTwo"))));
+      const all: [string, string, boolean][] = [...Object.entries(uses).filter(means).map(([u, body]): [string, string, boolean] => [u, body, false]), ...Object.entries(waits).filter(means).map(([u, body]): [string, string, boolean] => [u, body, true])].filter(([u]) => !(ordersTexts.has(u) && [births[a][0], births[b][0]].includes("function"))).filter(([u]) => !(u === "ownNames" && [births[a][0], births[b][0]].includes("error"))).filter(([u]) => !typed || (takenOfAnyType.has(u) && !(isAlwaysTrue && testsTruth.has(u)) && !(r === "awaited" && u.endsWith("OfTwo"))));
       // What is awaited is no promise any more, and what walks a value is not of its kind.
       if (r !== "walkOfMember" && !(r === "awaited" && [births[a][0], births[b][0]].some(kind => kind === "promise" || kind === "thenable"))) all.push(...guarded(births[a][0], births[b][0], order.indexOf(a) + order.indexOf(b)).filter(([u]) => !(typed && r === "capturedThenChanged" && /^(testKept|inClosure)/.test(u))));
-      return all.filter(([u, , waits]) => only.test(u) && !(waits && r === "awaited")).map(([u, body, waits]) => [u, () => road(u, body, A, B, { ...(waits ? waitingForm : plainForm), typed }, T) + (veiled && r !== "captured" ? veil(u) : "") + (one ? "" : runsOnce(u, body, A, waits ? waitingForm : plainForm, ballast))]);
+      const chosen = all.filter(([u, , waits]) => only.test(u) && !(waits && r === "awaited"));
+      return (joined ? [joinedInOne("everyUse", chosen.filter(([, , waits]) => !waits)), joinedInOne("everyWait", chosen.filter(([, , waits]) => waits))].filter(([, body]) => body.includes("try")) : chosen).map(([u, body, waits]) => [u, () => road(u, body, A, B, { ...(waits ? waitingForm : plainForm), typed }, T) + (veiled && r !== "captured" ? veil(u) : "") + (one ? "" : runsOnce(u, body, A, waits ? waitingForm : plainForm, ballast))]);
     };
     const file = typed ? "program.ts" : "program.mjs";
     const whole = (text: string) => marked(head + `const turns = process.env.FEWER_TURNS ? 9 : ${T}, attempts = process.env.FEWER_TURNS ? 2 : 6;\n` + (hidden ? "function hide(v) { return v; }\nfunction neverRuns() { hide = new Proxy(hide, {}); }\nif (one === 2) neverRuns();\n" : "") + `let flips = 0;\nfunction other() { return flips++ & 1 ? ${B} : ${A}; }\n` + (typed ? `const firstBirth = () => ${A}, secondBirth = () => ${B};\ntype V = ReturnType<typeof firstBirth> | ReturnType<typeof secondBirth>;\ntype AnyPromise = Promise<any>;\n` : "") + text + (typed ? "export {};\n" : ""), typed);
@@ -362,4 +413,12 @@ export function programs(typed = false, { which = "", turns = 60, onePlace = fal
     else made.push({ name: `${a}-${b}-${r}`, file, get text() { return whole(placesOf().map(([, text]) => text()).join("")); } });
   }
   return made;
+}
+
+// In a very large program whatever is neither hot nor warm is generated directly, without the optimizer. No program here is that large, so some are built as if all of their code were.
+export function programs(typed = false) {
+  const directly = ["--aot-testing=GenerateAllCodeDirectly"];
+  const called = (suffix: string, flags: string[] | undefined, list: ReturnType<typeof programsWith>) => list.map(program => ({ name: program.name + suffix, file: program.file, flags, get text() { return program.text; } }));
+  if (typed) return [...called("", undefined, programsWith(true)), ...called("-direct", directly, programsWith(true, { ballast: 0 }))];
+  return [...called("", undefined, programsWith()), ...called("-joined", undefined, programsWith(false, { joined: true, ballast: 0 })), ...called("-joined-direct", directly, programsWith(false, { joined: true, ballast: 0 }))];
 }

@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use bun_ast::{ImportKind, Log};
 use bun_paths::is_sep_native;
 
-use crate::compiled_program::compare_source_paths;
+use crate::compiled_program::{compare_source_paths, normalize_separator};
 use crate::resolver::Resolver;
 
 /// A file or a folder: where it is on the disk of the build, and where in the executable.
@@ -184,7 +184,12 @@ impl Resolver<'_> {
                 let hides_other_paths = subpath.is_empty() && exports.is_some();
                 if required.is_some() || imported.is_some() || hides_other_paths {
                     names.push(PackageName {
-                        public_path: [place.public_path, b"/node_modules/", specifier].concat(),
+                        // The run time joins what it looks for with forward slashes.
+                        public_path: [place.public_path, b"/node_modules/", specifier]
+                            .concat()
+                            .into_iter()
+                            .map(normalize_separator)
+                            .collect(),
                         required,
                         imported,
                         hides_other_paths,

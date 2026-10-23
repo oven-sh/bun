@@ -27,7 +27,7 @@
   },
   "functions of the host that are held in variables, beside calls of what nobody knows": {
     "millionInstructions": 81411,
-    "megabytes": 233
+    "megabytes": 324
   },
   "classes whose methods of one name are called at one place": {
     "millionInstructions": 13174,
@@ -41,7 +41,7 @@
     "megabytes": 429,
     "growth": {
       "instructions": 4.5,
-      "peakBytes": 16.6
+      "peakBytes": 5
     }
   },
   "one function of many statements": {
@@ -154,6 +154,9 @@
   },
   "functions on one line after non-ASCII text": {
     "millionInstructions": 13994,
-    "megabytes": 243
+    "megabytes": 243,
+    "growth": {
+      "peakBytes": 2.7
+    }
   }
 }

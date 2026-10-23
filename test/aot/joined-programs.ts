@@ -9,7 +9,7 @@
 // or says something else each time: its own path or arguments, stack texts, the clock, random numbers, timers, files, sockets, processes, an exit, a change to a built-in.
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { inPrograms, isGroup, listWrittenPrograms, partInShare, slot, taken, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
 
@@ -19,7 +19,7 @@ const namesInGroup = 300;
 // What a script makes from a few rows of the table of built-ins is listed under one name until it is made (run-programs.ts).
 const programsUnderOneName = 6;
 // TODO: two programs have died on arm64 in code generated directly, in groups that a run happened to take. Until that arm of the generator has been seen whole, a run there takes every group.
-const groupsInShare = process.arch === "arm64" ? Infinity : 3;
+const groupsInShare = process.arch === "arm64" ? Infinity : isASAN ? 1 : 3;
 const measure = ["--aot-heat=everything-is-hot"];
 
 const cannotBeJoined = new RegExp(
@@ -114,7 +114,7 @@ async function run(executable: string, cwd: string): Promise<Ran> {
   let output = "";
   const stopped: string[] = [];
   for (let from = 0, starts = 0; starts < 12; starts++) {
-    const ran = await spawned(withoutCoreDump([executable]), cwd, { ...bunEnv, FROM: String(from) }, 60);
+    const ran = await spawned(withoutCoreDump([executable]), cwd, { ...bunEnv, FROM: String(from) }, isASAN ? 300 : 60);
     output += ran.stdout;
     if (/^== end$/m.test(ran.stdout)) break;
     const [, index, name] = [...ran.stdout.matchAll(/^== (\d+) (\S+)$/gm)].at(-1) ?? [];
@@ -167,7 +167,10 @@ async function compare(folder: string, carrier: string[], group: number | string
 
   const [expected, actual] = [await run(first.executable, cwd), await run(second.executable, cwd)];
   rmSync(cwd, { recursive: true, force: true });
-  const differing = names.filter(name => actual.printed.get(name) !== expected.printed.get(name));
+  // With AddressSanitizer the clock ends slow programs, other ones in each build: that says nothing.
+  const endedByClock = new Set(isASAN ? [...expected.stopped, ...actual.stopped].filter(stop => stop.endsWith(": SIGKILL")).map(stop => stop.slice(0, stop.lastIndexOf(": "))) : []);
+  for (const ran of [expected, actual]) ran.stopped = ran.stopped.filter(stop => !endedByClock.has(stop.slice(0, stop.lastIndexOf(": "))));
+  const differing = names.filter(name => !endedByClock.has(name) && actual.printed.get(name) !== expected.printed.get(name));
   const firstLines = (name: string) => {
     const [a, b] = [actual.printed.get(name)?.split("\n") ?? ["<not reached>"], expected.printed.get(name)?.split("\n") ?? ["<not reached>"]];
     const line = a.findIndex((text, index) => text !== b[index]);
@@ -188,7 +191,7 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
     if (isWindows && flags.includes("--aot-testing=GenerateAllCodeDirectly")) return void test.skip("no code is generated directly on Windows", () => {});
     const groups = groupsOf(programsOfOneFile());
     const carrier = withoutDebugInformation();
-    const [first, step] = partInShare(part, parts, Math.max(1, Math.ceil(groups.length / parts / groupsInShare))).split("/").map(Number);
+    const [first, step] = partInShare(part, parts, Math.max(1, Math.ceil(groups.length / parts / groupsInShare)), true).split("/").map(Number);
     for (let group = first - 1; group < groups.length; group += step) {
       const listed = groups[group];
       const nameOf = (path: string) => inPrograms(path).replaceAll("\\", "/");

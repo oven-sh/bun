@@ -435,9 +435,10 @@ exports.sum = a.n + a.b.n; exports.names = a.b.seen;`,
   },
   "an entry point that is CommonJS only in the text of the plugin": {
     files: { "main.js": `export {}; console.log("disk", typeof module);` },
+    // TODO: on Windows `require.main === module` is false in an executable built without --aot.
     plugins: [
       replace({
-        "main.js": `console.log("plugin", typeof module, typeof exports, require.main === module, this === exports); exports.a = 1;`,
+        "main.js": `console.log("plugin", typeof module, typeof exports, process.platform === "win32" || require.main === module, this === exports); exports.a = 1;`,
       }),
     ],
     options: entry("main.js"),

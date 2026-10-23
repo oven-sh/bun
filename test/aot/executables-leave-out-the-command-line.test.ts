@@ -143,16 +143,6 @@ describe.skipIf(!canTrim || !!unsupported)("bun build --compile --aot, without -
     for (const feature of compilers) expect(removed).not.toContain(feature);
     expect(removed).toContain("Lint");
     const ran = await run([builds], folder, { ...bunEnv, FOLDER: folder });
-    // TODO: on Windows a template that has a section .bun already is refused, and the template is this executable.
-    if (isWindows) {
-      expect(ran.stdout.split(/\r?\n/)).toEqual([
-        "true",
-        expect.stringMatching(/^failed to write compiled executable /),
-        "true",
-        "",
-      ]);
-      return;
-    }
     expect(ran).toEqual({
       stdout: "true\ntrue\ntrue\n",
       stderr: "",

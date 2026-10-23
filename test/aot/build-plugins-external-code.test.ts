@@ -17,7 +17,7 @@ module.exports = [new console.Console(process.stdout).log.name, refused.join(), 
     plugins: [makeExternal],
     options: `entrypoints: ["./main.cjs"]`,
     interprets: true,
-    prints: "function log |  | true | a/b\n",
+    prints: `function log |  | true | ${join("a", "b")}\n`,
   },
 };
 

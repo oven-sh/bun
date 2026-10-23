@@ -22,6 +22,16 @@ There's no new syntax and nothing to annotate. Point `bun compile` at the entry 
 
 `bun compile` is short for `bun build --compile --aot` and takes the same flags. Three other commands take `--aot`: `bun check --aot` reports what the build would report, and [`bun run --aot` and `bun test --aot`](#run-under-the-compilers-rules) check your program as the build does and then run it from its source.
 
+## The compiler is a separate download
+
+`bun` doesn't contain the compiler. `bun compile`, `bun build --compile --aot`, `bun run --aot` and `bun check --aot` run in `bun-aot`, which is the same version of Bun with the compiler in it. You don't start it yourself. `bun` looks for it in this order:
+
+1. A file named `bun-aot` (`bun-aot.exe` on Windows) next to the `bun` executable.
+2. The cache that [`--target`](/bundler/executables#cross-compile-to-other-platforms) fills.
+3. npm: the package `@oven/bun-aot-<os>-<arch>` of the same version. Bun downloads it once and keeps it in that cache.
+
+Without a network connection and with nothing in the cache, the command fails with an error that names the package. The executables that `bun compile` writes don't need `bun-aot`, `bun` or a network connection.
+
 ## Build an executable
 
 The build type checks your program, so install Bun's type declarations first. [`bun init`](/runtime/templating/init) does that for a new project. [Without them](/bundler/aot-troubleshooting#buns-type-declarations-arent-installed) the program builds too, but whatever Bun provides has no types.

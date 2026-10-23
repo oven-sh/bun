@@ -362,7 +362,7 @@ function caseOf(combination: Combination, id: number) {
 
 export function programOf(combinations: Combination[]) {
   const before = [...new Set(combinations.map(each => each.birth.before).filter(Boolean))].join("\n");
-  return `${head}${before}\n${combinations.map((each, at) => caseOf(each, at + 1)).join("\n")}\n${combinations.map((_, at) => `await case${at + 1}();`).join("\n")}\nawait new Promise(resolve => setTimeout(resolve, 5));\nconsole.log(trail.join("\\n"));\n`;
+  return `${head}${before}\n${combinations.map((each, at) => caseOf(each, at + 1)).join("\n")}\n${combinations.map((_, at) => `await case${at + 1}();`).join("\n")}\nawait new Promise(resolve => setTimeout(resolve, 5));\nconsole.log(trail.sort().join("\\n"));\n`;
 }
 
 export interface Large {
@@ -398,7 +398,7 @@ export function largeProgramOf(large: Large) {
   });
   const whole = `const texts: string[] = [];\n${blocks.join("\n")}\nreturn texts.join("|");`;
   const one: Combination = { birth: parts[0].birth, holder: { name: "large", body: () => whole }, kind, suspension: parts[0].suspension, disturbance, heat, place: "in-a-function" };
-  return `${head}${before}\n${beside.filter(Boolean).join("\n")}\n${caseOf(one, 1)}\nawait case1();\nawait new Promise(resolve => setTimeout(resolve, 5));\nconsole.log(trail.join("\\n"));\n`;
+  return `${head}${before}\n${beside.filter(Boolean).join("\n")}\n${caseOf(one, 1)}\nawait case1();\nawait new Promise(resolve => setTimeout(resolve, 5));\nconsole.log(trail.sort().join("\\n"));\n`;
 }
 
 export const tsconfig = JSON.stringify({ compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", noEmit: true, strict: true, types: [] } });

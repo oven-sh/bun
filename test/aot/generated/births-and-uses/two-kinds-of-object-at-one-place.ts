@@ -21,16 +21,21 @@
 //   receiver      the value is `this`
 //   large         as returned, and the function that answers is too large to be inlined as well
 //   largeAndJoined  the same, with one return behind the place where the two kinds meet
+//   onlyTheSecond   a variable of the module starts as null and gets nothing but the second kind; it is copied into a local and tested for null in front of the use. Declared as the first kind, it holds only misfits
+//   onlyTheSecondCaptured  the same with a captured variable and undefined
+//   aroundTheLoop   a local gets the first kind, the second kind or null at the end of a turn of a loop and is used at the start of the next
 // A place is a function of its own. A program holds many places: one pair of kinds and one group of uses on every road, so that nothing but those two births decides what the compiler believes of a class or a
 // shape. `programs(false, "many")` packs them the other way: one first kind, one road, one group of uses, and many second kinds. `programs(false, "use")` makes a program of every single place, to cut a find down.
 // As TypeScript the value is declared as the union of what the two kinds are. Not every use is allowed on every union: each line stands behind a comment that silences the checker for it.
 // `programs("as the first kind")` declares it as what the first kind is, as a program does that takes what JSON.parse answers for an instance: what the compiler believes of the declared type may not decide what happens.
+// "which never comes": and the first kind is never born: wherever it would be, the second is. The place holds nothing but misfits of what it is declared as.
+// "through any": the members of the value are reached through a cast, `(v as any).a`, as a program must write that reads what the declared type lacks.
 // What is hot is a share of the program's own code, so a place among hundreds is not as hot as it is alone. `ballast` adds so many functions that run once for every place: with eight of them a place is as hot as
 // it is alone. `places` is the most that a program holds.
-/** There are 24,000 programs: one in so many is run every time. */
-export const oneIn = 400;
+/** There are 35,000 programs: one in so many is run every time. */
+export const oneIn = 800;
 
-export function programs(isTyped: boolean | "as the first kind" = false, grain: "pair" | "many" | "use" = "pair", places = 256, ballast = grain === "use" ? 0 : 8) {
+export function programs(isTyped: boolean | "through any" | "as the first kind" | "as the first kind, through any" | "as the first kind, which never comes" | "as the first kind, which never comes, through any" = false, grain: "pair" | "many" | "use" = "pair", places = 256, ballast = grain === "use" ? 0 : 8) {
   const made: { name: string; file: string; readonly text: string }[] = [];
   // `n` is a number that the place of birth knows only when it runs.
   const births: Record<string, string> = {
@@ -137,6 +142,16 @@ export function programs(isTyped: boolean | "as the first kind" = false, grain: 
     square: '{ kind: "square", side: n, a: n }',
     leaf: "{ a: n, next: null }",
     twoLinks: "{ a: n, next: { a: n + 1, next: null } }",
+    // A class that declares nothing, and what lies below a class's prototype without having been constructed.
+    emptyInstance: "new Empty()",
+    createdEmpty: "Object.create(Empty.prototype)",
+    filledEmpty: "Object.assign(Object.create(Empty.prototype), { a: n, b: 2 })",
+    reparentedEmpty: "Object.setPrototypeOf({ a: n }, Empty.prototype)",
+    belowEmpty: "{ __proto__: Empty.prototype, a: n }",
+    createdPoint: "Object.create(Point.prototype)",
+    createdFields: "Object.create(Fields.prototype)",
+    // A member is added on one path only.
+    sometimesGrown: "growSometimes({ a: n, b: 2 }, n)",
   };
   const record = "{ a: number; b: number }";
   const types: Record<string, string> = {
@@ -156,9 +171,10 @@ export function programs(isTyped: boolean | "as the first kind" = false, grain: 
     grouped: "Partial<Record<string, number[]>>", restOfPattern: record, pathParsed: "path.ParsedPath", queryParsed: "querystring.ParsedUrlQuery", ownError: "OwnError", aggregate: "AggregateError", namespace: "typeof path",
     url: "URL", promise: "Promise<number>", generatorObject: "Generator<number>", mathObject: "Math",
     fine: "{ ok: true; value: number }", failed: "{ ok: false; error: string }", circle: '{ kind: "circle"; r: number }', square: '{ kind: "square"; side: number; a: number }', leaf: "Link", twoLinks: "Link",
+    emptyInstance: "Empty", createdEmpty: "Empty", filledEmpty: "Empty", reparentedEmpty: "Empty", belowEmpty: "Empty", createdPoint: "Point", createdFields: "Fields", sometimesGrown: "{ a: number; b: number; c?: () => number }",
     text: "string", list: "number[]", map: "Map<string, number>", arrow: "() => number",
   };
-  const first = ["literal", "instance", "child", "fields", "old", "bare", "frozen", "proxy", "parsed", "spread", "getter", "nothing", "bag", "fine", "circle", "leaf"];
+  const first = ["literal", "instance", "child", "fields", "old", "bare", "frozen", "proxy", "parsed", "spread", "getter", "nothing", "bag", "fine", "circle", "leaf", "emptyInstance", "sometimesGrown"];
   const groups: Record<string, Record<string, string>> = {
     reads: {
       a: "return v.a;",
@@ -347,9 +363,31 @@ export function programs(isTyped: boolean | "as the first kind" = false, grain: 
       turnedRound: "let back = null; for (let x = v, i = 0; x && i < 9; x = x.next, i++) back = { a: x.a, next: back }; return back === null ? -1 : [back.a, back.next === null];",
       eitherEnd: "let head = n % 2 ? v : null; head = { a: -1, next: head }; return head.next === null ? head.a : head.next.a;",
     },
+    // Only as TypeScript: what a program writes to tell the checker more than it knows. None of it does anything when the program runs.
+    casts: {
+      notNull: "return v!.a;",
+      notNullCall: "return v!.sum();",
+      asPoint: "return (v as Point).a + (v as Point).b;",
+      asPointCall: "return (v as Point).sum();",
+      asFields: "return (v as Fields).sum();",
+      asRecord: "return (v as unknown as Record<string, unknown>).a;",
+      asAny: "return (v as any).nowhere;",
+      asAnyDeclared: "return (v as any).a;",
+      asAnyStore: "(v as any).nowhere = n; return (v as any).nowhere;",
+      asAnyCall: "return (v as any).sum?.();",
+      thereThenAny: "if (v === null || v === undefined) return -1; return (v as any).nowhere;",
+      predicate: "if (looksLikePoint(v)) return v.a + v.b; return -1;",
+      predicateCall: "if (looksLikePoint(v)) return v.sum(); return -1;",
+      assertion: "takeForPoint(v); return v.a + v.b;",
+      heldAsPoint: "const point: Point = v as any; return [point.a, point.b];",
+      handedAsPoint: "return sumOfPoint(v as any);",
+    },
   };
+  if (!isTyped) delete groups.casts;
   const head = `import * as path from "node:path";
 import * as querystring from "node:querystring";
+const only = process.argv[2];
+function wanted(place) { return only === undefined || only === place; }
 const key = Symbol("key");
 const source = { a: 1, b: 2 };
 class Point { constructor(a, b) { this.a = a; this.b = b; } sum() { return this.a + this.b; } get twice() { return this.a * 2; } }
@@ -364,14 +402,18 @@ class Dictionary { constructor(pairs) { this.map = new Map(pairs); this.a = pair
 class Sometimes { constructor(a) { this.a = a; if (a % 2) this.c = 3; this.b = 2; } sum() { return this.a + this.b; } }
 class Locked { constructor(a) { this.a = a; this.b = 2; Object.freeze(this); } sum() { return this.a + this.b; } }
 class OwnError extends Error { a = 1; b = 2; }
+class Empty {}
 const origin = new Point(1, 2);
 function ringOf(n) { const one = { a: n, next: null }, other = { a: n + 1, next: one }; one.next = other; return one; }
 function shrink(o) { delete o.z; return o; }
 function grow(o, n) { o.a = n; o.b = 2; return o; }
+function growSometimes(o, n) { if (n % 2) o.c = function () { return n; }; return o; }
 function show(v, depth = 0) { if (v === null) return "null"; if (Array.isArray(v)) { if (depth > 3) return "[..]"; let t = "["; for (let i = 0; i < v.length; i++) t += (i ? "," : "") + (i in v ? show(v[i], depth + 1) : "hole"); return t + "]#" + v.length; } if (typeof v === "object") { if (depth > 3) return "{..}"; let t = "{"; for (const k of Object.keys(v)) t += k + ":" + show(v[k], depth + 1) + ","; return t + "}"; } if (typeof v === "function") return "function"; if (typeof v === "symbol") return "symbol"; return typeof v + ":" + (Object.is(v, -0) ? "-0" : String(v)); }
 `;
   const headTyped = `import * as path from "node:path";
 import * as querystring from "node:querystring";
+const only: string | undefined = process.argv[2];
+function wanted(place: string): boolean { return only === undefined || only === place; }
 const key = Symbol("key");
 const source = { a: 1, b: 2 };
 class Point { a: number; b: number; constructor(a: number, b: number) { this.a = a; this.b = b; } sum(): number { return this.a + this.b; } get twice(): number { return this.a * 2; } }
@@ -386,11 +428,16 @@ class Dictionary { map: Map<string, number>; a: number; constructor(pairs: [stri
 class Sometimes { a: number; b: number; c?: number; constructor(a: number) { this.a = a; if (a % 2) this.c = 3; this.b = 2; } sum(): number { return this.a + this.b; } }
 class Locked { a: number; b: number; constructor(a: number) { this.a = a; this.b = 2; Object.freeze(this); } sum(): number { return this.a + this.b; } }
 class OwnError extends Error { a = 1; b = 2; }
+class Empty {}
 type Link = { a: number; next: Link | null };
+function looksLikePoint(o: unknown): o is Point { return typeof o === "object" && o !== null && "a" in o; }
+function takeForPoint(o: unknown): asserts o is Point {}
+function sumOfPoint(point: Point): number { return point.a + point.b; }
 const origin = new Point(1, 2);
 function ringOf(n: number) { const one: { a: number; next: any } = { a: n, next: null }, other = { a: n + 1, next: one }; one.next = other; return one; }
 function shrink(o: { a: number; z?: number; b: number }) { delete o.z; return o; }
 function grow(o: any, n: number): { a: number; b: number } { o.a = n; o.b = 2; return o; }
+function growSometimes(o: { a: number; b: number; c?: () => number }, n: number) { if (n % 2) o.c = function () { return n; }; return o; }
 ` + head.slice(head.indexOf("function show(")).replace("function show(v, depth = 0)", "function show(v: any, depth: number = 0): string");
   const show = (isTyped ? headTyped : head).slice((isTyped ? headTyped : head).indexOf("function show("));
   const ballasts: Record<number, string> = {};
@@ -398,15 +445,20 @@ function grow(o: any, n: number): { a: number; b: number } { o.a = n; o.b = 2; r
   const N = isTyped ? "n: number" : "n";
   const as = (name: string, type: string) => (isTyped ? `${name}: ${type}` : name);
   const attempt = (u: string, call: string, parameters: string) => `function attempt_${u}(${parameters}) { try { return show(${call}); } catch (e) { return "threw " + (e && e.name); } }\n`;
-  const given = (u: string, a: string, b: string) => `last = "";
+  // What runs a place stands behind a test of the program's first argument: a program that dies can be asked for each of its places alone.
+  const given = (u: string, a: string, b: string) => `if (wanted("${u}")) {
+last = "";
 for (let n = 0; n < 1000; n++) last = attempt_${u}(${a}, n);
 console.log("${u}", last);
 for (let n = 0; n < 3; n++) console.log(attempt_${u}(${b}, n));
 for (let n = 5; n < 6; n++) console.log(attempt_${u}(${a}, n));
+}
 `;
-  const called = (u: string, calls: number) => `last = "";
+  const called = (u: string, calls: number, behind = "") => `if (wanted("${u}")) {
+last = "";
 for (let n = 0; n < ${calls}; n++) { last = attempt_${u}(n); if (n < 12 || n === 27) console.log("${u}", n, last); }
 console.log(last);
+${behind}}
 `;
   // u: the name of the place; a, b: the two births; t: what the value is declared as
   const roads: Record<string, (u: string, use: string, a: string, b: string, t: string) => string> = {
@@ -418,12 +470,12 @@ console.log(last);
     oneTurn: (u, use, a, b, t) => `function main_${u}(${N}) { let ${as("v", t)} = ${a}; for (let i = 0; i < 100; i++) { const made = ${b}; if (i === 77 && n % 4 !== 3) v = made; } ${use} }\n` + attempt(u, `main_${u}(n)`, N) + called(u, 30),
     maker: (u, use, a, b, t) => `function make_${u}(${N}, ${as("keep", "boolean")}) { const made = ${b}; if (keep) return made; return n + 1; }
 function main_${u}(${N}) { let total = 0, ${as("v", t)} = ${a}; for (let i = 0; i < 200; i++) { const result = make_${u}(i, i === 177 && n % 4 !== 3); if (typeof result === "number") total += result; else v = result; } ${use} }
-` + attempt(u, `main_${u}(n)`, N) + called(u, 30) + `function replace_${u}() { make_${u} = new Proxy(make_${u}, {}); }\nif (last === "") replace_${u}();\n`,
+` + attempt(u, `main_${u}(n)`, N) + `function replace_${u}() { make_${u} = new Proxy(make_${u}, {}); }\n` + called(u, 30, `if (last === "") replace_${u}();\n`),
     returned: (u, use, a, b, t) => `const ${as("kept_" + u, `(${t})[]`)} = [];
 function keep_${u}(${as("v", t)}) { try { for (let i = 0; i < 2; i++) if (kept_${u}.length < 6 + i) kept_${u}.push(v); } catch { kept_${u}.length = 0; } }
 function make_${u}(${N}) { if (n % 3 === 0) return ${b}; return ${a}; }
 function main_${u}(${N}) { const v = make_${u}(n); if (n % 7 === 0) keep_${u}(v); ${use} }
-` + attempt(u, `main_${u}(n)`, N) + called(u, 1000) + `try { console.log(show(kept_${u})); } catch (e) { console.log("cannot be shown", e && e.name); }\n`,
+` + attempt(u, `main_${u}(n)`, N) + called(u, 1000, `try { console.log(show(kept_${u})); } catch (e) { console.log("cannot be shown", e && e.name); }\n`),
     thrown: (u, use, a, b) => `function main_${u}(${N}) { try { throw n % 10 === 7 ? ${b} : ${a}; } catch (v) { ${use} } }\n` + attempt(u, `main_${u}(n)`, N) + called(u, 1000),
     captured: (u, use, a, b, t) => `function main_${u}(${N}) { let ${as("v", t)} = ${a}; const look = () => { ${use} }; if (n % 10 === 7) v = ${b}; return look(); }\n` + attempt(u, `main_${u}(n)`, N) + called(u, 1000),
     element: (u, use, a, b, t) => `function use_${u}(${as("v", t)}, ${N}) { ${use} }\nfunction main_${u}(${N}) { const all = [${a}, ${b}], ${as("answers", "unknown[]")} = []; for (const v of all) { try { answers.push(use_${u}(v, n)); } catch (e) { answers.push("threw " + (e && e.name)); } } return answers; }\n` + attempt(u, `main_${u}(n)`, N) + called(u, 1000),
@@ -438,22 +490,27 @@ function main_${u}(${N}) { const v = make_${u}(n); if (n % 7 === 0) keep_${u}(v)
 function keep_${u}(${as("v", t)}) { try { for (let i = 0; i < 2; i++) if (kept_${u}.length < 6 + i) kept_${u}.push(v); } catch { kept_${u}.length = 0; } }
 function make_${u}(${N}) { try { for (let i = 0; i < 2; i++) if (seen_${u}.length < 3 + i) seen_${u}.push(n); } catch { seen_${u}.length = 0; } if (n % 3 === 0) return ${b}; return ${a}; }
 function main_${u}(${N}) { const v = make_${u}(n); if (n % 7 === 0) keep_${u}(v); ${use} }
-` + attempt(u, `main_${u}(n)`, N) + called(u, 1000) + `try { console.log(show(kept_${u})); } catch (e) { console.log("cannot be shown", e && e.name); }\n`,
+` + attempt(u, `main_${u}(n)`, N) + called(u, 1000, `try { console.log(show(kept_${u})); } catch (e) { console.log("cannot be shown", e && e.name); }\n`),
     largeAndJoined: (u, use, a, b, t) => `const seen_${u}${isTyped ? ": number[]" : ""} = [];
 function make_${u}(${N}) { try { for (let i = 0; i < 2; i++) if (seen_${u}.length < 3 + i) seen_${u}.push(n); } catch { seen_${u}.length = 0; } let ${as("made", t)} = ${a}; if (n % 3 === 0) made = ${b}; return made; }
 function main_${u}(${N}) { const v = make_${u}(n); ${use} }
 ` + attempt(u, `main_${u}(n)`, N) + called(u, 1000),
+    onlyTheSecond: (u, use, a, b, t) => `let ${as("current_" + u, `${t} | null`)} = null;\nfunction main_${u}(${N}) { const v = current_${u}; if (v === null) return "nothing"; ${use} }\nfunction set_${u}(${N}) { current_${u} = n % 10 === 3 ? null : ${b}; }\n` + attempt(u, `(set_${u}(n), main_${u}(n))`, N) + called(u, 1000),
+    onlyTheSecondCaptured: (u, use, a, b, t) => `function main_${u}(${N}) { let ${as("held", `${t} | undefined`)} = undefined; const look = () => { const v = held; if (v === undefined) return "nothing"; ${use} }; if (n % 10 !== 3) held = ${b}; return look(); }\n` + attempt(u, `main_${u}(n)`, N) + called(u, 1000),
+    aroundTheLoop: (u, use, a, b, t) => `function use_${u}(${as("v", t)}, ${N}) { ${use} }\nfunction main_${u}(${N}) { const ${as("answers", "unknown[]")} = []; let ${as("v", `${t} | null`)} = null; for (let i = 0; i < 7; i++) { if (v !== null) { try { answers.push(use_${u}(v, n)); } catch (e) { answers.push("threw " + (e && e.name)); } } v = i % 3 === 0 ? ${a} : i % 3 === 1 ? ${b} : null; } return answers; }\n` + attempt(u, `main_${u}(n)`, N) + called(u, 300),
   };
   // Where many second kinds stand in one program: a program that freezes an instance, replaces a prototype or deletes a member tells the compiler so about every object of that class or shape in it: those births
   // stand apart from the ones that do nothing of the kind.
-  const wild = ["getter", "setter", "symbolKey", "indexed", "belowLiteral", "belowNull", "created", "createdWith", "bare", "bareFilled", "frozen", "sealed", "closed", "frozenInstance", "defined", "definedGetter", "proxy", "proxyTraps", "proxyOfInstance", "assignedOnto", "shrunk", "reparented", "constructedBelow", "classValue", "walkedByGenerator", "locked", "parsedWithProtoKey", "toPrimitive", "withValueOf", "withToJSON", "tagged", "error", "date", "pattern", "boxedNumber", "boxedText", "argumentsObject", "grouped", "pathParsed", "queryParsed", "ownError", "aggregate", "namespace", "url", "promise", "generatorObject", "mathObject"];
+  const wild = ["getter", "setter", "symbolKey", "indexed", "belowLiteral", "belowNull", "created", "createdWith", "bare", "bareFilled", "frozen", "sealed", "closed", "frozenInstance", "defined", "definedGetter", "proxy", "proxyTraps", "proxyOfInstance", "assignedOnto", "shrunk", "reparented", "constructedBelow", "classValue", "walkedByGenerator", "locked", "parsedWithProtoKey", "toPrimitive", "withValueOf", "withToJSON", "tagged", "error", "date", "pattern", "boxedNumber", "boxedText", "argumentsObject", "grouped", "pathParsed", "queryParsed", "ownError", "aggregate", "namespace", "url", "promise", "generatorObject", "mathObject", "createdEmpty", "filledEmpty", "reparentedEmpty", "belowEmpty", "createdPoint", "createdFields"];
   // The groups that stand in programs of their own: all that change something, and those that came later.
-  const changing = ["storesOfTheSameKind", "storesOfAnotherKind", "storesOfNewMembers", "changes", "withAnother", "discriminants", "chains"];
+  const changing = ["storesOfTheSameKind", "storesOfAnotherKind", "storesOfNewMembers", "changes", "withAnother", "discriminants", "chains", "casts"];
   const grouped: Record<string, Record<string, string>> = {};
   for (const [g, uses] of Object.entries(groups))
     for (const [u, use] of Object.entries(uses)) (grouped[grain === "use" ? g + "_" + u : changing.includes(g) ? g : "looks"] ??= {})[g + "_" + u] = use;
   // And so do those whose members are of other types, or that are no objects: without them the members a and b of a literal are integers all over the program.
   const mixed = ["otherTypes", "sliced", "nested", "parsedOther", "integer", "text", "list", "map", "arrow", "iteratorResult", "generatorResult", "groups", "descriptorOrNot", "matchOrNot", "foundOrNot", "gotOrNot"];
+  const cast = (use: string) => (typeof isTyped === "string" && isTyped.endsWith("through any") ? use.replace(/\b([vwxpq]|head|kept|back)(?=\.|\[|\?\.)/g, "($1 as any)") : use);
+  const comes = (a: string, b: string) => (typeof isTyped === "string" && isTyped.includes("never comes") ? b : a);
   const inBrackets = (birth: string) => (birth.startsWith("{") ? `(${birth})` : birth);
   // A place: the road, the second kind, the use.
   const add = (name: string, a: string, uses: Record<string, string>, ofRoads: string[], seconds: string[]) => {
@@ -467,7 +524,7 @@ function main_${u}(${N}) { const v = make_${u}(n); ${use} }
         get text() {
           const some = list().slice(from, from + places);
           let text = (isTyped ? headTyped : head) + 'let last = "";\n' + runOnce(ballast * some.length);
-          for (const [r, b, u] of some) text += roads[r](grain === "many" ? u + "_" + b : grain === "pair" ? u + "_" + r : u, uses[u].replaceAll("$A", () => inBrackets(births[a])).replaceAll("$B", () => inBrackets(births[b])), inBrackets(births[a]), inBrackets(births[b]), isTyped === true ? `${types[a]} | ${types[b].includes("=>") ? `(${types[b]})` : types[b]}` : types[a]);
+          for (const [r, b, u] of some) text += roads[r](grain === "many" ? u + "_" + b : grain === "pair" ? u + "_" + r : u, cast(uses[u]).replaceAll("$A", () => inBrackets(births[comes(a, b)])).replaceAll("$B", () => inBrackets(births[b])), inBrackets(births[comes(a, b)]), inBrackets(births[b]), isTyped === true || isTyped === "through any" ? `${types[a]} | ${types[b].includes("=>") ? `(${types[b]})` : types[b]}` : types[a]);
           return isTyped ? text.replace(/^/gm, "// @ts-ignore\n").replace(/\/\/ @ts-ignore\n$/, "") + "export {};\n" : text;
         },
       });

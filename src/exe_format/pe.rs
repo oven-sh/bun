@@ -482,6 +482,41 @@ impl PEFile {
         Ok(())
     }
 
+    /// `add_bun_section` puts the section behind every other one in the headers, in the file and in memory. Where
+    /// something has been put behind it since, it stays and the file is refused.
+    fn remove_bun_section(&mut self) -> Result<(), Error> {
+        let sections = self.get_section_headers()?;
+        // Compare all 8 bytes exactly
+        let is_bun_section = |section: &SectionHeader| section.name[0..8] == BUN_SECTION_NAME;
+        let Some(position) = sections.iter().position(is_bun_section) else {
+            return Ok(());
+        };
+        let (raw_start, address) = (
+            sections[position].pointer_to_raw_data,
+            sections[position].virtual_address,
+        );
+        let is_in_front = |section: &SectionHeader| {
+            let raw_end =
+                u64::from(section.pointer_to_raw_data) + u64::from(section.size_of_raw_data);
+            raw_end <= u64::from(raw_start) && section.virtual_address < address
+        };
+        let is_last =
+            position + 1 == sections.len() && sections[..position].iter().all(is_in_front);
+        if !is_last || raw_start as usize > self.data.len() {
+            return Err(Error::SectionExists);
+        }
+        self.data.truncate(raw_start as usize);
+        let header_start = self.section_headers_offset + size_of::<SectionHeader>() * position;
+        self.data[header_start..header_start + size_of::<SectionHeader>()].fill(0);
+        let pe_header = self.get_pe_header_mut()?;
+        // SAFETY: pe_header points into self.data at validated offset
+        unsafe {
+            (*pe_header).number_of_sections -= 1;
+        }
+        self.num_sections -= 1;
+        Ok(())
+    }
+
     /// Add a new section to the PE file for storing Bun module data
     pub fn add_bun_section(&mut self, data_to_embed: &[u8], holds_code: bool) -> Result<(), Error> {
         // 1. Strip Authenticode (before any addition)
@@ -495,13 +530,9 @@ impl PEFile {
         // SAFETY: opt points into self.data at the offset validated by get_optional_header_mut
         let section_alignment = unsafe { (*opt).section_alignment };
 
-        // 3. Duplicate .bun guard - compare all 8 bytes exactly
+        // 3. A template that is itself a compiled executable gives up its payload
+        self.remove_bun_section()?;
         let section_headers = self.get_section_headers()?;
-        for section in section_headers {
-            if section.name[0..8] == BUN_SECTION_NAME {
-                return Err(Error::SectionExists);
-            }
-        }
 
         // Check if we can add another section
         if self.num_sections >= 96 {
@@ -697,6 +728,40 @@ mod tests {
         assert_eq!(file.optional_header_offset, layout.optional_header_offset);
         assert_eq!(file.section_headers_offset, layout.section_headers_offset);
         assert_eq!(file.num_sections, layout.num_sections);
+    }
+
+    #[test]
+    fn a_template_with_a_payload_gives_it_up() {
+        let bytes = toy_pe(Architecture::X86_64);
+        let with_payload = |template: &[u8], payload: &[u8]| {
+            let mut file = PEFile::init(template).unwrap();
+            file.add_bun_section(payload, false).unwrap();
+            file.data
+        };
+        let small = with_payload(&bytes, b"small");
+        let large = with_payload(&bytes, &[7; 100_000]);
+        assert!(small.len() < large.len());
+        assert!(with_payload(&large, b"small") == small);
+        assert!(with_payload(&small, &[7; 100_000]) == large);
+        assert_eq!(PEFile::layout_of(&small).unwrap().num_sections, 8);
+    }
+
+    #[test]
+    fn a_payload_with_a_section_behind_it_is_refused() {
+        let mut file = PEFile::init(&toy_pe(Architecture::X86_64)).unwrap();
+        file.add_bun_section(b"first", false).unwrap();
+        let mut bytes = file.data;
+        edit_section(&mut bytes, 7, |section| section.name = *b".other\0\0");
+        let mut file = PEFile::init(&bytes).unwrap();
+        file.add_bun_section(b"second", false).unwrap();
+        let mut bytes = file.data;
+        edit_section(&mut bytes, 7, |section| section.name = BUN_SECTION_NAME);
+        edit_section(&mut bytes, 8, |section| section.name = *b".other\0\0");
+        let mut file = PEFile::init(&bytes).unwrap();
+        assert_eq!(
+            file.add_bun_section(b"third", false).err(),
+            Some(SectionExists)
+        );
     }
 
     #[test]

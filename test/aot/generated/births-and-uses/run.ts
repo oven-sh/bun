@@ -15,7 +15,7 @@ const tsconfig = JSON.stringify({
 
 /** The pairs are what `programs` of ./<from>.ts returns. */
 export function birthsAndUses(title: string, from: string, isTyped?: boolean, part = 1, parts = 1) {
-  const generator: { programs(isTyped?: boolean): { name: string; file: string; text: string }[]; oneIn?: number; alsoUnder?: Record<string, string>[] } = require(`./${from}`);
+  const generator: { programs(isTyped?: boolean): { name: string; file: string; text: string; flags?: string[] }[]; oneIn?: number; alsoUnder?: Record<string, string>[] } = require(`./${from}`);
   const programs = generator.programs(isTyped);
   const differs: Record<string, string> = (known as Record<string, Record<string, string>>)[title] ?? {};
   const wasWrong = new Set((onceWrong as Record<string, string[]>)[title]);
@@ -29,6 +29,7 @@ export function birthsAndUses(title: string, from: string, isTyped?: boolean, pa
       // Some pairs are no program: a use that does not parse behind that birth, or that TypeScript rejects.
       mayBeUnjudgeable: true as const,
       failsToday: differs[program.name],
+      flags: program.flags,
       alsoUnder: generator.alsoUnder,
       // And makes the text of a program when it is asked for.
       make: () => ({ file: program.file, text: program.text, files: program.file.endsWith(".ts") ? { "tsconfig.json": tsconfig } : undefined }),

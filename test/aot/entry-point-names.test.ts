@@ -109,7 +109,9 @@ test("compiled: a module shows the path of its source", async () => {
   const executable = await build(String(dir), ["--aot"], ["src/shown.ts", "src/sub/typed.ts"], "shown");
   const run = await spawned([executable], String(elsewhere), bunEnv);
   expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({
-    stdout: `${virtualRoot}shown.ts\n${virtualRoot}sub/typed.ts`,
+    stdout: isWindows
+      ? "B:\\~BUN\\root\\shown.ts\nB:\\~BUN\\root\\sub\\typed.ts"
+      : `${virtualRoot}shown.ts\n${virtualRoot}sub/typed.ts`,
     exitCode: 0,
   });
 });

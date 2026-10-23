@@ -1,6 +1,7 @@
 use super::{EntryPointPaths, FolderPaths, LoadedBuild, LoadedProject};
 use crate::ir::{InParallel, for_each_mut};
 use crate::link::ProgramModule;
+use crate::load::module_paths::with_separators_of_host;
 use crate::load::{EntryPointKind, PerProject, ProgramFile, Sources};
 use crate::report::{ModuleSource, SourceTexts};
 use bun_sema::program::Files;
@@ -21,7 +22,10 @@ pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<
         })
         .map(|entry_point| EntryPointPaths {
             public_path: sources.module_paths(entry_point.file).public_path.to_vec(),
-            source_path: to_native(files.module(entry_point.file).file_name()).to_vec(),
+            source_path: with_separators_of_host(
+                to_native(files.module(entry_point.file).file_name()),
+                cfg!(windows),
+            ),
         })
         .collect()
 }
@@ -40,8 +44,11 @@ pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<Folde
         .compiled_files()
         .iter()
         .map(|&file| FolderPaths {
-            public_path: folder_of(sources.module_paths(file).public_path, |byte| byte == b'/')
-                .to_vec(),
+            public_path: folder_of(
+                sources.module_paths(file).public_path,
+                bun_paths::is_sep_native,
+            )
+            .to_vec(),
             source_path: folder_of(
                 to_native(files.module(file).file_name()),
                 bun_paths::is_sep_native,

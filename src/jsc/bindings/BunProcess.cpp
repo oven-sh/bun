@@ -535,6 +535,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             // and restarts (#29587), so it is never deleted here.
             fromEmbedded = true;
         }
+#if OS(WINDOWS)
+        // The libraries beside an addon are found only if its path has backslashes, and a file of an executable may be named with forward slashes.
+        if (Bun::hasCompiledModules())
+            filename = makeStringByReplacingAll(filename, '/', '\\');
+#endif
     }
 
     RETURN_IF_EXCEPTION(scope, {});

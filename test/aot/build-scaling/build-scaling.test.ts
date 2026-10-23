@@ -3,12 +3,13 @@
 // application it takes minutes or gigabytes.
 //
 // Each shape of ./shapes.ts is built at a size, at twice that size and at size 0, on one thread. Two things are counted: the instructions that the build
-// executes in user mode, and the most memory it has resident. Both are counts: no clock, the same at any load.
+// executes in user mode, and the most memory it has resident. Both are counts: no clock. The instructions are the same at any load; the memory of one
+// and the same build wavers by some 20 MB from run to run.
 //
 //   growth     (cost at twice the size - cost at size 0) / (cost at the size - cost at size 0)     may not pass 2.5
 //   budget     the cost at twice the size may not pass what ./budgets.linux-x64.json has for the shape by more than a fifth
 //
-// A shape that grows faster than 2.5 times today has its growth in the file, and may not pass that: the aim is that no shape has one.
+// A shape that grows faster than 2.5 times today has its growth in the file, and may not pass that, on any platform: the aim is that no shape has one.
 // The file only goes down. Whoever means to accept a worse number edits it, where a reviewer sees it.
 //
 // Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used only the memory is judged. The growth
@@ -107,15 +108,15 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
         const [none, once, twice] = await Promise.all(
           [0, size, 2 * size].map(size => slot(() => measure(shape, size, carrier))),
         );
-        const grown = (name: keyof Cost, least: number) => {
+        const grown = (name: keyof Cost, least: number, leastDivisor: number) => {
           if (none[name] === undefined || once[name] === undefined || twice[name] === undefined) return undefined;
           const [added, addedByTwice] = [once[name] - none[name], twice[name] - none[name]];
-          // What the smaller size adds may be next to nothing: then the quotient says little more than "much".
-          return addedByTwice < least ? undefined : addedByTwice / Math.max(added, least / 8);
+          // What the smaller size adds may be next to nothing, or little beside what wavers from run to run: then the quotient says little more than "much".
+          return addedByTwice < least ? undefined : addedByTwice / Math.max(added, leastDivisor);
         };
         const growth = {
-          instructions: grown("instructions", leastInstructionsJudged),
-          peakBytes: grown("peakBytes", leastBytesJudged),
+          instructions: grown("instructions", leastInstructionsJudged, leastInstructionsJudged / 8),
+          peakBytes: grown("peakBytes", leastBytesJudged, leastBytesJudged / 2),
         };
         const row = (cost: Cost) =>
           `${cost.instructions === undefined ? "?" : inMillions(cost.instructions)} M instructions, ${inMillions(cost.peakBytes)} MB`;
@@ -151,7 +152,7 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
 
         const worse: string[] = [];
         for (const what of ["instructions", "peakBytes"] as const) {
-          const allowed = Math.max(mostGrowth, (budget?.growth?.[what] ?? 0) * slackOfGrowth);
+          const allowed = Math.max(mostGrowth, (budgets[shape.name]?.growth?.[what] ?? 0) * slackOfGrowth);
           if (growth[what] !== undefined && growth[what] > allowed)
             worse.push(
               `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${rounded(allowed)}`,

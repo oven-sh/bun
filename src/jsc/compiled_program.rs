@@ -158,6 +158,15 @@ pub fn is_compiled_module(path: &[u8]) -> bool {
 fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
     static PATHS: bun_threading::Guarded<BTreeSet<&'static [u8]>> =
         bun_threading::Guarded::new(BTreeSet::new());
+    // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
+    let with_backslashes: Vec<u8>;
+    let path = if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
+        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
+        with_backslashes = path.iter().map(to_backslash).collect();
+        &with_backslashes[..]
+    } else {
+        path
+    };
     if !Bun__isCompiledProgramFile(&bun_core::String::from_bytes(path)) {
         return None;
     }

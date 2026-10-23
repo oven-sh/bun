@@ -81,6 +81,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${decoratorExpressions} > repeated export around a decorator is rejected`]: checkerSpeaksFirst,
     [`${decoratorExpressions} > type arguments in decorator member expression are stripped`]:
       "TS1477: a property access follows an instantiation expression",
+    [`${decorators} > members stay where they are written > a read of the class name before its class decorators run is undefined`]:
+      "the read throws a ReferenceError, as it does natively: the name is not initialized yet",
   },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedPackages,

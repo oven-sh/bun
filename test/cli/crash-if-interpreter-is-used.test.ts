@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { run } from "../aot/harness/run";
 import { unsupported, withoutCoreDump } from "../aot/run-programs";
 
-test("BUN_JSC_crashIfInterpreterIsUsed names the code and crashes", async () => {
+test.skipIf(!!unsupported)("BUN_JSC_crashIfInterpreterIsUsed names the code and crashes", async () => {
   const { stderr, exitCode } = await run(withoutCoreDump([bunExe(), "-e", "console.log(1)"]), undefined, {
     ...bunEnv,
     BUN_JSC_crashIfInterpreterIsUsed: "1",

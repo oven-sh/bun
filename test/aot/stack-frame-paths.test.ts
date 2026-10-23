@@ -5,7 +5,7 @@
 import { expect } from "bun:test";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
 import { built, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
@@ -118,13 +118,17 @@ function project() {
   return { dir, app: join(realpathSync(String(dir)), "app"), [Symbol.dispose]: () => dir[Symbol.dispose]() };
 }
 
+// The root of the modules of an executable is B:\~BUN\root on Windows.
+const root = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
+const under = (...parts: string[]) => [root, ...parts].join(sep);
+const pattern = (text: string) => text.replace(/[\\$.]/g, "\\$&");
+
 // What plain Bun prints, with the build's folder replaced by the root of the executable's own files.
 const inExecutable = (text: string, app: string) =>
   text
-    .replaceAll(join(app, "..", "above.ts"), "/$bunfs/root/_.._/above.ts")
-    .replaceAll(app, "/$bunfs/root")
-    .replaceAll(JSON.stringify(app).slice(1, -1), "/$bunfs/root")
-    .replace(/\/\$bunfs\/root[^\s:)",]*/g, path => path.replace(/\\+/g, "/"));
+    .replaceAll(join(app, "..", "above.ts"), () => under("_.._", "above.ts"))
+    .replaceAll(app, () => root)
+    .replaceAll(JSON.stringify(app).slice(1, -1), () => JSON.stringify(root).slice(1, -1));
 
 function pathsBelow(executable: Buffer, folder: string) {
   const found: string[] = [];
@@ -146,9 +150,9 @@ describe.concurrent("the file of a stack frame", () => {
       stdout: inExecutable(plain.stdout, at.app),
       exitCode: 0,
     });
-    expect(compiled.stdout).toContain("typed: at viaTyped (/$bunfs/root/src/deep/typed.ts:4:");
+    expect(compiled.stdout).toContain(`typed: at viaTyped (${under("src", "deep", "typed.ts")}:4:`);
     expect(compiled.stdout).toContain(
-      "package: at viaPackage (/$bunfs/root/node_modules/frames-of-a-package/lib/index.js:1:",
+      `package: at viaPackage (${under("node_modules", "frames-of-a-package", "lib", "index.js")}:1:`,
     );
     // The executable holds no path of the build's folder.
     expect(pathsBelow(readFileSync(join(at.app, isWindows ? "../program.exe" : "../program")), at.app)).toEqual([]);
@@ -167,11 +171,13 @@ describe.concurrent("the file of a stack frame", () => {
       exitCode: 0,
     });
     expect(compiled.stdout.split("\n")).toEqual([
-      "the folder a lookup starts from (resolve): /$bunfs/root",
-      "the file two frames up (get-caller-file): /$bunfs/root/idioms.ts",
-      "the first file that is not a loader's (caller): /$bunfs/root/src/helper.cjs",
+      `the folder a lookup starts from (resolve): ${root}`,
+      `the file two frames up (get-caller-file): ${under("idioms.ts")}`,
+      `the first file that is not a loader's (caller): ${under("src", "helper.cjs")}`,
       expect.stringMatching(
-        /^the first frame that is not the package's own build \(msw\): \/\$bunfs\/root\/idioms\.ts:\d+:\d+$/,
+        new RegExp(
+          `^the first frame that is not the package's own build \\(msw\\): ${pattern(under("idioms.ts"))}:\\d+:\\d+$`,
+        ),
       ),
       "",
     ]);
@@ -183,12 +189,12 @@ describe.concurrent("the file of a stack frame", () => {
       await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "../program"], at.app, bunEnv),
     );
     const traced = await spawned([join(at.app, "../program"), "trace"], "/", bunEnv);
-    expect(traced.stdout).toMatch(/traced\n\s+at \/\$bunfs\/root\/main\.ts:\d+:\d+/);
+    expect(traced.stdout).toMatch(new RegExp(`traced\\n\\s+at ${pattern(under("main.ts"))}:\\d+:\\d+`));
     const thrown = await spawned([join(at.app, "../program"), "throw"], "/", bunEnv);
     expect(thrown.exitCode).toBe(1);
     expect(thrown.stderr).toContain("RangeError: thrown in typed.ts");
-    expect(thrown.stderr).toMatch(/at viaTyped \(\/\$bunfs\/root\/src\/deep\/typed\.ts:3:\d+\)/);
-    expect(thrown.stderr).toMatch(/at \/\$bunfs\/root\/main\.ts:\d+:\d+/);
+    expect(thrown.stderr).toMatch(new RegExp(`at viaTyped \\(${pattern(under("src", "deep", "typed.ts"))}:3:\\d+\\)`));
+    expect(thrown.stderr).toMatch(new RegExp(`at ${pattern(under("main.ts"))}:\\d+:\\d+`));
     // An executable opens no file to show its source, also where its sources lie beside it.
     expect(thrown.stderr).not.toContain("if (throws) throw");
     const besideTheSources = await spawned([join(at.app, "../program"), "throw"], at.app, bunEnv);
@@ -210,7 +216,7 @@ describe.concurrent("the file of a stack frame", () => {
       const compiled = await spawned([join(at.app, "../program")], "/", bunEnv);
       expect(compiled.exitCode).toBe(0);
       for (const line of compiled.stdout.split("\n").filter(line => / at /.test(line) && !line.includes("node:events")))
-        expect(line).toMatch(/\/\$bunfs\/root\/[A-Za-z0-9]+:\d+:\d+\)?$/);
+        expect(line).toMatch(new RegExp(`${pattern(under(""))}[A-Za-z0-9]+:\\d+:\\d+\\)?$`));
       expect(compiled.stdout).not.toContain("typed.ts");
     },
     120_000,

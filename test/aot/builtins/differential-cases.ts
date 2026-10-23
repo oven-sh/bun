@@ -316,11 +316,11 @@ function defineDescriptionTests(): void {
   });
 }
 
-/** `part`: 1 to `parts`. Each takes its share of the entries; the first has the tests that call none as well. */
+/** `part`: 1 to `parts`. Each takes its share of the entries, by their paths; the first has the tests that call none as well. */
 export function differential(part: number, parts: number): void {
   const checkedCalls = dump.entries
     .filter(entry => filter.test(entry.path))
-    .filter((_, index) => (isUpdate ? part === 1 : index % parts === part - 1))
+    .filter(entry => (isUpdate ? part === 1 : Number(BigInt(Bun.hash(entry.path)) % BigInt(parts)) === part - 1))
     .flatMap((entry): CheckedCall[] => {
       const overloads = entry.overloads.filter(isChecked);
       return [...new Set(overloads.map(({ mode }) => mode))].map(mode => ({

@@ -32,7 +32,7 @@ function whereItDeparts(aot: string, plain: string) {
   const theirs = plain.split("\n");
   const lines = aot.split("\n").filter((line, i) => line !== theirs[i]);
   // A long number is a time or an address. A case may cut a message in the middle of the path of the temporary folder.
-  return [...lines.slice(0, 4).map(line => line.replaceAll("program.exe", "program").slice(0, 160).replace(/\d{10,}/g, "<number>").replace(/Cannot load '\/[^']*/g, "Cannot load '<path>")), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
+  return [...lines.slice(0, 4).map(line => line.replaceAll("program.exe", "program").replace(/B:\\~BUN\\root[^\s"']*/g, path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/")).replaceAll("\\r\\n", "\\n").slice(0, 160).replace(/\d{10,}/g, "<number>").replace(/Cannot load '(?:\/|[A-Z]:\\)[^']*/g, "Cannot load '<path>")), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
 }
 
 /**

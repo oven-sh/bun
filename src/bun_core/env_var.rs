@@ -77,6 +77,8 @@ new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
 new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
+// A Bun without the ahead-of-time compiler takes `bun-aot` from beside itself or not at all: neither the cache nor the network.
+new!(pub BUN_AOT_DISABLE_DOWNLOAD: boolean, "BUN_AOT_DISABLE_DOWNLOAD", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });

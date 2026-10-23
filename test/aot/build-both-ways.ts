@@ -63,7 +63,9 @@ try {
   messages = ["Bun.build rejected: " + (error?.message ?? error), ...(error?.errors ?? []).map((inner: any) => String(inner?.message ?? inner))];
 }
 told.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-const lines = told.map(entry => entry[1].replaceAll(folder, "<folder>")).filter((line, index, all) => line !== all[index - 1]);
+// On Windows the folder has backslashes, which JSON.stringify doubles.
+const tidy = (line: string) => line.replaceAll(JSON.stringify(folder).slice(1, -1), "<folder>").replace(/<folder>[^"]*/g, path => path.replace(/\\\\+/g, "/"));
+const lines = told.map(entry => tidy(entry[1])).filter((line, index, all) => line !== all[index - 1]);
 console.log(JSON.stringify({ success, messages, outputs, told: lines }));
 `;
 }

@@ -3,7 +3,7 @@
 // reads for references. What was left there, the list that had filled the heap, stayed alive until the next throw, so every second
 // attempt ran out of memory almost at once.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
 
@@ -29,7 +29,8 @@ console.log("the first holds many:", counts[0] > 500);
 console.log("each holds nine tenths of the first:", counts.map(count => count >= counts[0] * 0.9).join(" "));
 `;
 
-test.skipIf(!!unsupported)(
+// A Bun built with AddressSanitizer keeps a block with newly dead cells out of allocation until the next collection.
+test.skipIf(!!unsupported || isASAN)(
   "behind a caught RangeError for lack of memory the heap holds as much as before",
   async () => {
     await slot(async () => {

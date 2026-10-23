@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { beforeAll, describe, eachRow, gap, test } from "./supported";
 
-// Text that a compiled program evaluates runs in the interpreter, which answers accesses to compiled objects and calls of compiled
-// functions from caches, allocates the objects of literals itself, and compares, joins and measures strings itself. What it does by
-// itself does not enter the run time, so the counters of the interpreter's slow paths do not grow with the number of turns. Beside
-// each such operation stands one that has to.
+// Text that a compiled program evaluates runs in the interpreter, which answers accesses to compiled objects from caches and
+// allocates the objects of literals itself. What it does by itself does not enter the run time, so the counters of the interpreter's
+// slow paths do not grow with the number of turns. Beside each such operation stands one that has to. Calls and operators have no
+// counter: the bodies with them are held to the other five.
 const program = `
   declare const process: { argv: string[] };
   declare const console: { log(...values: any[]): void };
@@ -46,8 +46,8 @@ const program = `
   console.log(typeof run(item, other, literal, hidden, removed, frozen, parsed, proxy, add, subtract, many, wide, tools, heir, Item, Base, "whole", Number(turns)));
 `;
 
-type Counter = "Read" | "Store" | "Presence" | "Call" | "Allocation" | "Branch" | "Operator";
-const counters: Counter[] = ["Read", "Store", "Presence", "Call", "Allocation", "Branch", "Operator"];
+type Counter = "Read" | "Store" | "Presence" | "Allocation" | "Branch";
+const counters: Counter[] = ["Read", "Store", "Presence", "Allocation", "Branch"];
 
 let directory: ReturnType<typeof tempDir>;
 let executable: string;
@@ -79,7 +79,7 @@ async function slowPathsPerTurn(body: string) {
   );
 }
 
-const none = { Read: 0, Store: 0, Presence: 0, Call: 0, Allocation: 0, Branch: 0, Operator: 0 };
+const none = { Read: 0, Store: 0, Presence: 0, Allocation: 0, Branch: 0 };
 
 beforeAll(async () => {
   directory = tempDir("aot-evaluated-text-uses-property-caches", { "main.ts": program });
@@ -193,17 +193,8 @@ describe.concurrent("a slow path in every turn", () => {
     ],
     ["in with a proxy", 'if ("whole" in proxy) t++;', { Presence: 1 }],
     ["a store that creates a field, after its deletion", "delete other.maybe; other.maybe = i;", { Store: 1 }],
-    ["constructions of two classes at one site", "if (new (i & 1 ? Item : Base)()) t++;", { Call: 1 }],
     ["a branch on a BigInt", "if (BigInt(i)) t++;", { Branch: 1 }],
-    ["strict equality of BigInts", "if (BigInt(i) === BigInt(i)) t++;", { Operator: 1 }],
-    [
-      "strict equality of two strings that were joined",
-      "if (key + item.text === key + item.text) t++;",
-      { Operator: 1 },
-    ],
-    ["a string joined with a number", "if (key + i) t++;", { Operator: 1 }],
-    ["typeof of a proxy", 'if (typeof proxy === "object") t++;', { Operator: 1 }],
-    ["the length of a proxy", "if (proxy.length) t++;", { Operator: 1, Read: 1 }],
+    ["the length of a proxy", "if (proxy.length) t++;", { Read: 1 }],
     [
       "array literals of ten elements and of fractions",
       "t += [i, i, i, i, i, i, i, i, i, i].length + [i + 0.5].length;",

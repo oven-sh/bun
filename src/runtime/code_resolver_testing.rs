@@ -646,6 +646,9 @@ pub(crate) fn compare_code_resolution(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
+    if !bun_aot::engine::has_compiler() {
+        return Ok(JSValue::UNDEFINED);
+    }
     let root_argument = frame.argument(0).to_utf8(global)?;
     let conditions_argument = frame.argument(1).to_utf8(global)?;
     let vm = global.bun_vm();
@@ -699,6 +702,9 @@ pub(crate) fn resolve_computed_specifier(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
+    if !bun_aot::engine::has_compiler() {
+        return Ok(JSValue::UNDEFINED);
+    }
     let importer_argument = frame.argument(0).to_utf8(global)?;
     let prefix_argument = frame.argument(1).to_utf8(global)?;
     let suffix_argument = frame.argument(2).to_utf8(global)?;
@@ -931,6 +937,9 @@ fn describe_failure(failure: &LoadFailure) -> GraphDescription {
 }
 
 pub(crate) fn describe_code_graph(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if !bun_aot::engine::has_compiler() {
+        return Ok(JSValue::UNDEFINED);
+    }
     let session = Session::new();
     let entry_points_argument = frame.argument(0).to_utf8(global)?;
     let conditions_argument = frame.argument(1).to_utf8(global)?;

@@ -15,7 +15,7 @@ async function outermost(source: Source): Promise<unknown> {
   return await middle(source);
 }
 async function rejection(run: () => Promise<unknown>): Promise<string> {
-  try { await run(); return "fulfilled"; } catch (error) { return JSON.stringify(((error as Error).stack ?? "").split("\n").slice(1).map(line => line.trim().replace(/\(.*[\/]/, "("))); }
+  try { await run(); return "fulfilled"; } catch (error) { return JSON.stringify(((error as Error).stack ?? "").split("\n").slice(1).map(line => line.trim().replace(/\(.*[\\\/]/, "("))); }
 }
 async function main(): Promise<void> {
   for (const source of ["node:fs", "Bun.file"] as const) {

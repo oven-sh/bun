@@ -7,7 +7,7 @@ import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
-const root = isWindows ? "B:/~BUN/root/" : "/$bunfs/root/";
+const root = isWindows ? "B:\\~BUN\\root\\" : "/$bunfs/root/";
 
 if (isASAN)
   console.error(

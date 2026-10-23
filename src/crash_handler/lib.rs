@@ -33,6 +33,8 @@ pub use error::{Error, Result};
 
 pub mod build_id;
 mod compiled_frames;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod fault_registers;
 pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
@@ -1193,6 +1195,11 @@ mod draft {
                         }
                     }
 
+                    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                    crate::fault_registers::write_to(&mut |text| {
+                        let _ = writer.write_all(text);
+                    });
+
                     if enable_ansi_colors_stderr() {
                         if writer
                             .write_all(&Output::pretty_fmt::<true>("<r>\n"))
@@ -1597,6 +1604,11 @@ mod draft {
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
         let context = fault_context_from_ucontext(ctx);
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        crate::fault_registers::remember(
+            ctx,
+            matches!(sig, libc::SIGSEGV | libc::SIGBUS).then_some(addr),
+        );
 
         if matches!(
             sig,

@@ -20,6 +20,8 @@ fn find_beside(this_executable: &[u8]) -> Option<Vec<u8>> {
 
 fn find_or_fetch() -> Vec<u8> {
     let target = CompileTarget::with_compiler();
+    // The path of the cache is made absolute against the working directory, which no command has asked for this early.
+    let _ = bun_resolver::fs::FileSystem::init(None);
     let mut env = bun_dotenv::Loader::init();
     let _ = env.load_process();
     match target_executable(&target, &mut env, None) {
@@ -44,7 +46,16 @@ pub(crate) fn run_in_bun_with_compiler() {
         return;
     };
     let this_executable = this_executable.as_bytes();
-    let path = find_beside(this_executable).unwrap_or_else(find_or_fetch);
+    let path = match find_beside(this_executable) {
+        Some(path) => path,
+        None if bun_core::env_var::BUN_AOT_DISABLE_DOWNLOAD
+            .get()
+            .unwrap_or(false) =>
+        {
+            return;
+        }
+        None => find_or_fetch(),
+    };
     if path == this_executable {
         return;
     }

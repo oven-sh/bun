@@ -6,7 +6,7 @@ import { describe, test } from "./supported";
 // `module.children` lists every CommonJS module that the module has required, also one that another module had loaded before.
 
 const files = {
-  "lib/names.js": `exports.names = module => module.children.map(child => child.id.split("/").pop()).join();`,
+  "lib/names.js": `exports.names = module => module.children.map(child => child.id.split(/[\\\\/]/).pop()).join();`,
   "lib/shared.js": `exports.loads = globalThis.loads = (globalThis.loads || 0) + 1;`,
   "lib/first.js": `const { names } = require("./names.js");
 exports.shared = require("./shared.js");

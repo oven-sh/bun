@@ -1,6 +1,6 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GeneratorError } from "../../../src/codegen/builtins/declarations";
@@ -90,11 +90,17 @@ if (process.env.AOT_BUILTINS_UPDATE) {
     // The engine defines these on the global object only under an option or in a build for its own developers.
     const isForDevelopers = (holder: string, name: string) =>
       holder === "globalThis" && (name === "$vm" || name === "Loader" || name === "gc" || name.startsWith("__"));
+    // Windows has no users and groups by number.
+    const isForPosix = (holder: string, name: string) =>
+      isWindows && holder === "process" && /^(?:[gs]ete?[ug]id|[gs]etgroups|initgroups)$/.test(name);
     const failures = collectFailures((line, seen) =>
       line.properties
         .filter(
           ({ name, isCreatedInSomeRuns }) =>
-            !seen.has(name) && !isCreatedInSomeRuns && !isForDevelopers(line.holder, name),
+            !seen.has(name) &&
+            !isCreatedInSomeRuns &&
+            !isForDevelopers(line.holder, name) &&
+            !isForPosix(line.holder, name),
         )
         .map(({ name }) => `${line.holder}.${name}: is missing`),
     );

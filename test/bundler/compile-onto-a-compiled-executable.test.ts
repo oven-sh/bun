@@ -9,8 +9,7 @@ async function run(cmd: string[], cwd: string) {
 }
 
 // Bun.build({ compile }) inside a compiled executable takes that executable as its template, and so may --compile-executable-path.
-// TODO: on Windows a template that has a section .bun already is refused.
-test.todoIf(isWindows)("a compiled executable is the template of a program that is smaller than its own", async () => {
+test("a compiled executable is the template of a program that is smaller than its own", async () => {
   using dir = tempDir("compile-onto-a-compiled-executable", {
     "large.ts": `console.log("${Buffer.alloc(200_000, "x").toString()}".length);`,
     "small.ts": `console.log("small");`,
@@ -24,7 +23,7 @@ test.todoIf(isWindows)("a compiled executable is the template of a program that 
       "build",
       "--compile",
       "--compile-executable-path",
-      join(folder, "large"),
+      join(folder, isWindows ? "large.exe" : "large"),
       "small.ts",
       "--outfile",
       "small",

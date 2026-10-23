@@ -894,6 +894,7 @@ const aotTests = [
   "bundler/compile-trim",
   "bundler/trim-runtime-icu/",
   "cli/aot-",
+  "internal/trim/features",
 ];
 
 const aotSources = [

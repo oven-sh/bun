@@ -160,7 +160,10 @@ fn find_file(
     if found.is_some() {
         return found;
     }
-    let name_start = bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
+    let name_start = path
+        .iter()
+        .rposition(|&byte| normalize_separator(byte) == b'/')
+        .map_or(0, |separator| separator + 1);
     let dot = name_start + bun_core::strings::last_index_of_char(&path[name_start..], b'.')?;
     let (stem, extension) = path.split_at(dot);
     let mut rewritten = (search.rewritten_extensions)(extension, path).iter();
@@ -173,12 +176,17 @@ fn find_file_or_index(
     search: &ExtensionSearch<'_>,
     lookup: ModuleLookup,
 ) -> Option<&'static [u8]> {
+    // A program that runs in place has the paths of the host.
+    let index: &[u8] = match cfg!(windows) && bun_core::strings::contains_char(path, b'\\') {
+        true => b"\\index",
+        false => b"/index",
+    };
     find_file(path, search, lookup)
-        .or_else(|| find_with_extensions(&[path, b"/index"].concat(), search, lookup))
+        .or_else(|| find_with_extensions(&[path, index].concat(), search, lookup))
 }
 
 #[inline]
-fn normalize_separator(byte: u8) -> u8 {
+pub(crate) fn normalize_separator(byte: u8) -> u8 {
     if cfg!(windows) && byte == b'\\' {
         b'/'
     } else {
@@ -262,7 +270,7 @@ impl CompiledProgram {
     pub fn entry_point_by_module_path(&self, path: &[u8]) -> Option<&CompiledEntryPoint> {
         self.entry_points
             .iter()
-            .find(|entry_point| entry_point.module_path == path)
+            .find(|entry_point| compare_source_paths(entry_point.module_path, path).is_eq())
     }
 
     /// The public path of the compiled module that `specifier` names when imported from `source_dir`.

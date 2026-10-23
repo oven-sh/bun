@@ -23,7 +23,7 @@ const later = make(40);
 let sum = 0;
 try { for (;;) sum += read(later); } catch (error) {
   log.push(error.constructor.name + " " + error.message + " " + sum);
-  log.push(error.stack.split("\n").slice(1, 4).map(line => line.trim().replace(/\(.*\)|\/.*/, "").trim()).join(" < "));
+  log.push(error.stack.split("\n").slice(1, 4).map(line => line.trim().replace(/\(.*\)|(?:[A-Z]:)?[\\\/].*/, "").trim()).join(" < "));
 }
 log.push(readGuarded(later), String(finished));
 const thrower = Object.create(null);

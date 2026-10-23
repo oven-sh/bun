@@ -43,6 +43,13 @@ impl Error {
     }
 }
 
+/// Already logged at the macro call.
+impl From<bun_ast::StringTooLarge> for Error {
+    fn from(_: bun_ast::StringTooLarge) -> Self {
+        Error::MacroFailed
+    }
+}
+
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()

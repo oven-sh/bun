@@ -529,6 +529,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let mut buf = core::mem::take(&mut self.scratch_str);
         buf.clear();
         self.decode_escapes(body, &mut buf)?;
+        E::Str::check_len(
+            buf.len(),
+            "JSON string",
+            self.log,
+            Some(self.source),
+            usize2loc(self.token_start),
+        )?;
         let owned = self.alloc_owned_str(&buf);
         self.scratch_str = buf;
         Ok(E::EString::init(owned.slice()))

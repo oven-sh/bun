@@ -1843,6 +1843,69 @@ describe.concurrent("importing .md modules", () => {
     expect(stderr).toContain("Missing 'default' export");
     expect(exitCode).not.toBe(0);
   });
+
+  // The rendered HTML is one AST string, and the length of an AST string is a `u32`. HTML of more than 4 GiB
+  // was cut to its length mod 2^32, and a 2.8 MB file renders to that much: a row of a 128-column table is 2
+  // bytes of Markdown and 3 KB of HTML. The limit also follows the process string limit, which
+  // BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT lowers, so this child reaches it with 64 KiB.
+  test("rendered HTML is the module at the string limit and an error past it", async () => {
+    const LIMIT = 64 * 1024;
+    // A paragraph renders as "<p>" + text + "</p>\n".
+    const paragraph = (text: string) => `<p>${text}</p>\n`;
+    const atLimit = Buffer.alloc(LIMIT - paragraph("").length, "a").toString();
+    // 814 bytes of Markdown, 68 KB of HTML.
+    const table = `|${Buffer.alloc(128 * 2, "a|")}\n|${Buffer.alloc(128 * 4, ":-:|")}\n${Buffer.alloc(21 * 2, "a\n")}`;
+    using dir = tempDir("md-import-limit", {
+      "at-limit.md": atLimit + "\n",
+      "past-limit.md": atLimit + "a\n",
+      "table.md": table,
+      "entry.ts": `
+        import path from "node:path";
+        const summarize = (html: string) => ({ bytes: Buffer.byteLength(html), crc32: Bun.hash.crc32(html) });
+        const failure = (e: any) => ({ error: e.message, name: e.name, file: path.basename(e.position?.file ?? "") });
+        const results: Record<string, unknown> = {};
+        for (const name of ["at-limit", "past-limit", "table"]) {
+          let imported;
+          try {
+            imported = summarize((await import("./" + name + ".md")).default);
+          } catch (e) {
+            imported = failure(e);
+          }
+          const build = await Bun.build({ entrypoints: ["./" + name + ".md"], outdir: "./built/" + name, throw: false });
+          const bundled = build.success
+            ? summarize((await import(build.outputs[0].path)).default)
+            : build.logs.map(failure);
+          results[name] = { imported, bundled };
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT) },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const html = paragraph(atLimit);
+    const inlined = { bytes: html.length, crc32: Bun.hash.crc32(html) };
+    const tooLarge = (file: string, bytes: number) => ({
+      error: `Rendered Markdown is too large (${bytes} bytes, 4 GiB maximum)`,
+      name: "BuildMessage",
+      file,
+    });
+    const pastLimit = tooLarge("past-limit.md", LIMIT + 1);
+    const tableTooLarge = tooLarge("table.md", Markdown.html(table).length);
+    expect({ results: JSON.parse(stdout || "null"), stderr }).toEqual({
+      results: {
+        "at-limit": { imported: inlined, bundled: inlined },
+        "past-limit": { imported: pastLimit, bundled: [pastLimit] },
+        "table": { imported: tableTooLarge, bundled: [tableTooLarge] },
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("empty list items and paragraphs", () => {

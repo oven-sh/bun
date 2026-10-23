@@ -512,6 +512,14 @@ fn message_with_type_and_level_(
         }
     }
 
+    if message_type == MessageType::Dir {
+        // Cold: every other console call then pays one compare for the two `Dir` tests.
+        bun_core::hint::cold();
+        if len >= 1 && is_quoted_when_inspected(vals_slice[0]) {
+            print_options.quote_strings = true;
+        }
+    }
+
     if message_type == MessageType::Dir && len >= 2 {
         print_length = 1;
         let opts = vals_slice[1];
@@ -560,6 +568,11 @@ fn message_with_type_and_level_(
     }
 
     Ok(())
+}
+
+/// Not `is_string()`: quoting a String object drops its `[String: ...]` (#38171).
+fn is_quoted_when_inspected(value: JSValue) -> bool {
+    value.is_string_literal()
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2532,11 +2545,8 @@ pub mod formatter {
                                     // > representation of an object judged to be maximally useful
                                     // > and informative.
                                 }
-                                self.format::<ENABLE_ANSI_COLORS>(
-                                    Tag::get(next_value, global)?,
-                                    writer_,
-                                    next_value,
-                                    global,
+                                self.print_inspected::<ENABLE_ANSI_COLORS>(
+                                    writer_, next_value, global,
                                 )?;
                                 writer = WrappedWriter {
                                     ctx: writer_,
@@ -2570,6 +2580,22 @@ pub mod formatter {
                 writer.write_all(slice);
             }
             Ok(())
+        }
+
+        /// `%o` and `%O`. Out of line: the other specifiers do not pay for the restore guard.
+        #[inline(never)]
+        fn print_inspected<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            global: &'a JSGlobalObject,
+        ) -> JsResult<()> {
+            let prev_quote_strings = self.quote_strings;
+            if is_quoted_when_inspected(value) {
+                self.quote_strings = true;
+            }
+            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+            self.format::<C>(Tag::get(value, global)?, writer_, value, global)
         }
     }
 

@@ -519,7 +519,7 @@ Use `--all` to show every error. The one-line format always shows every error.
 
 ### AI agents
 
-When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, `bun check` prints each error as a tagged block with the source lines and no colors.
+When Bun detects an AI agent (see [AI Agent Integration](/test#ai-agent-integration) for the environment variables), `bun check` prints each error as a tagged block with the source lines and no colors.
 
 ```txt
 <error file="src/index.ts" line="3" column="25" code="TS2322">

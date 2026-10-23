@@ -42,7 +42,9 @@ pub use kind::boolean::string_is_truthy;
 // Declarations
 // ──────────────────────────────────────────────────────────────────────────────
 
-new!(pub AGENT: string, "AGENT", {});
+new!(pub AGENT: boolean, "AGENT", {});
+// Agents set this to their name (`crush`, `claude-code_<version>_agent`).
+new!(pub AI_AGENT: boolean, "AI_AGENT", {});
 new!(pub ANDROID_ROOT: string, "ANDROID_ROOT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
 // A compiled executable decodes ALL of its embedded bytecode at exit and writes one digest line per module here: for
@@ -151,7 +153,10 @@ new!(pub CI: boolean, "CI", {});
 new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
 new!(pub CI_JOB_URL: string, "CI_JOB_URL", {});
 new!(pub CLAUDE_CODE_AGENT_RULE_DISABLED: boolean, "CLAUDE_CODE_AGENT_RULE_DISABLED", { default: false });
-new!(pub CLAUDECODE: boolean, "CLAUDECODE", { default: false });
+new!(pub CLAUDECODE: boolean, "CLAUDECODE", {});
+// Codex exports both to the shells it spawns.
+new!(pub CODEX_CI: boolean, "CODEX_CI", {});
+new!(pub CODEX_THREAD_ID: boolean, "CODEX_THREAD_ID", {});
 new!(pub COLORTERM: string, "COLORTERM", {});
 new!(pub COLUMNS: unsigned, "COLUMNS", {});
 new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { default: false });
@@ -162,6 +167,8 @@ platform_specific_new!(pub DYLD_ROOT_PATH: string, posix = "DYLD_ROOT_PATH", win
 // indeed, an enum. The 80-20 is to make it an unsigned value (which also works well).
 new!(pub FORCE_COLOR: unsigned, "FORCE_COLOR", { deser: { error_handling: TruthyCast, empty_string_as: Value(1) } });
 platform_specific_new!(pub fpath: string, posix = "fpath", windows = None, {});
+// Gemini CLI exports `GEMINI_CLI=1` to the shells it spawns.
+new!(pub GEMINI_CLI: boolean, "GEMINI_CLI", {});
 new!(pub GIT_SHA: string, "GIT_SHA", {});
 new!(pub GITHUB_ACTIONS: boolean, "GITHUB_ACTIONS", { default: false });
 new!(pub GITHUB_REPOSITORY: string, "GITHUB_REPOSITORY", {});
@@ -205,7 +212,7 @@ new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
 new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
 platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
-new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
+new!(pub REPL_ID: boolean, "REPL_ID", {});
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});

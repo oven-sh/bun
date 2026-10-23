@@ -4648,10 +4648,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 // take ownership of the refs so ~GlobalObject on the old one doesn't drop
 // them — the envs stay valid for late finalizers and for the process-exit
 // cleanup hooks in rare_data.cleanup_hooks (which hold raw NapiEnv* in .ctx).
-//
-// The envs' napi_refs are VM-level Strongs into the old realm, the same kind
-// of root as the plugin and registry Strongs released below. Each env drops
-// them here (NapiEnv::releaseRealmRoots).
+// The envs' napi_refs are VM-level Strongs into the old realm, released like the registry Strongs below.
 void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 {
     if (oldGlobal->m_napiEnvs.isEmpty())

@@ -375,8 +375,7 @@ public:
     }
     void unlinkRef(uint32_t slot);
 
-    // `bun test --isolate` swapped this env's realm out: drop every strong root into it.
-    // Deferred to the next swap while this env's async work is on the thread pool.
+    // Drop every strong root into the swapped-out realm. Waits for the next swap while async work is on the pool.
     void releaseRealmRoots();
 
     /// Will abort the process if a duplicate entry would be added.
@@ -902,8 +901,7 @@ public:
         }
     }
 
-    // Drop the strong root into a finished realm. Like Node's Reference with a reset persistent
-    // handle: ref() and unref() report 0 and never root again, the weak handle and count stay.
+    // Node's Reference with a reset persistent handle: ref() and unref() report 0 and never root again.
     void releaseRealm()
     {
         if (m_released || m_isEternal || refCount == 0) {

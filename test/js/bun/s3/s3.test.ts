@@ -2126,21 +2126,25 @@ describe("s3 upload stream body error", () => {
 describe.concurrent("s3 writer().end(error)", () => {
   const partSize = 5 * 1024 * 1024;
 
-  // A local S3 that records the name of every request it gets. The answer to
-  // the first UploadPart is held until the next request arrives, so that part
-  // is still in flight when the test ends the writer.
-  function mockS3() {
+  // A local S3 that records the name of every request it gets. With `hold`,
+  // it does not answer a request of that kind until the test calls
+  // `release()`, so that request is still in flight when the test ends the
+  // writer.
+  function mockS3(hold?: "CreateMultipartUpload" | "UploadPart") {
     const requests: string[] = [];
-    const partReceived = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
     const aborted = Promise.withResolvers<void>();
-    let releaseHeldPart: (() => void) | undefined;
     const server = Bun.serve({
       port: 0,
       async fetch(req) {
-        releaseHeldPart?.();
         const { searchParams } = new URL(req.url);
         if (req.method === "POST" && searchParams.has("uploads")) {
           requests.push("CreateMultipartUpload");
+          if (hold === "CreateMultipartUpload") {
+            held.resolve();
+            await released.promise;
+          }
           return new Response(
             "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
             { headers: { "Content-Type": "application/xml" } },
@@ -2149,11 +2153,9 @@ describe.concurrent("s3 writer().end(error)", () => {
         if (req.method === "PUT" && searchParams.has("partNumber")) {
           const { byteLength } = await req.arrayBuffer();
           requests.push(`UploadPart ${byteLength}`);
-          if (searchParams.get("partNumber") === "1") {
-            const held = Promise.withResolvers<void>();
-            releaseHeldPart = held.resolve;
-            partReceived.resolve();
-            await held.promise;
+          if (hold === "UploadPart") {
+            held.resolve();
+            await released.promise;
           }
           return new Response(undefined, { headers: { ETag: '"etag"' } });
         }
@@ -2182,11 +2184,11 @@ describe.concurrent("s3 writer().end(error)", () => {
       bucket: "my_bucket",
       endpoint: server.url.href,
     });
-    return { server, client, requests, partReceived: partReceived.promise, aborted: aborted.promise };
+    return { server, client, requests, held: held.promise, release: released.resolve, aborted: aborted.promise };
   }
 
   it("aborts a multipart upload that is in progress", async () => {
-    const { server, client, requests, partReceived, aborted } = mockS3();
+    const { server, client, requests, held, release, aborted } = mockS3("UploadPart");
     using _ = server;
 
     const writer = client.file("obj").writer({ partSize });
@@ -2194,16 +2196,36 @@ describe.concurrent("s3 writer().end(error)", () => {
     writer.write("tail");
     // Pending for as long as part 1 is in the upload queue.
     const pendingFlush = writer.flush();
-    await partReceived;
+    await held;
 
     const error = new Error("the source failed");
+    const ended = writer.end(error);
+    release();
     // Both reject with the caller's error, not with a generic S3 error.
-    const [ended, flushed] = await Promise.allSettled([writer.end(error), pendingFlush]);
-    expect(ended).toEqual({ status: "rejected", reason: error });
-    expect(flushed).toEqual({ status: "rejected", reason: error });
+    expect(await Promise.allSettled([ended, pendingFlush])).toEqual([
+      { status: "rejected", reason: error },
+      { status: "rejected", reason: error },
+    ]);
     await aborted;
     // Neither the buffered tail nor a CompleteMultipartUpload goes out.
     expect(requests).toEqual(["CreateMultipartUpload", `UploadPart ${partSize}`, "AbortMultipartUpload"]);
+  });
+
+  it("aborts a multipart upload whose CreateMultipartUpload is still in flight", async () => {
+    const { server, client, requests, held, release, aborted } = mockS3("CreateMultipartUpload");
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize });
+    writer.write(Buffer.alloc(partSize, "a"));
+    await held;
+
+    const error = new Error("the source failed");
+    const ended = writer.end(error);
+    release();
+    await expect(ended).rejects.toBe(error);
+    await aborted;
+    // The part does not go out. The upload that S3 created is aborted when its id arrives.
+    expect(requests).toEqual(["CreateMultipartUpload", "AbortMultipartUpload"]);
   });
 
   // `instanceof Error`, but not a native Error object. The AxiosError of axios 1.6 is built this way.

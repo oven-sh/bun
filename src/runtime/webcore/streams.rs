@@ -2592,17 +2592,16 @@ impl NetworkSink {
     /// `Strong` to it that nothing clears would keep both alive.
     ///
     /// Raw `*mut Self` for the same reason as `fail_from_js_pump`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_with_error_from_js(
         this: *mut Self,
         cx: &bun_jsc::JsThread<'_>,
         err: JSValue,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // SAFETY: `this` is the live sink the JS wrapper holds; `end_from_js`
-        // does not re-enter it.
+        // SAFETY: `this` is the live sink the JS wrapper holds.
         if unsafe { (*this).ended } {
             // The outcome was decided by the earlier `end()` or failure.
+            // SAFETY: as above; `end_from_js` does not re-enter the sink.
             return match unsafe { (*this).end_from_js(cx) } {
                 bun_sys::Result::Ok(value) => Ok(value),
                 bun_sys::Result::Err(e) => Err(e.throw(global)),

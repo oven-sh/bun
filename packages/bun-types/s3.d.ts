@@ -93,9 +93,10 @@ declare module "bun" {
      * `end()` completes the upload as it does without an argument. With an
      * error, the upload is not completed, so the object under the key is not
      * created or replaced. An object that is already under the key stays as it
-     * is. The parts that wait in the queue are cancelled, and
-     * `AbortMultipartUpload` is sent if S3 has already returned an upload id.
-     * The returned Promise and a pending `flush()` reject with `error`. These
+     * is. The parts that wait in the queue are cancelled. If a multipart upload
+     * has started, `AbortMultipartUpload` is sent for it. If S3 has not yet
+     * returned the upload id, the abort is sent when the id arrives. The
+     * returned Promise and a pending `flush()` reject with `error`. These
      * rejections count as handled, so you do not have to await them. After an
      * earlier `end()`, or after the upload has failed, the argument has no
      * effect.

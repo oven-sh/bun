@@ -844,7 +844,7 @@ pub(crate) fn run_scripts_with_filter(
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(
+    let root_dir_info = RunCommand::configure_env_for_run(
         &mut *ctx,
         &mut this_transpiler,
         None,
@@ -855,6 +855,7 @@ pub(crate) fn run_scripts_with_filter(
     )?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
+    RunCommand::check_bun_version(root_dir_info.enclosing_package_json, ctx.debug.silent);
 
     let selected = FilterArg::select_packages(
         &*ctx,

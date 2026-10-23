@@ -79,6 +79,10 @@ pub struct Options {
 
     pub(crate) lockfile_only: bool,
 
+    /// `--ignore-engines`: no warning when the running bun does not satisfy the version that
+    /// package.json declares.
+    pub(crate) ignore_engines: bool,
+
     /// Set by `init_with_runtime`: no install phase, so only a resolve downloads a package.
     pub(crate) runtime_auto_install: bool,
 
@@ -172,6 +176,7 @@ impl Default for Options {
             ca_file_name: b"",
             save_text_lockfile: None,
             lockfile_only: false,
+            ignore_engines: false,
             runtime_auto_install: false,
             git_tag_version: true,
             allow_same_version: false,
@@ -1100,6 +1105,8 @@ impl Options {
         if cli.ignore_scripts {
             self.do_.set(Do::RUN_SCRIPTS, false);
         }
+
+        self.ignore_engines = cli.ignore_engines;
 
         if cli.trusted {
             self.do_.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, true);

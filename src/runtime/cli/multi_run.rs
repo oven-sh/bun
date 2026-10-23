@@ -1051,6 +1051,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         };
 
         let package_json = (*root_dir_info).enclosing_package_json;
+        RunCommand::check_bun_version(package_json, ctx.debug.silent);
         let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
 
         for raw_name in &script_names {

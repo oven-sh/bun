@@ -103,6 +103,132 @@ describe.concurrent.skipIf(!isLinux)("a working directory close to PATH_MAX", ()
   });
 });
 
+// The version that `packageManager: "bun@<range>"` or `engines.bun` declares is checked against the running bun
+// before a script runs. `Bun.version` has a `-debug` suffix in a debug build, which the check leaves out.
+describe.concurrent("bun version check", () => {
+  const running = Bun.version.replace(/-.*$/, "");
+  // Paths are compared with forward slashes.
+  const warning = (dir: string, range = "0.0.1") =>
+    `warn: ${join(dir, "package.json").replaceAll("\\", "/")} expects bun@${range}, running ${running}\n`;
+  const normalize = (stderr: string) => stderr.replaceAll("\\", "/");
+  const count = (stderr: string) => stderr.split(" expects bun@").length - 1;
+  // `--parallel` and `--sequential` prefix each line with the script name.
+  const output = (stdout: string) => stdout.replaceAll("hi | ", "");
+  const scripts = { prehi: "echo pre", hi: "echo hi", posthi: "echo post" };
+  const project = (fields: Record<string, unknown>, files: Record<string, string> = {}) =>
+    tempDir("run-bun-version", {
+      "package.json": JSON.stringify({ name: "foo", scripts, ...fields }),
+      "file.ts": "console.log('file')",
+      ...files,
+    });
+  async function run(cwd: string, cmd: string[], extraEnv: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd,
+      env: { ...bunEnv, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    [["run", "hi"], { packageManager: "bun@0.0.1" }],
+    [["hi"], { packageManager: "bun@0.0.1" }],
+    [["run", "--parallel", "hi"], { packageManager: "bun@0.0.1" }],
+    [["run", "--sequential", "hi"], { packageManager: "bun@0.0.1" }],
+    [["run", "hi"], { engines: { bun: "0.0.1" } }],
+    [["run", "hi"], { packageManager: "npm@10", engines: { bun: "0.0.1" } }],
+    [["run", "hi"], { packageManager: "bun@0.0.1+sha256.abc", engines: { bun: ">=1.0.0" } }],
+  ])("bun %j with %j warns once, before the scripts", async (cmd, fields) => {
+    using dir = project(fields);
+    const { stdout, stderr, exitCode } = await run(String(dir), cmd);
+    expect(normalize(stderr)).toStartWith(warning(String(dir)));
+    expect(count(stderr)).toBe(1);
+    expect(output(stdout)).toBe("pre\nhi\npost\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    [["run", "hi"], { packageManager: `bun@${running}` }, "pre\nhi\npost\n", {}],
+    [["run", "hi"], { packageManager: "bun@>=1.0.0" }, "pre\nhi\npost\n", {}],
+    [["run", "hi"], { packageManager: "bun@latest" }, "pre\nhi\npost\n", {}],
+    [["run", "hi"], { packageManager: "npm@10" }, "pre\nhi\npost\n", {}],
+    [["run", "hi"], { engines: { node: "0.0.1" } }, "pre\nhi\npost\n", {}],
+    [["run", "hi"], { engines: { bun: "bun@0.0.1" } }, "pre\nhi\npost\n", {}],
+    [["run", "--silent", "hi"], { packageManager: "bun@0.0.1" }, "pre\nhi\npost\n", {}],
+    [["run", "--parallel", "--silent", "hi"], { packageManager: "bun@0.0.1" }, "pre\nhi\npost\n", {}],
+    [["run", "hi"], { packageManager: "bun@0.0.1" }, "pre\nhi\npost\n", { BUN_CONFIG_IGNORE_ENGINES: "1" }],
+    [["run", "file.ts"], { packageManager: "bun@0.0.1" }, "file\n", {}],
+    [["file.ts"], { packageManager: "bun@0.0.1" }, "file\n", {}],
+  ])("bun %j with %j is silent", async (cmd, fields, expected, extraEnv) => {
+    using dir = project(fields);
+    const { stdout, stderr, exitCode } = await run(String(dir), cmd, extraEnv);
+    expect(count(stderr)).toBe(0);
+    expect(output(stdout)).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bunfig `run.silent` silences it", async () => {
+    using dir = project({ packageManager: "bun@0.0.1" }, { "bunfig.toml": "[run]\nsilent = true\n" });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "hi"]);
+    expect(count(stderr)).toBe(0);
+    expect(stdout).toBe("pre\nhi\npost\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Only a package.json script is checked, not an executable from node_modules/.bin.
+  test.skipIf(isWindows).each([[["run", "tool"]], [["tool"]]])("bun %j is silent", async cmd => {
+    using dir = project({ packageManager: "bun@0.0.1" }, { "node_modules/.bin/tool": "#!/bin/sh\necho tool\n" });
+    chmodSync(join(String(dir), "node_modules", ".bin", "tool"), 0o755);
+    const { stdout, stderr, exitCode } = await run(String(dir), cmd);
+    expect(count(stderr)).toBe(0);
+    expect(stdout).toBe("tool\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A script runs with the package.json that holds it, so that is the one checked.
+  describe("in a workspace", () => {
+    const workspace = () =>
+      tempDir("run-bun-version-workspace", {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          packageManager: "bun@0.0.1",
+          scripts,
+        }),
+        "packages/a/package.json": JSON.stringify({ name: "a", scripts }),
+        "packages/b/package.json": JSON.stringify({ name: "b", packageManager: "bun@0.0.2", scripts }),
+      });
+
+    test.each([
+      [["run", "hi"], ".", "0.0.1"],
+      [["run", "hi"], "packages/b", "0.0.2"],
+      [["run", "--filter", "*", "hi"], ".", "0.0.1"],
+      [["run", "--workspaces", "hi"], ".", "0.0.1"],
+    ])("bun %j from %s warns once with %s", async (cmd, cwd, range) => {
+      using dir = workspace();
+      const { stderr, exitCode } = await run(join(String(dir), cwd), cmd);
+      expect(normalize(stderr)).toContain(warning(join(String(dir), cwd), range));
+      expect(count(stderr)).toBe(1);
+      expect(exitCode).toBe(0);
+    });
+
+    // The package.json that encloses the working directory is the one checked, also with `--filter`.
+    test.each([[["run", "hi"]], [["run", "--filter", "b", "hi"]]])(
+      "bun %j is silent in a member that declares nothing",
+      async cmd => {
+        using dir = workspace();
+        const { stdout, stderr, exitCode } = await run(join(String(dir), "packages/a"), cmd);
+        expect(count(stderr)).toBe(0);
+        expect(stdout).toContain("hi\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+});
+
 test.if(isWindows)("[windows] A file in drive root runs", async () => {
   const path = "C:\\root-file" + Math.random().toString().slice(2) + ".js";
   try {

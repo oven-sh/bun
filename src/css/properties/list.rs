@@ -305,7 +305,7 @@ impl ListStyle {
         let mut list_style_type: Option<ListStyleType> = None;
         let mut nones: u8 = 0;
 
-        loop {
+        while !input.is_exhausted() {
             // `none` is ambiguous - both list-style-image and list-style-type support it.
             if input
                 .try_parse(|i| i.expect_ident_matching(b"none"))
@@ -318,13 +318,6 @@ impl ListStyle {
                 continue;
             }
 
-            if image.is_none() {
-                if let Ok(value) = input.try_parse(Image::parse) {
-                    image = Some(value);
-                    continue;
-                }
-            }
-
             if position.is_none() {
                 if let Ok(value) = input.try_parse(ListStylePosition::parse) {
                     position = Some(value);
@@ -335,6 +328,15 @@ impl ListStyle {
             if list_style_type.is_none() {
                 if let Ok(value) = input.try_parse(ListStyleType::parse) {
                     list_style_type = Some(value);
+                    continue;
+                }
+            }
+
+            // Last, because most values are idents. No image starts with a token that a
+            // position or a type starts with, so the order does not change the result.
+            if image.is_none() {
+                if let Ok(value) = input.try_parse(Image::parse) {
+                    image = Some(value);
                     continue;
                 }
             }

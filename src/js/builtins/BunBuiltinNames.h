@@ -51,6 +51,7 @@ using namespace JSC;
     macro(bunNativePtr) \
     macro(bytes) \
     macro(cancel) \
+    macro(capturedStackFrames) \
     macro(checks) \
     macro(close) \
     macro(cmd) \

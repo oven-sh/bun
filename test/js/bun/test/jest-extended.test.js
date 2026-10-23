@@ -610,6 +610,12 @@ describe("jest-extended", () => {
     expect("abc abc abc").toIncludeRepeated("abc", 3);
     expect("abc abc abc").not.toIncludeRepeated("abc", 4);
 
+    // A negative count never matches
+    expect("abc").not.toIncludeRepeated("x", -1);
+    expect("abc").not.toIncludeRepeated("a", -1);
+    expect("").not.toIncludeRepeated("a", -2);
+    expect("abc").not.toIncludeRepeated("x", -(2 ** 32));
+
     // Emojis/Unicode
     expect("😘🥳😤😘🥳").toIncludeRepeated("😘", 2);
     expect("😘🥳😤😘🥳").toIncludeRepeated("🥳", 2);
@@ -634,7 +640,10 @@ describe("jest-extended", () => {
     expect(() => tstErr(1.23)).toThrow();
     expect(() => tstErr(Infinity)).toThrow();
     expect(() => tstErr(NaN)).toThrow();
-    expect(() => tstErr(-0)).toThrow(); // -0 and below (-1, -2, ...)
+    expect(() => tstErr(-0)).toThrow();
+    // -1 and -2 fail the assertion. They are not argument errors.
+    expect(() => tstErr(-1)).toThrow(/Expected (string )?to include/);
+    expect(() => tstErr(-2)).toThrow(/Expected (string )?to include/);
     expect(() => tstErr(null)).toThrow();
     expect(() => tstErr(undefined)).toThrow();
     expect(() => tstErr({})).toThrow();

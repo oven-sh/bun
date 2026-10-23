@@ -7590,6 +7590,8 @@ declare module "bun" {
       ref(): void;
       unref(): void;
       close(): void;
+      /** Alias for {@link close}. Enables `using socket = await Bun.udpSocket(...)`. */
+      [Symbol.dispose](): void;
       /**
        * Enable or disable the SO_BROADCAST socket option.
        * @param enabled Whether to enable broadcast

@@ -1,7 +1,7 @@
 import * as Bun from "bun";
 import { expectType } from "./utilities";
 
-const socket = await Bun.udpSocket({
+using socket = await Bun.udpSocket({
   port: 0,
 });
 
@@ -35,8 +35,9 @@ expectType(socket.ref()).is<void>();
 expectType(socket.unref()).is<void>();
 
 expectType(socket.close()).is<void>();
+expectType(socket[Symbol.dispose]()).is<void>();
 
-const connectedSocket = await Bun.udpSocket({
+using connectedSocket = await Bun.udpSocket({
   port: 0,
   connect: {
     hostname: "127.0.0.1",
@@ -45,6 +46,7 @@ const connectedSocket = await Bun.udpSocket({
 });
 
 expectType(connectedSocket.remoteAddress).is<Bun.SocketAddress>();
+expectType(connectedSocket[Symbol.dispose]()).is<void>();
 
 expectType(connectedSocket.send("Hello")).is<boolean>();
 expectType(connectedSocket.send(new Uint8Array([1, 2, 3]))).is<boolean>();

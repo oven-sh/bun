@@ -113,7 +113,7 @@ img.heic({ quality: 80 }); // macOS / Windows only
 img.avif({ quality: 60 }); // macOS / Windows only
 ```
 
-`palette: true` quantizes to a ≤256-color palette and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. The indexed PNG is typically 3–5× smaller than truecolor for screenshots and UI assets.
+`palette: true` quantizes to a palette of at most `colors` entries (256 by default) and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. An image with no more distinct colors than that keeps every pixel. Without `dither`, the indexed PNG of a screenshot is typically 2–5× smaller than truecolor at 256 colors.
 
 ## Terminals
 

@@ -1,11 +1,8 @@
-//! Median-cut colour quantizer for `.png({ palette: true, colors: N })`.
+//! Colour quantizer for `.png({ palette: true, colors: N })`.
 //!
 //! Goal is "good enough to match Sharp's palette PNG path for screenshot
 //! compression", not perceptual perfection — Sharp uses libimagequant which
-//! is GPL, so we roll a small permissive one. Median-cut is the classic
-//! Heckbert '82 algorithm: treat the RGBA pixels as points in a 4-D box,
-//! repeatedly split the box with the largest channel range at that channel's
-//! median until you have N boxes, then each box's mean becomes a palette
+//! is GPL, so we roll a small permissive one: boxes cut by squared error, each box one palette
 //! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
 //! Floyd–Steinberg error diffusion (`dither: true`).
 
@@ -25,30 +22,6 @@ pub(crate) struct QuantizeResult {
 // `palette`/`indices` are `Box<[u8]>`, so
 // `Drop` is automatic — no explicit impl needed.
 
-#[derive(Clone, Copy)]
-struct ColorBox {
-    /// Slice into the shared `order` index buffer.
-    lo: u32,
-    hi: u32,
-    min: [u8; 4],
-    max: [u8; 4],
-}
-
-impl ColorBox {
-    fn widest_channel(self) -> u8 {
-        let mut best: u8 = 0;
-        let mut span: i32 = -1;
-        for c in 0..4usize {
-            let s: i32 = i32::from(self.max[c]) - i32::from(self.min[c]);
-            if s > span {
-                span = s;
-                best = u8::try_from(c).expect("int cast");
-            }
-        }
-        best
-    }
-}
-
 unsafe extern "C" {
     fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32)
     -> u32;
@@ -58,8 +31,7 @@ unsafe extern "C" {
 pub(crate) struct Options {
     pub(crate) max_colors: u16,
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
-    /// cost of grain on flat areas; off by default to match Sharp's
-    /// `palette:true` default.
+    /// cost of grain on flat areas; off by default.
     // No `Default` impl — callers must
     // pass this explicitly.
     pub(crate) dither: bool,
@@ -71,97 +43,340 @@ pub(crate) fn quantize(
     h: u32,
     opts: Options,
 ) -> Result<QuantizeResult, AllocError> {
-    let max_colors = opts.max_colors;
-    let n: u32 = u32::try_from(rgba.len() / 4).expect("int cast");
-    let want: u16 = 1.max(max_colors.min(256));
+    let (pixels, _) = rgba.as_chunks::<4>();
+    // The sums and products below are exact for fewer than 2^32 pixels.
+    let n: usize = u32::try_from(pixels.len()).map_err(|_| AllocError)? as usize;
+    let want: usize = usize::from(opts.max_colors.clamp(1, 256));
 
-    // `order` is a permutation of pixel indices that we partition in-place;
-    // each Box owns a contiguous [lo,hi) slice of it.
-    let mut order: Vec<u32> = (0..n).collect();
-
-    let mut boxes: Vec<ColorBox> = Vec::with_capacity(want as usize);
-    boxes.push(shrink(rgba, &order, 0, n));
-
-    while boxes.len() < want as usize {
-        // Pick the box with the largest single-channel range — the one that
-        // most wants splitting.
-        let mut pick: usize = 0;
-        let mut best: i32 = -1;
-        for (i, b) in boxes.iter().enumerate() {
-            let c = b.widest_channel();
-            let s: i32 = i32::from(b.max[c as usize]) - i32::from(b.min[c as usize]);
-            if s > best {
-                best = s;
-                pick = i;
+    let mut indices: Vec<u8> = try_filled(n)?;
+    let palette: Vec<u8> = match exact_palette(pixels, want, &mut indices) {
+        // Every pixel has its own entry, so there is no error to diffuse.
+        Some(palette) => palette,
+        None => {
+            // At most `want` entries: fewer when transparent pixels hid the colours over the limit.
+            let palette = split_boxes(pixels, want)?;
+            let k: u16 = u16::try_from(palette.len() / 4).expect("int cast");
+            if opts.dither {
+                map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
+            } else {
+                // Alpha is the top byte of a key: a transparent pixel is searched as `[0; 4]`.
+                map_runs(pixels, &mut indices, |key| {
+                    nearest(&palette, k, if key >> 24 == 0 { 0 } else { key })
+                });
             }
+            palette
         }
-        if best <= 0 {
-            break; // every remaining box is a single colour
-        }
-        let b = boxes[pick];
-        if b.hi - b.lo < 2 {
-            break;
-        }
-
-        let ch = b.widest_channel();
-        // Partial sort by the chosen channel, then cut at the midpoint.
-        let slice = &mut order[b.lo as usize..b.hi as usize];
-        // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
-        // `maxPixels`); the other order-index sites already widen first.
-        slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
-        let mid = b.lo + (b.hi - b.lo) / 2;
-        boxes[pick] = shrink(rgba, &order, b.lo, mid);
-        boxes.push(shrink(rgba, &order, mid, b.hi));
-    }
-
-    let k: u16 = u16::try_from(boxes.len()).expect("int cast");
-    let mut palette = vec![0u8; k as usize * 4];
-    let mut has_alpha = false;
-    for (i, b) in boxes.iter().enumerate() {
-        let mut sum: [u64; 4] = [0, 0, 0, 0];
-        for &px in &order[b.lo as usize..b.hi as usize] {
-            for c in 0..4usize {
-                sum[c] += u64::from(rgba[px as usize * 4 + c]);
-            }
-        }
-        let cnt: u64 = u64::from(b.hi - b.lo);
-        for c in 0..4usize {
-            palette[i * 4 + c] = u8::try_from((sum[c] + cnt / 2) / cnt).expect("int cast");
-        }
-        if palette[i * 4 + 3] < 255 {
-            has_alpha = true;
-        }
-    }
-
-    let mut indices = vec![0u8; n as usize];
-    if opts.dither {
-        map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
-    } else {
-        // Direct nearest-entry mapping. k ≤ 256; the inner search is the
-        // highway-dispatched kernel so it runs under the best -march.
-        for px in 0..n as usize {
-            let p = &rgba[px * 4..][..4];
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            indices[px] = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    i32::from(p[0]),
-                    i32::from(p[1]),
-                    i32::from(p[2]),
-                    i32::from(p[3]),
-                )
-            })
-            .unwrap();
-        }
-    }
+    };
 
     Ok(QuantizeResult {
+        colors: u16::try_from(palette.len() / 4).expect("int cast"),
+        has_alpha: palette
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|entry| entry[3] < 255),
         palette: palette.into_boxed_slice(),
         indices: indices.into_boxed_slice(),
-        colors: k,
-        has_alpha,
     })
+}
+
+/// `len` default values, or `AllocError` when there is no memory for them.
+fn try_filled<T: Clone + Default>(len: usize) -> Result<Vec<T>, AllocError> {
+    let mut v: Vec<T> = Vec::new();
+    v.try_reserve_exact(len).map_err(|_| AllocError)?;
+    v.resize(len, T::default());
+    Ok(v)
+}
+
+/// A fully transparent pixel shows no colour: in an image that does not fit, it is `[0; 4]`.
+fn shown(pixel: [u8; 4]) -> [u8; 4] {
+    if pixel[3] == 0 { [0; 4] } else { pixel }
+}
+
+/// One slot of an open-addressing table from a colour to its palette index plus 1.
+#[derive(Clone, Copy, Default)]
+struct Slot {
+    /// The pixel's four bytes, little-endian on every target.
+    key: u32,
+    /// 0 marks an empty slot.
+    val: u32,
+}
+
+/// The palette when the image has at most `want` colours, in first-seen order. Fills `indices`.
+fn exact_palette(pixels: &[[u8; 4]], want: usize, indices: &mut [u8]) -> Option<Vec<u8>> {
+    // `want` ≤ 256 keys in 512 slots: the table is never full and a probe passes at most 256.
+    let mut slots = [Slot::default(); 512];
+    let mut seen: Vec<u8> = Vec::with_capacity(want * 4);
+    // Flat images are runs of one colour: the previous pixel's answer.
+    let mut last: Option<(u32, u8)> = None;
+    for (p, out) in pixels.iter().zip(indices.iter_mut()) {
+        let key = u32::from_le_bytes(*p);
+        *out = match last {
+            Some((last_key, idx)) if last_key == key => idx,
+            _ => {
+                // Multiplicative hash: the top 9 bits depend on every byte of the key.
+                let mut i = (key.wrapping_mul(0x9E37_79B1) >> 23) as usize;
+                while slots[i].val != 0 && slots[i].key != key {
+                    i = (i + 1) & 511;
+                }
+                let slot = &mut slots[i];
+                if slot.val == 0 {
+                    if seen.len() == want * 4 {
+                        return None;
+                    }
+                    seen.extend_from_slice(p);
+                    *slot = Slot {
+                        key,
+                        val: u32::try_from(seen.len() / 4).expect("int cast"),
+                    };
+                }
+                let idx = u8::try_from(slot.val - 1).expect("int cast");
+                last = Some((key, idx));
+                idx
+            }
+        };
+    }
+    Some(seen)
+}
+
+/// Count, sums and sums of squares of a set of pixels: enough for its mean and squared error.
+#[derive(Clone, Copy, Default)]
+struct Moments {
+    n: u64,
+    sum: [u64; 4],
+    sq: [u64; 4],
+}
+
+impl Moments {
+    fn add(&mut self, pixel: [u8; 4]) {
+        self.n += 1;
+        for c in 0..4usize {
+            let v = u64::from(pixel[c]);
+            self.sum[c] += v;
+            self.sq[c] += v * v;
+        }
+    }
+
+    fn minus(&self, other: &Moments) -> Moments {
+        let mut out = *self;
+        out.n -= other.n;
+        for c in 0..4usize {
+            out.sum[c] -= other.sum[c];
+            out.sq[c] -= other.sq[c];
+        }
+        out
+    }
+
+    /// `n` × squared error of channel `c` about its mean. Exact: n < 2^32, sum < 2^40, sq < 2^48.
+    fn error_times_n(&self, c: usize) -> u128 {
+        u128::from(self.n) * u128::from(self.sq[c])
+            - u128::from(self.sum[c]) * u128::from(self.sum[c])
+    }
+
+    /// `n` times the squared error over all four channels.
+    fn total_error_times_n(&self) -> u128 {
+        (0..4usize).map(|c| self.error_times_n(c)).sum()
+    }
+
+    /// The channel with the largest squared error.
+    fn channel_to_split(&self) -> usize {
+        let mut best: usize = 0;
+        for c in 1..4usize {
+            if self.error_times_n(c) > self.error_times_n(best) {
+                best = c;
+            }
+        }
+        best
+    }
+
+    fn mean(&self) -> [u8; 4] {
+        let mut out = [0u8; 4];
+        for c in 0..4usize {
+            out[c] = u8::try_from((self.sum[c] + self.n / 2) / self.n).expect("int cast");
+        }
+        out
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ColorBox {
+    /// Slice into the copy of the pixels.
+    lo: usize,
+    hi: usize,
+    moments: Moments,
+    /// `moments.total_error_times_n()`, kept for the choice of the next box.
+    error_times_n: u128,
+}
+
+impl ColorBox {
+    fn new(lo: usize, hi: usize, moments: &Moments) -> ColorBox {
+        ColorBox {
+            lo,
+            hi,
+            moments: *moments,
+            error_times_n: moments.total_error_times_n(),
+        }
+    }
+}
+
+/// Split the pixels into `want` boxes (fewer if each is one colour). Each box gives one entry.
+fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
+    // The boxes are ranges of a copy. A cut is a value of a channel: equal colours stay together.
+    let mut pixels: Vec<[u8; 4]> = {
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(pixels.len())
+            .map_err(|_| AllocError)?;
+        copy.extend(pixels.iter().map(|&pixel| shown(pixel)));
+        copy
+    };
+    // Sums per value of the split channel. `cut` leaves it zero.
+    let mut at_value: Vec<Sums> = try_filled(256)?;
+    let mut all = Moments::default();
+    for &pixel in &pixels {
+        all.add(pixel);
+    }
+    let mut boxes: Vec<ColorBox> = Vec::with_capacity(want);
+    boxes.push(ColorBox::new(0, pixels.len(), &all));
+    while boxes.len() < want {
+        // The box with the most squared error: its index, `error_times_n` and `n`.
+        let mut pick: Option<(usize, u128, u64)> = None;
+        for (i, b) in boxes.iter().enumerate() {
+            if b.hi - b.lo < 2 {
+                continue;
+            }
+            // error_b / n_b > error_p / n_p, cross-multiplied (< 2^114).
+            if pick.is_none_or(|(_, error, n)| {
+                b.error_times_n * u128::from(n) > error * u128::from(b.moments.n)
+            }) {
+                pick = Some((i, b.error_times_n, b.moments.n));
+            }
+        }
+        let Some((pick, _, _)) = pick else { break };
+        let b = boxes[pick];
+        let ch = b.moments.channel_to_split();
+        let slice = &mut pixels[b.lo..b.hi];
+        // A box of one colour has no cut, and then no other box has error.
+        let Some(value) = cut(slice, ch, &b.moments, &mut at_value) else {
+            break;
+        };
+        // The pixels below `value` go first.
+        let mut at: usize = 0;
+        let mut left = Moments::default();
+        for i in 0..slice.len() {
+            if slice[i][ch] < value {
+                left.add(slice[i]);
+                slice.swap(at, i);
+                at += 1;
+            }
+        }
+        boxes[pick] = ColorBox::new(b.lo, b.lo + at, &left);
+        boxes.push(ColorBox::new(b.lo + at, b.hi, &b.moments.minus(&left)));
+    }
+    let mut palette: Vec<u8> = Vec::with_capacity(boxes.len() * 4);
+    for b in &boxes {
+        let entry = majority(&pixels[b.lo..b.hi]).unwrap_or_else(|| b.moments.mean());
+        palette.extend_from_slice(&entry);
+    }
+    Ok(palette)
+}
+
+/// The colour that more than half of `pixels` have: a flat background stays exact.
+fn majority(pixels: &[[u8; 4]]) -> Option<[u8; 4]> {
+    // One vote per pixel finds the only colour that can have more than half. A count confirms it.
+    let (mut colour, mut votes) = ([0u8; 4], 0usize);
+    for &pixel in pixels {
+        if votes == 0 {
+            colour = pixel;
+        }
+        if pixel == colour {
+            votes += 1;
+        } else {
+            votes -= 1;
+        }
+    }
+    let count = pixels.iter().filter(|&&pixel| pixel == colour).count();
+    (count * 2 > pixels.len()).then_some(colour)
+}
+
+/// Pixel count and channel sums of the pixels that have one value of a channel.
+#[derive(Clone, Copy, Default)]
+struct Sums {
+    n: u64,
+    sum: [u64; 4],
+}
+
+/// The cut of `pixels` along `ch` with the least squared error, as the value that starts part two.
+fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) -> Option<u8> {
+    // One bit per value of `ch` that the box has: a box of a few pixels has few of the 256.
+    let mut has = [0u64; 4];
+    // One step per run of equal pixels: a flat area would write the same sums once per pixel.
+    for run in pixels.chunk_by(|a, b| a == b) {
+        let pixel = run[0];
+        let count = run.len() as u64;
+        let value = usize::from(pixel[ch]);
+        has[value >> 6] |= 1 << (value & 63);
+        let sums = &mut at_value[value];
+        sums.n += count;
+        for c in 0..4usize {
+            sums.sum[c] += count * u64::from(pixel[c]);
+        }
+    }
+    // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
+    let mut left = Sums::default();
+    let mut best: Option<(u128, u8)> = None;
+    for (word, mut bits) in has.into_iter().enumerate() {
+        while bits != 0 {
+            let value = word * 64 + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let sums = core::mem::take(&mut at_value[value]);
+            left.n += sums.n;
+            // Nothing is past the last value, so no cut is there.
+            if left.n == total.n {
+                break;
+            }
+            let mut left_sq: u128 = 0;
+            let mut right_sq: u128 = 0;
+            for c in 0..4usize {
+                left.sum[c] += sums.sum[c];
+                let l = u128::from(left.sum[c]);
+                let r = u128::from(total.sum[c] - left.sum[c]);
+                left_sq += l * l;
+                right_sq += r * r;
+            }
+            // 32 fraction bits (< 2^115 in all): whole units tie in a box of a few pixels.
+            let score = (left_sq << 32) / u128::from(left.n)
+                + (right_sq << 32) / u128::from(total.n - left.n);
+            if best.is_none_or(|(s, _)| score > s) {
+                best = Some((score, u8::try_from(value + 1).expect("int cast")));
+            }
+        }
+    }
+    best.map(|(_, value)| value)
+}
+
+/// Index of the palette entry nearest to the colour `key`, the first one on a tie.
+#[inline]
+fn nearest(palette: &[u8], k: u16, key: u32) -> u8 {
+    let [r, g, b, a] = key.to_le_bytes().map(i32::from);
+    // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
+    u8::try_from(unsafe { bun_image_nearest_palette(palette.as_ptr(), u32::from(k), r, g, b, a) })
+        .expect("int cast")
+}
+
+/// Write every pixel's palette index, asking `index_of` once per run of equal pixels.
+fn map_runs(pixels: &[[u8; 4]], indices: &mut [u8], mut index_of: impl FnMut(u32) -> u8) {
+    let mut last: Option<(u32, u8)> = None;
+    for (p, out) in pixels.iter().zip(indices.iter_mut()) {
+        let key = u32::from_le_bytes(*p);
+        *out = match last {
+            Some((last_key, idx)) if last_key == key => idx,
+            _ => {
+                let idx = index_of(key);
+                last = Some((key, idx));
+                idx
+            }
+        };
+    }
 }
 
 /// Floyd–Steinberg error diffusion. Serial in raster order — each pixel's
@@ -188,6 +403,7 @@ fn map_floyd_steinberg(
     // Two rows of accumulated error in sixteenths of a level, ×4 channels.
     // `cur` carries error pushed *into* the current row from the row above;
     // `nxt` collects error for the row below.
+    let (pixels, _) = rgba.as_chunks::<4>();
     let stride: usize = w as usize * 4;
     let mut cur: Vec<i32> = vec![0i32; stride];
     let mut nxt: Vec<i32> = vec![0i32; stride];
@@ -202,10 +418,11 @@ fn map_floyd_steinberg(
             let off: usize = usize::try_from(x).expect("int cast") * 4;
 
             // Source + carried error, in sixteenths, kept inside 0..255. `cand`: nearest level.
+            let source = shown(pixels[px]);
             let mut wanted: [i32; 4] = [0; 4];
             let mut cand: [i32; 4] = [0; 4];
             for c in 0..4usize {
-                wanted[c] = (16 * i32::from(rgba[px * 4 + c]) + cur[off + c]).clamp(0, 16 * 255);
+                wanted[c] = (16 * i32::from(source[c]) + cur[off + c]).clamp(0, 16 * 255);
                 cand[c] = (wanted[c] + 8) >> 4;
             }
 
@@ -261,22 +478,4 @@ fn map_floyd_steinberg(
 #[inline]
 fn clamp255(v: i32) -> i32 {
     v.clamp(0, 255)
-}
-
-/// Recompute a box's tight min/max over its pixel slice.
-fn shrink(rgba: &[u8], order: &[u32], lo: u32, hi: u32) -> ColorBox {
-    let mut min: [u8; 4] = [255, 255, 255, 255];
-    let mut max: [u8; 4] = [0, 0, 0, 0];
-    for &px in &order[lo as usize..hi as usize] {
-        for c in 0..4usize {
-            let v = rgba[px as usize * 4 + c];
-            if v < min[c] {
-                min[c] = v;
-            }
-            if v > max[c] {
-                max[c] = v;
-            }
-        }
-    }
-    ColorBox { lo, hi, min, max }
 }

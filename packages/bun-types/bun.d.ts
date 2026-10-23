@@ -9601,7 +9601,10 @@ declare module "bun" {
     png(options?: {
       /** zlib level 0–9. */
       compressionLevel?: number;
-      /** Quantize to a palette and emit indexed (colour-type 3) PNG. */
+      /**
+       * Quantize to a palette and emit indexed (colour-type 3) PNG. An image
+       * with at most `colors` distinct colours keeps every pixel.
+       */
       palette?: boolean;
       /** Max palette size when `palette: true`. 2–256. @default 256 */
       colors?: number;

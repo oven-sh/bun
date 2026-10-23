@@ -102,6 +102,42 @@ async function resizePixels(src: Uint8Array, w: number, h: number, filter: Bun.I
   return decodePng(await new Bun.Image(src).resize(w, h, { filter }).png().bytes()).data;
 }
 
+type Rgba = [number, number, number, number];
+const byChannel = (a: Rgba, b: Rgba) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3];
+function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): Rgba {
+  const i = (y * w + x) * 4;
+  return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
+}
+// An RGBA8 PNG from width×height×4 bytes of pixels.
+function pngFromRgba(w: number, h: number, rgba: Uint8Array): Uint8Array {
+  return makePng(w, h, (x, y) => rgbaAt(rgba, w, x, y));
+}
+// PLTE of an indexed PNG in file order (tRNS supplies alpha, 255 past its
+// end), and the length of tRNS (0 when the file has none).
+function pngPlte(png: Uint8Array): { entries: Rgba[]; trns: number } {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let plte = new Uint8Array(0);
+  let trns = new Uint8Array(0);
+  for (let off = 8; off + 8 <= png.length;) {
+    const len = dv.getUint32(off);
+    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+    if (type === "PLTE") plte = png.subarray(off + 8, off + 8 + len);
+    else if (type === "tRNS") trns = png.subarray(off + 8, off + 8 + len);
+    else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const entries: Rgba[] = [];
+  for (let i = 0; i < plte.length / 3; i++) {
+    entries.push([plte[i * 3], plte[i * 3 + 1], plte[i * 3 + 2], i < trns.length ? trns[i] : 255]);
+  }
+  return { entries, trns: trns.length };
+}
+// The same palette sorted, so tests can compare against a set of expected
+// colours.
+function pngPalette(png: Uint8Array): Rgba[] {
+  return pngPlte(png).entries.sort(byChannel);
+}
+
 // ─── resize filters ─────────────────────────────────────────────────────────
 
 describe("resize filter properties", () => {
@@ -225,11 +261,617 @@ describe("resize filter properties", () => {
   });
 });
 
+// ─── palette quantizer ──────────────────────────────────────────────────────
+
+// The quantizer used to sort pixels and cut a box at its pixel-count
+// midpoint. When one colour held more than half the box, that midpoint
+// fell inside its run, the colour landed in both halves and the smaller
+// half's mean was a blend (75% white / 25% black gave white +
+// [128,128,128]). It now cuts only between two distinct values, at the
+// position with the least squared error, so a colour is never split
+// across two palette entries and a noisy dominant colour is cut off from
+// the rest, not in its middle.
+describe("png({palette:true}) never splits one colour across two palette entries", () => {
+  const white: [number, number, number, number] = [255, 255, 255, 255];
+  const black: [number, number, number, number] = [0, 0, 0, 255];
+  const grey = (v: number): [number, number, number, number] => [v, v, v, 255];
+
+  test.each([false, true])("white:black 3:1, colors:2, dither %p", async dither => {
+    const src = makePng(40, 40, (_x, y) => (y < 30 ? white : black));
+    const out = await new Bun.Image(src).png({ palette: true, colors: 2, dither }).bytes();
+    expect(out[25]).toBe(3); // indexed
+    expect(pngPalette(out)).toEqual([black, white]);
+    // Every pixel maps to its own colour, none to a blend.
+    const back = decodePng(await new Bun.Image(out).png().bytes());
+    expect(rgbaAt(back.data, 40, 0, 0)).toEqual(white);
+    expect(rgbaAt(back.data, 40, 39, 29)).toEqual(white);
+    expect(rgbaAt(back.data, 40, 0, 30)).toEqual(black);
+    expect(rgbaAt(back.data, 40, 39, 39)).toEqual(black);
+  });
+
+  test("five colours with unequal counts, colors:5 and colors:8", async () => {
+    const red: [number, number, number, number] = [255, 0, 0, 255];
+    const green: [number, number, number, number] = [0, 255, 0, 255];
+    const blue: [number, number, number, number] = [0, 0, 255, 255];
+    // 50% white, 25% black, 12.5% red, 7.5% green, 5% blue: every split
+    // lands its midpoint inside a run.
+    const src = makePng(40, 40, (_x, y) => (y < 20 ? white : y < 30 ? black : y < 35 ? red : y < 38 ? green : blue));
+    const expected = [black, blue, green, red, white];
+    const exact = await new Bun.Image(src).png({ palette: true, colors: 5 }).bytes();
+    expect(pngPalette(exact)).toEqual(expected);
+    // Spare slots must not be filled with duplicates of the same colour.
+    const spare = await new Bun.Image(src).png({ palette: true, colors: 8 }).bytes();
+    expect(pngPalette(spare)).toEqual(expected);
+  });
+
+  test("two alphas of one colour with unequal counts, colors:2", async () => {
+    // Same RGB: the entries differ only in tRNS.
+    const src = makePng(40, 40, (_x, y) => (y < 30 ? [100, 100, 100, 255] : [100, 100, 100, 0]));
+    const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(out)).toEqual([
+      [100, 100, 100, 0],
+      [100, 100, 100, 255],
+    ]);
+  });
+
+  test("three alphas of one colour, colors:2: the cut is on the alpha channel", async () => {
+    // 60% opaque, 20% alpha 128, 20% alpha 64. Only alpha has error, and
+    // {64, 128} | {255} leaves the least. Neither alpha has more than half
+    // of its box, so the entry is their mean, 96.
+    const alphaOf = (y: number) => (y < 24 ? 255 : y < 32 ? 128 : 64);
+    const src = makePng(40, 40, (_x, y) => [100, 100, 100, alphaOf(y)]);
+    const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(out)).toEqual([
+      [100, 100, 100, 96],
+      [100, 100, 100, 255],
+    ]);
+    const back = decodePng(await new Bun.Image(out).png().bytes());
+    expect([0, 24, 32].map(y => rgbaAt(back.data, 40, 0, y)[3])).toEqual([255, 96, 96]);
+  });
+
+  // Black, a middle grey, then white, in 40 rows. The middle run straddles
+  // the midpoint, so the old cut split it.
+  const threeGreys = (dark: number, mid: number, value = 128) =>
+    makePng(40, 40, (_x, y) => (y < dark ? black : y < dark + mid ? grey(value) : white));
+
+  test("three greys 30%/30%/40%, colors:3 is exact", async () => {
+    const out = await new Bun.Image(threeGreys(12, 12)).png({ palette: true, colors: 3 }).bytes();
+    expect(pngPalette(out)).toEqual([black, grey(128), white]);
+  });
+
+  test("three greys, colors:2: the middle grey joins the side that costs the least error", async () => {
+    // Grey 128 is equally far from both, so the counts decide: the pair
+    // with fewer pixels merges.
+    const moreWhite = await new Bun.Image(threeGreys(12, 12)).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(moreWhite)).toEqual([grey(64), white]);
+    const moreBlack = await new Bun.Image(threeGreys(16, 12)).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(moreBlack)).toEqual([black, grey(192)]);
+    // A grey near one end merges with that end whatever the counts. The
+    // end has more than half of the pair's pixels, so it is the entry.
+    const middle = async (png: Uint8Array, y: number) =>
+      rgbaAt(decodePng(await new Bun.Image(png).png().bytes()).data, 40, 0, y);
+    const nearWhite = await new Bun.Image(threeGreys(12, 12, 225)).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(nearWhite)).toEqual([black, white]);
+    expect(await middle(nearWhite, 12)).toEqual(white);
+    const nearBlack = await new Bun.Image(threeGreys(16, 12, 30)).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(nearBlack)).toEqual([black, white]);
+    expect(await middle(nearBlack, 16)).toEqual(black);
+  });
+
+  // +-2 per channel, in a fixed pattern so the fixture is deterministic.
+  const noise = (x: number, y: number, k: number) => ((x * k + y * (k + 4)) % 5) - 2;
+
+  test("a dominant colour with noise is cut off whole, colors:2", async () => {
+    // 75% near-white (250 +- 2) over 25% black. The white is five adjacent
+    // runs, not one, so a cut at the count midpoint would land between two
+    // of them and black would again map to a grey blend.
+    const src = makePng(40, 40, (x, y) => (y < 30 ? grey(250 + noise(x, y, 7)) : black));
+    const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(out)).toEqual([black, grey(250)]);
+    const back = decodePng(await new Bun.Image(out).png().bytes());
+    expect(rgbaAt(back.data, 40, 0, 30)).toEqual(black);
+    expect(rgbaAt(back.data, 40, 39, 39)).toEqual(black);
+  });
+
+  test.each([3, 6])("three flat colours with JPEG-like noise, colors:%d", async colors => {
+    // 70% off-white, 20% blue, 10% red, each +-2 on every channel. Every
+    // pixel must come back within the noise of its source colour, so no
+    // two source colours share an entry and no entry is a blend.
+    const base = [
+      [240, 240, 240],
+      [30, 60, 120],
+      [200, 40, 40],
+    ];
+    const pixel = (x: number, y: number): [number, number, number, number] => {
+      const c = base[y < 45 ? 0 : y < 58 ? 1 : 2];
+      return [c[0] + noise(x, y, 7), c[1] + noise(x, y, 3), c[2] + noise(x, y, 13), 255];
+    };
+    const src = makePng(64, 64, pixel);
+    const out = await new Bun.Image(src).png({ palette: true, colors }).bytes();
+    expect(pngPalette(out)).toHaveLength(colors);
+    const back = decodePng(await new Bun.Image(out).png().bytes());
+    let worst = 0;
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const got = rgbaAt(back.data, 64, x, y);
+        const want = pixel(x, y);
+        for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(got[c] - want[c]));
+      }
+    }
+    expect(worst).toBeLessThanOrEqual(4);
+  });
+
+  test.each([4, 16])("over budget: 75%% white + a 201-step grey ramp, colors:%d", async colors => {
+    // More colours than slots, with one dominant colour. White must get
+    // exactly one entry and every other slot must go to the ramp.
+    const src = makePng(64, 64, (x, y) => (y < 48 ? white : grey(((y - 48) * 64 + x) % 201)));
+    const out = await new Bun.Image(src).png({ palette: true, colors }).bytes();
+    const palette = pngPalette(out);
+    expect(palette).toHaveLength(colors);
+    expect(new Set(palette.map(e => e.join())).size).toBe(colors);
+    expect(palette.filter(e => e[0] === 255)).toEqual([white]);
+    // A blend of white with the ramp would land in (200, 255).
+    expect(palette.filter(e => e[0] > 200 && e[0] < 255)).toEqual([]);
+  });
+
+  test("256 distinct colours with a dominant one come out exact at the default colors", async () => {
+    // The shape of a re-encoded 256-colour GIF or PNG8: one background
+    // colour on 94% of the pixels and 255 single-pixel colours.
+    const table: [number, number, number, number][] = Array.from({ length: 256 }, (_, i) =>
+      i === 0 ? grey(128) : [i, (i * 7 + 3) & 255, (i * 13 + 5) & 255, 255],
+    );
+    const colourAt = (x: number, y: number) => table[y * 64 + x < 255 ? y * 64 + x + 1 : 0];
+    const src = makePng(64, 64, colourAt);
+    const out = await new Bun.Image(src).png({ palette: true }).bytes();
+    expect(pngPalette(out)).toEqual(
+      table.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]),
+    );
+    const back = decodePng(await new Bun.Image(out).png().bytes());
+    let changed = 0;
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        if (rgbaAt(back.data, 64, x, y).join() !== colourAt(x, y).join()) changed++;
+      }
+    }
+    expect(changed).toBe(0);
+  });
+});
+
+// An image with at most `colors` colours keeps them, in order of first
+// appearance. A bigger one is split where the squared error is largest,
+// and every pixel is written as the entry nearest to it.
+describe("png({palette:true}) keeps the colours that fit and splits the rest by squared error", () => {
+  // A different colour for every i below 2^24: an odd multiplier
+  // permutes the low 24 bits.
+  const colourAt = (i: number): Rgba => {
+    const v = Math.imul(i, 0x9e3779b1) & 0xffffff;
+    return [v & 255, (v >> 8) & 255, v >> 16, 255];
+  };
+  const decode = async (png: Uint8Array) => decodePng(await new Bun.Image(png).png().bytes());
+
+  describe.each([2, 4, 16, 256])("%d colours in unequal amounts", colors => {
+    // Colour i first appears before colour i+1 and holds more pixels.
+    const indexAt = (x: number, y: number) => Math.floor(colors * ((y * 64 + x) / 4096) ** 2);
+    const inOrder = Array.from({ length: colors }, (_, i) => colourAt(i));
+
+    test.each([false, true])(
+      "fit colors:" + colors + " exactly, in order of first appearance (dither %p)",
+      async dither => {
+        const src = makePng(64, 64, (x, y) => colourAt(indexAt(x, y)));
+        const out = await new Bun.Image(src).png({ palette: true, colors, dither }).bytes();
+        expect(pngPlte(out)).toEqual({ entries: inOrder, trns: 0 });
+        expect((await decode(out)).data).toEqual(decodePng(src).data);
+      },
+    );
+
+    test("keep their alpha, and tRNS is written", async () => {
+      // Colour 0 is half transparent, colour 1 fully transparent: the
+      // colour it hides is kept too.
+      const withAlpha = (i: number): Rgba => {
+        const c = colourAt(i);
+        return [c[0], c[1], c[2], i === 0 ? 128 : i === 1 ? 0 : 255];
+      };
+      const src = makePng(64, 64, (x, y) => withAlpha(indexAt(x, y)));
+      const out = await new Bun.Image(src).png({ palette: true, colors }).bytes();
+      const plte = pngPlte(out);
+      expect(plte.entries).toEqual(inOrder.map((_, i) => withAlpha(i)));
+      expect(plte.trns).toBeGreaterThanOrEqual(2);
+    });
+
+    test.each([false, true])("plus one more: only the two closest share an entry (dither %p)", async dither => {
+      // The extra colour is colour 0 one alpha step down, on three
+      // pixels. No other pair of colours is that close.
+      const base = colourAt(0);
+      const twin: Rgba = [base[0], base[1], base[2], 254];
+      const pixelOf = (x: number, y: number) => (y === 63 && x < 3 ? twin : colourAt(indexAt(x, y)));
+      const src = makePng(64, 64, pixelOf);
+      const out = await new Bun.Image(src).png({ palette: true, colors, dither }).bytes();
+      expect(pngPalette(out)).toEqual(inOrder.slice().sort(byChannel));
+      const back = await decode(out);
+      let wrong = 0;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+          const want = y === 63 && x < 3 ? base : pixelOf(x, y);
+          if (rgbaAt(back.data, 64, x, y).join() !== want.join()) wrong++;
+        }
+      }
+      expect(wrong).toBe(0);
+    });
+  });
+
+  describe("colours that share a slot of the first pass's table", () => {
+    // The first pass keeps colours in 512 slots and starts each one at the
+    // top 9 bits of key × 0x9e3779b1 (`exact_palette` in quantize.rs). These
+    // all start at slot 511, so each one after the first goes round to slot
+    // 0 and walks past every colour before it.
+    const lastSlot = (count: number): Rgba[] => {
+      const colours: Rgba[] = [];
+      for (let key = 0xff000000; colours.length < count; key++) {
+        if (Math.imul(key, 0x9e3779b1) >>> 23 === 511)
+          colours.push([key & 255, (key >> 8) & 255, (key >> 16) & 255, 255]);
+      }
+      return colours;
+    };
+    const indexAt = (x: number, y: number) => Math.floor(256 * ((y * 64 + x) / 4096) ** 2);
+
+    test("three colours, colors:3", async () => {
+      const three = lastSlot(3);
+      const src = makePng(3, 1, x => three[x]);
+      const out = await new Bun.Image(src).png({ palette: true, colors: 3 }).bytes();
+      expect(pngPlte(out)).toEqual({ entries: three, trns: 0 });
+      expect((await decode(out)).data).toEqual(decodePng(src).data);
+    });
+
+    test.each([false, true])("256 colours fit colors:256 exactly (dither %p)", async dither => {
+      const colours = lastSlot(256);
+      const src = makePng(64, 64, (x, y) => colours[indexAt(x, y)]);
+      const out = await new Bun.Image(src).png({ palette: true, colors: 256, dither }).bytes();
+      expect(pngPlte(out)).toEqual({ entries: colours, trns: 0 });
+      expect((await decode(out)).data).toEqual(decodePng(src).data);
+    });
+
+    test("257 colours do not fit colors:256", async () => {
+      const colours = lastSlot(257);
+      const src = makePng(64, 64, (x, y) => colours[y === 63 && x > 60 ? 256 : indexAt(x, y)]);
+      const out = await new Bun.Image(src).png({ palette: true, colors: 256 }).bytes();
+      const palette = pngPlte(out).entries;
+      expect(palette).toHaveLength(256);
+      expect(new Set(palette.map(e => e.join())).size).toBe(256);
+    });
+  });
+
+  describe("fully transparent pixels in an image that does not fit", () => {
+    test.each([false, true])("hide no colour: they are one entry (dither %p)", async dither => {
+      // 24 rows of alpha 0 that hide a different colour at every pixel, then 8
+      // opaque colours in rows of 5. With the hidden colours: 1,544 colours.
+      const opaque = Array.from({ length: 8 }, (_, i): Rgba => [i * 36, 255 - i * 36, (i * 90) % 256, 255]);
+      const pixel = (x: number, y: number): Rgba =>
+        (y < 24 ? [...colourAt(y * 64 + x)].fill(0, 3) : opaque[((y - 24) / 5) | 0]) as Rgba;
+      const out = await new Bun.Image(makePng(64, 64, pixel)).png({ palette: true, colors: 16, dither }).bytes();
+      expect(pngPalette(out)).toEqual([[0, 0, 0, 0] as Rgba, ...opaque].sort(byChannel));
+      const back = (await decode(out)).data;
+      let wrong = 0;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+          const want = y < 24 ? [0, 0, 0, 0] : pixel(x, y);
+          if (rgbaAt(back, 64, x, y).join() !== want.join()) wrong++;
+        }
+      }
+      expect(wrong).toBe(0);
+    });
+
+    test.each([false, true])("that hide white are not written as opaque white (dither %p)", async dither => {
+      // Transparent white is nearer to opaque white than to transparent black.
+      const pixel = (x: number, y: number): Rgba =>
+        y < 32 ? [255, 255, 255, 0] : y < 48 ? [255, 255, 255, 255] : [x * 3, x * 3, x * 3, 255];
+      const out = await new Bun.Image(makePng(64, 64, pixel)).png({ palette: true, colors: 16, dither }).bytes();
+      expect(pngPalette(out)[0]).toEqual([0, 0, 0, 0]);
+      const back = (await decode(out)).data;
+      let visible = 0;
+      for (let y = 0; y < 32; y++) for (let x = 0; x < 64; x++) if (rgbaAt(back, 64, x, y)[3] !== 0) visible++;
+      expect(visible).toBe(0);
+    });
+  });
+
+  test("the next box to split is the one with the most squared error, not the widest", async () => {
+    // Three greys share almost every pixel. Four single pixels are
+    // saturated colours: the widest box is always one that holds them.
+    const outliers: Rgba[] = [
+      [255, 0, 0, 255],
+      [0, 255, 0, 255],
+      [0, 0, 255, 255],
+      [255, 255, 0, 255],
+    ];
+    const greyOf = (y: number): Rgba =>
+      y < 24 ? [60, 60, 60, 255] : y < 48 ? [90, 90, 90, 255] : [120, 120, 120, 255];
+    const src = makePng(64, 64, (x, y) => (y === 0 && x < 4 ? outliers[x] : greyOf(y)));
+    const out = await new Bun.Image(src).png({ palette: true, colors: 3 }).bytes();
+    expect(pngPalette(out)).toEqual([greyOf(0), greyOf(24), greyOf(48)]);
+  });
+
+  test("a box is split along the channel with the most squared error, not the widest", async () => {
+    // Two colours that differ in green share almost every pixel, three
+    // to one. Two single pixels stretch red further than green.
+    const low: Rgba = [100, 50, 0, 255];
+    const high: Rgba = [100, 200, 0, 255];
+    const src = makePng(64, 64, (x, y) =>
+      y === 0 && x === 0 ? [0, 125, 0, 255] : y === 0 && x === 1 ? [255, 125, 0, 255] : y < 48 ? low : high,
+    );
+    const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(out)).toEqual([low, high]);
+  });
+
+  test("a colour on more than half of a box is written exactly: white beside a light panel", async () => {
+    // White on 70% of the pixels, grey 245 on 12.5%, then a ramp of 201
+    // greys. At 4 colours white and the panel share a box, and the mean of
+    // that box is (253,253,253).
+    const grey = (v: number): Rgba => [v, v, v, 255];
+    const src = makePng(64, 64, (x, y) => (y < 45 ? grey(255) : y < 53 ? grey(245) : grey(((y - 53) * 64 + x) % 201)));
+    const out = await new Bun.Image(src).png({ palette: true, colors: 4 }).bytes();
+    expect(pngPalette(out)).toEqual([grey(40), grey(119), grey(182), grey(255)]);
+    expect(rgbaAt((await decode(out)).data, 64, 0, 0)).toEqual(grey(255));
+  });
+
+  test("a colour on more than half of a box is written exactly: a transparent background", async () => {
+    // 62.5% fully transparent, two rows of low alphas under it, then three
+    // opaque colours with noise. The transparent pixels and the soft edge
+    // share a box, and the mean of that box has alpha 2.
+    const opaque = [
+      [251, 240, 223],
+      [200, 60, 70],
+      [20, 20, 20],
+    ];
+    const pixel = (x: number, y: number): Rgba => {
+      if (y < 40) return [0, 0, 0, 0];
+      if (y < 42) return [0, 0, 0, 8 + ((x * 7 + y * 3) % 8) * 8];
+      const c = opaque[y < 52 ? 0 : y < 58 ? 1 : 2];
+      const n = ((x * 7 + y * 11) % 5) - 2;
+      return [Math.max(0, c[0] + n), Math.max(0, c[1] + n), Math.max(0, c[2] + n), 255];
+    };
+    const out = await new Bun.Image(makePng(64, 64, pixel)).png({ palette: true, colors: 4 }).bytes();
+    expect(pngPalette(out)).toEqual([
+      [0, 0, 0, 0],
+      [20, 20, 20, 255],
+      [200, 60, 70, 255],
+      [251, 240, 223, 255],
+    ]);
+    const back = (await decode(out)).data;
+    let visible = 0;
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 64; x++) if (rgbaAt(back, 64, x, y)[3] !== 0) visible++;
+    expect(visible).toBe(0);
+  });
+
+  // width×height×4 bytes of pixels: white on the first `white`, then
+  // `distinct - 1` dark colours on one pixel each, then white again. The
+  // dark colours are all different (an odd multiplier permutes the low
+  // 21 bits) and every channel is below 128.
+  const whiteThenDark = (pixels: number, white: number, distinct: number) => {
+    const rgba = new Uint8Array(pixels * 4).fill(255);
+    for (let i = 0, p = white * 4; i < distinct - 1; i++, p += 4) {
+      const v = Math.imul(i, 0x9e3779b1) & 0x1fffff;
+      rgba[p] = v & 127;
+      rgba[p + 1] = (v >> 7) & 127;
+      rgba[p + 2] = v >> 14;
+    }
+    return rgba;
+  };
+  // Pixels of `back` that are not a palette entry nearest to the same
+  // pixel of `rgba` (squared RGBA distance).
+  const countNotNearest = (rgba: Uint8Array, palette: Rgba[], back: Uint8Array) => {
+    // The least distance from a colour to the palette, found once per colour.
+    const least = new Map<number, number>();
+    let count = 0;
+    for (let i = 0; i < rgba.length; i += 4) {
+      const [r, g, b, a] = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
+      const key = r | (g << 8) | (b << 16) | (a << 24);
+      let best = least.get(key);
+      if (best === undefined) {
+        best = Infinity;
+        for (const e of palette) {
+          best = Math.min(best, (r - e[0]) ** 2 + (g - e[1]) ** 2 + (b - e[2]) ** 2 + (a - e[3]) ** 2);
+        }
+        least.set(key, best);
+      }
+      const got = (r - back[i]) ** 2 + (g - back[i + 1]) ** 2 + (b - back[i + 2]) ** 2 + (a - back[i + 3]) ** 2;
+      if (got !== best) count++;
+    }
+    return count;
+  };
+
+  // [name, width, height, white pixels, distinct colours, colors].
+  test.each([
+    ["white and a few thousand other colours", 128, 128, 8192, 4000, 16],
+    ["mostly different colours", 64, 64, 1900, 2197, 16],
+  ] as const)("every pixel is written as a nearest entry: %s", async (_name, w, h, white, distinct, colors) => {
+    const rgba = whiteThenDark(w * h, white, distinct);
+    const out = await new Bun.Image(pngFromRgba(w, h, rgba)).png({ palette: true, colors }).bytes();
+    const palette = pngPlte(out).entries;
+    expect(palette).toHaveLength(colors);
+    // One colour per entry: white holds one entry, not several.
+    expect(new Set(palette.map(e => e.join())).size).toBe(colors);
+    expect(countNotNearest(rgba, palette, (await decode(out)).data)).toBe(0);
+  });
+
+  test("the palette does not depend on the order of the pixels", async () => {
+    const [w, h] = [128, 128];
+    const forward = whiteThenDark(w * h, 8192, 4000);
+    const backward = forward.slice();
+    new Uint32Array(backward.buffer).reverse();
+    const [first, second] = await Promise.all(
+      [forward, backward].map(rgba =>
+        new Bun.Image(pngFromRgba(w, h, rgba)).png({ palette: true, colors: 16 }).bytes(),
+      ),
+    );
+    expect(pngPlte(second).entries).toEqual(pngPlte(first).entries);
+  });
+
+  test("a cut is scored in fractions of a level", async () => {
+    // A cut after 3 leaves a squared error of 2.8 per channel, a cut after 2
+    // leaves 3. Scored in whole levels the two are equal.
+    const greys = [1, 1, 2, 2, 3, 5];
+    const src = makePng(6, 1, x => [greys[x], greys[x], greys[x], 255]);
+    const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
+    expect(pngPalette(out)).toEqual([
+      [2, 2, 2, 255],
+      [5, 5, 5, 255],
+    ]);
+  });
+
+  test("the error of a box counts alpha", async () => {
+    // The first cut is on alpha: the greys at 90 with alpha 1 and 128 on one
+    // side, the opaque greys on the other. The alpha side has more squared
+    // error (30,242 against 29,455), so it is split next. Grey 90 has more
+    // than half of the opaque side.
+    const runs: [Rgba, number][] = [
+      [[90, 90, 90, 1], 5],
+      [[150, 150, 150, 255], 5],
+      [[90, 90, 90, 128], 3],
+      [[90, 90, 90, 255], 6],
+    ];
+    const pixels = runs.flatMap(([colour, count]) => Array.from({ length: count }, () => colour));
+    const out = await new Bun.Image(makePng(pixels.length, 1, x => pixels[x]))
+      .png({ palette: true, colors: 3 })
+      .bytes();
+    expect(pngPalette(out)).toEqual([
+      [90, 90, 90, 1],
+      [90, 90, 90, 128],
+      [90, 90, 90, 255],
+    ]);
+  });
+
+  test("a 512x256 ramp: the score of a cut passes 64 bits", async () => {
+    const src = makePng(512, 256, x => {
+      const v = Math.floor(Math.sqrt(x / 511) * 255);
+      return [v, v, v, 255];
+    });
+    const out = await new Bun.Image(src).png({ palette: true, colors: 3 }).bytes();
+    expect(pngPalette(out)).toEqual([
+      [63, 63, 63, 255],
+      [128, 128, 128, 255],
+      [209, 209, 209, 255],
+    ]);
+  });
+
+  test("a 512x512 image: the products that choose a box pass 64 bits", async () => {
+    // Flat rows: 172 white, 11 black, 43 yellow, 286 cyan.
+    const rowOf = (y: number): Rgba =>
+      y < 172 ? [255, 255, 255, 255] : y < 183 ? [0, 0, 0, 255] : y < 226 ? [255, 255, 0, 255] : [0, 255, 255, 255];
+    const src = makePng(512, 512, (_x, y) => rowOf(y));
+    const out = await new Bun.Image(src).png({ palette: true, colors: 3 }).bytes();
+    expect(pngPalette(out)).toEqual([
+      [0, 255, 255, 255],
+      [255, 255, 0, 255],
+      [255, 255, 255, 255],
+    ]);
+  });
+
+  // The rules of the quantizer, one step at a time. Exact for the small
+  // images below: every sum is under 2^53, and the score is a BigInt.
+  const model = (pixels: Rgba[], colors: number): { palette: Rgba[]; indices: number[] } => {
+    const channels = [0, 1, 2, 3];
+    type Box = { pixels: Rgba[]; sums: number[]; error: number[] };
+    const boxOf = (pixels: Rgba[]): Box => {
+      const sums = channels.map(c => pixels.reduce((s, p) => s + p[c], 0));
+      // The number of pixels times the squared error, per channel.
+      const error = channels.map(c => pixels.length * pixels.reduce((s, p) => s + p[c] * p[c], 0) - sums[c] ** 2);
+      return { pixels, sums, error };
+    };
+    const total = (box: Box) => box.error.reduce((s, e) => s + e, 0);
+    const sumsSquared = (box: Box) => BigInt(box.sums.reduce((s, v) => s + v * v, 0));
+
+    // At most `colors` colours: those colours, in order of first appearance.
+    let palette: Rgba[] = [];
+    for (const p of pixels) if (!palette.some(e => e.join() === p.join())) palette.push(p);
+    if (palette.length > colors) {
+      // A fully transparent pixel shows no colour: they are all one colour.
+      pixels = pixels.map((p): Rgba => (p[3] === 0 ? [0, 0, 0, 0] : p));
+      const boxes = [boxOf(pixels)];
+      while (boxes.length < colors) {
+        // The box with the most squared error.
+        let pick: Box | undefined;
+        for (const box of boxes) {
+          if (box.pixels.length < 2) continue;
+          if (!pick || total(box) * pick.pixels.length > total(pick) * box.pixels.length) pick = box;
+        }
+        if (!pick) break;
+        const box = pick;
+        // Its channel with the most squared error.
+        let ch = 0;
+        for (const c of channels) if (box.error[c] > box.error[ch]) ch = c;
+        // The cut between two values of that channel that leaves the least
+        // squared error. The score keeps 32 fraction bits.
+        const values = [...new Set(box.pixels.map(p => p[ch]))].sort((a, b) => a - b);
+        let best: { score: bigint; parts: [Box, Box] } | undefined;
+        for (const value of values.slice(1)) {
+          const parts: [Box, Box] = [
+            boxOf(box.pixels.filter(p => p[ch] < value)),
+            boxOf(box.pixels.filter(p => p[ch] >= value)),
+          ];
+          const [below, rest] = parts;
+          const score =
+            (sumsSquared(below) << 32n) / BigInt(below.pixels.length) +
+            (sumsSquared(rest) << 32n) / BigInt(rest.pixels.length);
+          if (!best || score > best.score) best = { score, parts };
+        }
+        if (!best) break;
+        boxes[boxes.indexOf(box)] = best.parts[0];
+        boxes.push(best.parts[1]);
+      }
+      // An entry is the colour that more than half of the box has. With no
+      // such colour it is the mean of the box, a half rounded up.
+      palette = boxes.map(box => {
+        const n = box.pixels.length;
+        const most = box.pixels.find(p => box.pixels.filter(q => q.join() === p.join()).length * 2 > n);
+        return most ?? (box.sums.map(sum => Math.floor((sum + (n >> 1)) / n)) as Rgba);
+      });
+    }
+    // A pixel takes the nearest entry, the first one when two are as near.
+    const indices = pixels.map(p => {
+      const distances = palette.map(e => channels.reduce((s, c) => s + (p[c] - e[c]) ** 2, 0));
+      return distances.indexOf(Math.min(...distances));
+    });
+    return { palette, indices };
+  };
+
+  test("small random images match a model of the rules", async () => {
+    let state = 0x2f6e2b1;
+    const next = (below: number) => {
+      state = (Math.imul(state, 1103515245) + 12345) >>> 0;
+      return (state >>> 16) % below;
+    };
+    const cases = Array.from({ length: 40 }, () => {
+      const [w, h, colors] = [1 + next(8), 1 + next(8), 2 + next(8)];
+      // A few levels per channel, so that colours repeat and scores tie.
+      const [levels, withAlpha] = [1 + next(6), next(3) === 0];
+      const level = () => next(levels) * 51;
+      const pixels = Array.from({ length: w * h }, (): Rgba => [level(), level(), level(), withAlpha ? level() : 255]);
+      return { w, h, colors, pixels };
+    });
+    const got = await Promise.all(
+      cases.map(async ({ w, h, colors, pixels }) => {
+        const out = await new Bun.Image(makePng(w, h, (x, y) => pixels[y * w + x]))
+          .png({ palette: true, colors })
+          .bytes();
+        const back = (await decode(out)).data;
+        return {
+          palette: pngPlte(out).entries,
+          pixels: pixels.map((_, i) => rgbaAt(back, w, i % w, Math.floor(i / w))),
+        };
+      }),
+    );
+    const want = cases.map(({ colors, pixels }) => {
+      const { palette, indices } = model(pixels, colors);
+      return { palette, pixels: indices.map(i => palette[i]) };
+    });
+    expect(got).toEqual(want);
+  });
+});
+
 // ─── Floyd–Steinberg dither ─────────────────────────────────────────────────
 
 describe("Floyd–Steinberg dither", () => {
-  // A 0..255 horizontal grey ramp quantised to 2 colours. Median-cut on a
-  // uniform ramp yields palette ≈ [64, 192] (means of the two halves), so
+  // A 0..255 horizontal grey ramp quantised to 2 colours. The quantizer cuts
+  // a uniform ramp in the middle: palette ≈ [64, 192] (means of the halves), so
   // values outside [64,192] saturate — FS can only track the source *within
   // the palette's gamut*. Inside that band, the local mean over any window
   // should converge to the source value (the defining property of error
@@ -238,7 +880,7 @@ describe("Floyd–Steinberg dither", () => {
     const ramp = makePng(256, 8, x => [x, x, x, 255]);
     const png = await new Bun.Image(ramp).png({ palette: true, colors: 2, dither: true }).bytes();
     const back = decodePng(await new Bun.Image(png).png().bytes());
-    // Discover the two greys median-cut actually picked.
+    // Discover the two greys the quantizer actually picked.
     const seen = new Set<number>();
     for (let i = 0; i < back.data.length; i += 4) seen.add(back.data[i]);
     expect(seen.size).toBeLessThanOrEqual(2);

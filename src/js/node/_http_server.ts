@@ -65,6 +65,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
+  httpServerParts,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -4342,11 +4343,11 @@ http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 // The methods this module defines on Server.prototype, captured before user code can patch them. https.Server takes
 // them as own properties of its own prototype: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122
 const { constructor: _constructor, ...serverPrototypeDescriptors } = Object.getOwnPropertyDescriptors(Server.prototype);
+httpServerParts.initHttpServer = initHttpServer;
+httpServerParts.serverPrototypeDescriptors = serverPrototypeDescriptors;
 
 export default {
   Server,
   ServerResponse,
   kConnectionsCheckingInterval,
-  initHttpServer,
-  serverPrototypeDescriptors,
 };

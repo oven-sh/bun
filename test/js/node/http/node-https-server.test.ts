@@ -92,6 +92,45 @@ test("https.Server extends tls.Server, not http.Server", () => {
   const httpMethods = Reflect.ownKeys(http.Server.prototype).filter(key => key !== "constructor");
   expect(httpMethods.filter(key => !Object.hasOwn(https.Server.prototype, key))).toEqual([]);
   expect(typeof Object.getOwnPropertyDescriptor(https.Server.prototype, "listening")?.get).toBe("function");
+  // The net.Server and tls.Server members that an https server reaches without having run those constructors. A new
+  // member that needs net.Server's handle state needs an http.Server version too.
+  const parentKeys = [...Reflect.ownKeys(net.Server.prototype), ...Reflect.ownKeys(tls.Server.prototype)];
+  const inherited = parentKeys.filter(key => key !== "constructor" && !Object.hasOwn(https.Server.prototype, key));
+  expect(inherited.map(String).sort()).toEqual([
+    "Symbol(::buntlsnativesecurecontextctor::)",
+    "Symbol(kArmHandshakeTimeout)",
+    "Symbol(kClusterFauxListen)",
+    "Symbol(kRealListen)",
+    "_emitCloseIfDrained",
+    "getTicketKeys",
+    "getsockname",
+    "setTicketKeys",
+  ]);
+});
+
+test.concurrent.each([
+  ["an assignment to https.Server stays after createServer()", "https.Server = Mine; https.createServer();"],
+  ["Object.freeze(https) before the first read of Server", "Object.freeze(https); Mine = https.Server;"],
+])("%s", async (_label, statement) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const https = require("node:https");
+let Mine = class Mine {};
+${statement}
+const server = https.createServer();
+console.log(https.Server === Mine, Object.getPrototypeOf(Object.getPrototypeOf(server)) === require("node:tls").Server.prototype);
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "true true\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 // A wrapper of http.Server.prototype.emit must not be reachable through https.Server.prototype: a library that wraps

@@ -69,6 +69,15 @@ const http1ServerPipeline: {
   kMustCloseConnection?: symbol;
 } = {};
 
+// node:_http_server registers its constructor body and the methods it defines
+// on Server.prototype here at module initialization. node:https builds
+// https.Server from them, as node's https.Server borrows from _http_server,
+// without widening node:_http_server's exports.
+const httpServerParts: {
+  initHttpServer?: (this: unknown, options: unknown, callback: unknown) => unknown;
+  serverPrototypeDescriptors?: PropertyDescriptorMap;
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -555,6 +564,7 @@ export {
   hasServerResponseFinished,
   headerStateSymbol,
   http1ServerPipeline,
+  httpServerParts,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,

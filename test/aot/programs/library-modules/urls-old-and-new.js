@@ -17,7 +17,7 @@ try {
 const params = new URLSearchParams("a=1&b=2&a=3");
 params.sort();
 console.log(params.getAll("a").join(), params.has("b"), params.get("c"), params.toString(), [...params.keys()].join(), new URLSearchParams({ k: "v w" }).toString(), params.size);
-console.log(fileURLToPath("file:///tmp/a%20b.txt"), pathToFileURL("/tmp/a b#c.txt").href, fileURLToPath(new URL("file:///x/y")));
+console.log(fileURLToPath("file:///C:/tmp/a%20b.txt"), pathToFileURL("/tmp/a b#c.txt").href, fileURLToPath(new URL("file:///C:/x/y")));
 try {
   fileURLToPath("http://example.com/");
 } catch (error) {

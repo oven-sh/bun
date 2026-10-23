@@ -127,7 +127,7 @@ impl MachoFile {
 
         let header_size = size_of::<u64>() as u64;
         let total_size = header_size + data.len() as u64;
-        let aligned_size = align_size(total_size, blob_alignment);
+        let mut aligned_size = align_size(total_size, blob_alignment);
 
         // Look for existing __BUN,__BUN section
 
@@ -182,6 +182,9 @@ impl MachoFile {
                                         .checked_add(command.filesize)
                                         .ok_or(MachoError::OffsetOverflow)?;
                                     original_segsize = command.filesize;
+                                    // The template may be a compiled executable with a larger payload. What lies behind
+                                    // the segment only ever moves forward, so the segment keeps its size.
+                                    aligned_size = aligned_size.max(original_segsize);
                                     self.segment = command;
                                     self.section = sect;
 
@@ -257,8 +260,8 @@ impl MachoFile {
         }
 
         // __BUN is grown to fit the bundle; shrinking is not implemented (the
-        // offset-shift logic below only moves data forward). Real Bun templates
-        // ship a minimal placeholder so `aligned_size >= filesize` always holds.
+        // offset-shift logic below only moves data forward), so `aligned_size`
+        // is never less than the template's `filesize`.
         let size_diff: u64 = aligned_size
             .checked_sub(original_segsize)
             .ok_or(MachoError::InvalidObject)?;

@@ -22,6 +22,8 @@ pub struct CompileTarget {
     pub(crate) baseline: bool,
     pub(crate) version: Version,
     pub(crate) libc: Libc,
+    /// `bun-aot`, the Bun that has the ahead-of-time compiler in it, in place of `bun`.
+    pub(crate) has_compiler: bool,
 }
 
 impl Default for CompileTarget {
@@ -44,6 +46,7 @@ impl Default for CompileTarget {
             } else {
                 Libc::Default
             },
+            has_compiler: false,
         }
     }
 }
@@ -105,6 +108,19 @@ impl CompileTarget {
             && self.baseline == other.baseline
             && self.version.eql(other.version)
             && self.libc == other.libc
+            && self.has_compiler == other.has_compiler
+    }
+
+    /// This platform's `bun-aot` at this version.
+    pub fn with_compiler() -> CompileTarget {
+        CompileTarget {
+            has_compiler: true,
+            ..CompileTarget::default()
+        }
+    }
+
+    const fn product(&self) -> &'static str {
+        if self.has_compiler { "bun-aot" } else { "bun" }
     }
 
     pub fn is_default(&self) -> bool {
@@ -155,13 +171,17 @@ impl CompileTarget {
         // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
         let res = (|| -> std::io::Result<()> {
             cursor.write_all(registry_url)?;
-            cursor.write_all(b"/@oven/bun-")?;
+            cursor.write_all(b"/@oven/")?;
+            cursor.write_all(self.product().as_bytes())?;
+            cursor.write_all(b"-")?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
             cursor.write_all(arch.as_bytes())?;
             cursor.write_all(libc.as_bytes())?;
             cursor.write_all(baseline)?;
-            cursor.write_all(b"/-/bun-")?;
+            cursor.write_all(b"/-/")?;
+            cursor.write_all(self.product().as_bytes())?;
+            cursor.write_all(b"-")?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
             cursor.write_all(arch.as_bytes())?;
@@ -457,7 +477,8 @@ impl fmt::Display for CompileTarget {
         // This doesn't match up 100% with npm, but that's okay.
         write!(
             f,
-            "bun-{}-{}{}{}-v{}.{}.{}",
+            "{}-{}-{}{}{}-v{}.{}.{}",
+            self.product(),
             self.os.npm_name(),
             self.arch.npm_name(),
             self.libc,

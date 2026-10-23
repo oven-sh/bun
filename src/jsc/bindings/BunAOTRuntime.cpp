@@ -215,10 +215,10 @@ extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, const BunAOTImageFile*, cons
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes, uint32_t*) { return false; }
 extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes) { return true; }
 extern "C" BunAOTBytes Bun__AOT__imageCode() { return { nullptr, 0 }; }
-extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) { }
-extern "C" void Bun__AOT__setMismatchLogFormat(bool) { }
-extern "C" void Bun__AOT__listRefusedChanges() { }
-extern "C" void Bun__AOT__setVerbose(bool) { }
+extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) {}
+extern "C" void Bun__AOT__setMismatchLogFormat(bool) {}
+extern "C" void Bun__AOT__listRefusedChanges() {}
+extern "C" void Bun__AOT__setVerbose(bool) {}
 extern "C" int64_t Bun__AOT__offsetInCode(const void*) { return -1; }
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void*) { return -1; }
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset) { return offset; }
@@ -227,7 +227,7 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t*, size_t, uint8_t*, s
 // JavaScriptCore's aot/runtime/AOTExpectedRows.cpp, where the realm runs no compiled program. src/sql_jsc/shared/RowDecoder.rs decodes the row itself then.
 extern "C" uint32_t JSC__AOT__expectedResultType(JSC::JSGlobalObject*, JSC::EncodedJSValue) { return 0; }
 extern "C" void* JSC__AOT__ObjectBuilderPlan__create(JSC::JSGlobalObject*, uint32_t, const void*, uint32_t) { return nullptr; }
-extern "C" void JSC__AOT__ObjectBuilderPlan__destroy(void*) { }
-extern "C" JSC::EncodedJSValue JSC__AOT__ObjectBuilderPlan__createObject(JSC::JSGlobalObject*, const void*, const void*) { return JSC::JSValue::encode({ }); }
+extern "C" void JSC__AOT__ObjectBuilderPlan__destroy(void*) {}
+extern "C" JSC::EncodedJSValue JSC__AOT__ObjectBuilderPlan__createObject(JSC::JSGlobalObject*, const void*, const void*) { return JSC::JSValue::encode({}); }
 
 #endif // ENABLE(AOT)

@@ -21,7 +21,7 @@ parameters.set("c", [1, 2]);
 console.log(parameters.toString(), Object.fromEntries(parameters), new URLSearchParams("?a=1&a=2&b").getAll("a"), new URLSearchParams([["k", "v"]]).get("k"));
 parameters.forEach((value, name) => console.log(name, value));
 console.log(querystring.parse("a=1&a=2&b=%20x&c"), querystring.stringify({ a: [1, 2], b: "x y", c: true }), querystring.escape("a&b"), querystring.unescape("%41"));
-console.log(fileURLToPath("file:///tmp/a%20b.txt"), pathToFileURL("/tmp/a b#c.txt").href, url.format({ protocol: "http", host: "h", pathname: "/p", query: { a: 1 } }));
+console.log(fileURLToPath("file:///C:/tmp/a%20b.txt"), pathToFileURL("/tmp/a b#c.txt").href, url.format({ protocol: "http", host: "h", pathname: "/p", query: { a: 1 } }));
 const legacy = url.parse("http://user@h:81/p/q?a=1&b=2#f", true);
 console.log(legacy.host, legacy.port, legacy.pathname, legacy.query.a, legacy.auth, legacy.hash, url.resolve("http://h/a/b", "../c"), url.domainToASCII("español.com"));
 console.log(encodeURIComponent("a/b c?d"), decodeURIComponent("%E2%9C%93"), encodeURI("http://h/a b?c=d e"), import.meta.url.startsWith("file://"));

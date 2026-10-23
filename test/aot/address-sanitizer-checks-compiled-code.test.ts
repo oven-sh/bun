@@ -27,8 +27,22 @@ for (const m of mixed) for (const n of mixed) warm += same(m, n) ? 1 : 0;
 function read(leaf: any): number { return same(leaf, "x") ? 1 : 2; }`;
 
 const rows: [string, string, string, string[], RegExp, boolean][] = [
-  ["code that B3 generates", typedRead, "7998000\n", ["--aot-heat=everything-is-hot"], /poisoned memory: function \d+/, false],
-  ["code that is generated directly", typedRead, "7998000\n", ["--aot-testing=GenerateAllCodeDirectly"], /poisoned memory: function \d+/, true],
+  [
+    "code that B3 generates",
+    typedRead,
+    "7998000\n",
+    ["--aot-heat=everything-is-hot"],
+    /poisoned memory: function \d+/,
+    false,
+  ],
+  [
+    "code that is generated directly",
+    typedRead,
+    "7998000\n",
+    ["--aot-testing=GenerateAllCodeDirectly"],
+    /poisoned memory: function \d+/,
+    true,
+  ],
   ["a stub", looseEquality, "8000\n", ["--aot-heat=everything-is-hot"], /poisoned memory: a stub/, false],
 ];
 
@@ -39,14 +53,32 @@ test.skipIf(!isASAN || !isLinux || process.arch !== "x64").each(rows)(
     for (const sabotage of [[], staleCells.slice(0, 1)]) {
       const executable = join(String(dir), sabotage.length ? "sabotaged" : "sound");
       const build = await run(
-        [bunExe(), "build", "--compile", "--aot", ...staleCells.slice(1), ...sabotage, ...flags, "--explain=statistics", "entry.ts", "--outfile", executable],
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          ...staleCells.slice(1),
+          ...sabotage,
+          ...flags,
+          "--explain=statistics",
+          "entry.ts",
+          "--outfile",
+          executable,
+        ],
         String(dir),
       );
-      expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
       const generatedDirectly = Number(/FunctionsGeneratedDirectly (\d+)/.exec(build.stderr + build.stdout)?.[1] ?? 0);
       expect(generatedDirectly > 0).toBe(isGeneratedDirectly);
 
-      const { stdout, stderr, exitCode } = await run([executable], String(dir), { ...bunEnv, ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":symbolize=0" });
+      const { stdout, stderr, exitCode } = await run([executable], String(dir), {
+        ...bunEnv,
+        ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":symbolize=0",
+      });
       if (!sabotage.length) {
         expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
         continue;

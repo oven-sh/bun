@@ -4540,6 +4540,12 @@ impl SpawnStatus {
     pub fn is_ok(self) -> bool {
         self.code == 0
     }
+
+    /// -1 if a signal ended it.
+    #[inline]
+    pub fn code(self) -> i32 {
+        self.code
+    }
 }
 
 // ── posix_spawn_bun FFI (canonical #[repr(C)] mirror) ─────────────────────

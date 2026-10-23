@@ -36,8 +36,13 @@ test.skipIf(!!unsupported)(
       using dir = tempDir("aot-full-heap-again", { "entry.ts": program, "tsconfig.json": "{}" });
       const folder = String(dir);
       const executable = join(folder, isWindows ? "entry.exe" : "entry");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", executable], folder, bunEnv));
-      const ran = await spawned(withoutCoreDump([executable]), folder, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "64" });
+      built(
+        await spawned([bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", executable], folder, bunEnv),
+      );
+      const ran = await spawned(withoutCoreDump([executable]), folder, {
+        ...bunEnv,
+        BUN_JSC_markedBlockCageSizeInMB: "64",
+      });
       expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
         stdout: "the first holds many: true\neach holds nine tenths of the first: true true true true true true\n",
         stderr: "",

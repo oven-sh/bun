@@ -56,9 +56,9 @@ if (Bun.isMainThread) {
     });
     postMessage(server.port);
   } else if (kind === "node") {
-    const server = createServer((request, response) => {
+    const server = createServer((request: any, response: any) => {
       let body = "";
-      request.on("data", chunk => (body += chunk));
+      request.on("data", (chunk: unknown) => (body += chunk));
       request.on("end", () => {
         response.setHeader("content-type", "application/json");
         response.end(JSON.stringify({ ...counter.hit(request.url!), body }));

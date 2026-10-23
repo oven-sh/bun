@@ -1,6 +1,7 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { run } from "../../aot/harness/run";
+import { test } from "../../aot/supported";
 
 setDefaultTimeout(60_000);
 

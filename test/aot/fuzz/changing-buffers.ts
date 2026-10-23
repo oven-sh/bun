@@ -197,7 +197,7 @@ export function generate(random: Random): string {
     const drawn = pick(holder === "view" ? viewUses : holder === "data" ? dataUses : bufferUses);
     // An await stands only in the function's own body.
     const use = strike.startsWith("await") && /=> \{|get \w+\(\)|static get/.test(drawn) ? drawn.replaceAll(strike, direct) : drawn;
-    const rounds = pick([3, 3, 5, 40, 300]);
+    const rounds = pick(bytes > 256 ? [3, 3, 5] : [3, 3, 5, 40, 300]);
     const struck = random.between(1, rounds - 2);
     const after =
       holder === "data" ? "[lengthOf(view), memory.byteLength]" : `[view.length, view.byteLength, view.byteOffset, view[0], view[${Math.max(0, windowLength - 1)}], memory.byteLength${memoryKind === "fixed" ? ", (memory as any).detached" : ""}]`;

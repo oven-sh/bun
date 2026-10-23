@@ -7,6 +7,7 @@
 //   AOT_BUILTINS_UPDATE=1   checks every hand-written overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
 //   AOT_BUILTINS_FILTER=<r> only the entries whose path matches the regular expression
+//   AOT_BUILTINS_SECONDS_A_CALL=<n>  how long a call may take before its process is ended (45)
 // All of it takes twenty minutes of one core, so it is run in parts: test/aot/parts.mts. By hand: TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -34,6 +35,8 @@ const isUpdate = !!process.env.AOT_BUILTINS_UPDATE;
 const tablePath = process.env.AOT_BUILTINS_TABLE ?? null;
 const filter = new RegExp(process.env.AOT_BUILTINS_FILTER ?? ".");
 const secondsPerAttempt = 600;
+// CI ends a test file after five minutes, so a call that does not come back has to be found well before that.
+const secondsPerCall = Number(process.env.AOT_BUILTINS_SECONDS_A_CALL) || 45;
 const executableEnv = { ...bunEnv, BUN_INTERNAL_DESCRIBE_VALUES_WITHOUT_SCRIPT: "1" };
 const maxAttemptsPerWorker = 40;
 
@@ -363,7 +366,17 @@ export function differential(part: number, parts: number): void {
         stderr: "ignore",
         timeout: secondsPerAttempt * 1000,
       });
+      const notePath = `${reportsPath}.current`;
+      const noteOfCall = () => (existsSync(notePath) ? readFileSync(notePath, "utf8") : "");
+      const noteAtStart = noteOfCall();
+      let note = noteAtStart;
+      let notedAt = Date.now();
+      const watch = setInterval(() => {
+        if (note !== noteOfCall()) [note, notedAt] = [noteOfCall(), Date.now()];
+        else if (note !== noteAtStart && Date.now() - notedAt > secondsPerCall * 1000) worker.kill("SIGKILL");
+      }, 1000);
       await worker.exited;
+      clearInterval(watch);
       const current: [string, CallMode] | null = JSON.parse(readFileSync(`${reportsPath}.current`, "utf8"));
       if (current === null) break;
       endedProcess.add(keyOf(...current));

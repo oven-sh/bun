@@ -197,7 +197,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const again = await alone(bed, folder, generated, mode.flags);
     if (!sameFailure(failure, again.verdict)) {
       together ? counts.onlyTogether++ : counts.unstable++;
-      appendFileSync(join(out, together ? "only-in-a-shared-build.tsv" : "unstable.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${described(bed, mode.name, failure, generated.group)}\n`);
+      appendFileSync(join(out, together ? "only-in-a-shared-build.tsv" : "unstable.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${described(bed, mode.name, failure, generated.group)}\t${mode.flags.join(" ")}\n`);
       return together ? keepTogether(bed, folder, generated, members, mode, failure) : undefined;
     }
     if ((await alone(bed, folder, generated, mode.flags)).plain.stdout !== again.plain.stdout) {
@@ -356,7 +356,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         else bump(counts.runs, `${bed.name} ${mode.name}`);
         inGroup(generated, `${mode.name} ${verdict.kind === "skipped" ? `skipped: ${verdict.why}` : verdict.kind}`);
         if (!isFinding(verdict)) continue;
-        appendFileSync(join(out, "failures.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${generated.group ?? ""}\t${mode.name}\t${verdict.kind}\t${verdict.detail}\t${members.length} in the build\n`);
+        appendFileSync(join(out, "failures.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${generated.group ?? ""}\t${mode.name}\t${verdict.kind}\t${verdict.detail}\t${members.length} in the build\t${mode.flags.join(" ")}\n`);
         // Past the deadline a run that reduces only lists a failure: the other workers wait, and a later run finds it again.
         if (!settings.isCountOnly && (Date.now() < deadline || !settings.reduceSeconds)) await keep(bed, folder, generated, mode, verdict, members);
       }

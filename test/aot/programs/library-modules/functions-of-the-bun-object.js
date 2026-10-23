@@ -18,7 +18,7 @@ console.log(new Bun.Glob("*.{js,ts}").match("a.ts"), new Bun.Glob("**/x/*.js").m
 console.log(Bun.semver.satisfies("1.2.3", "^1.2.0"), Bun.semver.satisfies("2.0.0", "^1.2.0"), Bun.semver.order("1.0.0", "1.0.1"));
 console.log(Bun.escapeHTML('<a href="x">&</a>'), Bun.deepEquals({ a: [1] }, { a: [1] }), Bun.deepEquals({ a: 1 }, { a: 1, b: undefined }, true), Bun.deepMatch({ a: 1 }, { a: 1, b: 2 }), Bun.stringWidth("日本"), Bun.stringWidth("\u001b[31mred\u001b[0m"), Bun.stripANSI("\u001b[31mred\u001b[0m"));
 console.log(Bun.inspect({ a: new Map([[1, 2]]) }), Bun.inspect("text"), Bun.inspect.table([{ a: 1 }]).split("\n").length, typeof Bun.inspect.custom);
-console.log(JSON.stringify(Bun.TOML.parse('a = 1\n[b]\nc = "d"')), Bun.fileURLToPath("file:///a/b"), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#00f", "css"), JSON.stringify(Bun.color("rgb(1,2,3)", "{rgb}")));
+console.log(JSON.stringify(Bun.TOML.parse('a = 1\n[b]\nc = "d"')), Bun.fileURLToPath("file:///C:/a/b"), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#00f", "css"), JSON.stringify(Bun.color("rgb(1,2,3)", "{rgb}")));
 const child = Bun.spawn(["sh", "-c", "cat; echo err >&2; exit 3"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
 child.stdin.write("piped in");
 child.stdin.end();

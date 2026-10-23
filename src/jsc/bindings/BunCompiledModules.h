@@ -43,7 +43,8 @@ WTF::String firstCompiledModuleMatching(JSC::JSGlobalObject*, JSC::RegExp* filte
 // The end of every message about code that is not in the executable: what to do in one that was built with --no-compile-function-source, and nothing in any other.
 ASCIILiteral adviceToKeepFunctionSource();
 // Empty unless `path`, which names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable, may not be loaded.
-enum class NotInExecutable : bool { Code, HostObject };
+enum class NotInExecutable : bool { Code,
+    HostObject };
 JSC::JSValue createNotInExecutableError(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path, NotInExecutable = NotInExecutable::Code);
 JSC::JSValue errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, ErrorCode, const WTF::String& path);
 // The same for a file that loads as a database or a page, under a name the compiler could not follow.

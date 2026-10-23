@@ -283,6 +283,42 @@ export function classesBeyondLatin1(seed: number, count: number, isUnicode: bool
 }
 
 /**
+ * A repeated group with two alternatives: one ends in a run of characters, the other consumes nothing or may consume nothing. Whether the
+ * next turn of the group can go on behind the run hangs on where the run has stopped, so the run has to give characters back.
+ */
+export function runsInFrontOfAssertions(seed: number, count: number): Written {
+  const random = new Random(seed);
+  const runs = ["b*", "b+", "b*?", "b+?", "b?", "b{0,2}", "b{1,}", "b{2,3}", "[ab]*", "[ab]+", "\\w*", "\\w+", ".*", "[^,]*", "(?:b)*", "(b)*", "(?:b)+", "(?:b|c)*", "(?:ab)*", "(?:b*)", "(b+)"];
+  const empties = [
+    "\\b", "\\b", "\\B", "^", "$", "(?=a)", "(?=b)", "(?!a)", "(?!b)", "(?<=b)", "(?<=,b)", "(?<!b)", "(?<!a)", "(?=)", "(?!)", "", "(?:\\b)", "(\\b)", "(?:^|$)", "\\b\\b", "\\B(?=a)",
+    "(?=\\b)", "(?!\\b)", "c?\\b", "\\bc?", "(?:\\b|c)", "(?=a|$)", "(?:)", "()",
+  ];
+  const heads = [",", ",", "", "a", "c", "[,a]"];
+  const times = ["{2}", "{2}", "{3}", "+", "+", "*", "{1,2}", "{2,}", "{2,3}", "+?", "*?", "{2,3}?", "?"];
+  const inFront = ["", "", "^", "^", "a", ",?"];
+  const behind = ["", "", "", "$", "a", "b", ",", "\\b", "(?=a)", "\\1"];
+
+  const rows: string[] = [];
+  const seen = new Set<string>();
+  while (rows.length < count) {
+    const withRun = random.choice(heads) + random.choice(runs);
+    const parts = [withRun, random.choice(empties)];
+    if (random.random() < 0.2) parts.push(random.choice(empties));
+    if (random.random() < 0.35) parts.reverse();
+    const open = random.choice(["(?:", "(?:", "(?:", "("]);
+    let pattern = random.choice(inFront) + open + parts.join("|") + ")" + random.choice(times) + random.choice(behind);
+    if (random.random() < 0.15) pattern = "(?:" + pattern + ")" + random.choice(["{2}", "+", "*"]);
+    const flags = random.choice(["", "", "", "", "m", "i", "y", "g", "s", "u"]);
+    if (pattern.includes("\\1") && !/\((?!\?)/.test(pattern)) continue;
+    const row = `    /${pattern}/${flags},`;
+    if (seen.has(row)) continue;
+    seen.add(row);
+    rows.push(row);
+  }
+  return written(smallProgram, rows);
+}
+
+/**
  * The same expressions, each as a text that is whole only when the program runs. No code is generated for such a text when the program is
  * built: the executable compiles it when the expression is made, and matches it without the JIT.
  */

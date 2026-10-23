@@ -175,8 +175,8 @@ const operations: Operation[] = [
     passed: "file, 0o600",
     uses: [...nothing, "console.log((fs.statSync(file).mode & 0o777).toString(8));"],
   },
-  { name: "chown", passed: "file, process.getuid(), process.getgid()", uses: nothing },
-  { name: "lchown", passed: "file, process.getuid(), process.getgid()", uses: nothing },
+  { name: "chown", passed: "file, process.getuid?.() ?? 0, process.getgid?.() ?? 0", uses: nothing },
+  { name: "lchown", passed: "file, process.getuid?.() ?? 0, process.getgid?.() ?? 0", uses: nothing },
   { name: "utimes", passed: "file, 1, 2", uses: [...nothing, "console.log(fs.statSync(file).mtimeMs);"] },
   { name: "lutimes", passed: "file, 1, 2", uses: [...nothing, "console.log(fs.lstatSync(file).mtimeMs);"] },
   {
@@ -236,7 +236,7 @@ const operations: Operation[] = [
   {
     name: "fchown",
     before: opened,
-    passed: "descriptor, process.getuid(), process.getgid()",
+    passed: "descriptor, process.getuid?.() ?? 0, process.getgid?.() ?? 0",
     uses: [...nothing, ...closes],
     forms: withoutPromise,
   },
@@ -412,7 +412,7 @@ const others: [string, string[], string[]][] = [
       ...scaffold,
       'const handle = await fs.promises.open(file, "r+");',
       "console.log((await handle.truncate(2)) === undefined, (await handle.sync()) === undefined, (await handle.datasync()) === undefined);",
-      "console.log((await handle.utimes(1, 2)) === undefined, (await handle.chmod(0o600)) === undefined, (await handle.chown(process.getuid(), process.getgid())) === undefined);",
+      "console.log((await handle.utimes(1, 2)) === undefined, (await handle.chmod(0o600)) === undefined, (await handle.chown(process.getuid?.() ?? 0, process.getgid?.() ?? 0)) === undefined);",
       "await handle.close();",
       'console.log(fs.readFileSync(file, "utf8"));',
       cleanup,
@@ -1101,7 +1101,7 @@ const modules: [string, string[], string[]][] = [
       'import querystring from "node:querystring";',
       'import url from "node:url";',
       'const parsed = querystring.parse("first=1&second=two&first=3");',
-      'console.log(parsed.first.length, parsed.second.length, parsed.missing === undefined, querystring.stringify({ a: [1, 2], b: "c" }), url.parse("https://example.com/a?b=c").query, url.fileURLToPath("file:///a/b"));',
+      'console.log(parsed.first.length, parsed.second.length, parsed.missing === undefined, querystring.stringify({ a: [1, 2], b: "c" }), url.parse("https://example.com/a?b=c").query, url.fileURLToPath("file:///C:/a/b"));',
     ],
   ],
   [

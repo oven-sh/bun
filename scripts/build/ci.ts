@@ -287,12 +287,13 @@ const TIMINGS_META_DATA = "timings:";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Base triplet (bun-os-arch[-musl][-baseline]). Variant suffix (-profile,
+ * Base triplet (bun[-aot]-os-arch[-musl][-baseline]). Variant suffix (-profile,
  * -asan) is added by the caller. Matches ci.ts getTargetTriplet() and
  * cmake's bunTriplet — any drift breaks test-step downloads.
  */
 export function computeBunTriplet(cfg: Config): string {
-  let t = `bun-${cfg.os}-${cfg.arch}`;
+  // `bun-aot` is the release build that has the ahead-of-time compiler in it. The asan build has it under its own name.
+  let t = `${cfg.aot && !cfg.asan ? "bun-aot" : "bun"}-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
   if (cfg.abi === "android") t += "-android";
   // No `-baseline` suffix: x64 is always baseline and the historical

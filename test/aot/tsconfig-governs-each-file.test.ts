@@ -25,7 +25,9 @@ const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$
 // `bun check` writes `file(line,column): error TS1: ..`, a build `error: TS1: ..` and under it `at <folder>/file:line:column`.
 const errors = (said: string) =>
   [
-    ...[...said.matchAll(/^(\S+)\(\d+,\d+\): error (TS\d+)/gm)].map(match => `${match[1]} ${match[2]}`),
+    ...[...said.matchAll(/^(\S+)\(\d+,\d+\): error (TS\d+)/gm)].map(
+      match => `${match[1].replaceAll("\\", "/")} ${match[2]}`,
+    ),
     ...[...said.matchAll(/^error: (TS\d+):.*\n +at .*tsconfig-governs-each-file[^\\/]*[\\/](.+):\d+:\d+$/gm)].map(
       match => `${match[2].replaceAll("\\", "/")} ${match[1]}`,
     ),

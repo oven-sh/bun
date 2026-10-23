@@ -49,9 +49,9 @@ async function work(seed: number): Promise<string> {
   out.push(rows.map(row => row.id + row.name).join());
   database.close();
 
-  const upper = new Transform({ transform(chunk, _, done) { done(null, String(chunk).toUpperCase()); } });
+  const upper = new Transform({ transform(chunk: unknown, _: string, done: (error: null, chunk: string) => void) { done(null, String(chunk).toUpperCase()); } });
   let piped = "";
-  await new Promise<void>((resolve, reject) => pipeline(Readable.from(["a", "b", "c" + seed]), upper, async function (source) { for await (const chunk of source) piped += chunk; }, error => (error ? reject(error) : resolve())));
+  await new Promise<void>((resolve, reject) => pipeline(Readable.from(["a", "b", "c" + seed]), upper, async function (source: AsyncIterable<string>) { for await (const chunk of source) piped += chunk; }, (error: unknown) => (error ? reject(error) : resolve())));
   out.push(piped);
   const web = new ReadableStream<string>({ start(controller) { controller.enqueue("x"); controller.enqueue("y" + seed); controller.close(); } }).pipeThrough(new TextEncoderStream()).pipeThrough(new TextDecoderStream());
   out.push((await Array.fromAsync(web)).join(""));

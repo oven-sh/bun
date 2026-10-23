@@ -215,7 +215,7 @@ function download_buildkite_artifact() {
   # (build-bun unsigned, windows-sign signed). Pin to the sign step to
   # guarantee we get the signed one.
   local step_args=()
-  if [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
+  if [[ -n "$WINDOWS_ARTIFACT_STEP" && ("$name" == bun-windows-* || "$name" == bun-aot-windows-*) ]]; then
     step_args=(--step "$WINDOWS_ARTIFACT_STEP")
   fi
   run_command buildkite-agent artifact download "$name" "$dir" "${step_args[@]}"
@@ -330,6 +330,30 @@ function create_release() {
     bun-windows-x64-profile.zip
     bun-windows-aarch64.zip
     bun-windows-aarch64-profile.zip
+    bun-aot-darwin-aarch64.zip
+    bun-aot-darwin-aarch64-profile.zip
+    bun-aot-darwin-x64.zip
+    bun-aot-darwin-x64-profile.zip
+    bun-aot-linux-aarch64.zip
+    bun-aot-linux-aarch64-profile.zip
+    bun-aot-linux-x64.zip
+    bun-aot-linux-x64-profile.zip
+    bun-aot-linux-aarch64-musl.zip
+    bun-aot-linux-aarch64-musl-profile.zip
+    bun-aot-linux-x64-musl.zip
+    bun-aot-linux-x64-musl-profile.zip
+    bun-aot-linux-aarch64-android.zip
+    bun-aot-linux-aarch64-android-profile.zip
+    bun-aot-linux-x64-android.zip
+    bun-aot-linux-x64-android-profile.zip
+    bun-aot-freebsd-aarch64.zip
+    bun-aot-freebsd-aarch64-profile.zip
+    bun-aot-freebsd-x64.zip
+    bun-aot-freebsd-x64-profile.zip
+    bun-aot-windows-x64.zip
+    bun-aot-windows-x64-profile.zip
+    bun-aot-windows-aarch64.zip
+    bun-aot-windows-aarch64-profile.zip
   )
 
   # x64 ships one nehalem binary under the plain name. Re-zip it under the

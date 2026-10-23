@@ -9,8 +9,8 @@ const filesWritten: Record<string, string> = {};
 
 // module -> (the name that is imported, its use, [(the other member, its use with F for it)])
 const MODULES: Record<string, [string, string, [string, string][]]> = {
-  path: ["join", 'join("a", "b")', [["basename", 'F("/a/b.txt")'], ["relative", 'F("/a/b", "/a/c")']]],
-  url: ["fileURLToPath", 'fileURLToPath("file:///a/b")', [["parse", 'F("http://host/path?x=1").pathname'], ["Url", 'new F().parse("http://host/path").host'], ["format", 'F({ protocol: "http", host: "host", pathname: "/p" })']]],
+  path: ["join", 'join("a", "b").length', [["basename", 'F("/a/b.txt")'], ["relative", 'F("/a/b", "/a/c")']]],
+  url: ["fileURLToPath", 'fileURLToPath("file:///C:/a/b").slice(-1)', [["parse", 'F("http://host/path?x=1").pathname'], ["Url", 'new F().parse("http://host/path").host'], ["format", 'F({ protocol: "http", host: "host", pathname: "/p" })']]],
   util: ["format", 'format("%s", 1)', [["inspect", "F({ a: 1 })"], ["isDeepStrictEqual", "F([1], [1])"], ["promisify", "await F(callback => callback(null, 5))()"]]],
   querystring: ["escape", 'escape("a b")', [["parse", 'F("a=1&b=2").b'], ["stringify", "F({ a: 1 })"]]],
   events: ["once", "typeof once", [["EventEmitter", '(emitter => (emitter.on("x", value => seen.push(value)), emitter.emit("x", 5), seen.join()))(new F())'], ["getEventListeners", 'F(new EventTarget(), "x").length']]],

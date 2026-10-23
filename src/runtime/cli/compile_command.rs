@@ -3,6 +3,7 @@ mod command;
 mod configuration;
 mod entry_points;
 mod failure;
+mod hand_over;
 mod printing;
 mod reports;
 mod trimming;
@@ -31,6 +32,7 @@ use bun_trim::TrimError;
 
 pub(crate) use self::build::compile_to_executable;
 pub(crate) use self::command::compile_from_context;
+pub(crate) use self::hand_over::run_in_bun_with_compiler;
 pub(crate) use self::printing::{
     exit_with_failure, print_error_and_notes, print_failure, print_log, print_report_log,
     write_trimmed_size,

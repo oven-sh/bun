@@ -173,6 +173,9 @@ async function untilEarlierClosesWereHeard() {
   const arrived = new Promise<void>(resolve => far.once("data", () => resolve()));
   near.write(".");
   await arrived;
+  // The close and the byte may be heard in one turn of the event loop. What the close has put off to later in that turn, or to the next, comes first.
+  await nextTurn();
+  await nextTurn();
 }
 
 export async function untilDestroyed(socket: Socket | undefined) {

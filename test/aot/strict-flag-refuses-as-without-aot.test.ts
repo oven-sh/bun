@@ -63,7 +63,10 @@ describe.each([
       ["without", []],
       ["with", ["--aot"]],
     ] as const) {
-      const built = await run([bunExe(), "build", "--compile", ...flags, ...buildFlags, "main.ts", "--outfile", named(outfile)], cwd);
+      const built = await run(
+        [bunExe(), "build", "--compile", ...flags, ...buildFlags, "main.ts", "--outfile", named(outfile)],
+        cwd,
+      );
       expect(built.stderr).not.toMatch(/^error\b/m);
       expect(built.exitCode).toBe(0);
     }
@@ -77,23 +80,30 @@ describe.each([
     const ran = await both(options ? { BUN_OPTIONS: options.trim() } : {});
     expect(ran.with).toEqual(ran.without);
     const lines = ran.with.stdout.split("\n");
-    for (const road of ["require", "import.meta.require", "import()"]) expect(lines).toContain(`${road} of code on the disk => ${refusal} undefined`);
+    for (const road of ["require", "import.meta.require", "import()"])
+      expect(lines).toContain(`${road} of code on the disk => ${refusal} undefined`);
     expect(lines).toContain("require of data on the disk => data");
     expect(ran.with.stdout).not.toContain("disk.js ran");
   });
 
-  test.each(["--preload=./before.js", "--preload ./before.js", "-r ./before.js", "--require ./before.js", "--import ./before.js"])(
-    "BUN_OPTIONS=%s",
-    async option => {
-      const ran = await both({ BUN_OPTIONS: options + option });
-      expect(ran.with).toEqual(ran.without);
-      expect(ran.with).toMatchObject({ stdout: "", exitCode: 1 });
-      expect(ran.with.stderr.split("\n")[0]).toBe(refusal);
-    },
-  );
+  test.each([
+    "--preload=./before.js",
+    "--preload ./before.js",
+    "-r ./before.js",
+    "--require ./before.js",
+    "--import ./before.js",
+  ])("BUN_OPTIONS=%s", async option => {
+    const ran = await both({ BUN_OPTIONS: options + option });
+    expect(ran.with).toEqual(ran.without);
+    expect(ran.with).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(ran.with.stderr.split("\n")[0]).toBe(refusal);
+  });
 
   test("BUN_INSPECT_PRELOAD", async () => {
-    const ran = await both({ BUN_INSPECT_PRELOAD: join(cwd, "before.js"), ...(options ? { BUN_OPTIONS: options.trim() } : {}) });
+    const ran = await both({
+      BUN_INSPECT_PRELOAD: join(cwd, "before.js"),
+      ...(options ? { BUN_OPTIONS: options.trim() } : {}),
+    });
     expect(ran.with).toEqual(ran.without);
     expect(ran.with.stderr.split("\n")[0]).toBe(refusal);
   });

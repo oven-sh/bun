@@ -517,30 +517,30 @@ extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(
 namespace Bun {
 using namespace JSC;
 
-const AOT::ModuleHost compiledModuleHost { };
+const AOT::ModuleHost compiledModuleHost {};
 
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, bool, int64_t) { return nullptr; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
-JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return { }; }
+JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return {}; }
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
-String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return { }; }
+String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return {}; }
 ASCIILiteral adviceToKeepFunctionSource() { return ""_s; }
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path)
 {
     return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable."_s));
 }
-JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return { }; }
-JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return { }; }
+JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
+JSValue errorIfHostObjectOutsideImageIsRefused(JSGlobalObject*, ErrorCode, const String&) { return {}; }
 JSValue mainModuleOfExecutable(Zig::GlobalObject*) { return jsUndefined(); }
 bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { return true; }
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*) { return nullptr; }
 JSValue parentSeenBy(Zig::GlobalObject*, JSString*, JSValue parent) { return parent; }
-JSValue errorIfUnseenCodeIsRefused(JSGlobalObject*, ASCIILiteral) { return { }; }
+JSValue errorIfUnseenCodeIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
 bool isDebuggerAdmitted() { return true; }
-JSValue errorIfDebuggerIsRefused(JSGlobalObject*, ASCIILiteral) { return { }; }
-void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) { }
+JSValue errorIfDebuggerIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
+void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
 
 }
 
@@ -548,7 +548,7 @@ extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return
 extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
-extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({ }); }
-extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({ }); }
+extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
+extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 
 #endif // ENABLE(AOT)

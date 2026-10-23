@@ -81,7 +81,7 @@
 //   untyped-stress        the same, ported from stress tests that were written for the `jsc` shell
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join, relative, sep } from "path";
 import { describedRows, readTable, type Row } from "./built-ins-alone/table";
@@ -422,7 +422,8 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
     expectStatistics(build.stderr, [
       ...(program.statistics ?? []),
       ...(program.stubCopiesExpected ? [{ name: "StubCopiesEmitted", relation: ">=", bound: 2 } as const] : []),
-      ...(generatesAllCodeDirectly(program) ? [{ name: "FunctionsGeneratedDirectly", relation: ">=", bound: 1 } as const] : []),
+      // On ARM64 a function with an integer division or remainder goes to B3, and a small program may have no other function.
+      ...(generatesAllCodeDirectly(program) && !isArm64 ? [{ name: "FunctionsGeneratedDirectly", relation: ">=", bound: 1 } as const] : []),
     ]);
     let spentCollecting = 0;
     for (const environment of program.runEnvironments) {

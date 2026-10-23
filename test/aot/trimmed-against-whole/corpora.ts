@@ -252,7 +252,9 @@ export function aotPrograms(): Program[] {
   const programs = found.flatMap(path => {
     const beside = path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
     if (existsSync(beside + ".build-errors.txt") || existsSync(beside + ".todo.txt")) return [];
-    const options: { build?: string[]; env?: Record<string, string> } = existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")) : {};
+    const options: { build?: string[]; env?: Record<string, string>; skipInVariant?: Record<string, string> } = existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")) : {};
+    // It says itself why it does not behave the same with --trim.
+    if (options.skipInVariant?.["trimmed-runtime"]) return [];
     return [{ corpus: "aot-programs", name: slashes(relative(root, path)), entry: path, flags: options.build, env: options.env }];
   });
   return markedIfTheyStartProcesses(programs);

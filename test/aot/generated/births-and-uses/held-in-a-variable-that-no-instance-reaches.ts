@@ -1,8 +1,8 @@
-// Objects that `new C` did not make, held in a variable of type C that no instance of C ever reaches: every birth, every home of the variable, every way to tell "nothing there" apart,
-// every way to meet a value of a second class, and every use. TypeScript lets each birth through, and Object.create(C.prototype) is an everyday way to copy or revive an instance.
+// Objects that `new C` did not make, held in a variable of type C that no instance of C ever reaches: every birth, every kind of variable, every guard against null or undefined,
+// every join with a value of a second class, and every use. TypeScript lets each birth through, and Object.create(C.prototype) is an everyday way to copy or revive an instance.
 // What the compiler believes of a C or of a D may not decide what such a program does.
 //
-// A program is one class, one birth, one home, one way to tell apart and one group of uses. Each way to meet and each use has a function of its own in it.
+// A program is one class, one birth, one variable, one guard and one group of uses. Each join and each use has a function of its own in it.
 export const oneIn = 300;
 
 const classes: Record<string, string> = {
@@ -40,8 +40,8 @@ const births: Record<string, string> = {
   honest: "new C()",
 };
 
-// What stands around the functions, how the variable is declared, and how it is filled.
-const homes: Record<string, { declare: (birth: string) => string; fill: (birth: string) => string; isInFunction?: boolean }> = {
+// How the variable is declared, how it is filled, and whether a function stands around everything, so that closures capture it.
+const variables: Record<string, { declare: (birth: string) => string; fill: (birth: string) => string; isInFunction?: boolean }> = {
   moduleOrNull: { declare: () => "let held: C | null = null;", fill: b => `held = ${b} as any;` },
   moduleOrUndefined: { declare: () => "let held: C | undefined;", fill: b => `held = ${b} as any;` },
   moduleConstant: { declare: b => `const held: C = ${b} as any;`, fill: () => "" },
@@ -51,7 +51,7 @@ const homes: Record<string, { declare: (birth: string) => string; fill: (birth: 
 };
 
 // In front of these stands `const it = held;`.
-const tellings: Record<string, string> = {
+const guards: Record<string, string> = {
   nothing: "",
   strictlyNull: 'if (it === null) return "none";',
   strictlyUndefined: 'if (it === undefined) return "none";',
@@ -64,7 +64,7 @@ const tellings: Record<string, string> = {
 };
 
 // Gives `v`. `first` says which of the two is wanted.
-const meetings: Record<string, string> = {
+const joins: Record<string, string> = {
   alone: "const v = it;",
   conditional: "const v: C | D = first ? it : others[0];",
   conditionalNew: "const v: C | D = first ? it : new D();",
@@ -117,8 +117,8 @@ export function programs() {
   const made: { name: string; file: string; text: string }[] = [];
   for (const [c, declaration] of Object.entries(classes))
     for (const [b, birth] of Object.entries(births))
-      for (const [h, home] of Object.entries(homes))
-        for (const [t, telling] of Object.entries(tellings))
+      for (const [h, variable] of Object.entries(variables))
+        for (const [t, guard] of Object.entries(guards))
           for (const [g, uses] of Object.entries(groups)) {
             if (c === "empty" && g === "readsAsDeclared") continue;
             made.push({
@@ -127,15 +127,15 @@ export function programs() {
               get text() {
                 const functions: string[] = [];
                 const runs: string[] = [];
-                for (const [m, meeting] of Object.entries(meetings))
+                for (const [m, join] of Object.entries(joins))
                   for (const [u, use] of Object.entries(uses)) {
                     if (c === "empty" && needsDeclaredMembers.test(use)) continue;
-                    functions.push(`function ${m}_${u}(first: boolean) { const it = held; ${telling} ${meeting} return ${use}; }`);
+                    functions.push(`function ${m}_${u}(first: boolean) { const it = held; ${guard} ${join} return ${use}; }`);
                     runs.push(`show("${m} ${u}", () => ${m}_${u}(true)); show("${m} ${u} second", () => ${m}_${u}(false));`);
                   }
                 const state = "console.log(describe(held), describe(others[0]), describe(kept));";
-                const body = `${helpers(c === "empty" ? "(v as any).code" : "v.code")}${home.declare(birth)}\n${functions.join("\n")}\n${home.declare(birth).startsWith("const") ? "" : runs.join("\n") + "\n" + state + "\n"}${home.fill(birth)}\n${runs.join("\n")}\n${state}\n`;
-                return `${head}${declaration}\n${second}\n${home.isInFunction ? `function main() {\n${body}}\nmain();\n` : body}`;
+                const body = `${helpers(c === "empty" ? "(v as any).code" : "v.code")}${variable.declare(birth)}\n${functions.join("\n")}\n${variable.declare(birth).startsWith("const") ? "" : runs.join("\n") + "\n" + state + "\n"}${variable.fill(birth)}\n${runs.join("\n")}\n${state}\n`;
+                return `${head}${declaration}\n${second}\n${variable.isInFunction ? `function main() {\n${body}}\nmain();\n` : body}`;
               },
             });
           }

@@ -207,6 +207,7 @@ export const rows: Row[] = [
   births("one walk of two kinds of collection"),
   births("promises of natives that reject", "promises-of-natives-that-reject", false),
   births("steps of an async generator"),
+  births("stores behind every way to wait"),
   births("stores of two takers of one source", undefined, undefined, 5),
   births("stretches that differ in one thing"),
   births("strings", "strings", false),

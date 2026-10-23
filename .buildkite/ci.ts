@@ -172,7 +172,7 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 type Abi = Exclude<HostAbi, "gnu">;
 type Distro = "debian" | "ubuntu" | "alpine";
 type Tier = "latest" | "previous" | "oldest" | "beta";
-type Profile = "release" | "assert" | "debug" | "asan";
+type Profile = "release" | "assert" | "debug" | "asan" | "aot";
 
 interface Target {
   os: Os;
@@ -255,7 +255,7 @@ function getAzureVmSize(os: Os, arch: Arch, tier: AzureVmTier = "build"): string
  */
 const buildHostPlatform: Platform = { os: "linux", arch: "aarch64", distro: "debian", release: "13" };
 
-const buildPlatforms: Platform[] = [
+const bunPlatforms: Platform[] = [
   // macOS is cross-compiled from the debian-13 aarch64 host (clang --target +
   // the Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts
   // and scripts/build/flags.ts). There is no native macOS build lane: the mac
@@ -288,6 +288,14 @@ const buildPlatforms: Platform[] = [
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
+
+// Each release build is made twice. `bun` has neither the ahead-of-time compiler nor the run time of its programs
+// (--aot=off); it is what binary-size judges. `bun-aot`, the "aot" profile, has both: `bun` fetches it and hands the command
+// line over when it is asked for --aot (src/runtime/cli/compile_command/hand_over.rs), and the test-aot steps run on it.
+// The asan build has both as well.
+const buildPlatforms: Platform[] = bunPlatforms.flatMap(platform =>
+  platform.profile ? [platform] : [platform, { ...platform, profile: "aot" as const }],
+);
 
 const testPlatforms: Platform[] = [
   // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
@@ -587,6 +595,7 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
 
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
+  args.push(profile === "aot" || profile === "asan" ? "--aot=on" : "--aot=off");
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
@@ -637,12 +646,12 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
 }
 
 /**
- * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
+ * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64", "bun-linux-x64-musl-baseline" or "bun-aot-linux-x64".
  * Matches the naming convention in cmake/targets/BuildBun.cmake.
  */
 function getTargetTriplet(platform: Target): string {
-  const { os, arch, abi, baseline } = platform;
-  let triplet = `bun-${os}-${arch}`;
+  const { os, arch, abi, baseline, profile } = platform;
+  let triplet = `${profile === "aot" ? "bun-aot" : "bun"}-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
   }
@@ -966,8 +975,7 @@ function getAotFileDraw({ os, arch, distro, profile }: Platform, aot: AotTests):
   if (distro === "debian" && !profile) return 1;
   // TODO: 8 again once a run has shown every file on Windows: most of them have never begun there.
   if (os === "windows" && arch === "x64") return 1;
-  // TODO: 2 again once a run has shown every file on macOS: 377 of them have never begun there.
-  return os === "darwin" ? 1 : 8;
+  return os === "darwin" ? 2 : 8;
 }
 
 let expectedDurations: Record<string, Record<string, unknown>> | undefined;
@@ -997,7 +1005,9 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   const { os, profile } = platform;
   const { buildId, testFiles, aot } = testOptions;
 
-  const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  // The tests of --aot run on the build that has the compiler.
+  const buildKey = `${getTargetKey(aot && !profile ? { ...platform, profile: "aot" } : platform)}-build-bun`;
+  const args = [`--step=${buildKey}`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
@@ -1022,7 +1032,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 
   const depends: string[] = [];
   if (!buildId) {
-    depends.push(`${getTargetKey(platform)}-build-bun`);
+    depends.push(buildKey);
   }
 
   return {
@@ -1926,11 +1936,11 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
 
         // Trace the symbol order file later builds inherit, on the target's own
         // test fleet (see getTraceOrderStep). On main: that is where every
-        // build, of a pull request too, inherits from. Release profile only —
+        // build, of a pull request too, inherits from. `bun` and `bun-aot` only —
         // usesOrderFile() is false under a sanitizer anyway.
         const traceOn = traceOrderTargets.find(
           t =>
-            t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
+            t.os === target.os && t.arch === target.arch && !target.abi && (!target.profile || target.profile === "aot"),
         );
         if (traceOn && isMainBranch()) {
           const traceDeps = getImageDependsOn(traceOn.on, baking);

@@ -1,6 +1,6 @@
 import { afterAll, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 import { run } from "../harness/counted-run";
 import { compileCommand } from "../harness/flags";
@@ -35,6 +35,8 @@ const skipped =
       ? "a debug or ASAN build counts other instructions"
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/start.test.ts: ${skipped}`);
+else if (isMusl)
+  console.error("SKIPPED: test/aot/perf/start.test.ts: thousandInstructions: the budgets are those of glibc");
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -212,7 +214,10 @@ describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
                 now[what] === undefined ? [] : [[what, Math.min(now[what], budget[what] ?? Infinity)]],
               ),
             );
-          const judged = numbers.filter(what => now[what] !== undefined && budget[what] !== undefined);
+          const judged = numbers.filter(
+            what =>
+              now[what] !== undefined && budget[what] !== undefined && !(isMusl && what === "thousandInstructions"),
+          );
           const moved = (those: readonly (typeof numbers)[number][]) =>
             those.map(what => `${what} ${budget[what]} -> ${now[what]}`).join(", ");
           const worse = judged.filter(what => now[what]! > allowed(budget[what]!, what));

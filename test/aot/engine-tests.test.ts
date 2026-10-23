@@ -54,7 +54,9 @@ async function runTool(cmd: string[]) {
 const run = (...args: string[]) => runTool([testaot!, ...args]);
 
 function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
-  expect(lines.filter(line => line.startsWith("FAIL "))).toEqual([]);
+  // In front of its FAIL line a native test that crashed has said which check failed, and where.
+  const hasFailed = lines.some(line => line.startsWith("FAIL "));
+  expect(hasFailed ? lines.filter(line => !/^(PASS|TODO|SKIP) /.test(line)).slice(-60) : []).toEqual([]);
   // After a crash, lastLine names the native test and stderr has the failed check: stderr is listed so that it is printed.
   expect({ lastLine: lines.at(-1), stderr, exitCode }).toEqual({
     lastLine: expect.stringMatching(/^[1-9][0-9]* passed, 0 failed, [0-9]+ todo$/),
@@ -107,6 +109,14 @@ test.skipIf(!!whySkipped)("testaot fails a test file that does not exist", async
   const { lines, exitCode } = await run("run", "no-such-file.ir");
   expect(lines).toEqual([expect.stringMatching(/^FAIL no-such-file\.ir:1: /), "0 passed, 1 failed, 0 todo"]);
   expect(exitCode).toBe(1);
+});
+
+test.skipIf(!!whyEngineTestsSkipped || !!whyShellSkipped)("jsc takes an image that testaot wrote", async () => {
+  using folder = tempDir("aot-engine-tests", {});
+  const image = join(String(folder), "program.image");
+  const withEntryPoint = join(engineTests!, "pipeline", "a-literal-string-past-the-limit-is-tested-for.ir");
+  expect(await run("compile", withEntryPoint, `--output=${image}`)).toMatchObject({ stderr: "", exitCode: 0 });
+  expect(await runTool([jsc!, `--aotImagePath=${image}`, "-e", "0"])).toEqual({ lines: [], stderr: "", exitCode: 0 });
 });
 
 test.skipIf(!!whyShellSkipped)("jsc rejects a file that is not an image", async () => {

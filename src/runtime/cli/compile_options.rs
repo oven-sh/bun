@@ -822,6 +822,7 @@ fn list_and_exit(list: &[u8], origin: RequestOrigin) -> ! {
         );
     }
     if !engine::has_compiler() {
+        crate::cli::compile_command::run_in_bun_with_compiler();
         let mut message = Vec::new();
         CompileFailure::NoCompiler.write_message(origin, &CompileTarget::default(), &mut message);
         exit_with_message(&message);

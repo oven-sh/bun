@@ -54,6 +54,9 @@ pub(crate) fn exit_with_failure(
     target: &CompileTarget,
     failure: &CompileFailure,
 ) -> ! {
+    if matches!(failure, CompileFailure::NoCompiler) && origin != RequestOrigin::BuildApi {
+        super::hand_over::run_in_bun_with_compiler();
+    }
     print_failure(log, origin, target, failure);
     Global::exit(1);
 }

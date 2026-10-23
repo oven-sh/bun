@@ -66,6 +66,9 @@ for (const program of [
   "the-exports-of-library-modules-beside-a-hidden-value-are-called-under-hidden-keys",
   "the-exports-of-library-modules-arrive-late-beside-a-hidden-value-and-are-called-under-hidden-keys",
   "the-object-behind-a-namespace-object-has-escaped-before-its-exports-are-called-under-hidden-keys",
+  "a-library-module-arrives-late-beside-a-hidden-value-and-is-read-by-reflect-get",
+  "a-library-module-stands-beside-a-hidden-value-and-is-copied-by-object-assign",
+  "a-library-module-stands-beside-a-hidden-value-and-is-walked-by-object-values",
   "evaluators-and-a-loader-beside-a-hidden-value-are-called",
   "evaluators-and-a-loader-arrive-late-beside-a-hidden-value-and-are-called",
 ]) {
@@ -85,7 +88,12 @@ test("members-of-process-are-stored-where-process-stands-beside-a-hidden-value: 
   using dir = tempDir("aot-flow-schedules-listed", {});
   const directory = String(dir);
   cpSync(
-    join(import.meta.dir, "programs", "soundness", "members-of-process-are-stored-where-process-stands-beside-a-hidden-value.mjs"),
+    join(
+      import.meta.dir,
+      "programs",
+      "soundness",
+      "members-of-process-are-stored-where-process-stands-beside-a-hidden-value.mjs",
+    ),
     join(directory, "program.mjs"),
   );
   const plain = await run([bunExe(), "program.mjs"], directory);
@@ -93,8 +101,11 @@ test("members-of-process-are-stored-where-process-stands-beside-a-hidden-value: 
   const answers = await Promise.all(built.map(it => runCommand([it.executable], directory)));
   expect({ stdout: answers[0].stdout, exitCode: answers[0].exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   for (const { stdout, stderr, exitCode } of answers) {
-    const isRefused = stdout === "" && exitCode === 1 && stderr.includes("built-in objects are read-only in a compiled executable");
-    expect({ stdout, exitCode, isRefused }).toEqual(isRefused ? { stdout: "", exitCode: 1, isRefused } : { stdout: plain.stdout, exitCode: 0, isRefused });
+    const isRefused =
+      stdout === "" && exitCode === 1 && stderr.includes("built-in objects are read-only in a compiled executable");
+    expect({ stdout, exitCode, isRefused }).toEqual(
+      isRefused ? { stdout: "", exitCode: 1, isRefused } : { stdout: plain.stdout, exitCode: 0, isRefused },
+    );
   }
 });
 

@@ -8,6 +8,7 @@ use bun_ast::{Loc, Log, Source};
 use bun_event_loop::AnyEventLoop;
 use bun_js_printer::Encoding;
 use bun_paths::fs::Path;
+use bun_resolver::compiled_program::compare_source_paths;
 use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::DataValue;
 
@@ -235,13 +236,15 @@ fn write_page_manifests(
     }
 
     let mut positions_by_path: Vec<(&[u8], usize)> = pages.iter().copied().zip(0..).collect();
-    positions_by_path.sort_unstable();
+    positions_by_path.sort_unstable_by(|a, b| compare_source_paths(a.0, b.0));
 
     let sources = bundle.graph.input_files.items_source();
     let mut manifests: Vec<Option<Vec<u8>>> = vec![None; pages.len()];
     for (index, &source_index) in server_source_indices.iter().enumerate() {
         let path: &[u8] = sources[source_index as usize].path.text;
-        let Ok(found) = positions_by_path.binary_search_by_key(&path, |&(page, _)| page) else {
+        let Ok(found) =
+            positions_by_path.binary_search_by(|&(page, _)| compare_source_paths(page, path))
+        else {
             continue;
         };
 

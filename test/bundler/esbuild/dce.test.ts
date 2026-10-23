@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -801,8 +802,40 @@ describe("bundler", () => {
       stdout: "main effect - should be preserved\ndone",
     },
   });
-  // Webpack (which defines this field) documents that patterns without a '/'
-  // match at any depth, like "**/pattern". esbuild follows the same rule.
+  // An entry without "/" lists a file in every directory of the package, as in webpack and esbuild.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`dce/PackageJsonSideEffectsNoSlashAnyDirectory-${backend}`, {
+      backend,
+      files: {
+        "/Users/user/project/src/entry.js": /* js */ `
+          import "demo-pkg/root.side.js";
+          import "demo-pkg/deep/nested.side.js";
+          import "demo-pkg/.hidden/x.side.js";
+          import "demo-pkg/deep/.dot.side.js";
+          import "demo-pkg/polyfill.js";
+          import "demo-pkg/comp/polyfill.js";
+          import "demo-pkg/deep/unlisted.js";
+          console.log("done");
+        `,
+        "/Users/user/project/node_modules/demo-pkg/root.side.js": `console.log("root glob")`,
+        "/Users/user/project/node_modules/demo-pkg/deep/nested.side.js": `console.log("nested glob")`,
+        "/Users/user/project/node_modules/demo-pkg/.hidden/x.side.js": `console.log("dot directory")`,
+        "/Users/user/project/node_modules/demo-pkg/deep/.dot.side.js": `console.log("dotfile")`,
+        "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root name")`,
+        "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("nested name")`,
+        "/Users/user/project/node_modules/demo-pkg/deep/unlisted.js": `console.log("TEST FAILED")`,
+        "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+          {
+            "sideEffects": ["*.side.js", "polyfill.js"]
+          }
+        `,
+      },
+      dce: true,
+      run: {
+        stdout: "root glob\nnested glob\ndot directory\ndotfile\nroot name\nnested name\ndone",
+      },
+    });
+  }
   itBundled("dce/PackageJsonSideEffectsGlobNoSlashMatchesNested", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -873,24 +906,25 @@ describe("bundler", () => {
       stdout: "glob kept\nexact kept\nbare kept\ndone",
     },
   });
-  itBundled("dce/PackageJsonSideEffectsDotSlashStaysRootOnly", {
+  itBundled("dce/PackageJsonSideEffectsStarListsEveryFile", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import "demo-pkg/polyfill.js";
-        import "demo-pkg/comp/polyfill.js";
+        import "demo-pkg/a.js";
+        import "demo-pkg/deep/b.js";
+        import "demo-pkg/deep/.hidden/c.js";
         console.log("done");
       `,
-      "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root kept")`,
-      "/Users/user/project/node_modules/demo-pkg/comp/polyfill.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/a.js": `console.log("a")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/b.js": `console.log("b")`,
+      "/Users/user/project/node_modules/demo-pkg/deep/.hidden/c.js": `console.log("c")`,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
-          "sideEffects": ["./polyfill.js"]
+          "sideEffects": ["*"]
         }
       `,
     },
-    dce: true,
     run: {
-      stdout: "root kept\ndone",
+      stdout: "a\nb\nc\ndone",
     },
   });
   itBundled("dce/PackageJsonSideEffectsBareCSSAndJS", {
@@ -921,6 +955,228 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out/entry.css").toContain("color: red");
     },
+  });
+  // A package.json without a name gives the last answer only when its list has no glob. With a glob, the nearest
+  // package.json that has a name answers again. So this keeps the nested file only if a file name is not a glob.
+  itBundled("dce/PackageJsonSideEffectsFileNameInPackageWithoutName", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "no-name/polyfill.js";
+        import "no-name/sub/polyfill.js";
+        import "no-name/sub/unlisted.js";
+        console.log("done");
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "app",
+          "sideEffects": false
+        }
+      `,
+      "/Users/user/project/node_modules/no-name/polyfill.js": `console.log("root name")`,
+      "/Users/user/project/node_modules/no-name/sub/polyfill.js": `console.log("nested name")`,
+      "/Users/user/project/node_modules/no-name/sub/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/no-name/package.json": /* json */ `
+        {
+          "sideEffects": ["polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root name\nnested name\ndone",
+    },
+  });
+  // "[slug]" in the path of the package is not a character class for an entry without "/".
+  itBundled("dce/PackageJsonSideEffectsNoSlashUnderBracketDirectory", {
+    files: {
+      "/Users/user/project/[slug]/src/entry.js": /* js */ `
+        import "demo-pkg/root.side.js";
+        import "demo-pkg/deep/nested.side.js";
+        import "demo-pkg/polyfill.js";
+        import "demo-pkg/deep/polyfill.js";
+        import "demo-pkg/deep/unlisted.js";
+        console.log("done");
+      `,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/root.side.js": `console.log("root glob")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/deep/nested.side.js": `console.log("nested glob")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/polyfill.js": `console.log("root name")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/deep/polyfill.js": `console.log("nested name")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/deep/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/[slug]/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["*.side.js", "polyfill.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root glob\nnested glob\nroot name\nnested name\ndone",
+    },
+  });
+  // An entry with "/" is a path from the directory of the package.json.
+  itBundled("dce/PackageJsonSideEffectsEntryWithSlashIsAPath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/polyfill.js";
+        import "demo-pkg/lib/polyfill.js";
+        import "demo-pkg/root.side.js";
+        import "demo-pkg/lib/nested.side.js";
+        import "demo-pkg/comp/setup.js";
+        import "demo-pkg/lib/comp/setup.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/polyfill.js": `console.log("root name")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/polyfill.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/root.side.js": `console.log("root glob")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/nested.side.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/comp/setup.js": `console.log("comp path")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/comp/setup.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["./polyfill.js", "./*.side.js", "comp/setup.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "root name\nroot glob\ncomp path\ndone",
+    },
+  });
+  // "\\" separates directories in an entry on Windows only. It is not part of a file name on any platform.
+  itBundled("dce/PackageJsonSideEffectsEntryWithBackslashIsAPath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/sub/effect.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/sub/effect.js": `console.log("sub effect")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["sub\\\\effect.js"]
+        }
+      `,
+    },
+    run: {
+      stdout: isWindows ? "sub effect\ndone" : "done",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsExactListInPackageWithoutName", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "no-name/listed.js";
+        import "no-name/unlisted.js";
+        console.log("done");
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "app",
+          "sideEffects": false
+        }
+      `,
+      "/Users/user/project/node_modules/no-name/listed.js": `console.log("listed")`,
+      "/Users/user/project/node_modules/no-name/unlisted.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/no-name/package.json": /* json */ `
+        {
+          "sideEffects": ["./listed.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "listed\ndone",
+    },
+  });
+  // A list that has a glob does not store its ".css" entries. A list without a glob stores them. The CSS is in
+  // the bundle either way. A lazily loaded importer keeps an empty initializer for a CSS file with side effects.
+  itBundled("dce/PackageJsonSideEffectsCSSEntries", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require("with-glob").name, require("with-both").name, require("with-path").name);
+      `,
+      "/Users/user/project/node_modules/with-glob/index.js": /* js */ `
+        import "./sub/globbed.css";
+        export const name = "glob";
+      `,
+      "/Users/user/project/node_modules/with-glob/sub/globbed.css": `.globbed { color: red; }`,
+      "/Users/user/project/node_modules/with-glob/package.json": /* json */ `
+        {
+          "sideEffects": ["*.css"]
+        }
+      `,
+      "/Users/user/project/node_modules/with-both/index.js": /* js */ `
+        import "./sub/mixed.css";
+        export const name = "both";
+      `,
+      "/Users/user/project/node_modules/with-both/sub/mixed.css": `.mixed { color: green; }`,
+      "/Users/user/project/node_modules/with-both/package.json": /* json */ `
+        {
+          "sideEffects": ["./sub/mixed.css", "./*.side.js"]
+        }
+      `,
+      "/Users/user/project/node_modules/with-path/index.js": /* js */ `
+        import "./sub/exact.css";
+        export const name = "path";
+      `,
+      "/Users/user/project/node_modules/with-path/sub/exact.css": `.exact { color: blue; }`,
+      "/Users/user/project/node_modules/with-path/package.json": /* json */ `
+        {
+          "sideEffects": ["./sub/exact.css"]
+        }
+      `,
+    },
+    outdir: "/out",
+    run: {
+      stdout: "glob both path",
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js).not.toContain("init_globbed");
+      expect(js).not.toContain("init_mixed");
+      expect(js).toContain("init_exact");
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain(".globbed");
+      expect(css).toContain(".mixed");
+      expect(css).toContain(".exact");
+    },
+  });
+  // The resolver asks the "sideEffects" list about every file that it resolves in the package. A file name in the
+  // list costs that ask one hash lookup, as a path does. A glob costs it one match: spelled "**/m0.js", these
+  // 20,000 names take 10.8 s of CPU on a debug build, against 0.2 s.
+  test("dce/PackageJsonSideEffectsFileNamesCostOneLookup", async () => {
+    const files = isDebug || isASAN ? 20 : 400;
+    const pkg = (name: string, spell: (i: number) => string) => ({
+      "package.json": JSON.stringify({
+        name,
+        version: "1.0.0",
+        main: "index.js",
+        sideEffects: Array.from({ length: 20_000 }, (_, i) => spell(i)),
+      }),
+      "index.js":
+        Array.from({ length: files }, (_, i) => `import "./unlisted${i}.js";\n`).join("") + "export const x = 1;\n",
+      ...Object.fromEntries(Array.from({ length: files }, (_, i) => [`unlisted${i}.js`, `globalThis.x${i} = 1;\n`])),
+    });
+    using dir = tempDir("side-effects-file-names", {
+      "names.js": `import { x } from "names"; console.log(x);`,
+      "paths.js": `import { x } from "paths"; console.log(x);`,
+      node_modules: {
+        names: pkg("names", i => `m${i}.js`),
+        paths: pkg("paths", i => `./m${i}.js`),
+      },
+    });
+    const userCpu = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", entry, "--outdir=out"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      expect(await proc.exited).toBe(0);
+      return Number(proc.resourceUsage()!.cpuTime.user) / 1000;
+    };
+    const paths = await userCpu("paths.js");
+    const names = await userCpu("names.js");
+    expect(names).toBeLessThan(paths * 4 + 100);
   });
   itBundled("dce/PackageJsonSideEffectsGlobInvalidPattern", {
     files: {

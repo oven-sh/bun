@@ -228,7 +228,7 @@ pub enum SideEffects {
     /// "sideEffects": false
     False,
     /// "sideEffects": ["file.js", "other.js"]
-    Map(SideEffectsMap),
+    Map(ExactEntries),
     /// "sideEffects": ["side_effects/*.js"]
     Glob(GlobList),
     /// "sideEffects": ["file.js", "side_effects/*.js"] - mixed patterns
@@ -239,9 +239,68 @@ type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
 type GlobList = Vec<glob::Prepared<Box<[u8]>>>;
 
+/// The entries that have no glob syntax.
+#[derive(Default)]
+pub struct ExactEntries {
+    /// Entries with a path separator, joined onto the package directory.
+    paths: SideEffectsMap,
+    /// Entries without one. In a box, so that a `PackageJSON` stays in its allocator size class.
+    names: Option<Box<FileNames>>,
+}
+
+/// Entries that are a file name. Each lists that file in every directory of the package.
+struct FileNames {
+    /// The package directory with its trailing separator, as the keys of `ExactEntries::paths` spell it.
+    directory: Box<[u8]>,
+    names: SideEffectsMap,
+}
+
 pub struct MixedPatterns {
-    pub(crate) exact: SideEffectsMap,
+    pub(crate) exact: ExactEntries,
     pub(crate) globs: GlobList,
+}
+
+impl ExactEntries {
+    fn contains(&self, path: &[u8]) -> bool {
+        if !self.paths.is_empty()
+            && self
+                .paths
+                .contains_key(&StringHashMapUnownedKey::init(path))
+        {
+            return true;
+        }
+        self.names
+            .as_deref()
+            .is_some_and(|names| names.contains(path))
+    }
+}
+
+impl FileNames {
+    fn contains(&self, path: &[u8]) -> bool {
+        path.strip_prefix(&*self.directory).is_some_and(|below| {
+            let name = bun_paths::basename(below);
+            self.names
+                .contains_key(&StringHashMapUnownedKey::init(name))
+        })
+    }
+}
+
+/// Returns true if an entry of "sideEffects" has glob syntax.
+fn is_glob(entry: &[u8]) -> bool {
+    strings::contains_any(entry, b"*?[{") || glob::has_extglob_prefix(entry)
+}
+
+fn any_glob_matches(globs: &GlobList, path: &[u8]) -> bool {
+    if globs.is_empty() {
+        return false;
+    }
+    // Normalize path for cross-platform glob matching
+    let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
+        return true;
+    };
+    globs
+        .iter()
+        .any(|pattern| pattern.r#match(&normalized_path).matches())
 }
 
 impl SideEffects {
@@ -249,40 +308,93 @@ impl SideEffects {
         match self {
             SideEffects::Unspecified => true,
             SideEffects::False => false,
-            SideEffects::Map(map) => map.contains_key(&StringHashMapUnownedKey::init(path)),
-            SideEffects::Glob(glob_list) => {
-                // Normalize path for cross-platform glob matching
-                let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
-                    return true;
-                };
-
-                for pattern in glob_list.iter() {
-                    if pattern.r#match(&normalized_path).matches() {
-                        return true;
-                    }
-                }
-                false
-            }
+            SideEffects::Map(exact) => exact.contains(path),
+            SideEffects::Glob(globs) => any_glob_matches(globs, path),
             SideEffects::Mixed(mixed) => {
-                // First check exact matches
-                if mixed
-                    .exact
-                    .contains_key(&StringHashMapUnownedKey::init(path))
-                {
-                    return true;
-                }
-                // Then check glob patterns with normalized path
-                let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
-                    return true;
-                };
-
-                for pattern in mixed.globs.iter() {
-                    if pattern.r#match(&normalized_path).matches() {
-                        return true;
-                    }
-                }
-                false
+                mixed.exact.contains(path) || any_glob_matches(&mixed.globs, path)
             }
+        }
+    }
+
+    /// Reads the array that "sideEffects" holds in the package.json in `package_dir`.
+    ///
+    /// An entry without a path separator lists a file in every directory of the package, as in
+    /// webpack and esbuild. Any other entry is a path from `package_dir`.
+    fn from_array(
+        items: &[js_ast::E::JsonValue],
+        package_dir: &[u8],
+        r_fs: &fs::FileSystem,
+    ) -> SideEffects {
+        let entries = || items.iter().filter_map(|item| item.as_str());
+        let glob_count = entries().filter(|entry| is_glob(entry)).count();
+        let exact_count = entries().count() - glob_count;
+
+        let mut exact = ExactEntries::default();
+        let mut globs = GlobList::default();
+        let mut spill: Vec<u8> = Vec::new();
+
+        for entry in entries() {
+            // A list with a glob has never stored its `.css` entries. The JS that imports the CSS depends on it.
+            if glob_count > 0 && bun_paths::extension(entry) == b".css" {
+                continue;
+            }
+            let is_file_name = !strings::contains_any(entry, b"/\\");
+
+            if is_glob(entry) {
+                let pattern = if is_file_name {
+                    // No directory in the pattern: its name is not glob syntax.
+                    [&b"**/"[..], entry].concat()
+                } else {
+                    let mut joined = r_fs.join(&mut spill, &[package_dir, entry]).to_vec();
+                    // Normalize pattern to use forward slashes for cross-platform compatibility
+                    bun_paths::slashes_to_posix_in_place(&mut joined[..]);
+                    joined
+                };
+                if globs.is_empty() {
+                    globs.reserve(glob_count);
+                }
+                globs.push(glob::Prepared::new(pattern.into_boxed_slice()));
+                continue;
+            }
+
+            let joined = r_fs.join(&mut spill, &[package_dir, entry]);
+            // The join resolves `.` and `..`, so those are paths.
+            let directory = joined.strip_suffix(entry).filter(|directory| {
+                is_file_name
+                    && directory
+                        .last()
+                        .is_some_and(|&last| bun_paths::is_sep_native(last))
+            });
+            match directory {
+                Some(directory) => {
+                    let file_names = exact.names.get_or_insert_with(|| {
+                        Box::new(FileNames {
+                            directory: directory.into(),
+                            names: SideEffectsMap::with_capacity(exact_count),
+                        })
+                    });
+                    debug_assert!(*file_names.directory == *directory);
+                    let _ = file_names
+                        .names
+                        .insert(StringHashMapUnownedKey::init(entry), ());
+                }
+                None => {
+                    if exact.paths.is_empty() {
+                        exact.paths.reserve(exact_count);
+                    }
+                    let _ = exact
+                        .paths
+                        .insert(StringHashMapUnownedKey::init(joined), ());
+                }
+            }
+        }
+
+        match (glob_count > 0, exact_count > 0) {
+            // If the array is empty, treat it as false (no side effects)
+            (false, false) => SideEffects::False,
+            (false, true) => SideEffects::Map(exact),
+            (true, false) => SideEffects::Glob(globs),
+            (true, true) => SideEffects::Mixed(MixedPatterns { exact, globs }),
         }
     }
 }
@@ -704,114 +816,11 @@ impl PackageJSON {
                     package_json.side_effects = SideEffects::False;
                 }
             } else if let js_ast::ExprData::EArrayJSON(e_array) = &side_effects_field.data {
-                // Handle arrays, including empty arrays
-                let items = e_array.get().items();
-                let mut map = SideEffectsMap::default();
-                let mut glob_list = GlobList::default();
-                let mut has_globs = false;
-                let mut has_exact = false;
-
-                // Webpack matches slashless patterns as "**/<pattern>", so they are always globs.
-                for item in items {
-                    if let Some(name) = item.as_str() {
-                        if !strings::contains_char(name, b'/')
-                            || strings::contains_char(name, b'*')
-                            || strings::contains_char(name, b'?')
-                            || strings::contains_char(name, b'[')
-                            || strings::contains_char(name, b'{')
-                            || glob::has_extglob_prefix(name)
-                        {
-                            has_globs = true;
-                        } else {
-                            has_exact = true;
-                        }
-                    }
-                }
-
-                let mut spill: Vec<u8> = Vec::new();
-
-                // If the array is empty, treat it as false (no side effects)
-                if !has_globs && !has_exact {
-                    package_json.side_effects = SideEffects::False;
-                } else if has_globs && has_exact {
-                    // Mixed patterns - use both exact and glob matching
-                    map.reserve(items.len());
-                    glob_list.reserve(items.len());
-
-                    for item in items {
-                        if let Some(name) = item.as_str() {
-                            let slashless = !strings::contains_char(name, b'/');
-
-                            // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 3] = [
-                                json_source.path.name().dir_with_trailing_slash(),
-                                if slashless { b"**/" } else { b"" },
-                                name,
-                            ];
-
-                            let pattern = r_fs.join(&mut spill, &joined);
-
-                            if slashless
-                                || strings::contains_char(name, b'*')
-                                || strings::contains_char(name, b'?')
-                                || strings::contains_char(name, b'[')
-                                || strings::contains_char(name, b'{')
-                                || glob::has_extglob_prefix(name)
-                            {
-                                // Normalize pattern to use forward slashes for cross-platform compatibility
-                                let normalized_pattern = Self::normalize_path_for_glob(pattern)
-                                    .unwrap_or_else(|_| pattern.to_vec());
-                                glob_list.push(glob::Prepared::new(
-                                    normalized_pattern.into_boxed_slice(),
-                                ));
-                            } else {
-                                let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
-                            }
-                        }
-                    }
-                    package_json.side_effects = SideEffects::Mixed(MixedPatterns {
-                        exact: map,
-                        globs: glob_list,
-                    });
-                } else if has_globs {
-                    // Only glob patterns
-                    glob_list.reserve(items.len());
-                    for item in items {
-                        if let Some(name) = item.as_str() {
-                            // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 3] = [
-                                json_source.path.name().dir_with_trailing_slash(),
-                                if strings::contains_char(name, b'/') {
-                                    b""
-                                } else {
-                                    b"**/"
-                                },
-                                name,
-                            ];
-
-                            let pattern = r_fs.join(&mut spill, &joined);
-                            // Normalize pattern to use forward slashes for cross-platform compatibility
-                            let normalized_pattern = Self::normalize_path_for_glob(pattern)
-                                .unwrap_or_else(|_| pattern.to_vec());
-                            glob_list
-                                .push(glob::Prepared::new(normalized_pattern.into_boxed_slice()));
-                        }
-                    }
-                    package_json.side_effects = SideEffects::Glob(glob_list);
-                } else {
-                    // Only exact matches
-                    map.reserve(items.len());
-                    for item in items {
-                        if let Some(name) = item.as_str() {
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
-
-                            let pattern = r_fs.join(&mut spill, &joined);
-                            let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
-                        }
-                    }
-                    package_json.side_effects = SideEffects::Map(map);
-                }
+                package_json.side_effects = SideEffects::from_array(
+                    e_array.get().items(),
+                    json_source.path.name().dir_with_trailing_slash(),
+                    r_fs,
+                );
             }
         }
 

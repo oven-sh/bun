@@ -7538,11 +7538,15 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   it("keeps a non-throwing callback in the same place in the event loop", async () => {
     const { stdout, exitCode } = await runScript(`
       const fs = require("fs");
+      const { getEventLoopStats } = require("bun:internal-for-testing");
       const log = [];
       fs.stat(${file}, (err, st) => {
         log.push("fs-cb:" + (err === null) + ":" + st.isFile());
         process.nextTick(() => log.push("tick-from-fs-cb"));
       });
+      // The stat completes on the thread pool. Spin until its completion is queued for this
+      // thread. Otherwise the immediate runs first when the stat is slow.
+      while (getEventLoopStats().concurrentTasksEmpty) {}
       setImmediate(() => log.push("setImmediate"));
       process.on("exit", () => console.log(log.join(",")));
     `);

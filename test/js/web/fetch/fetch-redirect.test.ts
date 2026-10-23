@@ -390,3 +390,91 @@ describe("fetch() follows a redirect whose Location scheme is not lowercase", ()
     }
   });
 });
+
+// The redirect handler used to scan the whole Location header for "://" to
+// decide whether it was an absolute URL. A relative Location whose query or
+// fragment happened to contain an absolute URL (common in OAuth/SSO flows,
+// e.g. ?next=https://app.example.com) was misclassified as absolute with a
+// scheme of "/login?next=https" and rejected as UnsupportedRedirectProtocol
+// instead of being resolved against the request URL.
+describe("fetch() follows relative redirect whose Location contains '://'", () => {
+  it.concurrent.each([
+    ["in query", "/login?next=https://app.example.com", "/login", "?next=https://app.example.com"],
+    ["in fragment", "/cb#token=abc&iss=https://issuer.example.com", "/cb", ""],
+    ["query-only", "?return_to=http://example.com/", "/start", "?return_to=http://example.com/"],
+    ["in path segment", "a/http://example.com", "/a/http://example.com", ""],
+  ])("%s", async (_name, location, expectedPathname, expectedSearch) => {
+    const seen: { pathname: string; search: string }[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname, search } = new URL(req.url);
+        seen.push({ pathname, search });
+        if (pathname === "/start" && search === "") {
+          return new Response(null, { status: 302, headers: { Location: location } });
+        }
+        return new Response("ok", { status: 200 });
+      },
+    });
+
+    const res = await fetch(new URL("/start", server.url));
+    expect(await res.text()).toBe("ok");
+    expect(res.status).toBe(200);
+    expect(res.redirected).toBe(true);
+
+    const final = new URL(res.url);
+    expect({ pathname: final.pathname, search: final.search }).toEqual({
+      pathname: expectedPathname,
+      search: expectedSearch,
+    });
+    expect(seen).toEqual([
+      { pathname: "/start", search: "" },
+      { pathname: expectedPathname, search: expectedSearch },
+    ]);
+  });
+
+  // Regression guard: absolute Location headers must still be treated as
+  // absolute, and a second "://" appearing later in the URL must not confuse
+  // the classifier.
+  it.concurrent("absolute Location with '://' later in the URL still works", async () => {
+    let target: URL;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/start") {
+          return new Response(null, { status: 302, headers: { Location: target.href } });
+        }
+        return new Response("ok", { status: 200 });
+      },
+    });
+    target = new URL("/done?u=https://example.com", server.url);
+
+    const res = await fetch(new URL("/start", server.url));
+    expect(await res.text()).toBe("ok");
+    expect(res.status).toBe(200);
+    expect(res.url).toBe(target.href);
+  });
+
+  // A data: Location that embeds "://" in its body no longer matches the
+  // absolute-URL heuristic; it must still be rejected by the non-HTTP(S)
+  // scheme check in the relative branch.
+  it.concurrent("still rejects a data: Location with an embedded '://'", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/start") {
+          return new Response(null, {
+            status: 302,
+            headers: { Location: 'data:text/html,<a href="http://x">' },
+          });
+        }
+        return new Response("ok", { status: 200 });
+      },
+    });
+
+    await expect(fetch(new URL("/start", server.url))).rejects.toMatchObject({
+      code: "UnsupportedRedirectProtocol",
+    });
+  });
+});

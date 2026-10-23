@@ -5190,7 +5190,11 @@ impl<'a> HTTPClient<'a> {
                 let hop: RedirectHop;
 
                 {
-                    if let Some(i) = strings::index_of(location, b"://") {
+                    // RFC 3986: a scheme cannot contain '/', '?' or '#'.
+                    let scheme_end = strings::index_of(location, b"://")
+                        .filter(|&i| strings::index_of_any(&location[..i], b"/?#").is_none());
+
+                    if let Some(i) = scheme_end {
                         let mut string_builder = StringBuilder::default();
 
                         let is_protocol_relative = i == 0;

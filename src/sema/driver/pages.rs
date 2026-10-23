@@ -1,226 +1,210 @@
-//! Which imports of a checked file Bun loads as an HTML page, and where each page is.
+//! Which imports of a checked file Bun loads as an HTML page.
 //!
-//! Bun decides that for each import, from the loader that the import's `type` attribute names, or else from the
-//! loader of the file that the specifier resolves to (`bun_ast::Loader::of_extension`). What the specifier looks like
-//! decides nothing: `import text from "./page.html" with { type: "text" }` is a string, and
-//! `import page from "./page.tmpl" with { type: "html" }` is a page. A page stands for its scripts, which
-//! `Host::scripts_of_page` names.
+//! Bun decides that for each import: by the loader that the import's `type` attribute names, or else by the loader of
+//! the file's extension (`bun_ast::Loader::of_extension`). So `import text from "./page.html" with { type: "text" }` is
+//! a string, and `import page from "./page.tmpl" with { type: "html" }` is a page. A page stands for its scripts,
+//! which `Host::scripts_of_page` names.
+//!
+//! Only an import that is written as a path is followed. Where any other specifier leads is for Bun's resolver to
+//! say. A bundle has asked it, and names the scripts of its pages itself: see `Request::loaders`.
 
-use crate::PageRules;
-use bun_ast::Loader;
-use bun_core::strings;
+use bun_ast::{Loader, LoaderHashTable};
+use bun_paths::fs::PathName;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Atom;
-use bun_sema::hir::{self, ExprId, ExprKind, ResolutionMode, SpecifierKind, SpecifierUse};
-use bun_sema::program::{FileId, Files, Module};
-use bun_sema::resolve::{AsRequire, Host, Resolver, is_relative, join};
-use bun_sema::session::Session;
-use bun_sema::util::FxHashSet;
-use std::cell::{Cell, OnceCell};
+use bun_sema::hir::{self, ExprId, ExprKind, SpecifierKind, skip_assertions};
+use bun_sema::program::{FileId, Files};
+use bun_sema::resolve::{Host, is_relative, join};
+use bun_sema::util::{FxHashSet, SharedSort};
 
 /// Finds the pages that the files of one program import.
 pub(crate) struct Pages<'a, 's> {
     host: &'a dyn Host,
     files: &'a Files<'s>,
-    rules: PageRules<'a>,
-    /// Owns what `resolver` caches.
-    resolving: &'a Session,
-    /// Locates what a specifier that isn't a path names. Made for the first such specifier that TypeScript binds to no
-    /// file: the resolver that loaded the program is gone, and most programs need none here.
-    resolver: OnceCell<Resolver<'a>>,
-    /// The pages whose scripts `scripts_imported_by` has returned.
+    /// `Request::loaders`
+    loaders: &'a LoaderHashTable,
+    /// `--loader :html`: a file without an extension is a page.
+    is_page_without_extension: bool,
+    /// The extensions that `loaders` gives the HTML loader, except `.html`.
+    other_page_extensions: Vec<&'a [u8]>,
+    /// The real paths of the pages whose scripts `scripts_imported_by` has returned.
     followed: FxHashSet<Vec<u8>>,
-    /// `is_beside_page` of each file of the program, once it was asked. Many files import the same file.
-    beside_page: Vec<Cell<Option<bool>>>,
 }
 
-/// What the `type` attributes of the uses of one specifier say about its loader.
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Named {
-    /// One use names the HTML loader.
-    Html,
-    /// Every use names a loader, and none of them is the HTML loader.
-    Other,
-    /// At least one use names no loader, so Bun takes the loader of the file.
-    Nothing,
+/// A specifier of one file that can name a page, and what its uses in the file say.
+struct Import {
+    specifier: Atom,
+    /// The extension that is written in the specifier is a page's.
+    has_page_extension: bool,
+    /// A use names the HTML loader.
+    names_html: bool,
+    /// A use names no loader, so Bun takes the loader of the file's extension.
+    names_nothing: bool,
+}
+
+/// The `with` clauses and the `import()` options of one file, by the position of the specifier they belong to. Made
+/// for the first use that asks.
+#[derive(Default)]
+struct Attributes {
+    /// Each `import` declaration, from its first token to its end. Sorted.
+    declarations: Option<Vec<(u32, u32)>>,
+    /// The second argument of each `import()` that has one, by the position of the first. Sorted.
+    options: Option<Vec<(u32, ExprId)>>,
 }
 
 impl<'a, 's> Pages<'a, 's> {
     pub(crate) fn new(
         host: &'a dyn Host,
         files: &'a Files<'s>,
-        rules: PageRules<'a>,
-        resolving: &'a Session,
+        loaders: &'a LoaderHashTable,
     ) -> Self {
+        let of_pages = loaders.iter().filter(|it| *it.1 == Loader::Html);
+        let of_pages = of_pages.map(|it| &it.0[..]);
         Pages {
             host,
             files,
-            rules,
-            resolving,
-            resolver: OnceCell::new(),
+            loaders,
+            is_page_without_extension: Loader::of_extension(b"", loaders) == Some(Loader::Html),
+            other_page_extensions: of_pages.filter(|it| *it != b".html").collect(),
             followed: FxHashSet::default(),
-            beside_page: vec![Cell::new(None); files.modules.len()],
         }
     }
 
     /// The scripts of the pages that `file` imports. A page's scripts are returned once per program.
     pub(crate) fn scripts_imported_by(&mut self, file: FileId) -> Vec<Vec<u8>> {
         let module = self.files.module(file);
-        let attributes = module.hir.import_attributes.iter();
-        let names_html = attributes
-            .map(|it| self.loader_named_in(&module.hir, it.1))
-            .any(|it| it == Some(Loader::Html));
-        let mut scripts = Vec::new();
+        let hir = &module.hir;
+        // A `type` attribute makes a page of a file with any name.
+        let mut clauses = hir.import_attributes.iter();
+        let names_html = clauses.any(|it| self.loader_named_in(hir, it.1) == Some(Loader::Html));
+        let mut imports = Vec::new();
         for &specifier in module.bound.specifiers.iter() {
-            let Some(page) = self.page_of(module, specifier, names_html) else {
-                continue;
-            };
-            if self.followed.contains(&page) {
+            let written = self.files.atoms.bytes(specifier);
+            let has_page_extension = self.has_page_extension(written);
+            if (has_page_extension || names_html) && is_relative(written) {
+                imports.push(Import {
+                    specifier,
+                    has_page_extension,
+                    names_html: false,
+                    names_nothing: false,
+                });
+            }
+        }
+        if imports.is_empty() {
+            return Vec::new();
+        }
+        self.read_attributes(hir, &mut imports);
+        let directory = dirname::<Posix>(module.file_name());
+        let mut scripts = Vec::new();
+        for import in &imports {
+            let is_named_by_extension = import.names_nothing && import.has_page_extension;
+            if !import.names_html && !is_named_by_extension {
                 continue;
             }
-            // As for a page of a bundle (`type_check` in src/bundler/bundle_v2.rs): what is installed is not checked
-            // for the page's sake.
-            let of_page = self.host.scripts_of_page(&page).into_iter();
-            scripts.extend(of_page.filter(|it| !strings::contains(it, b"/node_modules/")));
-            self.followed.insert(page);
+            let written = join(directory, self.files.atoms.bytes(import.specifier));
+            if !self.host.is_file(&written) {
+                continue;
+            }
+            // Bun's resolver returns the real path, and takes the loader of that.
+            let real = self.host.realpath(&written);
+            if !import.names_html && !self.has_page_extension(&real) {
+                continue;
+            }
+            let page = self.in_spelling_of(&written, &real);
+            if self.followed.insert(real) {
+                scripts.extend(self.host.scripts_of_page(&page));
+            }
         }
         scripts
     }
 
-    /// The real path of the file that Bun loads as a page for `specifier` in `module`, if it loads one.
-    /// `names_html`: a `type` attribute in `module` names the HTML loader.
-    fn page_of(&self, module: &Module<'s>, specifier: Atom, names_html: bool) -> Option<Vec<u8>> {
-        // What TypeScript binds to a file of the program is what Bun loads too, so it is no page, unless that file
-        // stands beside the page for its types (`index.html.d.ts`). Otherwise the types come from a
-        // `declare module "*.html"` or from nowhere, and Bun can still find a file.
-        let may_be_page = match self.bound_file(module, specifier) {
-            Some(bound) => self.is_beside_page(bound),
-            None => !self.is_no_file(module, specifier),
+    /// True if Bun loads a file at `path` as a page, unless the import says otherwise. `Path::loader` in
+    /// src/resolver/lib.rs takes the extension the same way: `.html` is the extension of a file named `.html`.
+    fn has_page_extension(&self, path: &[u8]) -> bool {
+        if !self.can_end_like_a_page(path) {
+            return false;
+        }
+        match PathName::init(path).ext {
+            b"" => self.is_page_without_extension,
+            extension => Loader::of_extension(extension, self.loaders) == Some(Loader::Html),
+        }
+    }
+
+    /// False for nearly every specifier of a program, after a byte or two compared: `path` ends with no extension
+    /// that a page can have.
+    fn can_end_like_a_page(&self, path: &[u8]) -> bool {
+        let ends_with = |end: &[u8]| {
+            let start = path.len().checked_sub(end.len());
+            start.is_some_and(|start| path[start..].eq_ignore_ascii_case(end))
         };
-        if !may_be_page && !names_html {
-            return None;
+        ends_with(b".html")
+            || self.is_page_without_extension
+            || self.other_page_extensions.iter().any(|it| ends_with(it))
+    }
+
+    /// The path to read the page at `real` by, which `written` names. The scripts of a page are relative to its real
+    /// folder. The files of the program have the names they were found by, so the page keeps the spelling of the
+    /// folder it was found in, as long as it is at or below that folder: a project can be named through a link.
+    fn in_spelling_of(&self, written: &[u8], real: &[u8]) -> Vec<u8> {
+        if written == real {
+            return real.to_vec();
         }
-        let named = self.named_by_uses(module, specifier);
-        match named {
-            Named::Html => {}
-            Named::Nothing if may_be_page => {}
-            Named::Nothing | Named::Other => return None,
-        }
-        let found = self.locate(module, self.files.atoms.bytes(specifier))?;
-        // Bun's resolver returns the real path, and the scripts of a page are relative to it.
-        let real = self.host.realpath(&found);
-        let is_page = named == Named::Html || self.is_page_extension(bun_paths::extension(&real));
-        is_page.then_some(real)
-    }
-
-    /// The file of the program that TypeScript resolves `specifier` to in `module`.
-    fn bound_file(&self, module: &Module<'s>, specifier: Atom) -> Option<FileId> {
-        let in_mode = |mode| module.imports.get(&(specifier, mode)).copied();
-        // A plain `import` is resolved in the first mode, so one lookup finds most.
-        in_mode(module.default_mode)
-            .or_else(|| in_mode(ResolutionMode::Import))
-            .or_else(|| in_mode(ResolutionMode::Require))
-            .or_else(|| in_mode(ResolutionMode::None))
-    }
-
-    /// True if `file` stands beside a page for its types: TypeScript finds `./index.html` in `index.html.ts`,
-    /// `index.html.d.ts` and `index.d.html.ts`, and Bun loads `index.html`.
-    fn is_beside_page(&self, file: FileId) -> bool {
-        let known = &self.beside_page[file.idx()];
-        known.get().unwrap_or_else(|| {
-            let name = self.files.module(file).file_name();
-            let is_beside_page = self.is_page_extension(stood_for_extension(name));
-            known.set(Some(is_beside_page));
-            is_beside_page
-        })
-    }
-
-    /// True if `specifier`, which TypeScript binds to no file of the program, is known to be no page without a look at
-    /// the disk. It has a scheme (`node:fs`). Or it is declared by name (`declare module "bun"`) or is JavaScript that
-    /// the program leaves out, and its own extension is not a page's.
-    fn is_no_file(&self, module: &Module<'s>, specifier: Atom) -> bool {
-        let text = self.files.atoms.bytes(specifier);
-        if !is_relative(text) && strings::contains_char(text, b':') {
-            return true;
-        }
-        let is_known = module.untyped_imports.iter().any(|it| it.0 == specifier)
-            || self.files.try_find_ambient_module(specifier).is_some();
-        is_known && !self.is_page_extension(bun_paths::extension(text))
-    }
-
-    /// True if Bun loads a file with this extension as a page, unless the import says otherwise.
-    fn is_page_extension(&self, extension: &[u8]) -> bool {
-        !extension.is_empty()
-            && Loader::of_extension(extension, self.rules.loaders) == Some(Loader::Html)
-    }
-
-    /// Reads the `type` attribute of every use of `specifier` in `module`.
-    fn named_by_uses(&self, module: &Module<'s>, specifier: Atom) -> Named {
-        let hir = &module.hir;
-        let uses = hir.specifier_uses.iter().filter(|it| it.spec == specifier);
-        let mut named = Named::Other;
-        let mut is_used = false;
-        for specifier_use in uses {
-            is_used = true;
-            match self.loader_named_by(hir, specifier_use) {
-                Some(Loader::Html) => return Named::Html,
-                Some(_) => {}
-                None => named = Named::Nothing,
-            }
-        }
-        match is_used {
-            true => named,
-            false => Named::Nothing,
+        let folder = dirname::<Posix>(written);
+        let below = real.strip_prefix(&self.host.realpath(folder)[..]);
+        match below.and_then(|it| it.strip_prefix(b"/")) {
+            Some(below) => join(folder, below),
+            None => real.to_vec(),
         }
     }
 
-    /// The loader that the `type` attribute of one import names, as Bun's parser reads it: after the specifier of an
-    /// `import` declaration, and in the options of an `import()`. It reads none after `export .. from`.
-    fn loader_named_by(&self, hir: &hir::File<'s>, specifier_use: &SpecifierUse) -> Option<Loader> {
-        match specifier_use.kind {
-            SpecifierKind::Import | SpecifierKind::SideEffect => {
-                if hir.import_attributes.is_empty() {
-                    return None;
+    /// Reads the `type` attribute of every use of `imports` in the file, in one pass over its specifiers.
+    fn read_attributes(&self, hir: &hir::File<'s>, imports: &mut [Import]) {
+        imports.shared_sort_unstable_by_key(|it| it.specifier.0);
+        let mut attributes = Attributes::default();
+        for specifier_use in hir.specifier_uses.iter() {
+            let found = imports.binary_search_by_key(&specifier_use.spec.0, |it| it.specifier.0);
+            let Ok(at) = found else {
+                continue;
+            };
+            // As Bun's parser reads it: after the specifier of an `import` declaration, and in the options of an
+            // `import()`. It reads none after `export .. from`.
+            let clause = match specifier_use.kind {
+                SpecifierKind::Import | SpecifierKind::SideEffect => {
+                    attributes.of_declaration(hir, specifier_use.pos)
                 }
-                let is_around = |loc: &hir::TextRange, at: u32| (loc.pos..loc.end).contains(&at);
-                let declarations = hir.imports.iter();
-                let declarations = declarations.filter(|it| it.stmt.is_some());
-                let mut declarations = declarations.map(|it| hir[it.stmt].loc);
-                let declaration = declarations.find(|it| is_around(it, specifier_use.pos))?;
-                let mut attributes = hir.import_attributes.iter();
-                let attributes = attributes.find(|it| is_around(&declaration, it.0))?;
-                self.loader_named_in(hir, attributes.1)
+                SpecifierKind::ImportCall => attributes
+                    .of_import_call(hir, specifier_use.pos)
+                    .and_then(|options| self.with_in(hir, options)),
+                _ => None,
+            };
+            match clause.and_then(|it| self.loader_named_in(hir, it)) {
+                Some(Loader::Html) => imports[at].names_html = true,
+                Some(_) => {}
+                None => imports[at].names_nothing = true,
             }
-            SpecifierKind::ImportCall => {
-                let arguments = hir.exprs.iter().find_map(|it| match it.kind {
-                    ExprKind::ImportCall { args } => Some(args).filter(|&args| {
-                        let first = hir.ids(args).next();
-                        first.is_some_and(|first: ExprId| hir[first].pos == specifier_use.pos)
-                    }),
-                    _ => None,
-                })?;
-                let ExprKind::Object(options) = hir[hir.ids(arguments).nth(1)?].kind else {
-                    return None;
-                };
-                let option = |name: &[u8]| {
-                    let mut options = options.iter().map(|it| hir[it]);
-                    options.find(|it| self.is_named(it.key, name))
-                };
-                self.loader_named_in(hir, option(b"with").or_else(|| option(b"assert"))?.value)
-            }
-            SpecifierKind::Require | SpecifierKind::ImportType | SpecifierKind::RequireCall => None,
         }
     }
 
-    /// The loader that `type` names in `attributes`, the object after `with`. A name that no loader has is ignored.
-    fn loader_named_in(&self, hir: &hir::File<'s>, attributes: ExprId) -> Option<Loader> {
-        let ExprKind::Object(attributes) = hir[attributes].kind else {
+    /// The value of `with` in the options of an `import()`. The runtime evaluates the options, so only a literal is
+    /// known here.
+    fn with_in(&self, hir: &hir::File<'s>, options: ExprId) -> Option<ExprId> {
+        let ExprKind::Object(options) = hir[skip_assertions(hir, options)].kind else {
+            return None;
+        };
+        let mut options = options.iter().map(|it| hir[it]);
+        let with = options.find(|it| self.is_named(it.key, b"with"))?;
+        Some(with.value)
+    }
+
+    /// The loader that `type` names in `clause`, the object after `with`. A name that no loader has is ignored.
+    fn loader_named_in(&self, hir: &hir::File<'s>, clause: ExprId) -> Option<Loader> {
+        let ExprKind::Object(attributes) = hir[skip_assertions(hir, clause)].kind else {
             return None;
         };
         let attributes = attributes.iter().rev().map(|it| hir[it]);
         let mut types = attributes.filter(|it| self.is_named(it.key, b"type"));
-        types.find_map(|it| match hir[it.value].kind {
+        types.find_map(|it| match hir[skip_assertions(hir, it.value)].kind {
             ExprKind::String(name) => Loader::from_string(self.files.atoms.bytes(name)),
             _ => None,
         })
@@ -229,35 +213,46 @@ impl<'a, 's> Pages<'a, 's> {
     fn is_named(&self, key: hir::PropKey, name: &[u8]) -> bool {
         matches!(key, hir::PropKey::Name(key) if self.files.atoms.bytes(key) == name)
     }
-
-    /// The file that `specifier` names in `module` the way Bun's resolver finds it, before links are followed.
-    fn locate(&self, module: &Module<'s>, specifier: &[u8]) -> Option<Vec<u8>> {
-        let from = module.file_name();
-        if is_relative(specifier) {
-            let written = join(dirname::<Posix>(from), specifier);
-            return self.host.is_file(&written).then_some(written);
-        }
-        let resolver = self.resolver.get_or_init(|| {
-            Resolver::for_few_lookups(self.resolving, self.host, self.files.options)
-        });
-        let (resolver, from) = resolver.redirect_for_resolution(from);
-        let base_url = &resolver.options().base_url[..];
-        let how = AsRequire {
-            extensions: &[],
-            module_directories: &[b"node_modules"],
-            paths: &[],
-            through_paths: true,
-            as_import: true,
-            base_url: Some(base_url).filter(|it| !it.is_empty()),
-            conditions: self.rules.conditions,
-        };
-        Some(resolver.resolve_as_require(specifier, from, &how)?.0)
-    }
 }
 
-/// The extension of the file that `stand_in` has the types of, going by its name: `.html` for `index.html.ts`,
-/// `index.html.d.ts` and `index.d.html.ts`. Empty for `index.ts`.
-fn stood_for_extension(stand_in: &[u8]) -> &[u8] {
-    let without_own = &stand_in[..stand_in.len() - bun_paths::extension(stand_in).len()];
-    bun_paths::extension(without_own.strip_suffix(b".d").unwrap_or(without_own))
+impl Attributes {
+    /// The `with` clause of the `import` declaration whose specifier is at `specifier`.
+    fn of_declaration(&mut self, hir: &hir::File, specifier: u32) -> Option<ExprId> {
+        let clauses = &hir.import_attributes[..];
+        if clauses.is_empty() {
+            return None;
+        }
+        let declarations = self.declarations.get_or_insert_with(|| {
+            let declarations = hir.imports.iter().filter(|it| it.stmt.is_some());
+            let mut ranges: Vec<(u32, u32)> = declarations
+                .map(|it| (hir[it.stmt].start, hir[it.stmt].loc.end))
+                .collect();
+            ranges.shared_sort_unstable_by_key(|it| it.0);
+            ranges
+        });
+        let before = declarations.partition_point(|it| it.0 <= specifier);
+        let &(_, end) = declarations[..before]
+            .last()
+            .filter(|it| specifier < it.1)?;
+        let clause = clauses.get(clauses.partition_point(|it| it.0 <= specifier))?;
+        (clause.0 < end).then_some(clause.1)
+    }
+
+    /// The second argument of the `import()` whose first argument is at `specifier`.
+    fn of_import_call(&mut self, hir: &hir::File, specifier: u32) -> Option<ExprId> {
+        let options = self.options.get_or_insert_with(|| {
+            let calls = hir.exprs.iter().filter_map(|it| match it.kind {
+                ExprKind::ImportCall { args, .. } => {
+                    let mut args = hir.ids::<ExprId>(args);
+                    Some((hir[args.next()?].pos, args.next()?))
+                }
+                _ => None,
+            });
+            let mut options: Vec<(u32, ExprId)> = calls.collect();
+            options.shared_sort_unstable_by_key(|it| it.0);
+            options
+        });
+        let at = options.binary_search_by_key(&specifier, |it| it.0).ok()?;
+        Some(options[at].1)
+    }
 }

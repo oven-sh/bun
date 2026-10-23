@@ -242,8 +242,19 @@ struct Entries<'a> {
     script_kinds: &'a [(Vec<u8>, ScriptKind)],
     script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     conditions: &'a [Box<[u8]>],
-    /// `PageRules::loaders`. `None`: every extension has the loader of its name.
-    loaders: Option<&'a bun_ast::LoaderHashTable>,
+    pages: Pages<'a>,
+}
+
+/// Who names the scripts of the pages that the paths import. See `Request::loaders`.
+#[derive(Clone, Copy, Default)]
+enum Pages<'a> {
+    /// The check, by the loader that has the name of each extension: `bun check` takes no `--loader`.
+    #[default]
+    ByName,
+    /// The check, by these loaders: what is run or transpiled has no module graph.
+    ByLoaders(&'a bun_ast::LoaderHashTable),
+    /// The bundle, which has those scripts among its own paths.
+    InBundle,
 }
 
 fn run<R>(
@@ -332,7 +343,7 @@ fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
     }
 }
 
-/// `no_loaders`: an empty table, for paths that come without one.
+/// `no_loaders`: an empty table, for `Pages::ByName`.
 fn request<'a>(
     cwd: &'a [u8],
     project: Option<&'a [u8]>,
@@ -342,7 +353,6 @@ fn request<'a>(
     threads: usize,
     progress: Option<&'a Progress>,
 ) -> Request<'a> {
-    use bun_bundler::options::TargetExt as _;
     let (entries, command_line) = match *paths {
         Paths::Arguments(command_line) => {
             let paths = Entries {
@@ -364,11 +374,11 @@ fn request<'a>(
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
-        // Every path is one that Bun runs or bundles, or one that a file it runs can import.
-        pages: Some(bun_sema_driver::PageRules {
-            loaders: entries.loaders.unwrap_or(no_loaders),
-            conditions: bun_ast::Target::default_conditions_map()[bun_ast::Target::Bun],
-        }),
+        loaders: match entries.pages {
+            Pages::ByName => Some(no_loaders),
+            Pages::ByLoaders(loaders) => Some(loaders),
+            Pages::InBundle => None,
+        },
         compiler_options,
         threads,
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -584,7 +594,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
-        loaders: Some(&loaders),
+        pages: Pages::ByLoaders(&loaders),
     };
     check_and_report(&Paths::EntryPoints(entries), provided)
 }
@@ -648,17 +658,36 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, true)
+    check_for_build(checked, log, true, Built::Bundle)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. Prints nothing.
 pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, false)
+    check_for_build(checked, log, false, Built::Bundle)
+}
+
+/// `bun build --no-bundle --check`: `checked` has the entry points as they are written, and no sources.
+pub(crate) fn check_for_no_bundle_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+    check_for_build(checked, log, true, Built::EachFile)
+}
+
+/// What `check_for_build` checks.
+#[derive(Clone, Copy)]
+enum Built {
+    /// The module graph of a bundle, which has every file that Bun loads for it.
+    Bundle,
+    /// Each entry point by itself. Nothing is resolved.
+    EachFile,
 }
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
-fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
+fn check_for_build(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+    shows_progress: bool,
+    built: Built,
+) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -697,7 +726,10 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions,
-        loaders: Some(loaders),
+        pages: match built {
+            Built::Bundle => Pages::InBundle,
+            Built::EachFile => Pages::ByLoaders(loaders),
+        },
     });
     let then = |report| report;
     let report = match shows_progress {

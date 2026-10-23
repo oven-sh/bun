@@ -7,7 +7,6 @@ import {
   canBuildNodeAddons,
   isASAN,
   isCI,
-  isDebug,
   isMacOS,
   isMusl,
   isWindows,
@@ -72,12 +71,10 @@ beforeAll(async () => {
 }, 300_000);
 
 describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
-  describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
-    // Each of these calls spawnSync on bun several times, and in this concurrent group a test also
-    // waits for the others' spawnSync calls. With a debug bun that takes 7 to 32 s per test.
-    const debugBudget = isDebug ? { timeout: 60_000 } : {};
+  // Serial: these call spawnSync, which would block every other test of the concurrent group while a child runs.
+  describe.serial.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
-      it("Bun.build", debugBudget, async () => {
+      it("Bun.build", async () => {
         await using dir = tempDir("node-file-cli", {
           "package.json": JSON.stringify({
             name: "napi-app",
@@ -173,11 +170,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
           // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
           // which on debian/ubuntu is disk-backed gp3.
-          isDebug ? 60_000 : 30 * 1000,
+          30 * 1000,
         );
       }
 
-      it("`bun build`", debugBudget, async () => {
+      it("`bun build`", async () => {
         await using dir = tempDir("node-file-build", {
           "package.json": JSON.stringify({
             name: "napi-app",

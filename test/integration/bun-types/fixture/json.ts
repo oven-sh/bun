@@ -26,7 +26,7 @@ function identity<T>(value: T): T {
 }
 expectType(identity(JSON.parse(text))).is<any>();
 
-export const parse: typeof JSON.parse = (from, reviver) => JSON.parse(from, reviver);
+export const parse: typeof JSON.parse = (from, reviver) => (reviver ? null : JSON.parse(from));
 export const parseWithoutReviver: typeof JSON.parse = from => JSON.parse(from.trim());
 export const stringify: typeof JSON.stringify = (value: unknown) => JSON.stringify(value);
 expectType<ReturnType<typeof JSON.parse>>().is<any>();

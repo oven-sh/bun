@@ -191,6 +191,12 @@ pub(crate) fn removed_feature_reached(addresses: [Option<usize>; 2]) -> Option<F
 mod tests {
     use super::removed_feature_reached;
 
+    /// The engine's, as in an executable without compiled code.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__AOT__offsetInCode(_address: *const core::ffi::c_void) -> i64 {
+        -1
+    }
+
     #[test]
     fn untrimmed_executable_reaches_no_removed_feature() {
         let local_function = removed_feature_reached as *const () as usize;

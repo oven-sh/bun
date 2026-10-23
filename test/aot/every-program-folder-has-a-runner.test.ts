@@ -45,7 +45,9 @@ for (const [file, text] of testFiles) {
     const shared = `${dirname(file) === "." ? "" : dirname(file) + "/: "}${callee}(${common}`;
     splitCalls.set(shared, [...(splitCalls.get(shared) ?? []), { file, part, parts }]);
   };
-  for (const [, callee, before, part, parts] of text.matchAll(
+  // The formatter lays a long call out with one argument a line.
+  const onOneLine = text.replace(/\(\n\s+/g, "(").replace(/,\n\s+/g, ", ").replace(/,\n\)/g, ")");
+  for (const [, callee, before, part, parts] of onOneLine.matchAll(
     /^(?:await |if \(.*\) )?(\w+)\((.*?)(\d+), (\d+)(?:, (?:"[^"]*"|\[[^\]]*\]|\d+))*\);$/gm,
   ))
     add(callee, before, Number(part), Number(parts));

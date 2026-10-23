@@ -133,7 +133,7 @@ function readBuiltinSourceTexts(executable: Buffer): { name: string; text: strin
       dataOffset: field(6),
       dataLength: field(7),
     };
-    if (header.version !== 1 || header.modulesOffset !== builtinModulesHeaderSize) continue;
+    if (header.version !== 2 || header.modulesOffset !== builtinModulesHeaderSize) continue;
     if (header.modulesOffset + header.moduleCount * builtinModuleRecordSize > header.dataOffset) continue;
     if (start + header.dataOffset + header.dataLength > executable.length) continue;
     const data = executable.subarray(start + header.dataOffset, start + header.dataOffset + header.dataLength);

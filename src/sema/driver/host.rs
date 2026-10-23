@@ -1389,8 +1389,8 @@ impl Host for Disk {
         let mut reader = self.take_reader(parent);
         // The second and later files read from a directory are opened relative to the directory. An absolute path makes
         // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a
-        // single file, opening the directory costs that walk and more.
-        let read = if reader.directory != parent {
+        // single file, opening the directory costs that walk and more. On macOS it always does: opens wait for one lock.
+        let read = if cfg!(target_os = "macos") || reader.directory != parent {
             reader.handle = None;
             reader.directory.clear();
             reader.directory.extend_from_slice(parent);

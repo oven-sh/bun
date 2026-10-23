@@ -328,7 +328,7 @@ impl InternalErrorKind {
         "the blocks are not in reverse postorder, or a block is unreachable",
         "the type is not what the result rule gives",
         "a result rule answers with more for an operand of a narrower type, or its two paths disagree",
-        "an operand does not have the representation its operation wants",
+        "a value has a representation that its type does not allow, or one operation takes it in two",
         "the operand has the wrong type",
         "the stored value is outside the declared type",
         "an edge argument is outside the type of its parameter",

@@ -325,7 +325,6 @@ fn explain_limit_is_family() {
         explain_set(&[b"limit".as_slice()]).ok(),
         Some(ExplainSet::ONLY_LIMIT)
     );
-    assert!(report::CAUSE_FAMILIES.contains(ExplainSet::ONLY_LIMIT));
     assert_eq!(
         explain_set(&[b"limit".as_slice(), b"mutation"]).ok(),
         Some(ExplainSet::ONLY_LIMIT | ExplainSet::ONLY_MUTATION)

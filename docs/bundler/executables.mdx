@@ -979,6 +979,12 @@ console.log(addon.hello());
 
 If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` file directly, or it won't bundle correctly.
 
+Some addons load a shared library that ships beside them. `sharp` is one: its `.node` file needs `libvips` from a neighboring package. With `--aot`, embed the folder that holds both, and the addon finds the library:
+
+```bash terminal icon="terminal"
+bun build --compile --aot ./index.ts --asset node_modules/@img --outfile mycli
+```
+
 ### Embed directories
 
 Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
@@ -1016,6 +1022,8 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 ```
 
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
+
+With `--aot`, modules keep their places relative to one another, and so do the files you embed. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`, and `--asset node_modules/@img` is at `node_modules/@img`. A file or folder from outside of the working directory keeps only its own name: `--asset ../shared` is at `shared`, at the top of the embedded files.
 
 `process.chdir()` works on an embedded directory. After it, `process.cwd()`, `path.resolve()` and the relative paths that you pass to `node:fs` and `Bun.file()` start there.
 

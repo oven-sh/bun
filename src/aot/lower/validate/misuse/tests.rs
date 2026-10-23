@@ -87,6 +87,27 @@ fn lower_misuse(line: &str) -> LoweredFile {
     lower_main(&format!("{HEADER}{MISUSE_DECLARATIONS}{line}\n"))
 }
 
+/// The lines of a text. A type alias that the formatter spread over lines stands on one, as it is written above.
+fn joined_lines(text: &[u8]) -> Vec<Vec<u8>> {
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    let mut is_open = false;
+    for line in split(text, b"\n").map(<[u8]>::trim_ascii) {
+        if is_open {
+            let alias = lines.last_mut().unwrap();
+            if line == b"};" && alias.ends_with(b";") {
+                alias.pop();
+            }
+            alias.push(b' ');
+            alias.extend_from_slice(line);
+            is_open = line != b"};";
+        } else {
+            lines.push(line.to_vec());
+            is_open = line.starts_with(b"type ") && line.ends_with(b"{");
+        }
+    }
+    lines
+}
+
 #[test]
 fn declarations_match_bun_types() {
     let published: [&[u8]; 3] = [
@@ -94,18 +115,14 @@ fn declarations_match_bun_types() {
         include_bytes!("../../../../../packages/bun-types/globals.d.ts"),
         include_bytes!("../../../../../packages/bun-types/bundle.d.ts"),
     ];
-    let published_lines: Vec<&[u8]> = published
-        .into_iter()
-        .flat_map(|text| split(text, b"\n"))
-        .map(<[u8]>::trim_ascii)
-        .collect();
+    let published_lines: Vec<Vec<u8>> = published.into_iter().flat_map(joined_lines).collect();
     let declarations: Vec<&[u8]> = split(BUN_TYPES.as_bytes(), b"\n")
         .map(<[u8]>::trim_ascii)
         .filter(|line| line.ends_with(b";"))
         .collect();
     assert_eq!(declarations.len(), 21);
     for declaration in declarations {
-        let is_published = published_lines.contains(&declaration);
+        let is_published = published_lines.iter().any(|line| line == declaration);
         assert!(is_published, "not published: {}", BStr::new(declaration));
     }
 }

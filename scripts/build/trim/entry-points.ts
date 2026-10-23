@@ -74,7 +74,7 @@ export function sortedUnique<T>(items: T[], compare: (a: T, b: T) => number): T[
 }
 
 // The optimizer removes a call of a function that does nothing, also one it may not inline, and the function with it.
-function onlyReturns(graph: SectionGraph, node: number): boolean {
+export function onlyReturns(graph: SectionGraph, node: number): boolean {
   return (
     graph.size[node]! <= largestFunctionThatOnlyReturns && graph.successorStart[node] === graph.successorStart[node + 1]
   );

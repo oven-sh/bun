@@ -415,15 +415,17 @@ function operandInfoFunction(enumName: EntryEnumName, parameter: string): string
 }
 
 function operationsSource(schema: Schema): string[] {
-  const namedMemberArrays = new Map<string, string>();
+  // The table of built-ins says which of its names the engine means by BuiltinNames::x: in a list, at the position of x. One name is a stretch of that list.
   const namedMembersOf = (operand: Operand) => {
-    if (operand.uses.namedMembers.length === 0) return "{ }";
-    const elements = operand.uses.namedMembers
-      .map(member => namedExternalMemberOf(schema, "BuiltinName", member))
-      .join(", ");
-    const name = namedMemberArrays.get(elements) ?? `namedMembers${namedMemberArrays.size}`;
-    namedMemberArrays.set(elements, name);
-    return name;
+    const [member, ...others] = operand.uses.namedMembers;
+    if (member === undefined) return "{ }";
+    if (others.length > 0) {
+      throw new Error(
+        `${operand.name}: an operand names one member at the most: ${operand.uses.namedMembers.join(", ")}`,
+      );
+    }
+    const constant = namedExternalMemberOf(schema, "BuiltinName", member);
+    return `std::span<const BuiltinName>(&builtinTableNamedNames[${constant}.position()], 1)`;
   };
   const contents = (entries: readonly Entry[], elementsOf: (entry: Entry) => string[]): EntryContents =>
     entries.map(entry => [entry, elementsOf(entry)]);
@@ -450,7 +452,6 @@ function operationsSource(schema: Schema): string[] {
   const pair = (elementType: string, name: string, shared: SharedArrays) =>
     both(schema, spans(`std::span<const ${elementType}>`, name, shared));
   const definitions = blocks(
-    [...namedMemberArrays].map(([elements, name]) => `static constexpr BuiltinName ${name}[] = { ${elements} };`),
     operands.declarations,
     both(schema, spans("static std::span<const OperandInfo>", "operandInfosOf", operands)),
     operandInfoFunction("Opcode", "opcode"),

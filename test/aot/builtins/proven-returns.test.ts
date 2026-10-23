@@ -1,6 +1,6 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 import { ClassType, FunctionDefinition, Getter, type ClassMember } from "../../../src/codegen/bindgen-lib-internal";
 import { loadSchemaFile } from "../../../src/codegen/bindgen-load";
@@ -419,7 +419,9 @@ test("a value inside the declared type passes the check", async () => {
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "a a a\n", stderr: "", exitCode: 0 });
 });
 
-test.concurrent.each(
+const testWithAssertions = isDebug || isASAN ? test.concurrent : test.skip;
+
+testWithAssertions.each(
   Object.entries(checkedMembers).flatMap(([member, { type, outside }]) =>
     outside.map(value => [member, value, type] as const),
   ),
@@ -430,7 +432,7 @@ test.concurrent.each(
   expect(exitCode).not.toBe(0);
 });
 
-test.concurrent.each([
+testWithAssertions.each([
   ["a static function", `DeclaredTypesForTesting.number("1");`, messageOf("number", "number")],
   ["a getter", `instance.hold(1); instance.heldString;`, messageOf("heldString", "string")],
   [

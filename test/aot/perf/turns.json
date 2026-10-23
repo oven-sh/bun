@@ -228,5 +228,14 @@
   "guess/reads-of-two-receivers-right": 1000000,
   "guess/reads-of-two-receivers-wrong": 1000000,
   "guess/store-to-one-receiver-right": 1000000,
-  "guess/store-to-one-receiver-wrong": 1000000
+  "guess/store-to-one-receiver-wrong": 1000000,
+  "bytes/fill-a-buffer-by-index": 100000,
+  "bytes/find-a-byte-in-a-buffer": 100000,
+  "bytes/read-the-shorts-of-a-buffer": 100000,
+  "bytes/read-the-words-of-a-buffer": 100000,
+  "bytes/sum-the-bytes-of-a-buffer-declared-a-view": 100000,
+  "bytes/sum-the-bytes-of-a-buffer": 100000,
+  "bytes/sum-the-bytes-of-a-view": 100000,
+  "bytes/the-three-lengths-of-a-buffer": 400000,
+  "bytes/write-words-into-a-buffer": 100000
 }

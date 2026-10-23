@@ -37,6 +37,7 @@ pub struct PluginSetup {
 pub struct AotBuildRequest<'r, 'a> {
     pub transpiler: &'a mut Transpiler<'a>,
     pub entry_points: &'r [&'r [u8]],
+    pub assets: &'r [Box<[u8]>],
     pub options: &'r AotOptions,
     pub executable_identity: ExecutableIdentity,
     pub module_prefix: &'r [u8],
@@ -58,6 +59,7 @@ pub struct AotBuild {
     pub output_files: Vec<OutputFile>,
     pub engine: EngineResult,
     pub entry_points: Vec<AotEntryPoint>,
+    pub root_directory: Vec<u8>,
     /// The names of packages that lead to entry points. The positions are those in `entry_points`.
     pub package_names: Vec<PackageName>,
     pub names: ProgramNames,
@@ -78,6 +80,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     let AotBuildRequest {
         transpiler,
         entry_points,
+        assets,
         options: aot,
         executable_identity,
         module_prefix,
@@ -93,6 +96,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     let input = OptionsInput {
         bundle_options: &transpiler.options,
         entry_points,
+        assets,
         aot,
         executable_identity,
         module_prefix,
@@ -192,6 +196,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             };
             let mut build = output::finish_build(compilation, &names, embedded);
             build.package_names = package_names;
+            build.root_directory = options.paths.root_directory;
             Ok(build)
         }
         Err(BuildFailed {

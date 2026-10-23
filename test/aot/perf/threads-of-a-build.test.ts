@@ -78,6 +78,7 @@ test.skipIf(!isLinux)("a ten-line program is built by a few threads", async () =
   const threads = await threadsOfBuild({ "main.ts": tenLines }, []);
   console.log(threads);
   expect(threads["Bun Pool"] ?? 0).toBe(0);
+  expect(threads["Early Load"] ?? 0).toBe(0);
   expect(threads["Bun Compile"]).toBeLessThanOrEqual(4);
 });
 

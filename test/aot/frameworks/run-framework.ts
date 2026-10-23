@@ -162,10 +162,10 @@ async function serve(cwd: string, cmd: string[], requests: string, more: Record<
   return await ask(base, requests);
 }
 
-export function testFramework(name: keyof typeof frameworks) {
+export function testFramework(name: keyof typeof frameworks, form: "in place" | "one file" = "in place") {
   const framework: Framework = frameworks[name];
   test.skipIf(framework.isBuiltByNode === true && !nodeExe())(
-    name,
+    form === "in place" ? name : `${name}, as one file`,
     async () => {
       using dir = tempDir(`aot-framework-${name}`, {});
       const site = join(String(dir), "site");
@@ -198,7 +198,7 @@ export function testFramework(name: keyof typeof frameworks) {
           "build",
           "--compile",
           "--aot",
-          "--compile-in-place",
+          ...(form === "in place" ? ["--compile-in-place"] : []),
           framework.entryPoint,
           ...(framework.moreEntryPoints ?? []),
           ...framework.assets.flatMap(asset => ["--asset", asset]),

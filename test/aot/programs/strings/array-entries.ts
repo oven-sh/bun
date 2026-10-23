@@ -9,7 +9,7 @@
 // CALLS- kept operationAOTNewArrayIterator
 // CALLS- held operationAOTNewArrayIterator
 // CALLS- withRest operationAOTNewArrayIterator
-// CALLS+ spread operationAOTNewArrayIterator
+// CALLS- spread operationAOTNewArrayIterator
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

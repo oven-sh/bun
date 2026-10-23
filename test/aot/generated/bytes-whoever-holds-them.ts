@@ -319,7 +319,7 @@ export function program(cases: string[], isOpened = false): { file: string; text
 function answer(run: (given: any) => unknown, make: () => unknown): string {
   let given: unknown;
   try { given = make(); } catch (error) { return "not made: " + (error as Error).name; }
-  try { return show(run(given)); } catch (error: any) { return "threw " + error?.name + (error?.code ? " " + error.code + ": " + String(error.message).slice(0, 120).replace(/(must be .*)\\. Received .*/, "$1") : ""); }
+  try { return show(run(given)); } catch (error: any) { return "threw " + error?.name + (error?.code ? " " + error.code + ": " + String(error.message).slice(0, 120) : ""); }
 }
 for (const [name, run] of CASES) {
   const plain = [answer(run, MAKERS[0][1]), answer(run, MAKERS[7][1])].join(" | ");

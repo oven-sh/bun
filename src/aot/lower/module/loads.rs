@@ -235,9 +235,9 @@ pub(super) fn try_lower_module_call(
     if has_spread_argument(hir, arguments) {
         return None;
     }
-    let bound = lowering.file.bound;
+    let (bound, decisions) = (lowering.file.bound, Some(lowering.file.decisions()));
     let require_call = matches!(site.kind, ImportSiteKind::Require(_))
-        .then(|| find_require_call(hir, bound, hir[id].callee, arguments))
+        .then(|| find_require_call(hir, bound, decisions, hir[id].callee, arguments))
         .flatten();
     let is_module_require =
         matches!(site.kind, ImportSiteKind::Require(_)) && require_call.is_none();
@@ -268,7 +268,7 @@ pub(super) fn try_lower_module_call(
             RequireCallForm::Apply => Some(BuiltinId::FunctionPrototypeApply),
         };
         if let Some(method) = method {
-            let require = find_own_require(hir, bound, found.require)?;
+            let require = find_own_require(hir, bound, decisions, found.require)?;
             let guarded = GuardedCall {
                 call,
                 expected: method,
@@ -296,7 +296,8 @@ pub(super) fn try_lower_module_call(
             Some(emit_operation(lowering, operation, site, specifier))
         }
         CalleeKnowledge::Unresolved
-            if find_own_require(hir, bound, hir[id].callee) == Some(OwnRequire::OfFile) =>
+            if find_own_require(hir, bound, decisions, hir[id].callee)
+                == Some(OwnRequire::OfFile) =>
         {
             let guarded = GuardedCall {
                 call,
@@ -350,6 +351,12 @@ fn try_lower_library_module_named_to_made_require(
     if !is_plain_call || has_spread_argument(hir, arguments) {
         return None;
     }
+    let argument = hir.id_at(arguments, 0);
+    let source = parsed_source(lowering.file.queries.files(), lowering.file.file)?;
+    let named = modules_named_in(source.named_modules(), argument);
+    if named.is_empty() {
+        return None;
+    }
     let is_made_require = is_made_require(hir, lowering.file.bound, hir[id].callee);
     let decisions = lowering.file.decisions();
     if !is_made_require
@@ -357,7 +364,6 @@ fn try_lower_library_module_named_to_made_require(
     {
         return None;
     }
-    let argument = hir.id_at(arguments, 0);
     let name = match lowering
         .file
         .decisions()
@@ -371,8 +377,6 @@ fn try_lower_library_module_named_to_made_require(
             return None;
         }
     };
-    let source = parsed_source(lowering.file.queries.files(), lowering.file.file)?;
-    let named = modules_named_in(source.named_modules(), argument);
     let module = ModuleRef::Runtime(named.iter().find(|it| it.name == name)?.module);
     let site = AnsweredSite {
         specifier: ImportSpecifier::Constant(name),

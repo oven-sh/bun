@@ -17,14 +17,16 @@ use core::mem::MaybeUninit;
 
 /// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.
 pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
-    let stack = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+    let checked = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+    // What a test does with a tree checks no stack, and a frame is many times as large without optimization.
+    let stack = checked * if cfg!(debug_assertions) { 16 } else { 1 };
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..threads.max(1) {
             std::thread::Builder::new()
                 .stack_size(stack)
                 .spawn_scoped(scope, || {
-                    native::set_stack_size(stack - (256 << 10));
+                    native::set_stack_size(checked - (256 << 10));
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if i >= count {

@@ -50,6 +50,7 @@ describe.concurrent("keeps nothing of the language that it does not use", () => 
       `Bun.serve({ port: 3000, routes: { "/": () => new Response("hello") } });`,
     ],
     ["parsed JSON, printed", `console.log(JSON.parse(process.argv[2]!));`],
+    ["an error, printed", `console.error(new Error("x"));`],
     ["the text of a file", `console.log(await Bun.file("a.txt").text());`],
     ["the bytes of a file", `console.log((await Bun.file("a.txt").bytes()).length);`],
     ["whether a file exists", `console.log(await Bun.file("a.txt").exists());`],
@@ -73,6 +74,25 @@ describe.concurrent("keeps nothing of the language that it does not use", () => 
   });
 });
 
+// Something of the language is in unknown hands here, a prototype object or an error, and nothing more is kept for that.
+describe.concurrent("keeps nothing of the language where one of its objects escapes", () => {
+  test.each([
+    ["a date, printed", `console.log(new Date());`],
+    [
+      "a route with a parameter",
+      `Bun.serve({ port: 3000, routes: { "/users/:id": request => new Response(request.params.id) } });`,
+    ],
+    [
+      "a server with an error handler",
+      `Bun.serve({ port: 3000, fetch() { return new Response("a"); }, error(error) { return new Response(error.message, { status: 500 }); } });`,
+    ],
+  ])("%s", async (_, text) => {
+    const { escapes, ...rest } = await report(text);
+    const { escapes: none, ...expected } = tight;
+    expect(rest).toEqual(expected);
+  });
+});
+
 // A value nobody knows is converted to a string here: the body of a Response, a member of a form, the message of an error. `toString` is looked up by its name, and every class of the language has one:
 // that of Intl.Locale and those of Temporal stay. No locale data, no segmenter, no WebAssembly, no interpreter.
 describe.concurrent("keeps of the language what a conversion to a string may call", () => {
@@ -82,16 +102,8 @@ describe.concurrent("keeps of the language what a conversion to a string may cal
       `Bun.serve({ port: 3000, async fetch(request) { return Response.json(await request.json()); } });`,
     ],
     [
-      "a route with a parameter",
-      `Bun.serve({ port: 3000, routes: { "/users/:id": request => new Response(request.params.id) } });`,
-    ],
-    [
       "a route that reads and sets a cookie",
       `Bun.serve({ port: 3000, routes: { "/": request => { request.cookies.set("a", "b"); return new Response(request.cookies.get("a")); } } });`,
-    ],
-    [
-      "a server with an error handler",
-      `Bun.serve({ port: 3000, fetch() { return new Response("a"); }, error(error) { return new Response(error.message, { status: 500 }); } });`,
     ],
     [
       "a request that is sent with a body and headers",

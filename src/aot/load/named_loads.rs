@@ -251,10 +251,15 @@ mod tests {
     use crate::load::runtime_modules::RuntimeModules;
     use crate::load::runtime_roots::collect_runtime_roots;
 
-    fn host_loaded_modules(files: &[(&str, &str)]) -> Vec<RuntimeModule> {
+    fn root_modules(files: &[(&str, &str)]) -> Vec<RuntimeModule> {
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
         with_bind_input(files, &default_settings(), |input| {
-            collect_runtime_roots(input.files, &runtime_modules, input.platform).host_loaded_modules
+            let roots = collect_runtime_roots(input.files, &runtime_modules, input.platform);
+            let is_root = |module: &RuntimeModule| {
+                let path = runtime_modules.module_path(*module);
+                path.is_some_and(|path| roots.paths.iter().any(|root| root == path))
+            };
+            RuntimeModule::ALL.into_iter().filter(is_root).collect()
         })
     }
 
@@ -264,7 +269,7 @@ mod tests {
         kept: &[RuntimeModule],
         dropped: &[RuntimeModule],
     ) {
-        let modules = host_loaded_modules(files);
+        let modules = root_modules(files);
         for module in kept {
             assert!(modules.contains(module), "{module:?} is missing: {files:?}");
         }

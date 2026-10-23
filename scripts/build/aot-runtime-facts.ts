@@ -73,6 +73,38 @@ export interface RuntimeFacts {
   includes: string;
 }
 
+interface ConditionalFrame {
+  earlierArms: string[];
+  arm: string | null;
+}
+
+const allOf = (conditions: string[]): string =>
+  conditions.length === 1 ? conditions[0]! : conditions.map(condition => `(${condition})`).join(" && ");
+const conditionOf = (frame: ConditionalFrame): string =>
+  allOf([...frame.earlierArms.map(arm => `!(${arm})`), ...(frame.arm === null ? [] : [frame.arm])]);
+
+function forEachLineWithGuard(text: string, visit: (line: string, guard: string) => void): void {
+  const frames: ConditionalFrame[] = [];
+  for (const line of text.split("\n")) {
+    const directive = /^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b\s*(.*?)\s*(?:\/\/.*)?$/.exec(line);
+    if (!directive) {
+      const conditions = frames.map(conditionOf).filter(condition => condition !== "ENABLE(AOT)");
+      visit(line, conditions.length ? allOf(conditions) : "");
+      continue;
+    }
+    const [, kind, rest] = directive;
+    const top = frames.at(-1);
+    if (kind === "if") frames.push({ earlierArms: [], arm: rest! });
+    else if (kind === "ifdef") frames.push({ earlierArms: [], arm: `defined(${rest})` });
+    else if (kind === "ifndef") frames.push({ earlierArms: [], arm: `!defined(${rest})` });
+    else if (kind === "endif") frames.pop();
+    else if (top) {
+      if (top.arm !== null) top.earlierArms.push(top.arm);
+      top.arm = kind === "elif" ? rest! : null;
+    }
+  }
+}
+
 export function collectRuntimeFacts(javaScriptCore: string): RuntimeFacts {
   const leftOutPath = join(javaScriptCore, leftOutFile);
   const leftOut = new Set(
@@ -82,15 +114,20 @@ export function collectRuntimeFacts(javaScriptCore: string): RuntimeFacts {
       .map(line => line.split(" | ")[0]!),
   );
   const owners = new Map<string, string>();
+  const guards = new Map<string, Set<string>>();
   for (const directory of compilerDirectories) {
     for (const file of filesUnder(join(javaScriptCore, "aot", directory), isCompilerSource)) {
-      const text = readFileSync(file, "utf8");
-      for (const { pattern, expression, owner } of patterns) {
-        for (const match of text.matchAll(pattern)) {
-          if (!leftOut.has(expression(match)) && !owners.has(expression(match)))
-            owners.set(expression(match), owner(match));
+      forEachLineWithGuard(readFileSync(file, "utf8"), (line, guard) => {
+        for (const { pattern, expression, owner } of patterns) {
+          for (const match of line.matchAll(pattern)) {
+            const text = expression(match);
+            if (leftOut.has(text)) continue;
+            owners.set(text, owner(match));
+            if (!guards.has(text)) guards.set(text, new Set());
+            guards.get(text)!.add(guard);
+          }
         }
-      }
+      });
     }
   }
   const headers = new Set(filesUnder(javaScriptCore, path => path.endsWith(".h")).map(path => basename(path)));
@@ -100,10 +137,25 @@ export function collectRuntimeFacts(javaScriptCore: string): RuntimeFacts {
       for (const header of [`${part}.h`, `AOT${part}.h`]) if (headers.has(header)) includes.add(header);
     }
   }
+  const byGuard = new Map<string, string[]>();
+  for (const text of [...owners.keys()].sort(byCodeUnit)) {
+    const seen = guards.get(text)!;
+    const guard = seen.has("")
+      ? ""
+      : [...seen]
+          .sort(byCodeUnit)
+          .map(one => (seen.size > 1 ? `(${one})` : one))
+          .join(" || ");
+    if (!byGuard.has(guard)) byGuard.set(guard, []);
+    byGuard.get(guard)!.push(`AOT_RUNTIME_FACT("${text}", static_cast<uint32_t>(${text}))\n`);
+  }
   const head = "// Written by scripts/build/aot-runtime-facts.ts in Bun's tree. Do not edit.\n";
-  const expressions = [...owners.keys()].sort(byCodeUnit);
+  const blocks = [...byGuard.keys()].sort(byCodeUnit).map(guard => {
+    const lines = byGuard.get(guard)!.join("");
+    return guard ? `#if ${guard}\n${lines}#endif\n` : lines;
+  });
   return {
-    facts: head + expressions.map(text => `AOT_RUNTIME_FACT("${text}", static_cast<uint32_t>(${text}))\n`).join(""),
+    facts: head + blocks.join(""),
     includes:
       head +
       [...includes]

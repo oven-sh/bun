@@ -125,7 +125,9 @@ function cppClassOf(builtinClass: ModelClass): CppClassRef {
 
 function findClassesWithBindings(model: TableModel, origin: Origin): ModelClass[] {
   return model.classes.filter(
-    builtinClass => builtinClass.origin === origin && builtinClass.instanceTest === "ClassInfoInherits",
+    builtinClass =>
+      builtinClass.origin === origin &&
+      (builtinClass.instanceTest === "ClassInfoInherits" || builtinClass.pristineTest === "InstanceStructure"),
   );
 }
 
@@ -148,7 +150,7 @@ function formatRealmLookup(resultType: string, cppExpression: string | null): st
 function formatClassBinding(builtinClass: ModelClass, id: string): string {
   return formatAggregate([
     ["builtinClass", id],
-    ["instanceClassInfo", `${cppClassOf(builtinClass).name}::info()`],
+    ["instanceClassInfo", builtinClass.instanceCppClass === null ? null : `${cppClassOf(builtinClass).name}::info()`],
     ["findPrototype", formatRealmLookup("JSC::JSObject*", builtinClass.prototypeCppExpression)],
     ["findInstanceStructure", formatRealmLookup("JSC::Structure*", builtinClass.instanceStructureCppExpression)],
   ]);
@@ -254,7 +256,7 @@ function formatLinkTimeConstantBinding(builtin: ModelBuiltin): string[] {
   if (linkTimeConstant === null) return [];
   return [
     formatAggregate([
-      ["builtin", `Builtins::${builtin.token}`],
+      ["builtin", formatId("BuiltinID", builtin)],
       ["constant", `LinkTimeConstant::${linkTimeConstant}`],
     ]),
   ];
@@ -300,7 +302,7 @@ function emitEngineFunctionDeclarations(entries: readonly NativeFunctionEntry[])
 
 function formatEngineNativeFunction({ builtin, nativeFunction }: NativeFunctionEntry): string {
   const pointer = `JSC_REGISTERED_HOST_FUNCTION(${nativeFunction.symbol})`;
-  return formatNativeFunctionBinding(`Builtins::${builtin.token}`, pointer, nativeFunction);
+  return formatNativeFunctionBinding(formatId("BuiltinID", builtin), pointer, nativeFunction);
 }
 
 export function emitEngineBindings(model: TableModel): string {
@@ -310,7 +312,7 @@ export function emitEngineBindings(model: TableModel): string {
   const body = joinBlocks([
     emitEngineFunctionDeclarations(nativeFunctions),
     emitBindings("constinit const BuiltinBindingSet engineBuiltinBindings", {
-      classes: classes.map(builtinClass => formatClassBinding(builtinClass, `BuiltinClasses::${builtinClass.token}`)),
+      classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
       cachedGetters: [],
       customGetters: [],
       appendFunctions: [],
@@ -335,7 +337,7 @@ export function emitEngineBindings(model: TableModel): string {
     codeIndexAssertions,
     checkedNumberAssertions,
   ]);
-  const classHeaders = classes.map(builtinClass => cppClassOf(builtinClass).header);
+  const classHeaders = classes.flatMap(builtinClass => builtinClass.instanceCppClass?.header ?? []);
   const headers = sortUnique([...engineHeaders, ...checkedExpressionHeaders, ...classHeaders]);
   return wrapFile([...headers, ...standardHeaders], body);
 }
@@ -346,7 +348,7 @@ function emitHostIncludes(
   directFunctions: readonly DirectFunctionEntry[],
   nativeFunctions: readonly NativeFunctionEntry[],
 ): string {
-  const classHeaders = classes.map(builtinClass => cppClassOf(builtinClass).header);
+  const classHeaders = classes.flatMap(builtinClass => builtinClass.instanceCppClass?.header ?? []);
   const functionHeaders = [
     ...(directFunctions.length > 0 ? headersOfDirectFunctions : []),
     ...directFunctions.flatMap(({ directEntry }) => directEntry.headers),

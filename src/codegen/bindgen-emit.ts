@@ -725,11 +725,11 @@ export function checkedWordsOf(type: Type): readonly string[] | null {
   return words && [...words, type.modifier === "optional" ? "undefined" : "null"];
 }
 
-/** Lines that end the process where `value`, a `JSC::JSValue`, is none of the words of `.returning`. `vm` is in scope. */
+/** Lines that, in a build with assertions, end the process where `value`, a `JSC::JSValue`, is none of the words of `.returning`. `vm` is in scope. */
 function cppCheckResult(type: Type, { owner, member, receiver }: ResultSite, value: string): string[] {
   const words = checkedWordsOf(type);
   if (words === null) return [];
-  return checkOfDeclaredType({
+  const check = checkOfDeclaredType({
     className: owner,
     member,
     type: words.join(" | "),
@@ -738,6 +738,7 @@ function cppCheckResult(type: Type, { owner, member, receiver }: ResultSite, val
     mayBeEmpty: true,
     cppClassOfGeneratedClass: name => classesByName.get(name)?.cpp,
   }).split("\n");
+  return ["if constexpr (ASSERT_ENABLED || ASAN_ENABLED) {", ...check.map(line => `    ${line}`), "}"];
 }
 
 /** What `cppCheckResult` names. */
@@ -1059,10 +1060,11 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(${getterSymbolName(type, getter)});
 ${
   check.length === 0
     ? ""
-    : `static JSC_DECLARE_CUSTOM_GETTER(${get});
-JSC_DEFINE_CUSTOM_GETTER(${get}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName))
+    : `[[maybe_unused]] static JSC_DECLARE_CUSTOM_GETTER(${get}Checked);
+static constexpr auto ${get} = ASSERT_ENABLED || ASAN_ENABLED ? ${get}Checked : ${getterSymbolName(type, getter)};
+JSC_DEFINE_CUSTOM_GETTER(${get}Checked, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName))
 {
-    auto& vm = JSC::getVM(globalObject);
+    [[maybe_unused]] auto& vm = JSC::getVM(globalObject);
     JSC::EncodedJSValue result = ${getterSymbolName(type, getter)}(globalObject, thisValue, attributeName);
     ${check.join("\n    ")}
     return result;
@@ -1854,7 +1856,7 @@ const rustImplJsClass = (type: ClassType, toJS: string) => `impl bun_jsc::JsClas
 }`;
 
 /** Thunks call the struct's inherent methods by path. */
-function rustForClass(type: ClassType, scope: RustScope, guards: Guards): string {
+function rustForClass(type: ClassType, scope: RustScope): string {
   const { rustPath, refCounted } = type;
   const receiverArgument = {
     ref: [refCounted ? "wrapped" : "this.payload_ref()"],
@@ -1935,7 +1937,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     );
   }
 
-  return `${refCounted ? rustForRefCounted(type) : rustForPayload(type, guardOfClass(type, guards) !== null)}
+  return `${refCounted ? rustForRefCounted(type) : rustForPayload(type)}
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
 ${(["memoryCost", "estimatedSize"] as const)
@@ -1967,8 +1969,7 @@ unsafe impl bindgen::JsCreateWithStructure for ${rustPath} {
   }${rustForModule(type)}${thunks}`;
 }
 
-/** `isGuarded`: the call in C++ stands in a guard that names the function. LTO removes the call of one that it can see does nothing. */
-function rustForPayload(type: ClassType, isGuarded: boolean): string {
+function rustForPayload(type: ClassType): string {
   const { rustPath } = type;
   return `
 unsafe extern "C" {
@@ -1995,7 +1996,7 @@ ${type.sharedThis ? rustImplJsClass(type, "bindgen::JsPayload::into_js_wrapper(s
 // A cell is at a multiple of 8, and so is the payload in it.
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
 const _: () = assert!(${offsetOfPayload(type)} + size_of::<${rustPath}>() <= ${maxCellSize}, "too large to be stored in its JS object: box its largest field");
-#[unsafe(no_mangle)]${isGuarded ? "\n#[inline(never)]" : ""}
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
     unsafe { core::ptr::drop_in_place(payload) }
@@ -2121,7 +2122,7 @@ ${
         ${safety}
         unsafe { ${
           checkedFields.includes(field)
-            ? `${symbolName(type, `${field}SetCached`)}(this_value, global.as_mut_ptr(), value)`
+            ? `if cfg!(debug_assertions) { ${symbolName(type, `${field}SetCached`)}(this_value, global.as_mut_ptr(), value) } else { bindgen::set_internal_field_at(this_value, global, ${offset}, value) }`
             : `bindgen::set_internal_field_at(this_value, global, ${offset}, value)`
         } }
     }
@@ -2174,7 +2175,7 @@ const rustTraitImports = (file: SchemaFile) =>
 const hasRust = (file: SchemaFile) =>
   file.types.length > 0 || file.functions.some(fn => fn.signatures.some(signature => !signature.cppSymbol));
 
-export function rustForCrate(files: readonly SchemaFile[], guards: Guards): string {
+export function rustForCrate(files: readonly SchemaFile[]): string {
   return (
     banner(null) +
     files
@@ -2205,7 +2206,7 @@ ${indent(
         : type instanceof UnionType
           ? rustForUnion(type, file.origin)
           : type instanceof ClassType
-            ? rustForClass(type, file.origin, guards)
+            ? rustForClass(type, file.origin)
             : rustForDictionary(type as DictionaryType, file.origin),
     )
     .join("") + file.functions.map(fn => rustForFunction(fn, file)).join(""),

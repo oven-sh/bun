@@ -65,11 +65,11 @@ fn map_and_view() {
 #[test]
 fn nested_global_path_is_not_split() {
     let paths = paths_of_class(BuiltinClass::Glob);
-    assert_eq!(paths.len(), 1);
-    assert_eq!(
-        (paths[0].module, paths[0].names),
-        (None, &["Bun", "Glob"][..])
-    );
+    let described: Vec<_> = paths.iter().map(|path| (path.module, path.names)).collect();
+    // The class of a schema also has the name that Bun's own modules ask for it by.
+    let expected: [(Option<&str>, &[&str]); 2] =
+        [(None, &["Bun", "Glob"]), (None, &["$Bindgen", "Glob"])];
+    assert_eq!(described, expected);
 }
 
 #[test]

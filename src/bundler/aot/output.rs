@@ -59,6 +59,7 @@ pub(crate) fn finish_build(
         output_files,
         engine,
         entry_points,
+        root_directory: Vec::new(),
         package_names: Vec::new(),
         names,
         texts,

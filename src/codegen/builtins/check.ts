@@ -397,13 +397,22 @@ function extendsClass(builtinClass: ModelClass, ancestor: ModelClass): boolean {
 // The test compares with the Structures that closures are created with, which inherit from Function.prototype.
 function checkPristineTests(model: TableModel, problems: Problems): void {
   const functionClass = model.classes.find(builtinClass => builtinClass.token === functionClassToken);
-  for (const { pristineTest, isNeverPristine, prototype, token } of model.classes) {
-    if (pristineTest !== "ClosureAsCreated") continue;
+  for (const { pristineTest, isNeverPristine, prototype, token, instanceStructureCppExpression } of model.classes) {
+    if (pristineTest === "Mark") continue;
     if (!isNeverPristine) {
       problems.add(
         null,
         `the class ${token} has the test ${pristineTest}, so no mark of a Structure answers for it: it is isNeverPristine`,
       );
+    }
+    if (pristineTest === "InstanceStructure") {
+      if (instanceStructureCppExpression === null) {
+        problems.add(
+          null,
+          `the class ${token} has the test ${pristineTest} and does not name the Structure of its instances (instanceStructureCppExpression)`,
+        );
+      }
+      continue;
     }
     if (prototype === null || prototype !== functionClass?.prototype) {
       problems.add(

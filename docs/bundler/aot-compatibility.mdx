@@ -230,6 +230,7 @@ A few packages change built-ins, mostly to support old browsers or to offer a sh
 | `private` 0.1                   | Replaces `Object.getOwnPropertyNames`                                                | On import                   | `recast` 0.17 and `regenerator-transform` 0.14 do without  |
 | `sass` 1                        | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype` | On import                   | Compile your stylesheets before you build the executable   |
 | `zone.js`, Angular through it   | Replaces `Promise.prototype.then` and `Object.prototype.toString`                    | On import                   | Angular without zones (`provideZonelessChangeDetection()`) |
+| `next` 16                       | Replaces `Date.prototype.constructor`, for the clock checks of `cacheComponents`     | At the start; it is logged  | Everything else: Next.js catches the error and goes on     |
 | `es5-shim`                      | Replaces `Array.prototype.forEach`, `map`, `filter`, `every` and `some`              | On import                   | Remove the import: Bun implements what it fills in         |
 | `es6-shim`                      | Replaces `RegExp.prototype.toString` and `Set.prototype.add`, `has` and `delete`     | On import                   | Remove the import: Bun implements what it fills in         |
 | `harmony-reflect`               | Replaces `Object.prototype.hasOwnProperty`, `valueOf`, `toString` and four more      | On import                   | Remove the import: `Reflect` and `Proxy` are built in      |
@@ -260,15 +261,13 @@ That's fine for a template or a configuration file. It matters when a library ge
 
 If your program never calls `eval` or `new Function`, the compiler assumes it has seen all the code that will ever run (a closed-world assumption, like GraalVM Native Image) and optimizes accordingly.
 
-It finds these calls by tracking the functions as values, so `const run = eval`, `Reflect.construct(Function, [code])` and `(() => {}).constructor(code)` all count.
+It finds these calls by tracking the functions as values, so `const run = eval`, `Reflect.construct(Function, [code])`, `(() => {}).constructor(code)` and `new Proxy(Function, {})(code)` all count.
 
 A direct `eval` in strict code doesn't count if its string is known at build time and is only the name of a variable, as in `eval("require")`, or `eval("quire".replace(/^/, "re"))` in the `@protobufjs/inquire` package. It's compiled as a read of that variable.
 
 Only a call counts. Naming `eval` or `Function`, storing one in an object or passing one to another function costs nothing by itself. Neither does a call to a function that the compiler knows nothing about: it doesn't assume that such a call might be `eval`.
 
 What it doesn't track is an `eval` or a `Function` that your program reads under a computed key, as in `object[name](code)` or `globalThis[name](code)`. That holds for your own objects too. A table such as `{ "%eval%": eval, "%parse%": parse }`, like the one in the `get-intrinsic` package, costs nothing however it's read, and `table["%eval%"](code)` counts as a call while `table[name](code)` doesn't. In a program with no other such call, that one throws:
-
-It doesn't look through a `Proxy` either: `new (new Proxy(Function, {}))(code)` throws the same error.
 
 ```txt
 EvalError: Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly.
@@ -468,15 +467,21 @@ The compiler also follows `require` under another name, as long as it can see th
 | `require.bind(null)("./inside.js")`                                         | `require(name)`: it finds the entry points |
 | `let load = require; load = other; load("./inside.js")`                     | `require(name)`: it finds the entry points |
 
-The name of a built-in module means the same in every file, so for those names the compiler follows `require`, `import.meta.require` and `createRequire()` further: out of a function that's called where it's written, and from an `export` to an `import`. That covers the `__require` helper that esbuild and `bun build` put into ES module bundles, also when code splitting moves the helper into a shared chunk. Any other path is still a dynamic path there.
+A function that's called where it's written and returns `require` counts as another name too. That's the `__require` helper that esbuild puts into ES module bundles.
 
-| Call                                                                                        | Compiled like                              |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `var __require = (x => typeof require !== "undefined" ? require : x)(f); __require("zlib")` | `require("zlib")`                          |
-| `import { __require } from "./chunk.js"; __require("node:zlib")`                            | `require("node:zlib")`                     |
-| `import { __require } from "./chunk.js"; __require("./inside.js")`                          | `require(name)`: it finds the entry points |
+| Call                                                                                               | Compiled like            |
+| -------------------------------------------------------------------------------------------------- | ------------------------ |
+| `var __require = (x => typeof require !== "undefined" ? require : x)(f); __require("./inside.js")` | `require("./inside.js")` |
+| `const load = (() => require)(); load("./inside.js")`                                              | `require("./inside.js")` |
 
-`process.getBuiltinModule("node:fs")` with a string literal is compiled like `require("node:fs")`. If your program assigns a function of its own to `process.getBuiltinModule`, such a call still gets the built-in module. A call with a dynamic name runs the replacement. The compiler follows `process.getBuiltinModule` under another name like `require`. It can't see the function behind a computed key (`process[key](name)`) or behind a `Proxy`: such a call throws `Cannot load '...': this executable can't load a module from a dynamic path`.
+With code splitting, esbuild and `bun build` export the helper from a shared chunk. The compiler follows `require`, `import.meta.require` and `createRequire()` from an `export` to an `import` for built-in modules, whose names mean the same in every file. Any other path is still a dynamic path there.
+
+| Call                                                               | Compiled like                              |
+| ------------------------------------------------------------------ | ------------------------------------------ |
+| `import { __require } from "./chunk.js"; __require("node:zlib")`   | `require("node:zlib")`                     |
+| `import { __require } from "./chunk.js"; __require("./inside.js")` | `require(name)`: it finds the entry points |
+
+`process.getBuiltinModule("node:fs")` with a string literal is compiled like `require("node:fs")`. If your program assigns a function of its own to `process.getBuiltinModule`, such a call still gets the built-in module. A call with a dynamic name runs the replacement. The compiler follows `process.getBuiltinModule` under another name like `require`. It can't see the function behind a computed key (`process[key](name)`): such a call throws `Cannot load '...': this executable can't load a module from a dynamic path`.
 
 `require()` can't wait. If it reaches an ES module outside of the executable that has a top-level `await`, it throws a `TypeError` that tells you to use `await import()`.
 
@@ -486,10 +491,10 @@ Next.js and Angular load your application's pages and routes from paths that the
 
 ```bash terminal icon="terminal"
 # Next.js with `output: "standalone"`, in .next/standalone
-bun compile ./server.js ".next/server/**/*.js" --asset .next --asset public --outfile server
+bun compile ./server.js ".next/server/**/*.js" --asset .next --asset public --asset node_modules/@img --outfile server
 ```
 
-The result is one file that needs nothing else on the machine that runs it. Bun expands the quoted pattern itself. Next.js can't write its page cache into the executable, so it keeps the cache in memory.
+The result is one file that needs nothing else on the machine that runs it. Bun expands the quoted pattern itself. `node_modules/@img` holds `sharp`, which resizes the images of `next/image`; without it Next.js serves them at their original size. Next.js can't write its page cache into the executable, so it keeps the cache in memory. It can't store the images it has resized either, and logs `Failed to write image to cache` for each of them.
 
 `--compile-in-place` builds an executable that only runs on the machine that built it: modules keep their paths on disk, and whatever wasn't compiled or embedded is read from there.
 
@@ -497,7 +502,12 @@ The result is one file that needs nothing else on the machine that runs it. Bun 
 bun compile --compile-in-place ./server.js $(find .next/server -name '*.js') --outfile server
 ```
 
-For Angular the files are `$(find dist/site/server -name '*.mjs' -not -name server.mjs)`. Nuxt, SvelteKit, Astro and React Router need no additional entry points.
+For Angular the files are `$(find dist/site/server -name '*.mjs' -not -name server.mjs)`. Nuxt, SvelteKit, Astro and React Router need no additional entry points. Pass what the server reads from disk with `--asset`:
+
+```bash terminal icon="terminal"
+bun compile ./dist/server/entry.mjs --asset dist/client --outfile server # Astro
+bun compile ./build/index.js --asset build/client --asset build/prerendered --outfile server # SvelteKit
+```
 
 Without the entry points, the first request fails with the error above.
 
@@ -587,6 +597,10 @@ One case differs. A callback that you handed to other code may call `require()` 
 **A file that your program loads from disk at run time isn't part of the executable**: an `--external` package, or a config file that a package reads with `require()`. It's in `require.cache`, `delete` takes it out, and it runs again at the next `require()`, as under `bun run`.
 
 **A module of the executable can't be loaded a second time in another form.** `new Bun.ModuleGraph().import(url)` of one rejects with `ERR_MODULE_NOT_FOUND`: a second graph would have to run the module again from its file. `require(path, { type: "text" })` with a path that is put together at run time throws as well, because the file isn't there to be read. Use `import(path, { with: { type: "text" } })` with a constant path: the text is then included at build time.
+
+```txt
+error: Cannot load '/$bunfs/root/app.ts': it's compiled into this executable, and a compiled module can't be loaded a second time (for example into a Bun.ModuleGraph).
+```
 
 ## Loader hooks
 

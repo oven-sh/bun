@@ -312,6 +312,69 @@ fn write_changed_blocks(
     Ok(bytes_written + (bytes.len() - changed_start) as u64)
 }
 
+/// Fills `bytes` in at the end of `file` through a mapping, whose pages several threads make side by side. False: use `pwrite`.
+#[cfg(target_os = "linux")]
+fn fill_behind_end(file: &bun_sys::File, bytes: &[u8], position: u64) -> bool {
+    const FEWEST_BYTES: usize = 32 << 20;
+    const MOST_THREADS: usize = 8;
+    if bytes.len() < FEWEST_BYTES {
+        return false;
+    }
+    let first_page = position - position % MappedFile::page_size() as u64;
+    let skipped = (position - first_page) as usize;
+    // With its blocks reserved, a page that is touched cannot find the disk full.
+    // SAFETY: fallocate has no precondition but a valid file descriptor.
+    let reserved = unsafe {
+        libc::fallocate(
+            file.handle().native(),
+            0,
+            position as i64,
+            bytes.len() as i64,
+        )
+    };
+    if reserved != 0 {
+        return false;
+    }
+    let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
+    let length = skipped + bytes.len();
+    let Ok(pointer) = bun_sys::mmap(
+        core::ptr::null_mut(),
+        length,
+        access,
+        flags,
+        file.handle(),
+        first_page as i64,
+    ) else {
+        return false;
+    };
+    // SAFETY: the mapping holds `length` writable bytes until `munmap`, and nothing else refers to them.
+    let target = unsafe { core::slice::from_raw_parts_mut(pointer.add(skipped), bytes.len()) };
+    let threads = usize::from(bun_core::get_thread_count()).clamp(1, MOST_THREADS);
+    let share = bytes
+        .len()
+        .div_ceil(threads)
+        .next_multiple_of(MappedFile::page_size());
+    std::thread::scope(|scope| {
+        for (target, bytes) in target.chunks_mut(share).zip(bytes.chunks(share)) {
+            scope.spawn(move || target.copy_from_slice(bytes));
+        }
+    });
+    let _ = bun_sys::munmap(pointer, length);
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fill_behind_end(_file: &bun_sys::File, _bytes: &[u8], _position: u64) -> bool {
+    false
+}
+
+fn write_behind_end(file: &bun_sys::File, bytes: &[u8], position: u64) -> bun_sys::Maybe<()> {
+    match fill_behind_end(file, bytes, position) {
+        true => Ok(()),
+        false => file.pwrite_all(bytes, position as i64),
+    }
+}
+
 /// What `file` holds already.
 #[derive(Copy, Clone)]
 pub(crate) struct Original<'a> {
@@ -337,18 +400,26 @@ fn write_pieces(
     for piece in pieces {
         match (piece, original) {
             (Piece::Bytes(bytes), Some(original)) => {
+                let inside = bytes.len().min(previous_size.saturating_sub(size) as usize);
+                let (inside, behind) = bytes.split_at(inside);
                 let written = write_changed_blocks(
                     file,
                     size,
-                    bytes,
+                    inside,
                     original.file,
                     untouched.as_ref(),
                     &mut block,
                 )
                 .map_err(Write)?;
-                bytes_kept += bytes.len() as u64 - written;
+                bytes_kept += inside.len() as u64 - written;
+                write_behind_end(file, behind, size + inside.len() as u64).map_err(Write)?;
             }
-            (Piece::Bytes(bytes), None) => file.pwrite_all(bytes, size as i64).map_err(Write)?,
+            (Piece::Bytes(bytes), None) => {
+                let inside = bytes.len().min(previous_size.saturating_sub(size) as usize);
+                let (inside, behind) = bytes.split_at(inside);
+                file.pwrite_all(inside, size as i64).map_err(Write)?;
+                write_behind_end(file, behind, size + inside.len() as u64).map_err(Write)?;
+            }
             (Piece::Length(length), _) => file.pwrite_all(length, size as i64).map_err(Write)?,
             (Piece::Zeros(count), _) => {
                 let mut written: u64 = 0;
@@ -478,6 +549,36 @@ mod tests {
         assert_eq!(size, expected.len() as u64);
         assert_eq!(bytes_written, expected.len() as u64);
         assert!(read_file(&path) == expected);
+    }
+
+    #[test]
+    fn large_pieces_behind_the_end_are_whole() {
+        let folder = TemporaryFolder::create("large");
+        let held: Vec<u8> = (0..100_001u32).map(|index| (index / 7) as u8).collect();
+        let large: Vec<u8> = (0..(40u32 << 20) + 13)
+            .map(|index| (index / 11) as u8)
+            .collect();
+        let pieces = [
+            Piece::Bytes(&held[..70_000]),
+            Piece::Bytes(&large),
+            Piece::Zeros(5),
+            Piece::Bytes(&large),
+            Piece::Bytes(b"end"),
+        ];
+        let expected = [&held[..70_000], &large, &[0; 5], &large, b"end"].concat();
+        let original_path = folder.write("original", &held);
+        let original = bun_sys::File::open(&original_path, bun_sys::O::RDONLY, 0).unwrap();
+        let original = Original {
+            file: &original,
+            mapping: None,
+        };
+        for original in [None, Some(original)] {
+            let path = folder.write("file", &held);
+            let file = bun_sys::File::open(&path, bun_sys::O::RDWR, 0).unwrap();
+            let (size, _) = write_pieces(&file, &pieces, original).unwrap();
+            assert_eq!(size, expected.len() as u64);
+            assert!(read_file(&path) == expected);
+        }
     }
 
     #[cfg(target_os = "linux")]

@@ -750,13 +750,12 @@ impl TestingSwitch {
     pub const DELAY_OTHER_FLOW_RULES: TestingSwitch = TestingSwitch(1 << 11);
     pub const GENERATE_ALL_CODE_DIRECTLY: TestingSwitch = TestingSwitch(1 << 12);
     pub const CHECK_PROOFS_AT_RUN_TIME: TestingSwitch = TestingSwitch(1 << 13);
-    pub const CONVERT_OPERANDS_AT_FETCH: TestingSwitch = TestingSwitch(1 << 14);
-    pub const GENERATE_DIRECT_CODE_BY_LINEAR_SCAN: TestingSwitch = TestingSwitch(1 << 15);
-    pub const ALL: TestingSwitch = TestingSwitch(0b1111111111111111);
-    pub const NAMES: [&'static str; 16] = [
+    pub const GENERATE_DIRECT_CODE_BY_LINEAR_SCAN: TestingSwitch = TestingSwitch(1 << 14);
+    pub const ALL: TestingSwitch = TestingSwitch(0b111111111111111);
+    pub const NAMES: [&'static str; 15] = [
         "IgnoreBranchHints", "ForceGCSlowPaths", "MayEncounterMasqueradesAsUndefined", "DropGuard", "IgnoreExpectedTypes", "DropReferenceGuards",
         "ProveEverything", "NoCallConvertsCells", "NoLayoutIsMadeSeldom", "FlattenUntilHeldWhereverLegal", "DelayFlowRules", "DelayOtherFlowRules",
-        "GenerateAllCodeDirectly", "CheckProofsAtRunTime", "ConvertOperandsAtFetch", "GenerateDirectCodeByLinearScan"
+        "GenerateAllCodeDirectly", "CheckProofsAtRunTime", "GenerateDirectCodeByLinearScan"
     ];
     pub const fn contains(self, other: TestingSwitch) -> bool { self.0 & other.0 == other.0 }
     pub const fn intersects(self, other: TestingSwitch) -> bool { self.0 & other.0 != 0 }

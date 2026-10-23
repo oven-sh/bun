@@ -3,21 +3,14 @@ import { Problems } from "./declarations.ts";
 import {
   hashOfBuiltinTokens,
   nameArraysOf,
+  namedListsOf,
   slotTokenOf,
   textNameSlotsArray,
   textNamesArray,
 } from "./emit-cpp-names.ts";
 import { emitMacroList, formatDouble, formatInt64, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
-import type {
-  ModelAttachments,
-  ModelBound,
-  ModelBuiltin,
-  ModelFunction,
-  ModelName,
-  ModelSlot,
-  TableModel,
-} from "./model.ts";
+import type { ModelAttachments, ModelBound, ModelBuiltin, ModelFunction, ModelSlot, TableModel } from "./model.ts";
 import { tokenOf } from "./paths.ts";
 
 type Constant = readonly [name: string, number: number];
@@ -67,10 +60,6 @@ function slotConstantOf(slot: ModelSlot): Constant {
   return [slotTokenOf(slot), slot.id];
 }
 
-function nameConstantOf({ cppConstant, number }: ModelName): Constant[] {
-  return cppConstant === null ? [] : [[cppConstant, number]];
-}
-
 function functionConstantOf({ file, name, id }: ModelFunction): Constant {
   return [tokenOf([file.slice(file.lastIndexOf("/") + 1), name]), id];
 }
@@ -100,6 +89,15 @@ export function emitCppIds(model: TableModel): string {
   const problems = new Problems();
   const { checkedJSTypes, linkTimeConstants } = model.syntax;
   const functionConstants = model.functions.filter(hasConstant).map(functionConstantOf);
+  const namedLists = namedListsOf(model);
+  const [namedBuiltins, namedNames, namedClasses, namedLayouts] = namedLists.map(({ namespace, cppType, items }) =>
+    emitConstants(
+      namespace,
+      `NamedTableID<${cppType}>`,
+      items.map(([constant], position): Constant => [constant, position]),
+      problems,
+    ),
+  );
   const counts: readonly Constant[] = [
     ["numberOfBuiltins", model.builtins.length],
     ["numberOfBuiltinNames", model.names.length],
@@ -108,16 +106,17 @@ export function emitCppIds(model: TableModel): string {
     ["numberOfBuiltinLayouts", model.layouts.length],
     ["numberOfRuntimeModules", model.modules.length],
     ["numberOfRuntimeFunctions", model.functions.length],
+    ...namedLists.map(({ countName, items }): Constant => [countName, items.length]),
   ];
   const blocks = [
     `${fileHeader}#pragma once`,
     "namespace JSC { namespace AOT {",
     counts.map(emitCount).join("\n"),
-    emitConstants("Builtins", "BuiltinID", model.builtins.map(tokenConstantOf), problems),
-    emitConstants("BuiltinNames", "BuiltinName", model.names.flatMap(nameConstantOf), problems),
-    emitConstants("BuiltinClasses", "BuiltinClassID", model.classes.map(tokenConstantOf), problems),
+    namedBuiltins,
+    namedNames,
+    namedClasses,
     emitConstants("BuiltinSlots", "BuiltinSlotID", model.slots.map(slotConstantOf), problems),
-    emitConstants("BuiltinLayouts", "BuiltinLayoutID", model.layouts.map(tokenConstantOf), problems),
+    namedLayouts,
     emitConstants("RuntimeModules", "RuntimeModuleID", model.modules.map(tokenConstantOf), problems),
     emitConstants("RuntimeFunctions", "RuntimeFunctionID", functionConstants, problems),
     emitEnum("CheckedJSType", "numberOfCheckedJSTypes", checkedJSTypes, problems),

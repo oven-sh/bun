@@ -628,6 +628,7 @@ _http_server[ServerResponse][prototype] c-w object
 _http_server[ServerResponse][prototype]: object above=_http_outgoing[OutgoingMessage][prototype] extensible=true
 _http_server[ServerResponse][prototype][constructor] c-w function
 _http_server[ServerResponse][prototype][constructor] = _http_server[ServerResponse]
+_http_server[ServerResponse][prototype][statusCode] cew number
 _http_server[ServerResponse][prototype][setHeader] cew function
 _http_server[ServerResponse][prototype][setHeader]: function function name="setHeader" length=2 above=Function extensible=true
 _http_server[ServerResponse][prototype][setHeader][length] c-- number
@@ -3400,7 +3401,7 @@ util[TextDecoder][name] c-- string
 util[TextDecoder][prototype] --- object
 util[TextDecoder][prototype]: object above=Object extensible=true
 util[TextDecoder][prototype][decode] -ew function
-util[TextDecoder][prototype][decode]: function native name="decode" length=1 above=Function extensible=true
+util[TextDecoder][prototype][decode]: function native name="decode" length=0 above=Function extensible=true
 util[TextDecoder][prototype][decode][length] c-- number
 util[TextDecoder][prototype][decode][name] c-- string
 util[TextDecoder][prototype][encoding] -ea accessor get=function set=undefined
@@ -4056,6 +4057,7 @@ zlib[constants][BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS] -e- number
 zlib[constants][BROTLI_DECODER_ERROR_FORMAT_PADDING_1] -e- number
 zlib[constants][BROTLI_DECODER_ERROR_FORMAT_PADDING_2] -e- number
 zlib[constants][BROTLI_DECODER_ERROR_FORMAT_DISTANCE] -e- number
+zlib[constants][BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH] -e- number
 zlib[constants][BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET] -e- number
 zlib[constants][BROTLI_DECODER_ERROR_INVALID_ARGUMENTS] -e- number
 zlib[constants][BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES] -e- number
@@ -4254,7 +4256,7 @@ http.OutgoingMessage level 1: constructor:c-w _isLenientHeaderValidation:cew err
 http.OutgoingMessage level 2: constructor:c-w pipe:cew eventNames:cew
 http.OutgoingMessage level 3: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
 http.ServerResponse level 0: _events:cew _eventsCount:cew _maxListeners:cew outputData:cew outputSize:cew writable:cew destroyed:cew _last:cew chunkedEncoding:cew shouldKeepAlive:cew maxRequestsOnConnectionReached:cew _defaultKeepAlive:cew useChunkedEncodingByDefault:cew sendDate:cew _removedConnection:cew _removedContLen:cew _removedTE:cew strictContentLength:cew _contentLength:cew _hasBody:cew _trailer:cew finished:cew _headerSent:cew _closed:cew _header:cew _keepAliveTimeout:cew _onPendingData:cew req:cew _sent100:cew statusCode:cew statusMessage:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kBytesWritten):cew Symbol(kNeedDrain):cew Symbol(corked):cew Symbol(kChunkedBuffer):cew Symbol(kChunkedLength):cew Symbol(kSocket):cew Symbol(kOutHeaders):cew Symbol(errored):cew Symbol(kHighWaterMark):cew Symbol(kRejectNonStandardBodyWrites):cew Symbol(kLenientValidation):cew Symbol(kExchange):cew Symbol(pendingCallbacks):cew Symbol(handle):cew Symbol(fakeSocket):cew
-http.ServerResponse level 1: constructor:c-w setHeader:cew appendHeader:cew setHeaders:cew removeHeader:cew headers:--a socket:--a connection:--a writableCorked:--a cork:cew uncork:cew setTimeout:cew headersSent:--a _writeRaw:cew writeEarlyHints:cew writeInformation:cew writeProcessing:cew writeContinue:cew end:cew write:cew _callPendingCallbacks:cew _finish:cew detachSocket:cew _implicitHeader:cew writableNeedDrain:--a writableFinished:--a writableLength:--a writableHighWaterMark:--a closed:--a _send:cew writeHead:cew assignSocket:cew destroy:cew emit:cew flushHeaders:cew
+http.ServerResponse level 1: constructor:c-w statusCode:cew setHeader:cew appendHeader:cew setHeaders:cew removeHeader:cew headers:--a socket:--a connection:--a writableCorked:--a cork:cew uncork:cew setTimeout:cew headersSent:--a _writeRaw:cew writeEarlyHints:cew writeInformation:cew writeProcessing:cew writeContinue:cew end:cew write:cew _callPendingCallbacks:cew _finish:cew detachSocket:cew _implicitHeader:cew writableNeedDrain:--a writableFinished:--a writableLength:--a writableHighWaterMark:--a closed:--a _send:cew writeHead:cew assignSocket:cew destroy:cew emit:cew flushHeaders:cew
 http.ServerResponse level 2: constructor:c-w _isLenientHeaderValidation:cew errored:--a closed:--a writableFinished:--a writableObjectMode:--a writableLength:--a writableHighWaterMark:--a writableCorked:--a connection:--a socket:--a _renderHeaders:cew cork:cew uncork:cew setTimeout:cew destroy:cew _send:cew _writeRaw:cew _storeHeader:cew setHeader:cew setHeaders:cew appendHeader:cew getHeader:cew getHeaderNames:cew getRawHeaderNames:cew getHeaders:cew hasHeader:cew removeHeader:cew _implicitHeader:cew headersSent:cea writableEnded:--a writableNeedDrain:--a write:cew addTrailers:cew end:cew _finish:cew _flush:cew _flushOutput:cew flushHeaders:cew pipe:cew _headers:--a headers:--a _headerNames:--a Symbol(nodejs.rejection):cew
 http.ServerResponse level 3: constructor:c-w pipe:cew eventNames:cew
 http.ServerResponse level 4: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew

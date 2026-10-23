@@ -149,7 +149,7 @@ const toyMembers = (declare: (...words: string[]) => string) => `
 `;
 
 describe("generated bindings of a toy class", () => {
-  test("a declared result is checked where it leaves native code, in every build", async () => {
+  test("a declared result is checked where it leaves native code, in a build with assertions", async () => {
     const run = await runToy(
       toyMembers((...words) => `b.any.returning(${words.map(word => JSON.stringify(word)).join(", ")})`),
     );
@@ -170,7 +170,7 @@ describe("generated bindings of a toy class", () => {
       "JSC::JSValue::decode(result) == callFrame->thisValue() || JSC::JSValue::decode(result).isUndefined()",
     );
     expect(impl).toContain("JSC::JSValue::decode(result).inherits<Bun::Bindgen::Generated::JSToy>()");
-    expect(impl).not.toContain("ASSERT_ENABLED || ASAN_ENABLED");
+    expect(countOf(impl, "if constexpr (ASSERT_ENABLED || ASAN_ENABLED) {")).toBe(7);
 
     const types = run.readTypes();
     expect(types).toContain('"load": (() => Promise<unknown>);');

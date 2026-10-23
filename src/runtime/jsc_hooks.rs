@@ -5039,9 +5039,7 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
         return bun_core::String::DEAD;
     }
     let input_path = path.to_utf8();
-    if !bun_standalone_graph::is_bun_standalone_file_path(input_path.slice())
-        && let Some(path) = write_next_to_libraries(input_path.slice())
-    {
+    if let Some(path) = write_next_to_libraries(input_path.slice()) {
         return bun_core::String::clone_utf8(&path);
     }
     let mut path_buf = bun_paths::path_buffer_pool::get();

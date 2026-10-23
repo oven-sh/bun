@@ -60,6 +60,6 @@ writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Tables.h"), cppTable
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Counts.h"), cppCounts(tables));
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Classes.h"), cppClasses(tables));
 for (const [crate, crateFiles] of Map.groupBy(files, file => file.origin.crate)) {
-  writeIfNotChanged(path.join(codegenPath, `generated_bindgen_${crate}.rs`), rustForCrate(crateFiles, guards));
+  writeIfNotChanged(path.join(codegenPath, `generated_bindgen_${crate}.rs`), rustForCrate(crateFiles));
 }
 writeIfNotChanged(path.join(args["types-path"], "Bindgen.d.ts"), dts(allFiles));

@@ -4,7 +4,10 @@ use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
     InitialState, SymbolId, has_mapped_arguments,
 };
-use crate::hir::{ExprId, ExprKind, File, Flags, MemberKey, NodeData};
+use crate::fold::Decisions;
+use crate::hir::{
+    Branches, Chain, ExprId, ExprKind, File, Flags, FnBody, FnKind, MemberKey, NodeData, StmtKind,
+};
 
 fn is_node_module(specifier: Atom) -> bool {
     specifier == known::module || specifier == known::node_module
@@ -188,12 +191,71 @@ pub enum OwnRequire {
 
 const LONGEST_CHAIN_OF_BINDINGS: usize = 8;
 
+fn iife_return_value(hir: &File<'_>, e: ExprId) -> Option<ExprId> {
+    let Some(ExprKind::Call(call)) = expr_kind(hir, e) else {
+        return None;
+    };
+    let call = hir[call];
+    let Some(ExprKind::Fn(function)) = expr_kind(hir, hir.skip_type_assertions(call.callee)) else {
+        return None;
+    };
+    let function = &hir[function];
+    let is_plain_function = matches!(function.kind, FnKind::Arrow | FnKind::Expr)
+        && !function.flags.intersects(Flags::ASYNC | Flags::GENERATOR);
+    if call.chain != Chain::No || !is_plain_function {
+        return None;
+    }
+    match function.body {
+        FnBody::Expr(value) => Some(value),
+        FnBody::Block(statements) if statements.len() == 1 => {
+            match hir[hir.id_at(statements, 0)].kind {
+                StmtKind::Return(value) => value.some(),
+                _ => None,
+            }
+        }
+        FnBody::Block(_) | FnBody::None => None,
+    }
+}
+
+fn live_branch(hir: &File<'_>, decisions: &Decisions<'_>, e: ExprId) -> Option<ExprId> {
+    let Some(ExprKind::Cond { branches, .. }) = expr_kind(hir, e) else {
+        return None;
+    };
+    let Branches { yes, no } = hir.branches(branches);
+    match (decisions.is_dead_expr(yes), decisions.is_dead_expr(no)) {
+        (false, true) => Some(yes),
+        (true, false) => Some(no),
+        (false, false) | (true, true) => None,
+    }
+}
+
+// The expression whose value `e` evaluates to: the live branch of a folded `?:`, or what an IIFE returns.
+// esbuild writes `var __require = (x => typeof require !== "undefined" ? require : ..)(function (x) { .. })`.
+pub fn find_result_expression(
+    hir: &File<'_>,
+    decisions: &Decisions<'_>,
+    e: ExprId,
+) -> Option<ExprId> {
+    live_branch(hir, decisions, e).or_else(|| iife_return_value(hir, e))
+}
+
 // The `require` of the file, or `createRequire(import.meta.url)`, which resolves what it is given as that one does: written on the spot, or held by a binding that nothing stores to, which may start as another such binding.
-pub fn find_own_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<OwnRequire> {
+pub fn find_own_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
+    e: ExprId,
+) -> Option<OwnRequire> {
     let mut e = hir.skip_type_assertions(e);
     for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
         if is_free_common_js(hir, bound, e, CommonJsVariable::Require) {
             return Some(OwnRequire::OfFile);
+        }
+        if let Some(result) =
+            decisions.and_then(|decisions| find_result_expression(hir, decisions, e))
+        {
+            e = hir.skip_type_assertions(result);
+            continue;
         }
         let Some(symbol) = settled_symbol(hir, bound, e) else {
             return is_made_for_own_file(hir, bound, e).then_some(OwnRequire::Made);
@@ -279,5 +341,5 @@ pub fn may_still_be_undefined(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> b
 }
 
 pub fn is_require_made_for_own_file(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> bool {
-    find_own_require(hir, bound, callee) == Some(OwnRequire::Made)
+    find_own_require(hir, bound, None, callee) == Some(OwnRequire::Made)
 }

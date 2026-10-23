@@ -664,7 +664,7 @@ group("only reached code counts", () => {
   });
 
   test("a built-in module binds its native code where it is loaded", async () => {
-    const isBinding = (line: string) => /^native \S*node_zlib_binding\.rs:NativeZlib$/.test(line);
+    const isBinding = (line: string) => /^native \S*node_zlib_binding\.bind\.ts:NativeZlib$/.test(line);
     const [hello, zlib] = await Promise.all([of(`console.log(1);`), runtimeUse({ "main.ts": `import { gzipSync } from "node:zlib";\ndeclare const console: any;\nconsole.log(gzipSync("a"));` })]);
     expect({ hello: hello.lines.some(isBinding), zlib: zlib.lines.some(isBinding) }).toEqual({ hello: false, zlib: true });
   });

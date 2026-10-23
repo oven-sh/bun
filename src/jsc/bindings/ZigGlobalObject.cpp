@@ -2642,6 +2642,8 @@ void GlobalObject::finishCreation(VM& vm)
              JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
              scope.assertNoExceptionExceptTermination();
              init.set(subclassStructure);
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateStructure(init.owner, subclassStructure);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSResizableOrGrowableSharedBufferSubclassStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);

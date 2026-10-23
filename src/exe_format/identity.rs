@@ -148,7 +148,7 @@ impl HostDescription {
     pub fn revision_in(record: &[u8]) -> Option<&[u8]> {
         let revision = record.get(core::mem::offset_of!(HostDescription, revision)..)?;
         let revision = revision.get(..40)?;
-        let length = revision.iter().position(|&byte| byte == 0).unwrap_or(40);
+        let length = bun_core::strings::index_of_char_usize(revision, 0).unwrap_or(40);
         Some(&revision[..length])
     }
 }

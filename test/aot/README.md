@@ -82,13 +82,21 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   TypeScript files is built twice, with its types and with its types erased; any other program and every program of a `variant-*`
   is built once. A folder of programs and a `variant-*` are split by a hash of the path: `programs("strings", 1, 2)`,
   `variant("veneers", [..], {}, 1, 3)`. A topic file that takes more than three minutes gets more parts.
+- **Many programs in one executable.** A build costs about as much for 250 small programs as for one. `joined(label, flags, part, parts)`
+  of `joined-programs.ts` puts the programs that can share a process into groups of about 250, builds each group twice, once with
+  every function through B3 and once with `flags`, runs both and compares what each program printed. It is for a way of generating
+  code that every function can take: `joined-programs-all-code-direct-*`, `joined-programs-direct-code-by-linear-scan-*`. A red
+  names the programs that differ or stopped the executable; each is then run alone with the same flags.
+- **The direct code generators and the check of references.** `run-programs.ts` builds every program with
+  `--aot-check=validate-references`, and a build with that check sends every function through B3. A build whose flags hold
+  `--aot-testing=GenerateAllCodeDirectly` therefore goes without it, and must count `FunctionsGeneratedDirectly`.
 - **The share.** All programs in all ways are 130 hours of one processor, and CI has 40 shards of twelve minutes on four vCPUs. So a
   run that is told nothing takes a share, and which one follows from `Bun.revision`: each commit takes other programs, and in
   time all are taken. `inShare(name, oneIn)` and `partInShare(part, parts, oneIn)` of `run-programs.ts` decide: one program in
   10 for `programs()` and `programsBuiltWith()` (a list of names given to the second is taken whole), one in 400 for each
   `variant-*` (a fortieth of its tenth, another for each variant), one in 10 of `each-case-alone` and `typedness`, one in 100 for
   `jit-mode-eager-tier-up`, a quarter for `generated()`, one of ten pieces of each file's part for `collector-stress`, `heat` and
-  `bad-time`. A file that takes a share says so once on stderr, with the seed. A test is named after its program:
+  `bad-time`, three groups of each file's part for `joined()`. A file that takes a share says so once on stderr, with the seed. A test is named after its program:
   `AOT_PROGRAMS=<name> bun test test/aot/<file>` runs a red again, `AOT_SHARE=<revision>` the whole share of that commit,
   `AOT_SHARE=all` everything. A test with a body of its own in a `*.test.ts` is in no share: it runs every time. What grows with
   the suite belongs in a share.

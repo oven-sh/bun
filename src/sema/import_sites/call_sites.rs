@@ -14,7 +14,7 @@ pub(crate) fn call_site_kind(
     call: ExprId,
 ) -> Option<ImportSiteKind> {
     let form = find_call_form(hir, call)?;
-    find_call_site(hir, bound, call, form).map(|site| site.kind)
+    find_call_site(hir, bound, None, call, form).map(|site| site.kind)
 }
 
 // What the loader is given: not the arguments of the call where it goes through `call` or `apply`.
@@ -24,7 +24,7 @@ pub(crate) fn call_site_arguments(
     call: ExprId,
 ) -> Option<IdList<ExprId>> {
     let form = find_call_form(hir, call)?;
-    find_call_site(hir, bound, call, form).map(|site| site.args)
+    find_call_site(hir, bound, None, call, form).map(|site| site.args)
 }
 
 pub(super) fn expr_kind(hir: &File<'_>, e: ExprId) -> Option<ExprKind> {
@@ -107,11 +107,12 @@ pub struct RequireCall {
 pub fn find_require_call(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     callee: ExprId,
     args: IdList<ExprId>,
 ) -> Option<RequireCall> {
     let callee = hir.skip_type_assertions(callee);
-    if find_own_require(hir, bound, callee).is_some() {
+    if find_own_require(hir, bound, decisions, callee).is_some() {
         return Some(RequireCall {
             require: callee,
             form: RequireCallForm::Direct,
@@ -122,7 +123,7 @@ pub fn find_require_call(
         (object, MemberKey::Name(name)) => (hir.skip_type_assertions(object), name),
         (_, MemberKey::PrivateName(_) | MemberKey::Computed(_)) => return None,
     };
-    find_own_require(hir, bound, require)?;
+    find_own_require(hir, bound, decisions, require)?;
     if name == known::call && args.len() > 1 {
         return Some(RequireCall {
             require,
@@ -160,6 +161,7 @@ struct CallSite {
 fn find_call_site(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     call: ExprId,
     form: CallForm,
 ) -> Option<CallSite> {
@@ -178,7 +180,7 @@ fn find_call_site(
         return None;
     }
     let callee = hir.skip_type_assertions(callee);
-    if let Some(found) = find_require_call(hir, bound, callee, args) {
+    if let Some(found) = find_require_call(hir, bound, decisions, callee, args) {
         return Some(create_site(ImportSiteKind::Require(call), found.args));
     }
     if holds_import_meta_require(hir, bound, callee) {
@@ -209,7 +211,7 @@ fn find_call_site(
             return Some(create_site(ImportSiteKind::ImportMetaResolve(call), args));
         }
         // Under any name, as for the call itself: what `createRequire(import.meta.url)` makes resolves as the `require` of the file does.
-        let is_require = find_own_require(hir, bound, object).is_some();
+        let is_require = find_own_require(hir, bound, decisions, object).is_some();
         return is_require.then(|| create_site(ImportSiteKind::RequireResolve(call), args));
     }
     if name == known::getBuiltinModule {
@@ -274,7 +276,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         if bound.parent_of_expr(call) == Parent::None || decisions.is_dead_expr(call) {
             continue;
         }
-        let Some(found) = find_call_site(hir, bound, call, form) else {
+        let Some(found) = find_call_site(hir, bound, Some(decisions), call, form) else {
             continue;
         };
         let site = create_call_site(inputs, &found);

@@ -600,12 +600,17 @@ impl StandaloneModuleGraph {
 
     /// `(path, contents)`.
     pub fn preserved_shared_libraries(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
-        let program = self.compiled_program.as_ref();
-        let preserves_source_paths = program.is_some_and(|program| program.preserves_source_paths);
+        let preserves_source_paths = self
+            .compiled_program
+            .as_ref()
+            .map(|program| program.preserves_source_paths);
         self.files
             .iter()
-            .take_while(move |_| preserves_source_paths)
-            .filter(|(key, _)| !is_bun_standalone_file_path(key) && is_shared_library_name(key))
+            .take_while(move |_| preserves_source_paths.is_some())
+            .filter(move |(key, _)| {
+                preserves_source_paths != Some(is_bun_standalone_file_path(key))
+                    && is_shared_library_name(key)
+            })
             .map(|(key, file)| (&key[..], file.contents.as_bytes()))
     }
 

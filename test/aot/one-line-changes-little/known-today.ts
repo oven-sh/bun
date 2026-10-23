@@ -181,6 +181,17 @@ export const knownBesideLibrary: Readonly<Record<string, string>> = {
   "unlisted-global-called-with-body": "31 | 40 | 23, 23 | 4 | 10, 21,074",
   "unlisted-global-member-called-with-body": "31 | 40 | 24, 23 | 4 | 10, 21,082",
   "push-other-layout": "unknown calls 1 -> 4",
+  "class-to-unknown": "free accesses 44 -> 24, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 8, bytes of code of the program 7186 -> 13378",
+  "constructor-new": "free accesses 44 -> 27, accesses by name 9 -> 17, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 12860",
+  "log-world": "free accesses 44 -> 23, accesses by name 9 -> 13, direct calls 35 -> 23, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15683",
+  "world-named-property": "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 22, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15687",
+  "method-to-unknown": "free accesses 44 -> 37, accesses by name 9 -> 14, direct calls 35 -> 32, unknown calls 1 -> 5, bytes of code of the program 7186 -> 13084",
+  "world-unknown-index": "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 23, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15706",
+  "body-to-unknown": "free accesses 44 -> 25, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 9, bytes of code of the program 7186 -> 14558",
+  "constructor-read-2": "free accesses 44 -> 25, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 6, bytes of code of the program 7186 -> 12715",
+  "class-unknown-static-read": "free accesses 44 -> 24, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 13353",
+  "log-class": "free accesses 44 -> 24, accesses by name 9 -> 13, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 13333",
+  "world-to-unknown": "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 23, unknown calls 1 -> 10, bytes of code of the program 7186 -> 15728",
 };
 
 export const typedAgainstUntyped = "typed 69 | 17 | 10, 0 unknown calls, 8,167 bytes; untyped 66 | 15 | 9, 0, 8,715";

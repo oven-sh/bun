@@ -62,9 +62,11 @@ const checkedPrototypeFunctions = (name: string) =>
 JSC_DECLARE_HOST_FUNCTION(${checkedSymbol(name, member)});
 JSC_DEFINE_HOST_FUNCTION(${checkedSymbol(name, member)}, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     JSC::EncodedJSValue result = ${name}__${native}(lexicalGlobalObject, callFrame);
-    ${checkOfDeclaredType({ className: name, member, type: returns, value: "JSC::JSValue::decode(result)", receiver: "callFrame->thisValue()", mayBeEmpty: true })}
+    if constexpr (ASSERT_ENABLED || ASAN_ENABLED) {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        ${checkOfDeclaredType({ className: name, member, type: returns, value: "JSC::JSValue::decode(result)", receiver: "callFrame->thisValue()", mayBeEmpty: true })}
+    }
     return result;
 }
 `,

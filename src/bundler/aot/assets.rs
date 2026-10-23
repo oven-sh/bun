@@ -102,7 +102,7 @@ fn create_embedded_file(
     let runs_in_place = context.module_prefix.is_empty();
     let dest_path = match runs_in_place {
         true => posix_path(file.path),
-        false => print_embedded_name(&template),
+        false => name_under_root(context, file, &template),
     };
     let path = match runs_in_place {
         true => file.path.to_vec(),
@@ -132,7 +132,7 @@ pub(crate) fn embedded_name(
     content_hash: u64,
 ) -> Vec<u8> {
     let template = create_embedded_template(context, file, content_hash);
-    print_embedded_name(&template.expect("the path fits"))
+    name_under_root(context, file, &template.expect("the path fits"))
 }
 
 pub(crate) fn embedded_path(module_prefix: &[u8], dest_path: &[u8]) -> Vec<u8> {
@@ -167,6 +167,23 @@ fn create_embedded_template(
         template.placeholder.target = Target::Bun.naming_placeholder().into();
     }
     Some(template)
+}
+
+/// A native addon may load libraries by a path relative to itself, so it keeps its path from the root directory.
+fn name_under_root(
+    context: &BuildContext,
+    file: &SourceFile<'_>,
+    template: &PathTemplate,
+) -> Vec<u8> {
+    let path_from_root = || {
+        let working_directory = context.bundle().transpiler().fs().top_level_dir();
+        let relative = relative_path(working_directory, &context.options().root_dir, file.path)?;
+        (!relative.starts_with(b"..")).then(|| posix_path(&relative))
+    };
+    let kept = Some(())
+        .filter(|()| file.loader == Loader::Napi)
+        .and_then(|()| path_from_root());
+    kept.unwrap_or_else(|| print_embedded_name(template))
 }
 
 fn posix_path(path: &[u8]) -> Vec<u8> {

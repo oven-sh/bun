@@ -156,7 +156,7 @@ export const operandRoles = [
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
-export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense"] as const;
+export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow"] as const;
 export type PristineAspect = (typeof pristineAspects)[number];
 
 export const contentsSlots = ["Element", "Key", "Value"] as const;
@@ -582,7 +582,7 @@ export interface CppClassRef {
   header: string;
 }
 
-export const pristineTests = ["Mark", "ClosureAsCreated"] as const;
+export const pristineTests = ["Mark", "ClosureAsCreated", "InstanceStructure"] as const;
 export type PristineTest = (typeof pristineTests)[number];
 
 export interface ClassColumns {
@@ -592,7 +592,7 @@ export interface ClassColumns {
   sharingMode?: SharingMode;
   isPrimitiveWrapper?: boolean;
   isNeverPristine?: boolean;
-  /** How compiled code tests that an instance has gained no property and kept its prototype. Mark: start-up marks the Structure of new instances. */
+  /** How compiled code tests that an instance has gained no property and kept its prototype. Mark: start-up marks the Structure of new instances. InstanceStructure: the cell has the Structure that the realm gives a new instance. */
   pristineTest?: PristineTest;
   hasClosureInstances?: boolean;
   /** Native code makes no instance of the class but the entries that inherit from its prototype, so no result that is left undescribed is one. */

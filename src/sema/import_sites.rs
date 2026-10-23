@@ -18,8 +18,8 @@ pub use jsx::{
 };
 pub use macro_calls::macro_callee;
 pub use made_requires::{
-    OwnRequire, find_own_require, holds_import_meta_require, is_made_require,
-    is_require_made_for_own_file, may_still_be_undefined,
+    OwnRequire, find_own_require, find_result_expression, holds_import_meta_require,
+    is_made_require, is_require_made_for_own_file, may_still_be_undefined,
 };
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;

@@ -6,6 +6,7 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 test = false
+bench = false
 doctest = false
 
 [dependencies]

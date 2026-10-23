@@ -715,7 +715,41 @@ test("--aot requires --format=esm", async () => {
   ).toThrow("compile.aot requires format: 'esm'");
 });
 
-describe("Bun.ModuleGraph with --aot", () => {
+test("Bun.ModuleGraph refuses a module that is compiled into the executable", async () => {
+  using dir = tempDir("compile-aot-module-graph-refused", {
+    "entry.ts": `
+      const url = new URL("./app.js", import.meta.url).href;
+      console.log((await import(url)).name);
+      const error = await new Bun.ModuleGraph().import(url).then(() => undefined, (error: any) => error);
+      console.log(error?.code, String(error?.message).split(" (bun compile")[0]);
+    `,
+    "app.ts": `export const name: string = "app";`,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "app.ts", "--outfile", "out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
+  await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "app",
+      expect.stringMatching(
+        /^ERR_MODULE_NOT_FOUND Cannot load '.*app\.ts': it's compiled into this executable, and a compiled module can't be loaded a second time \(for example into a Bun\.ModuleGraph\)\.$/,
+      ),
+      "",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// TODO: compile modules so that each graph gets its own instance. Until then graph.import() of a compiled module rejects.
+describe.todo("Bun.ModuleGraph with --aot", () => {
   async function run(entry: string, more = "") {
     using dir = tempDir("compile-aot-module-graph", {
       "entry.ts": `

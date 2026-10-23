@@ -576,7 +576,7 @@ console.log(require(path.join(__dirname, "vendor", "addon", ["addon", "node"].jo
 `,
 };
 
-async function buildAddonWithLibrary(dir: string) {
+async function buildAddonWithLibrary(dir: string, flags = ["--compile-in-place"]) {
   const isDarwin = process.platform === "darwin";
   const library = isDarwin ? "libgreeting.dylib" : isWindows ? "greeting.dll" : "libgreeting.so";
   const libraryFolder = isWindows ? "vendor/addon" : "vendor/lib";
@@ -608,17 +608,31 @@ async function buildAddonWithLibrary(dir: string) {
   }
   const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
   expect(plain).toEqual({ stdout: "from a library beside the addon\n", stderr: "", exitCode: 0 });
-  const built = await build(app, "./start.cjs", "--asset", "./vendor");
+  const built = await run(app, [
+    bunExe(),
+    "build",
+    "--compile",
+    "--aot",
+    ...flags,
+    "./start.cjs",
+    "--asset",
+    "./vendor",
+    "--outfile",
+    "../built.exe",
+  ]);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   renameSync(app, join(dir, "moved-away"));
   return plain;
 }
 
-test.skipIf(!systemCC)(
-  "a native addon loads the shared library it links to",
-  async () => {
-    using dir = tempDir("aot-in-place-addon-with-a-library", addonWithLibrary);
-    const plain = await buildAddonWithLibrary(String(dir));
+test.skipIf(!systemCC).each([
+  ["in place", ["--compile-in-place"]],
+  ["under its own root", []],
+])(
+  "a native addon loads the shared library it links to, compiled %s",
+  async (_, flags) => {
+    using dir = tempDir("aot-addon-with-a-library", addonWithLibrary);
+    const plain = await buildAddonWithLibrary(String(dir), flags);
     expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
   },
   120_000,

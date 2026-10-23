@@ -26,6 +26,7 @@ use crate::options::{
 pub(crate) struct OptionsInput<'r, 'i, 'a> {
     pub bundle_options: &'i BundleOptions<'a>,
     pub entry_points: &'i [&'i [u8]],
+    pub assets: &'i [Box<[u8]>],
     pub aot: &'r AotOptions,
     pub executable_identity: ExecutableIdentity,
     pub module_prefix: &'i [u8],
@@ -339,6 +340,12 @@ fn root_directory(
     let written = &input.bundle_options.root_dir[..];
     if written.is_empty() {
         let directory = common_entry_directory(input.working_directory, entry_points);
+        let assets = if input.aot.runs_in_place {
+            &[][..]
+        } else {
+            input.assets
+        };
+        let directory = widen_to_assets(input.working_directory, directory, assets);
         return Some(real_directory_path(&directory).unwrap_or(directory));
     }
     let root_directory = absolute_path(input.working_directory, written);
@@ -362,6 +369,35 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
         .chain(paths.iter().map(|path| &path[..]))
         .collect();
     let common = absolute_path(working_directory, longest_common_path_of(&all));
+    without_trailing_slash_windows_path(&common).to_vec()
+}
+
+/// Never above the working directory: the executable would name the folders of the machine that built it.
+fn widen_to_assets(
+    working_directory: &[u8],
+    entry_directory: Vec<u8>,
+    assets: &[Box<[u8]>],
+) -> Vec<u8> {
+    let working_directory = absolute_path(working_directory, b"");
+    let is_inside = |path: &[u8]| {
+        path.strip_prefix(without_trailing_slash_windows_path(&working_directory))
+            .is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
+    };
+    if !is_inside(&entry_directory) {
+        return entry_directory;
+    }
+    let paths = assets
+        .iter()
+        .map(|asset| absolute_path(&working_directory, asset));
+    let inside = paths.filter(|path| is_inside(path) && path.len() > working_directory.len());
+    let folders = inside.filter_map(|path| bun_core::dirname(&path).map(<[u8]>::to_vec));
+    // Each ends with a separator: of two equal paths without one `longest_common_path` answers the folder that holds them.
+    let all: Vec<Vec<u8>> = core::iter::once(entry_directory)
+        .chain(folders)
+        .map(|folder| [&folder[..], b"/"].concat())
+        .collect();
+    let all: Vec<&[u8]> = all.iter().map(|folder| &folder[..]).collect();
+    let common = absolute_path(&working_directory, longest_common_path_of(&all));
     without_trailing_slash_windows_path(&common).to_vec()
 }
 

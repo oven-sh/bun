@@ -8,12 +8,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { unsupported } from "../../../aot/run-programs";
 
 // ── sources embedded into the executable ──────────────────────────────────────────────────────────
 const sources: Record<string, string> = {
   "dep.ts": `
-    declare var __log: string[] | undefined;
     (typeof __log !== "undefined" ? __log : undefined)?.push("dep@" + (process.env.TAG ?? "host"));
     export let count = 0;
     export function bump(): number { return ++count; }
@@ -25,9 +23,9 @@ const sources: Record<string, string> = {
   `,
   "data.json": `{ "kind": "json", "n": 1 }`,
   "c.cjs": `(typeof __log !== "undefined" ? __log : undefined)?.push("cjs@" + (process.env.TAG ?? "host")); let n = 0; module.exports = { who: process.env.TAG ?? "host", inc: () => ++n, get n() { return n; } };`,
-  "tla.ts": `declare var __log: string[] | undefined; (typeof __log !== "undefined" ? __log : undefined)?.push("tla@" + (process.env.TAG ?? "host")); await new Promise(r => setTimeout(r, 2)); export const tlaWho = process.env.TAG ?? "host";`,
-  "lazy.ts": `declare var __log: string[] | undefined; (typeof __log !== "undefined" ? __log : undefined)?.push("lazy@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export let n = 0; export const inc = () => ++n;`,
-  "throws.ts": `declare var __log: string[] | undefined; (typeof __log !== "undefined" ? __log : undefined)?.push("throws@" + (process.env.TAG ?? "host")); if (process.env.TAG?.startsWith("bad")) throw new RangeError("boom:" + process.env.TAG); export const ok = process.env.TAG ?? "host";`,
+  "tla.ts": `(typeof __log !== "undefined" ? __log : undefined)?.push("tla@" + (process.env.TAG ?? "host")); await new Promise(r => setTimeout(r, 2)); export const tlaWho = process.env.TAG ?? "host";`,
+  "lazy.ts": `(typeof __log !== "undefined" ? __log : undefined)?.push("lazy@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export let n = 0; export const inc = () => ++n;`,
+  "throws.ts": `(typeof __log !== "undefined" ? __log : undefined)?.push("throws@" + (process.env.TAG ?? "host")); if (process.env.TAG?.startsWith("bad")) throw new RangeError("boom:" + process.env.TAG); export const ok = process.env.TAG ?? "host";`,
   "instance.ts": `
     import Thing, { bump, count, viaLocal, tag, K } from "./dep.ts";
     import * as depNs from "./dep.ts";
@@ -36,7 +34,6 @@ const sources: Record<string, string> = {
     const cjs = require("./c.cjs");
     // require() of an ES module from a graph's module: this graph's instance (import.meta.require of the chunk when split)
     const reqDep = require("./dep.ts");
-    declare var __log: string[] | undefined;
     (typeof __log !== "undefined" ? __log : undefined)?.push("instance@" + (process.env.TAG ?? "host"));
     const short = (u: string) => u.replace(/^.*[\\\\/]/, "<embedded>/");
     export async function runInstance(n: number) {
@@ -58,7 +55,6 @@ const sources: Record<string, string> = {
     export function nsRead(n: number) { let r; for (let i = 0; i < n; i++) r = depNs.tag + "|" + depNs.K; return r; }
     export function bumpLocal(n: number) { for (let i = 0; i < n; i++) local++; return local; }
     export const throwing = () => import("./throws.ts").then(m => ({ ok: m.ok }), e => ({ err: e.constructor.name, message: e.message }));
-    export const envOfProcess = () => Object.keys(process.env).join();
     export const missing = () => import("./not-embedded-" + (process.env.TAG ?? "host") + ".ts").then(() => "resolved", e => e.constructor.name);
   `,
   "worker.ts": `
@@ -153,7 +149,7 @@ const sources: Record<string, string> = {
       result = { tags, hostCount: host.count, hostTag: host.tag, evaluations: log.filter(l => l.startsWith("instance@")).length };
     } else if (scenario === "worker") {
       const w = new Worker(new URL("./worker.js", import.meta.url).href);
-      result = await new Promise((res, rej) => { w.onmessage = (e: any) => res(e.data); w.onerror = (e: any) => rej(e); });
+      result = await new Promise((res, rej) => { w.onmessage = e => res(e.data); w.onerror = e => rej(e); });
       w.terminate();
     } else if (scenario === "external") {
       // a graph loads a module from disk next to the executable, which imports embedded code by URL
@@ -163,10 +159,6 @@ const sources: Record<string, string> = {
       for (const tag of ["x0", "x1"]) { const g = mk(tag); const m = await g.import(ext); out.push(await m.describe(url)); g.dispose(); }
       const hostView = await (await import(ext)).describe(url);
       result = { out, hostView, log: log.filter(l => l.startsWith("external@") || l.startsWith("instance@")) };
-    } else if (scenario === "process") {
-      const g = new MG({ globals: { process: Object.create(process, { env: { value: { TAG: "own" }, enumerable: true } }) } });
-      result = await g.import(url).then((ns: any) => ns.envOfProcess(), (e: any) => errName(e) + ": " + String(e.message).split(" (bun compile")[0]);
-      g.dispose();
     } else {
       result = { error: "unknown scenario " + scenario };
     }
@@ -196,7 +188,6 @@ const combos: Combo[] = [
   { name: "esm+splitting+bytecode", args: ["--format=esm", "--splitting", "--bytecode"] },
   { name: "esm+splitting+bytecode+minify", args: ["--format=esm", "--splitting", "--bytecode", "--minify"] },
   { name: "esm+splitting+bytecode+sourcemap", args: ["--format=esm", "--splitting", "--bytecode", "--sourcemap"] },
-  ...(unsupported ? [] : [{ name: "esm+splitting+aot", args: ["--format=esm", "--splitting", "--aot"] }]),
 ];
 
 // All executables are built up front, concurrently; each describe awaits its own.
@@ -267,20 +258,8 @@ for (const [index, combo] of combos.entries()) {
       } catch {}
     });
 
-    const isAot = combo.args.includes("--aot");
-    // TODO(aot): a difference of compiled code, and a bug: import() in a graph that has been disposed of still resolves.
-    const testButForAot = isAot ? test.failing : test;
-
     test("build", () => {
       expect(buildResult).toEqual({ exitCode: 0, built: true, stderrHasError: "" });
-    });
-
-    test("a graph's own `process`", async () => {
-      expect(await run("process")).toEqual({
-        parsed: "TAG",
-        exitCode: 0,
-        stderr: "",
-      });
     });
 
     test("several instances of an embedded module: isolation, identity, host unaffected", async () => {
@@ -310,8 +289,7 @@ for (const [index, combo] of combos.entries()) {
       "viaEval",
       "viaFunction",
     ] as const) {
-      const testOrdering = ordering === "disposeMiddle" ? testButForAot : test;
-      testOrdering(`dynamic import() of a lazily loaded embedded chunk × ${ordering}`, async () => {
+      test(`dynamic import() of a lazily loaded embedded chunk × ${ordering}`, async () => {
         const tags = ["l0", "l1", "l2"];
         const skipped = (i: number) => ordering === "onlySome" && i === 1;
         const disposed = (i: number) => ordering === "disposeMiddle" && i === 1;

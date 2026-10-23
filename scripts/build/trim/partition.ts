@@ -1,5 +1,5 @@
 import { deriveFeatureEdges } from "./edges.ts";
-import { sortedUnique } from "./entry-points.ts";
+import { onlyReturns, sortedUnique } from "./entry-points.ts";
 import { findEdge, propagateFeatureSets, reach, type SectionGraph } from "./graph.ts";
 import {
   EdgeKind,
@@ -68,6 +68,27 @@ function isFoldedWithOtherCode(graph: SectionGraph, entry: number, records: Entr
   return namedSections < 1 + (graph.aliases.get(entry)?.length ?? 0);
 }
 
+function findEmptyEntriesThatOtherCodeJumpsTo(
+  graph: SectionGraph,
+  recordsByEntry: [entry: number, records: EntryPoint[]][],
+): Set<number> {
+  const guardsOfEmptyEntry = new Map<number, Set<number>>();
+  for (const [entry, records] of recordsByEntry) {
+    if (onlyReturns(graph, entry)) guardsOfEmptyEntry.set(entry, new Set(records.map(record => record.guard)));
+  }
+  const found = new Set<number>();
+  if (guardsOfEmptyEntry.size === 0) return found;
+  const isEmptyEntry = new Uint8Array(graph.count);
+  for (const entry of guardsOfEmptyEntry.keys()) isEmptyEntry[entry] = 1;
+  for (let referrer = 0; referrer < graph.count; referrer++) {
+    for (let edge = graph.successorStart[referrer]!; edge < graph.successorStart[referrer + 1]!; edge++) {
+      const entry = graph.successors[edge]!;
+      if (isEmptyEntry[entry] !== 0 && !guardsOfEmptyEntry.get(entry)!.has(referrer)) found.add(entry);
+    }
+  }
+  return found;
+}
+
 function classifyEdges(
   graph: SectionGraph,
   entryPoints: EntryPoint[],
@@ -80,8 +101,10 @@ function classifyEdges(
   const isSoftEntry = new Uint8Array(graph.count);
   const foldedEntryPoints: EntryPoint[] = [];
   const failures: PartitionFailure[] = [];
-  for (const [entry, records] of groupByEntry(entryPoints)) {
-    if (isFoldedWithOtherCode(graph, entry, records)) {
+  const recordsByEntry = groupByEntry(entryPoints);
+  const emptyEntriesThatOtherCodeJumpsTo = findEmptyEntriesThatOtherCodeJumpsTo(graph, recordsByEntry);
+  for (const [entry, records] of recordsByEntry) {
+    if (isFoldedWithOtherCode(graph, entry, records) || emptyEntriesThatOtherCodeJumpsTo.has(entry)) {
       foldedEntryPoints.push(...records);
       continue;
     }

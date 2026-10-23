@@ -125,12 +125,9 @@ declare module "bun" {
      *
      * `JSON.parse(text)` and `JSON.parse<any>(text)` never validate.
      */
-    parse<T = any>(
-      text: string,
-      reviver?: (this: any, key: string, value: any, context: { source?: string }) => any,
-    ): T;
+    parse<T = any>(text: string, reviver?: (this: any, key: string, value: any) => any): T;
     // TypeScript infers (`ReturnType`, `.then(JSON.parse)`) from the last signature, so `JSON.parse(text)` stays `any`.
-    parse(text: string, reviver?: (this: any, key: string, value: any, context: { source?: string }) => any): any;
+    parse(text: string, reviver?: (this: any, key: string, value: any) => any): any;
   }
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =

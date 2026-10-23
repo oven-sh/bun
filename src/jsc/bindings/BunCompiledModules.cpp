@@ -390,6 +390,8 @@ JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode
 {
     if (!hasCompiledModules() || !AOT::refusesCodeOutsideImage(globalObject))
         return {};
+    if (isCompiledModule(path))
+        return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it's compiled into this executable, and a compiled module can't be loaded a second time (for example into a Bun.ModuleGraph)."_s, adviceToKeepFunctionSource()));
     return createNotInExecutableError(globalObject, code, path);
 }
 

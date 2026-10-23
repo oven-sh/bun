@@ -233,6 +233,8 @@ export default b.declarations(
     extends: "Uint8Array",
     jsType: "Uint8ArrayType",
     isNeverPristine: true,
+    pristineTest: "InstanceStructure",
+    instanceStructureCppExpression: "globalObject->m_JSBufferSubclassStructure.getConcurrently()",
     lockedMembers: ["constructor", "prototype"],
     types: [b.exactType("Buffer")],
     constructorTable: b.staticTable("src/jsc/bindings/JSBuffer.cpp", "jsBufferConstructorTable"),

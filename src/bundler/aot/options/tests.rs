@@ -66,6 +66,7 @@ fn convert<R>(
     let input = OptionsInput {
         bundle_options: &options,
         entry_points: case.entry_points,
+        assets: &[],
         aot: &aot,
         executable_identity: ExecutableIdentity([0; 16]),
         module_prefix: b"/$bunfs/root/",

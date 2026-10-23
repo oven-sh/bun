@@ -14,6 +14,7 @@
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
 #include "wtf/Vector.h"
@@ -555,10 +556,35 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
 }
 
+// A proxy whose handler has no "get" hands a read on to its target. Null where script would run.
+static JSC::JSObject* objectThatAnswersReads(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
+        auto* handler = proxy->handler().getObject();
+        if (!handler || !proxy->target())
+            return nullptr;
+        PropertySlot trapSlot(handler, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasTrap = handler->getNonIndexPropertySlot(globalObject, vm.propertyNames->get, trapSlot);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (trapSlot.isTaintedByOpaqueObject())
+            return nullptr;
+        if (hasTrap && (!trapSlot.isValue() || !trapSlot.getValue(globalObject, vm.propertyNames->get).isUndefinedOrNull()))
+            return nullptr;
+        object = proxy->target();
+    }
+    return object;
+}
+
 // What value.constructor.name is where reading it runs no script: only data properties count, and a prototype whose "constructor" is a native accessor is named by its class.
 static WTF::String constructorNameOf(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    object = objectThatAnswersReads(vm, globalObject, object);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!object)
+        return {};
 
     PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool hasConstructor = object->getNonIndexPropertySlot(globalObject, vm.propertyNames->constructor, constructorSlot);

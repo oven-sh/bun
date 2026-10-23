@@ -252,7 +252,9 @@ impl Walker<'_, '_> {
             return false;
         }
         let require_call = match site.kind {
-            ImportSiteKind::Require(_) => find_require_call(hir, bound, call.callee, call.args),
+            ImportSiteKind::Require(_) => {
+                find_require_call(hir, bound, Some(self.decisions), call.callee, call.args)
+            }
             ImportSiteKind::JsxRuntime
             | ImportSiteKind::JsxPackage
             | ImportSiteKind::Import(_)

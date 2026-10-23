@@ -471,7 +471,7 @@ describe("the texts of the built-in modules", () => {
     });
     const header = Buffer.alloc(48);
     header.write("BUNBLTNS", 0, "latin1");
-    [1, 0, texts.length, 48, recordsEnd, dependenciesEnd, dataOffset, data.length].forEach((word, index) =>
+    [2, 0, texts.length, 48, recordsEnd, dependenciesEnd, dataOffset, data.length].forEach((word, index) =>
       header.writeUInt32LE(word, 8 + 4 * index),
     );
     const padding = Buffer.alloc(dataOffset - recordsEnd);
@@ -574,7 +574,7 @@ describe("the texts of the built-in modules", () => {
   });
 
   test.each<[string, (bytes: Buffer) => void]>([
-    ["another version", bytes => bytes.writeUInt32LE(2, 8)],
+    ["another version", bytes => bytes.writeUInt32LE(1, 8)],
     ["records past the section", bytes => bytes.writeUInt32LE(1000, 16)],
     ["a module without text", bytes => bytes.writeUInt32LE(0, 48 + 20)],
     ["a text without its NUL in the data", bytes => bytes.writeUInt32LE(bytes.readUInt32LE(36) - 1, 36)],

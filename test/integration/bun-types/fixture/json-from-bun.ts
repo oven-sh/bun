@@ -36,11 +36,11 @@ expectType(asGlobal.parse(text)).is<any>();
 expectType(asImported.parse<User>(text)).is<User>();
 
 // The global `JSON` has the one signature of the standard library, so TypeScript infers these parameters.
-export const parse: typeof globalThis.JSON.parse = (from, reviver) => globalThis.JSON.parse(from, reviver);
+export const parse: typeof globalThis.JSON.parse = (from, reviver) => (reviver ? null : globalThis.JSON.parse(from));
 export const parseWithoutReviver: typeof globalThis.JSON.parse = from => globalThis.JSON.parse(from.trim());
 export const codec: Pick<globalThis.JSON, "parse"> = {
   parse(from, reviver) {
-    return globalThis.JSON.parse(from.trim(), reviver);
+    return reviver ? null : globalThis.JSON.parse(from.trim());
   },
 };
 // @ts-expect-error

@@ -91,6 +91,25 @@ mod tests {
         split(text, b"\n").map(<[u8]>::trim_ascii)
     }
 
+    /// The declarations that begin with `type`, each on one line, however many the formatter gave it.
+    fn type_aliases(text: &[u8]) -> Vec<Vec<u8>> {
+        let mut aliases: Vec<Vec<u8>> = Vec::new();
+        let mut is_open = false;
+        for line in trimmed_lines(text) {
+            if is_open {
+                let alias = aliases.last_mut().unwrap();
+                alias.push(b' ');
+                alias.extend_from_slice(line);
+            } else if line.starts_with(b"type ") {
+                aliases.push(line.to_vec());
+            } else {
+                continue;
+            }
+            is_open = line.ends_with(b"{") || (is_open && line != b"};");
+        }
+        aliases
+    }
+
     #[test]
     fn every_build_has_them_as_types_only() {
         with_application_files(&EMPTY_PROGRAM, |files, declarations| {
@@ -136,13 +155,12 @@ mod tests {
 
     #[test]
     fn tagged_aliases_are_written_as_in_bun_types() {
-        let aliases: Vec<&[u8]> = trimmed_lines(TEXT)
-            .filter(|line| line.starts_with(b"type ") && contains(line, b"\"bun."))
-            .collect();
+        let mut aliases = type_aliases(TEXT);
+        aliases.retain(|alias| contains(alias, b"\"bun."));
         assert_eq!(aliases.len(), TAGGED_ALIAS_COUNT);
+        let published = type_aliases(BUN_TYPES);
         for alias in aliases {
-            let is_in_bun_types = trimmed_lines(BUN_TYPES).any(|line| line == alias);
-            assert!(is_in_bun_types, "{}", BStr::new(alias));
+            assert!(published.contains(&alias), "{}", BStr::new(&alias));
         }
     }
 }

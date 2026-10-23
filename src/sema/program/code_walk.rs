@@ -46,7 +46,7 @@ struct WalkState<'s, 'r> {
     idle_plugin_readers: usize,
     pending_assets: Vec<u32>,
     background_reads_disabled: bool,
-    has_early_loaders: bool,
+    early_loaders: usize,
     /// Without a thread of their own, one thread that reads waits for one plugin at a time: there may be no more than two that read.
     has_plugin_reader: bool,
     is_finished: bool,
@@ -75,12 +75,12 @@ struct CodeWalk<'c, 'a, 's: 'r, 'r> {
 }
 
 type StartPluginReader<'w> = &'w (dyn Fn() -> bool + Sync);
-type StartEarlyLoaders<'w> = &'w (dyn Fn() + Sync);
+type StartEarlyLoader<'w> = &'w (dyn Fn() + Sync);
 
 #[derive(Copy, Clone)]
 struct ThreadStarters<'w> {
     plugin_reader: StartPluginReader<'w>,
-    early_loaders: StartEarlyLoaders<'w>,
+    early_loader: StartEarlyLoader<'w>,
 }
 
 pub(super) type SpawnBackgroundReaders<'w> = &'w (dyn Fn(Vec<Vec<u8>>) + Sync);
@@ -275,27 +275,27 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 });
                 started.is_ok()
             };
-            let start_early_loaders = || {
-                for _ in 0..threads {
-                    let thread = std::thread::Builder::new()
-                        .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize);
-                    let _ = thread.spawn_scoped(scope, move || {
-                        bun_core::Output::Source::configure_named_thread(bun_core::zstr!(
-                            "Early Load"
-                        ));
-                        bun_threading::lower_current_thread_priority();
-                        walk.load_early();
-                    });
-                }
-            };
+            fn start_early_loader<'scope>(
+                scope: &'scope std::thread::Scope<'scope, '_>,
+                walk: &'scope CodeWalk<'_, '_, '_, '_>,
+            ) {
+                let thread = std::thread::Builder::new()
+                    .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize);
+                let _ = thread.spawn_scoped(scope, move || {
+                    bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Early Load"));
+                    bun_threading::lower_current_thread_priority();
+                    walk.load_early(&|| start_early_loader(scope, walk));
+                });
+            }
+            let start_early_loader = || start_early_loader(scope, walk);
             let start = ThreadStarters {
                 plugin_reader: &start_plugin_reader,
-                early_loaders: &start_early_loaders,
+                early_loader: &start_early_loader,
             };
             self.queue_found_files(start.plugin_reader);
             let mut meanwhile = || {
                 meanwhile();
-                self.allow_early_load(&mut self.state.lock(), start.early_loaders);
+                self.allow_early_load(&mut self.state.lock(), start.early_loader);
             };
             match host.io_pool() {
                 Some(io) => {
@@ -318,18 +318,27 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         });
     }
 
-    fn allow_early_load(&self, state: &mut WalkState<'s, 'r>, start: StartEarlyLoaders<'_>) {
-        if !state.has_idle_threads() || self.early_prefetch.get().is_none() {
+    fn allow_early_load(&self, state: &mut WalkState<'s, 'r>, start: StartEarlyLoader<'_>) {
+        /// The walk of a program with fewer files is over before a thread has started.
+        const FEWEST_RUNS_OF_FILES: usize = 64;
+        let Some(prefetch) = self.early_prefetch.get() else {
+            return;
+        };
+        if !state.has_idle_threads() {
             return;
         }
-        match std::mem::replace(&mut state.has_early_loaders, true) {
-            true => self.may_load_early.notify_all(),
-            false => start(),
+        match state.early_loaders {
+            0 if !prefetch.has_work_for_more_than(FEWEST_RUNS_OF_FILES) => {}
+            0 => {
+                state.early_loaders = 1;
+                start();
+            }
+            _ => self.may_load_early.notify_all(),
         }
     }
 
-    /// Loads the files of `early_prefetch` while the walk leaves threads idle.
-    fn load_early(&self) {
+    /// Loads the files of `early_prefetch` while the walk leaves threads idle, and starts one more loader while many files wait.
+    fn load_early(&self, start_another: StartEarlyLoader<'_>) {
         let Some(prefetch) = self.early_prefetch.get() else {
             return;
         };
@@ -351,7 +360,15 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 self.may_load_early.wait_guarded(&mut state);
                 continue;
             }
+            let needs_another = state.early_loaders < context.host.threads()
+                && prefetch.has_work_for_more_than(state.early_loaders);
+            if needs_another {
+                state.early_loaders += 1;
+            }
             drop(state);
+            if needs_another {
+                start_another();
+            }
             if !loader.load(true, true, true) {
                 return;
             }
@@ -460,7 +477,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 self.read_deferred(deferred);
                 state = self.state.lock();
             } else {
-                self.allow_early_load(&mut state, start.early_loaders);
+                self.allow_early_load(&mut state, start.early_loader);
                 match processes {
                     true => self.has_changed.wait_guarded(&mut state),
                     false => self.has_to_read.wait_guarded(&mut state),

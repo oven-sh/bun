@@ -1158,6 +1158,14 @@ impl<'s, 'r> Prefetch<'s, 'r> {
         self.has_to_read.notify_all();
     }
 
+    /// Adjacent paths are in the same directory.
+    const FILES_READ_IN_A_RUN: usize = 16;
+
+    fn has_work_for_more_than(&self, loaders: usize) -> bool {
+        let state = self.state.lock();
+        state.to_read.len() + state.ready.len() > loaders * Self::FILES_READ_IN_A_RUN
+    }
+
     /// Makes every `FileLoader::load` that would wait return instead.
     fn pause(&self) {
         self.state.lock().is_paused = true;
@@ -1289,8 +1297,7 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
 
     /// With `once`, returns true after reading or processing one batch, or after one wait.
     fn load(&self, reads: bool, processes: bool, once: bool) -> bool {
-        /// Adjacent paths are in the same directory.
-        const RUN: usize = 16;
+        const RUN: usize = Prefetch::FILES_READ_IN_A_RUN;
         /// Contents that have been read occupy memory until they are processed.
         const AHEAD: usize = 256;
         let FileLoader {

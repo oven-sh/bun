@@ -223,11 +223,16 @@ impl<'r> Prefetch<'_, 'r> {
         let mut state = self.state.lock();
         let next = state.seen.len() as u32;
         if *state.seen.entry(path).or_insert(next) == next {
-            state.to_read.push_back(ToLoad {
+            let seed = ToLoad {
                 path,
                 is_lib,
                 package: None,
-            });
+            };
+            // The libraries are the first files that are put in order.
+            match is_lib {
+                true => state.to_read.push_front(seed),
+                false => state.to_read.push_back(seed),
+            }
             if state.expects_seeds {
                 self.has_to_read.notify_one();
                 self.has_work.notify_one();

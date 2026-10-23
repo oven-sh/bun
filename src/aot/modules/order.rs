@@ -563,7 +563,7 @@ impl<'a, 's> FileText<'a, 's> {
                         && !self.may_replace(CommonJsVariable::Module)
                 }
                 Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) => false,
-                None => find_own_require(hir, bound, callee) == Some(OwnRequire::Made),
+                None => find_own_require(hir, bound, None, callee) == Some(OwnRequire::Made),
             },
             _ => false,
         }

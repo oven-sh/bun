@@ -563,7 +563,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFileSinkControllerPrototype)                        \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_subtleCryptoObject)                                   \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSHTTPResponseController)                            \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                           \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleSourceValueMap)                                \

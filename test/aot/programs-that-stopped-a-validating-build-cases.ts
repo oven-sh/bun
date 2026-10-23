@@ -171,9 +171,13 @@ const stopped: Record<string, string[]> = {
   ],
   "soundness": [
     "a-fraction-in-an-enum-field-survives-a-rest-copy",
+    "a-hidden-function-of-node-util-copies-a-property-onto-a-built-in-prototype",
+    "a-hidden-native-function-defines-a-property-on-a-built-in-prototype",
+    "a-setter-of-node-fs-stores-into-a-field-of-its-receiver",
     "first-use-of-built-ins-in-the-handler-of-a-stack-overflow",
     "names-that-compiled-code-walks-past-are-added-later",
     "objects-outlive-the-call-that-made-their-constructor-function",
+    "reflect-set-stores-into-a-receiver-that-is-a-built-in-prototype",
     "thenables-handed-to-built-ins",
   ],
   "strings": [

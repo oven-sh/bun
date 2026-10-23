@@ -214,7 +214,7 @@ export interface BuiltinModuleText {
 
 // The index that src/codegen/bundle-modules.ts writes and src/exe_format/builtins.rs reads.
 const builtinModulesMagic = "BUNBLTNS";
-const builtinModulesVersion = 1;
+const builtinModulesVersion = 2;
 const builtinModulesHeaderBytes = 48;
 const versionOffset = 8;
 const moduleCountOffset = 16;

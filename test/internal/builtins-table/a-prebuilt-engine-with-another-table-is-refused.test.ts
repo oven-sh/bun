@@ -63,10 +63,10 @@ test.skipIf(generated === undefined)(
     using _ = root;
     const ids = join(generatedCopy, "AOTBuiltinIDs.h");
     const text = readFileSync(ids, "utf8");
-    const line = /inline constexpr BuiltinID ArrayPrototypePush \{ (\d+) \};/.exec(text)!;
+    const line = /inline constexpr NamedTableID<BuiltinID> ArrayPrototypePush \{ (\d+) \};/.exec(text)!;
     writeFileSync(
       ids,
-      text.replace(line[0], `inline constexpr BuiltinID ArrayPrototypePush { ${Number(line[1]) + 1} };`),
+      text.replace(line[0], `inline constexpr NamedTableID<BuiltinID> ArrayPrototypePush { ${Number(line[1]) + 1} };`),
     );
     const { exitCode, errors } = await generateAgainst(generatedCopy);
     expect(errors).toContain("AOTBuiltinIDs.h");

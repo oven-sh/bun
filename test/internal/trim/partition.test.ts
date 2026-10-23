@@ -154,6 +154,35 @@ describe("the partition", () => {
     expect(result.retained()).toEqual(["main", "guardA", "entryA", "onlyA"]);
   });
 
+  test("an entry point that only returns, which the compiler has made another empty function jump to, is not removable and is not a failure", () => {
+    const result = partitioned(
+      {
+        main: { root: true, to: ["guardA", "alsoEmpty"] },
+        guardA: { to: ["entryA"] },
+        alsoEmpty: { size: 10, to: ["entryA"] },
+        entryA: { size: 6 },
+      },
+      oneFeatureGuards,
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.foldedEntryPoints).toEqual(result.entryPoints);
+    expect(result.retained()).toEqual(["main", "guardA", "alsoEmpty", "entryA"]);
+  });
+
+  test("an entry point that only returns and that only its guards refer to leaves with its feature", () => {
+    const result = partitioned(
+      {
+        main: { root: true, to: ["guardA"] },
+        guardA: { to: ["entryA"] },
+        entryA: { size: 6 },
+      },
+      oneFeatureGuards,
+    );
+    expect(result.failures).toEqual([]);
+    expect(result.foldedEntryPoints).toEqual([]);
+    expect(result.features("entryA")).toEqual([A]);
+  });
+
   describe("exports", () => {
     const library: Record<string, Section> = {
       main: { root: true },

@@ -76,19 +76,15 @@ await askRoute(request => {
   return "has";
 });
 //// an-import-of-a-WebAssembly-module-from-JSON
-//@ todo --trim removes the function that the WebAssembly module finds on JSON under a name made at run time: ERR_FEATURE_REMOVED
 const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("raw" + given + "JSON"), { j: JSON });
 tell(() => instance.exports.run());
 //// an-import-of-a-WebAssembly-module-from-Math
-//@ todo --trim removes the function that the WebAssembly module finds on Math under a name made at run time: ERR_FEATURE_REMOVED
 const instance = new WebAssembly.Instance(new WebAssembly.Module(moduleThatCallsItsImport("sum" + given + "Precise")), { j: Math });
 tell(() => instance.exports.run());
 //// an-import-of-a-WebAssembly-module-from-Promise
-//@ todo --trim removes the function that the WebAssembly module finds on Promise under a name made at run time: ERR_FEATURE_REMOVED
 const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("all" + given + "Settled"), { j: Promise });
 tell(() => instance.exports.run());
 //// an-import-of-a-WebAssembly-module-from-the-prototype-of-strings
-//@ todo --trim removes the function that the WebAssembly module finds on String.prototype under a name made at run time: ERR_FEATURE_REMOVED
 const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("isWell" + given + "Formed"), { j: Object.getPrototypeOf("a") });
 tell(() => instance.exports.run());
 //// JSON-stringify-with-a-list-of-names

@@ -97,7 +97,12 @@ fn write_product(
 ) -> Result<(), CompileFailure> {
     let started = Instant::now();
     let options = request.options;
-    add_assets(request, product.outfile, &mut build.output_files)?;
+    add_assets(
+        request,
+        product.outfile,
+        &build.root_directory,
+        &mut build.output_files,
+    )?;
     let module_ids = build.engine.entry_module_ids();
     let entry_points = pair_entry_points(&build.entry_points, module_ids, options.runs_in_place)?;
     let package_names: Vec<CompiledPackageNameInput<'_>> = build
@@ -298,6 +303,7 @@ fn build_program(
     let built = bun_bundler::aot::build(AotBuildRequest {
         transpiler: bundler.transpiler,
         entry_points: request.entry_points,
+        assets: request.executable.assets,
         options: request.options,
         executable_identity: identity,
         module_prefix,
@@ -322,6 +328,7 @@ fn build_program(
 fn add_assets(
     request: &CompileRequest<'_, '_>,
     outfile: Option<&[u8]>,
+    root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
 ) -> Result<(), CompileFailure> {
     let assets = request.executable.assets;
@@ -332,7 +339,7 @@ fn add_assets(
         add_assets_in_place(assets, output_files)
     } else {
         let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
-        add_assets_under_root(assets, entry_name, output_files)
+        add_assets_under_root(assets, entry_name, root_directory, output_files)
     };
     added.map_err(CompileFailure::Assets)
 }
@@ -377,24 +384,79 @@ fn add_asset(
 fn add_assets_under_root(
     assets: &[Box<[u8]>],
     entry_name: &[u8],
+    root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
 ) -> Result<(), String> {
+    let working_directory = bun_sys::getcwd_alloc()
+        .map_err(|error| format!("failed to read the working directory: {error}"))?;
     let mut modules_without_text = modules_without_text(output_files);
-    let mut others: Vec<OutputFile> = output_files
+    let mut taken: std::collections::HashMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
-        .filter(|file| !has_no_text(file))
-        .map(|file| OutputFile {
-            dest_path: file.dest_path.clone(),
-            output_kind: file.output_kind,
-            ..OutputFile::zero_value()
+        .enumerate()
+        .filter(|(_, file)| !has_no_text(file) && file.output_kind.is_file_in_standalone_mode())
+        .map(|(index, file)| {
+            (
+                bun_core::strings::remove_leading_dot_slash(&file.dest_path).into(),
+                Some(index),
+            )
         })
         .collect();
-    let number_of_others = others.len();
-    collect_compile_assets(assets, entry_name, &mut others)?;
-    for asset in others.drain(number_of_others..) {
-        add_asset(asset, &mut modules_without_text, output_files);
+    for asset in assets {
+        let mut files = Vec::new();
+        collect_compile_assets(core::slice::from_ref(asset), entry_name, &mut files)?;
+
+        let asset_path = trim_trailing_separators(asset);
+        let asset_name = bun_paths::basename(asset_path);
+        let under_root = path_under_root(root_directory, working_directory.as_bytes(), asset_path);
+        for mut file in files {
+            if let Some(under_root) = &under_root {
+                let path_in_asset = file
+                    .dest_path
+                    .strip_prefix(asset_name)
+                    .expect("collect_compile_assets names files under the asset's name");
+                file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
+            }
+            let Some(earlier) = taken.insert(file.dest_path.clone(), None) else {
+                add_asset(file, &mut modules_without_text, output_files);
+                continue;
+            };
+            // A native addon that a module has embedded stands at the path of its source already.
+            let is_same_file = earlier
+                .is_some_and(|index| output_files[index].value.as_slice() == file.value.as_slice());
+            if !is_same_file {
+                return Err(format!(
+                    "asset {} collides with another embedded file at {}",
+                    bun_fmt::quote(asset),
+                    bun_fmt::quote(&file.dest_path),
+                ));
+            }
+        }
     }
     Ok(())
+}
+
+fn path_under_root(
+    root_directory: &[u8],
+    working_directory: &[u8],
+    asset_path: &[u8],
+) -> Option<Vec<u8>> {
+    let written_path =
+        resolve_path::join_abs_string::<platform::Auto>(working_directory, &[asset_path]).to_vec();
+    let written_folder = bun_paths::dirname(&written_path)?;
+    let mut real_path_buffer = bun_paths::path_buffer_pool::get();
+    let real_folder =
+        bun_sys::realpath(&ZBox::from_bytes(written_folder), &mut real_path_buffer).ok();
+
+    let root_directory = trim_trailing_separators(root_directory);
+    let folders_below_root = |folder: &'_ [u8]| match folder.strip_prefix(root_directory)? {
+        [] => Some(Vec::new()),
+        [b'/' | b'\\', folders @ ..] => Some([folders, b"/"].concat()),
+        _ => None,
+    };
+    let folders = real_folder
+        .and_then(folders_below_root)
+        .or_else(|| folders_below_root(written_folder))?;
+    Some([&folders[..], bun_paths::basename(&written_path)].concat())
 }
 
 fn add_assets_in_place(

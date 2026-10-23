@@ -3,11 +3,8 @@ use bun_sema::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CommonJsVariable, Decl, SymbolId,
 };
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{
-    Branches, CallId, Chain, ExprId, ExprKind, File, Flags, FnBody, FnKind, MemberKey, NodeData,
-    StmtKind,
-};
-use bun_sema::import_sites::is_made_require;
+use bun_sema::hir::{ExprId, ExprKind, File, MemberKey, NodeData};
+use bun_sema::import_sites::{find_result_expression, is_made_require};
 
 const MAX_ALIAS_STEPS: usize = 8;
 
@@ -47,38 +44,6 @@ fn is_unmodified_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprI
         && !bound.import_meta_may_be_modified()
 }
 
-fn iife_return_value(hir: &File<'_>, call: CallId) -> Option<ExprId> {
-    let call = hir[call];
-    let ExprKind::Fn(function) = hir[hir.skip_type_assertions(call.callee)].kind else {
-        return None;
-    };
-    let function = &hir[function];
-    let is_plain_function = matches!(function.kind, FnKind::Arrow | FnKind::Expr)
-        && !function.flags.intersects(Flags::ASYNC | Flags::GENERATOR);
-    if call.chain != Chain::No || !is_plain_function {
-        return None;
-    }
-    match function.body {
-        FnBody::Expr(value) => Some(value),
-        FnBody::Block(statements) if statements.len() == 1 => {
-            match hir[hir.id_at(statements, 0)].kind {
-                StmtKind::Return(value) => value.some(),
-                _ => None,
-            }
-        }
-        FnBody::Block(_) | FnBody::None => None,
-    }
-}
-
-fn live_branch(decisions: &Decisions<'_>, branches: Branches) -> Option<ExprId> {
-    let Branches { yes, no } = branches;
-    match (decisions.is_dead_expr(yes), decisions.is_dead_expr(no)) {
-        (false, true) => Some(yes),
-        (true, false) => Some(no),
-        (false, false) | (true, true) => None,
-    }
-}
-
 // Follows esbuild's `var __require = (x => typeof require !== "undefined" ? require : ..)(function (x) { .. })`.
 pub(crate) fn resolve_loader_alias(
     hir: &File<'_>,
@@ -102,10 +67,8 @@ pub(crate) fn resolve_loader_alias(
                     _ => return None,
                 }
             }
-            ExprKind::Cond { branches, .. } => live_branch(decisions, hir.branches(branches))?,
             ExprKind::Call(_) if is_made_require(hir, bound, e) => return Some(LoaderAlias::Local),
-            ExprKind::Call(call) => iife_return_value(hir, call)?,
-            _ => return None,
+            _ => find_result_expression(hir, decisions, e)?,
         };
         e = hir.skip_type_assertions(next);
     }

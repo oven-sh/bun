@@ -227,6 +227,61 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
         &["a"],
     ),
     (
+        "a.mjs",
+        r#"var __require = ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, { get: (a, b) => (typeof require !== "undefined" ? require : a)[b] }) : x)(function(x) { if (typeof require !== "undefined") return require.apply(this, arguments); throw Error(x); }); __require("a"); __require.resolve("b");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"var t=(a=>typeof require<"u"?require:a)(function(a){throw Error(a)});t("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = (() => require)(); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = (function () { return require; })(); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"(typeof require === "function" ? require : other)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = (flag ? require : other); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const load = (async () => require)(); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const load = (function* () { return require; })(); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const load = (() => { if (flag) return other; return require; })(); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const load = (r => r)(require); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const make = () => require; const load = make(); load("a");"#,
+        &[],
+    ),
+    (
         "a.cjs",
         r#"let load = require; load = other; load("a");"#,
         &[],

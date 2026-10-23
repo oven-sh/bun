@@ -125,7 +125,7 @@ mod _impl {
             let write_state_value = write_state.to_js();
             let process_callback_value = process_callback.to_js();
 
-            let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
+            let Some(write_state) = write_state_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     "writeState",
                     "Uint32Array",
@@ -141,8 +141,7 @@ mod _impl {
             }
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_state_slice = write_state.as_u32();
-            if write_state_slice.len() < 2 {
+            if write_state.len < 2 {
                 return Err(global
                     .err(
                         jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -198,7 +197,7 @@ mod _impl {
                 return Ok(false);
             }
 
-            let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
+            let Some(params_) = init_params_array_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     "initParamsArray",
                     "Uint32Array",
@@ -212,7 +211,8 @@ mod _impl {
                     init_params_array_value,
                 ));
             }
-            for (i, &x) in params_.as_u32().iter().enumerate() {
+            for (i, x) in params_.elements::<u32>().iter().enumerate() {
+                let x = x.get();
                 if x == u32::MAX {
                     continue;
                 }

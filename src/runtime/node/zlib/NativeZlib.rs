@@ -99,7 +99,7 @@ mod _impl {
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
             let write_result_value = write_state.to_js();
-            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
+            let Some(write_result_buf) = write_result_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     "writeResult",
                     "Uint32Array",
@@ -113,8 +113,7 @@ mod _impl {
                     write_result_value,
                 ));
             }
-            let write_result_slice = write_result_buf.as_u32();
-            if write_result_slice.len() < 2 {
+            if write_result_buf.len < 2 {
                 return Err(global
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,

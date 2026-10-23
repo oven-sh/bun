@@ -1,14 +1,18 @@
+import { memfd_create } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
   bunExe,
   isASAN,
+  isLinux,
   isWindows,
   normalizeBunSnapshot,
   tempDir,
   tmpdirSync,
+  unalignedTypedArraySource,
   withoutAggressiveGC,
 } from "harness";
+import { closeSync } from "node:fs";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -1491,4 +1495,207 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+// An ArrayBuffer over memory that JSC did not allocate (bun:ffi, N-API, Bun.mmap, a slice of a
+// large Blob) starts at any address, so the elements of a view of it are not aligned. Each case
+// runs in a child, so that an abort fails the case and not the test runner.
+describe.concurrent("TypedArray over an ArrayBuffer at an unaligned address", () => {
+  async function run(args, cwd) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const int32s = "Int32Array(4) [ 1, -2, 16909060, 4 ]\n";
+
+  it("prints every element type at every address", async () => {
+    const result = await run([
+      "-e",
+      `${unalignedTypedArraySource}
+      for (const [TypedArray, values] of [
+        [Int16Array, [1, -2, 0x0102]],
+        [Uint16Array, [1, 0xffff, 0x0102]],
+        [Int32Array, [1, -2, 0x01020304]],
+        [Uint32Array, [1, 0xffffffff, 0x01020304]],
+        [Float16Array, [1.5, -2.25, Math.PI]],
+        [Float32Array, [1.5, -2.25, Math.PI]],
+        [Float64Array, [1.5, -2.25, Math.PI]],
+        [BigInt64Array, [1n, -2n, 0x0102030405060708n]],
+        [BigUint64Array, [1n, 0xffffffffffffffffn, 0x0102030405060708n]],
+      ]) {
+        // One line for each element type when all seven addresses print the same text.
+        const printed = new Set();
+        for (let offset = 1; offset < 8; offset++) printed.add(Bun.inspect(unaligned(TypedArray, values, offset)));
+        for (const text of printed) console.log(text);
+      }`,
+    ]);
+    expect(result).toEqual({
+      stdout:
+        "Int16Array(3) [ 1, -2, 258 ]\n" +
+        "Uint16Array(3) [ 1, 65535, 258 ]\n" +
+        "Int32Array(3) [ 1, -2, 16909060 ]\n" +
+        "Uint32Array(3) [ 1, 4294967295, 16909060 ]\n" +
+        "Float16Array(3) [ 1.5, -2.25, 3.140625 ]\n" +
+        "Float32Array(3) [ 1.5, -2.25, 3.1415927410125732 ]\n" +
+        "Float64Array(3) [ 1.5, -2.25, 3.141592653589793 ]\n" +
+        "BigInt64Array(3) [ 1n, -2n, 72623859790382856n ]\n" +
+        "BigUint64Array(3) [ 1n, 18446744073709551615n, 72623859790382856n ]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("prints through console.log, console.error, a format string, a nested value and colors", async () => {
+    const result = await run([
+      "-e",
+      `${unalignedTypedArraySource}
+      const view = unaligned(Int32Array, [1, -2, 0x01020304, 4]);
+      console.log(view);
+      console.log("%o", view);
+      console.log({ nested: [view] });
+      console.log(Bun.stripANSI(Bun.inspect(view, { colors: true })));
+      console.error(view);`,
+    ]);
+    expect(result).toEqual({
+      stdout: int32s + int32s + "{\n  nested: [\n    " + int32s.trimEnd() + "\n  ],\n}\n" + int32s,
+      stderr: int32s,
+      exitCode: 0,
+    });
+  });
+
+  it("prints a subarray, a view at a byte offset, more than 513 elements and a transferred buffer", async () => {
+    const result = await run([
+      "-e",
+      `${unalignedTypedArraySource}
+      const view = unaligned(Int32Array, [1, -2, 0x01020304, 4]);
+      console.log(view.subarray(1, 3));
+      console.log(new Int32Array(view.buffer, 8));
+      console.log(new Int32Array(view.buffer, 8, 0));
+      console.log(unaligned(Uint16Array, Array.from({ length: 600 }, (_, i) => i)));
+      const transferred = view.buffer.transfer();
+      console.log(view);
+      console.log(ptr(transferred) % 8, new Int32Array(transferred));`,
+    ]);
+    expect(result).toEqual({
+      stdout:
+        "Int32Array(2) [ -2, 16909060 ]\n" +
+        "Int32Array(2) [ 16909060, 4 ]\n" +
+        "Int32Array(0) []\n" +
+        `Uint16Array(600) [ ${Array.from({ length: 513 }, (_, i) => i).join(", ")}, ... 87 more ]\n` +
+        "Int32Array(0) []\n" +
+        "1 " +
+        int32s,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The buffers below are ones that Bun makes. Each child prints the address of its buffer modulo
+  // 4 before the view: a case that gets an aligned buffer tests nothing, and fails.
+
+  // Bun.mmap is not on Windows.
+  it.skipIf(isWindows)("prints a view of a Bun.mmap at an odd file offset", async () => {
+    using dir = tempDir("inspect-unaligned-mmap", {
+      "data.bin": Buffer.concat([Buffer.alloc(1), Buffer.from(new Int32Array([1, -2, 0x01020304, 4]).buffer)]),
+    });
+    const result = await run(
+      [
+        "-e",
+        `import { ptr } from "bun:ffi";
+        const map = Bun.mmap("data.bin", { offset: 1, size: 16 });
+        console.log(ptr(map) % 4);
+        console.log(new Int32Array(map.buffer));`,
+      ],
+      String(dir),
+    );
+    expect(result).toEqual({ stdout: "1\n" + int32s, stderr: "", exitCode: 0 });
+  });
+
+  // A Blob of 8 MiB or more is in a memfd, and a slice of it is read as a mapping of the whole
+  // memfd plus the offset of the slice. Only Linux has a memfd, and a sandbox can refuse one.
+  const memfdAvailable =
+    isLinux &&
+    !process.env.BUN_FEATURE_FLAG_DISABLE_MEMFD &&
+    (() => {
+      try {
+        closeSync(memfd_create(4096));
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+  it.skipIf(!memfdAvailable)("prints a view of a slice of a large Blob", async () => {
+    const result = await run([
+      "-e",
+      `import { ptr } from "bun:ffi";
+      const bytes = new Uint8Array(12 * 1024 * 1024);
+      bytes.set(new Uint8Array(new Int32Array([1, -2, 0x01020304, 4]).buffer), 1);
+      const buffer = await new Blob([bytes]).slice(1, 17).arrayBuffer();
+      console.log(ptr(buffer) % 4);
+      console.log(new Int32Array(buffer));`,
+    ]);
+    expect(result).toEqual({ stdout: "1\n" + int32s, stderr: "", exitCode: 0 });
+  });
+
+  // A body that is the only owner of the store of a sliced Blob gives JS the store's own bytes.
+  // It is the only owner once the Blob and the slice are collected.
+  it("prints a view of a Response body that is a slice of a Blob", async () => {
+    const result = await run([
+      "-e",
+      `import { ptr } from "bun:ffi";
+      let collected = 0;
+      const registry = new FinalizationRegistry(() => collected++);
+      function responseOfSlice() {
+        const bytes = new Uint8Array(4097);
+        bytes.set(new Uint8Array(new Int32Array([1, -2, 0x01020304, 4]).buffer), 1);
+        const blob = new Blob([bytes]);
+        const slice = blob.slice(1, 17);
+        registry.register(blob);
+        registry.register(slice);
+        return new Response(slice);
+      }
+      const response = responseOfSlice();
+      while (collected < 2) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const buffer = await response.arrayBuffer();
+      console.log(ptr(buffer) % 4);
+      console.log(new Int32Array(buffer));`,
+    ]);
+    expect(result).toEqual({ stdout: "1\n" + int32s, stderr: "", exitCode: 0 });
+  });
+
+  it("prints an uncaught typed array and exits with code 1", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `${unalignedTypedArraySource}
+      throw unaligned(Int32Array, [1, -2, 0x01020304, 4]);`,
+    ]);
+    expect({ stdout, stderr: stderr.split("\n").slice(0, 2), exitCode }).toEqual({
+      stdout: "",
+      stderr: ["error", int32s.trimEnd()],
+      exitCode: 1,
+    });
+  });
+
+  it("prints the received value and the diff of a failed bun:test matcher", async () => {
+    using dir = tempDir("inspect-unaligned-matcher", {
+      "unaligned.test.js": `
+        import { expect, test } from "bun:test";
+        ${unalignedTypedArraySource}
+        test("toBe", () => {
+          expect(unaligned(Int32Array, [1, -2, 0x01020304, 4])).toBe(1);
+        });
+        test("toEqual", () => {
+          expect(unaligned(Int32Array, [1, -2, 0x01020304, 4])).toEqual(new Int32Array([1, -2]));
+        });
+      `,
+    });
+    const { stderr, exitCode } = await run(["test", "unaligned.test.js"], String(dir));
+    expect(stderr).toContain("Expected: 1\nReceived: " + int32s);
+    expect(stderr).toContain("  Int32Array [\n    1,\n    -2,\n+   16909060,\n+   4,\n  ]\n");
+    expect(exitCode).toBe(1);
+  });
 });

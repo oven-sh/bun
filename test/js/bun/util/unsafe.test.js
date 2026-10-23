@@ -1,5 +1,5 @@
 import { expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, gc, isLinux, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, gc, isLinux, isMacOS, isWindows, unalignedTypedArraySource } from "harness";
 import { readFileSync } from "node:fs";
 
 it("arrayBufferToString u8", async () => {
@@ -155,6 +155,31 @@ it("Bun.unsafe.arrayBufferToString takes a typed array or an ArrayBuffer", () =>
       expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "Expected an ArrayBuffer" }),
     );
   }
+});
+
+// In a child, so that an abort fails this test and not the test runner.
+it("Bun.unsafe.arrayBufferToString reads 16-bit units from an ArrayBuffer at an odd address", async () => {
+  const units = [104, 0x65e5, 0xd83d, 0xde00];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `${unalignedTypedArraySource}
+      const { buffer } = unaligned(Uint16Array, ${JSON.stringify(units)});
+      const strings = [new Uint16Array(buffer), new Int16Array(buffer), new Uint16Array(buffer, 2, 0)].map(view =>
+        Bun.unsafe.arrayBufferToString(view),
+      );
+      console.log(JSON.stringify(strings.map(string => Array.from(string.split(""), unit => unit.charCodeAt(0)))));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([units, units, []]) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("Bun.unsafe.memoryFootprint is a number of bytes, or undefined where there is nothing to read it from", () => {

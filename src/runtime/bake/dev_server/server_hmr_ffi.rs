@@ -2,14 +2,40 @@
 
 use super::*;
 
-pub(super) fn bake_load_server_hmr_patch(
+/// Why JSC's parser rejects a piece of server code.
+pub(super) struct ServerCodeSyntaxError {
+    /// 0-based line of the text that was parsed.
+    pub(super) line: u32,
+    /// 0-based column of that line, in UTF-16 code units.
+    pub(super) column: u32,
+    pub(super) message: BunString,
+}
+
+/// Parses `code` with JSC's parser, without running it.
+pub(super) fn bake_find_server_code_syntax_error(
     global: &JSGlobalObject,
     code: BunString,
-) -> JsResult<JSValue> {
+) -> Option<ServerCodeSyntaxError> {
     unsafe extern "C" {
-        safe fn BakeLoadServerHmrPatch(global: &JSGlobalObject, code: BunString) -> JSValue;
+        /// `message` receives a +1 ref when this returns true.
+        safe fn BakeFindServerCodeSyntaxError(
+            global: &JSGlobalObject,
+            code: BunString,
+            line: &mut u32,
+            column: &mut u32,
+            message: &mut BunString,
+        ) -> bool;
     }
-    jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code))
+    let mut line: u32 = 0;
+    let mut column: u32 = 0;
+    let mut message = BunString::EMPTY;
+    BakeFindServerCodeSyntaxError(global, code, &mut line, &mut column, &mut message).then_some(
+        ServerCodeSyntaxError {
+            line,
+            column,
+            message,
+        },
+    )
 }
 
 pub(super) fn bake_load_server_hmr_patch_with_source_map(

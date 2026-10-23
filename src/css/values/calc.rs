@@ -377,7 +377,7 @@ impl<V: CalcValue> Calc<V> {
                 Self::parse_math_fn(
                     i,
                     strategy,
-                    |s, a, b| round((), a, b, s),
+                    round,
                     |s, a, b| MathFunction::Round {
                         strategy: s,
                         value: a,
@@ -1367,14 +1367,33 @@ fn arr2<T>(a: T, b: T) -> Vec<T> {
     vec![a, b]
 }
 
-fn round(_: (), value: f32, to: f32, strategy: RoundingStrategy) -> f32 {
-    let v = value / to;
-    match strategy {
-        RoundingStrategy::Down => v.floor() * to,
-        RoundingStrategy::Up => v.ceil() * to,
-        RoundingStrategy::Nearest => v.round() * to,
-        RoundingStrategy::ToZero => v.trunc() * to,
+/// CSS Values 4 `#round-func` and `#round-infinities`. This differs from lightningcss on purpose.
+#[inline(never)]
+fn round(strategy: RoundingStrategy, value: f32, to: f32) -> f32 {
+    let step = to.abs();
+    let quotient = value / step;
+    if step.is_infinite() && value.is_finite() {
+        let signed_zero = quotient;
+        return match strategy {
+            RoundingStrategy::Up if value > 0.0 => f32::INFINITY,
+            RoundingStrategy::Down if value < 0.0 => f32::NEG_INFINITY,
+            _ => signed_zero,
+        };
     }
+    let lower = quotient.floor();
+    let multiple = match strategy {
+        RoundingStrategy::Down => lower,
+        RoundingStrategy::Up => quotient.ceil(),
+        RoundingStrategy::ToZero => quotient.trunc(),
+        RoundingStrategy::Nearest => {
+            if quotient - lower < 0.5 {
+                lower
+            } else {
+                quotient.ceil()
+            }
+        }
+    };
+    multiple * step
 }
 
 fn hypot(_: (), a: f32, b: f32) -> f32 {

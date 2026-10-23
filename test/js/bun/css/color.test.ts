@@ -686,6 +686,20 @@ describe("rgb() channel order and legacy syntax", () => {
   });
 });
 
+describe("round() in a channel", () => {
+  // CSS Values 4: round() takes the multiple nearer to +∞ when the value is exactly halfway,
+  // so a hue of -45 rounds to -30 and not to -60.
+  test.each([
+    ["hsl(round(-45, 30) 50% 50%)", "#bf4080"],
+    ["hsl(round(45, 30) 50% 50%)", "#bfbf40"],
+    // The channel keywords of a relative color reach the same fold.
+    ["lab(from lab(50% -45 20) l round(a, 30) b)", "lab(50% -30 20)"],
+    ["lch(from lch(50% 30 120) l c round(h - 165, 30))", "lch(50% 30 -30)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
 describe("conversions between color spaces", () => {
   // Each case converts a color whose channels all differ, so a channel landing
   // in another channel's place shows up in the output. Mixing a color with

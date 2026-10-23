@@ -1320,32 +1320,41 @@ function registerCustomAssertion(name: string, fn: Function) {
   customAssertions[name] = fn;
 }
 
-type NodeAssert = typeof nodeAssert;
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/assert.js#L10-L28
+const kAssertMethodsToCopy = [
+  "deepEqual",
+  "deepStrictEqual",
+  "doesNotMatch",
+  "doesNotReject",
+  "doesNotThrow",
+  "equal",
+  "fail",
+  "ifError",
+  "match",
+  "notDeepEqual",
+  "notDeepStrictEqual",
+  "notEqual",
+  "notStrictEqual",
+  "partialDeepStrictEqual",
+  "rejects",
+  "strictEqual",
+  "throws",
+] as const;
 
-interface TestRunnerAssert extends Omit<NodeAssert, "AssertionError" | "strict"> {
-  AssertionError?: NodeAssert["AssertionError"];
-  CallTracker?: typeof import("internal/assert/calltracker").default;
-  strict?: NodeAssert["strict"];
-  fileSnapshot: typeof fileSnapshot;
-  snapshot: typeof snapshot;
-  register: typeof registerCustomAssertion;
+// Node's `require("node:test").assert` has `register` only; the other members predate `t.assert` and are kept.
+const assert: Record<string, unknown> = { ok: nodeAssert.ok };
+for (let i = 0; i < kAssertMethodsToCopy.length; i++) {
+  const key = kAssertMethodsToCopy[i];
+  assert[key] = nodeAssert[key];
 }
-
-const assert: TestRunnerAssert = {
-  ...nodeAssert,
-  fileSnapshot,
-  snapshot,
-  register: registerCustomAssertion,
-};
-
-// Delete deprecated methods on assert (required to pass node's tests)
-delete assert.AssertionError;
-delete assert.CallTracker;
-delete assert.strict;
+assert.Assert = nodeAssert.Assert;
+assert.fileSnapshot = fileSnapshot;
+assert.snapshot = snapshot;
+assert.register = registerCustomAssertion;
 
 function buildContextAssert(node: TestNode, ctx: TestContext) {
   // Per-context assert namespace, prototype-less like Node's: node:assert
-  // methods (minus the uncopied ones), snapshot/fileSnapshot, and custom
+  // methods (kAssertMethodsToCopy), snapshot/fileSnapshot, `ok`, and custom
   // assertions; each call counts the plan and binds the TestContext.
   const result: Record<string, Function> = { __proto__: null } as unknown as Record<string, Function>;
   // Node captures `plan` once at first `t.assert` access and closes over it,
@@ -1361,14 +1370,9 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
     Object.defineProperty(wrapper, "name", { __proto__: null, value: name, configurable: true });
     result[name] = wrapper;
   };
-  for (const key of Object.keys(nodeAssert)) {
-    // CallTracker is also excluded: bun's node:assert still ships it (Node 26
-    // does not), and copying it would trigger its deprecation accessor.
-    // `ok` is installed below, outside the generic wrapper.
-    if (key === "AssertionError" || key === "strict" || key === "CallTracker" || key === "ok") continue;
-    const value = nodeAssert[key];
-    if (!$isCallable(value)) continue;
-    add(key, value);
+  for (let i = 0; i < kAssertMethodsToCopy.length; i++) {
+    const key = kAssertMethodsToCopy[i];
+    add(key, nodeAssert[key]);
   }
   add("snapshot", snapshot);
   add("fileSnapshot", fileSnapshot);

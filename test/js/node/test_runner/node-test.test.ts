@@ -1,10 +1,24 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe } from "harness";
 import { join } from "node:path";
 
+// A fixture that states what Node does is run on Node too. The reference is
+// the Node version that bun reports: not any other `node` on PATH, and not
+// the `node` shim that `bun run` puts there, which is bun.
+const referenceNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout, exitCode } = spawnSync({
+    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
+    env: bunEnv,
+    stderr: "ignore",
+  });
+  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
+})();
+
 describe("node:test", () => {
-  // These three drive the largest fixtures (01-harness has 32 node:test cases);
+  // These three drive the largest fixtures (01-harness has 33 node:test cases);
   // a debug+ASAN `bun test` child takes several seconds to start, so give them
   // headroom and let them spawn in parallel instead of serially.
   test.concurrent(
@@ -18,6 +32,16 @@ describe("node:test", () => {
     },
     30_000,
   );
+
+  // Runs only Node, so it passes without the fix too: it keeps 01-harness.js true on Node.
+  test.concurrent.skipIf(!referenceNode)("should run basic tests the same way on node", async () => {
+    const { exitCode, stdout } = await runTestsOnNode(["01-harness.js"]);
+    expect(stdout).toContain("pass 33");
+    expect({ exitCode, stdout }).toMatchObject({
+      exitCode: 0,
+      stdout: expect.stringContaining("fail 0"),
+    });
+  });
 
   test.concurrent(
     "should run hooks in the right order",
@@ -53,8 +77,8 @@ describe("node:test", () => {
       const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 0,
-        // 32 from 01-harness + 3 from 02-hooks
-        stderr: expect.stringContaining("35 pass"),
+        // 33 from 01-harness + 3 from 02-hooks
+        stderr: expect.stringContaining("36 pass"),
       });
     },
     30_000,
@@ -341,6 +365,18 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stdoutStream).text(),
     new Response(stderrStream).text(),
   ]);
+  return { exitCode, stdout, stderr };
+}
+
+async function runTestsOnNode(filenames: string[]) {
+  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
+  await using proc = spawn({
+    cmd: [referenceNode!, "--test", ...testPaths],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
   return { exitCode, stdout, stderr };
 }
 

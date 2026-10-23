@@ -396,5 +396,84 @@ describe.concurrent.skipIf(isWindows)(
         await expectDrainOverPipe(afterInheritSpawn, "{}", { drained: true }, 1 + (1 << 20));
       },
     );
+
+    // Whatever started Bun with its own stdout and stderr goes on using them: `time bun x.js`, `(bun x.js; tool) | reader`.
+    describe("fd 1 and 2 are as Bun found them once it has exited", () => {
+      // Runs `script`, then `after`, with the same stdout and stderr: sockets, or a real pipe(2) as stdout.
+      async function runThen(script: string, after: string, stdout: "socket" | "pipe") {
+        const both = `"$0" -e "$1"; ${after}`;
+        await using proc = spawn({
+          cmd: ["sh", "-c", stdout === "pipe" ? `{ ${both}; } | cat` : both, bunExe(), script, probe],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { out, err, exitCode };
+      }
+      const use = "void process.stdout.isTTY; void process.stderr.isTTY;";
+
+      describe.each(["socket", "pipe"] as const)("stdout is a %s", stdout => {
+        test.each([
+          ["the program ends", use],
+          ["process.exit()", `${use} process.exit(0);`],
+          [
+            "process.exit() with most of a write still queued",
+            `${use} process.stdout.write(Buffer.alloc(1 << 20, "A")); process.exit(0);`,
+          ],
+          ["an uncaught exception", `${use} throw new Error("boom");`],
+          ["an unhandled rejection", `${use} Promise.reject(new Error("boom"));`],
+          ["Bun.stdout.writer()", `const writer = Bun.stdout.writer(); writer.write("A"); await writer.end();`],
+          ["a Worker used them", `new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(use)}));`],
+        ])("after %s", async (_, script) => {
+          const { out, exitCode } = await runThen(script, `"$0" "$2" 1 2`, stdout);
+          expect(out.replace(/^A+/, "")).toBe("1:blocking 2:blocking\n");
+          expect(exitCode).toBe(0);
+        });
+
+        test("after a write that had to wait for the reader, and all of it arrives", async () => {
+          const script = `${use} process.stdout.write(Buffer.alloc(1 << 20, "A"));`;
+          const { out, exitCode } = await runThen(script, `"$0" "$2" 1 2`, stdout);
+          expect(out.slice(1 << 20)).toBe("1:blocking 2:blocking\n");
+          expect(out.slice(0, 1 << 20)).toBe(Buffer.alloc(1 << 20, "A").toString());
+          expect(exitCode).toBe(0);
+        });
+
+        test("a plain tool that runs next can write more than the pipe holds", async () => {
+          const { out, err, exitCode } = await runThen(use, `head -c 1000000 /dev/zero; echo "rc=$?" >&2`, stdout);
+          expect(err).toBe("rc=0\n");
+          expect(out.length).toBe(1000000);
+          expect(exitCode).toBe(0);
+        });
+      });
+
+      // The first program leaves fd 1 non-blocking for the one it turns into, which makes it blocking for its child.
+      test("a descriptor that was non-blocking when Bun started is non-blocking again", async () => {
+        const second = `Bun.spawnSync(["true"], { stdio: ["inherit", "inherit", "inherit"] });`;
+        const first = `${use} process.execve(process.execPath, [process.execPath, "-e", ${JSON.stringify(second)}]);`;
+        const { out, exitCode } = await runThen(first, `"$0" "$2" 1`, "socket");
+        expect(out).toBe("1:nonblocking\n");
+        expect(exitCode).toBe(0);
+      });
+
+      // With a terminal among fd 0-2, SIGINT and SIGTERM put the terminal's settings back. The flags go with them.
+      test("after SIGTERM, if stdin is a terminal", async () => {
+        const script = `${use} process.kill(process.pid, "SIGTERM"); setInterval(() => {}, 1 << 30);`;
+        const closed = Promise.withResolvers<void>();
+        let output = "";
+        await using proc = spawn({
+          cmd: ["sh", "-c", `{ "$0" -e "$1"; "$0" "$2" 1; } | cat`, bunExe(), script, probe],
+          env: bunEnv,
+          terminal: {
+            data: (_, chunk) => void (output += Buffer.from(chunk).toString()),
+            exit: () => closed.resolve(),
+          },
+        });
+        const exitCode = await proc.exited;
+        await closed.promise;
+        expect(output).toContain("1:blocking");
+        expect(exitCode).toBe(0);
+      });
+    });
   },
 );

@@ -662,6 +662,7 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
+static int status_flags_to_restore_later[3] = { -1, -1, -1 };
 // Whether Bun itself has modified the termios of each stdio fd during this
 // process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
 // whether the exit-time termios restore should fire when Bun is acting as a
@@ -697,6 +698,14 @@ extern "C" void bun_restore_stdio()
 
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
+        // O_NONBLOCK is a flag of the open file description, which whoever started this process goes on using. Left on,
+        // its next write to a full pipe fails with EAGAIN. Node's ResetStdio() puts it back too:
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node.cc#L684-L696
+        int flags = fcntl(fd, F_GETFL);
+        int flagsAtStart = status_flags_to_restore_later[fd];
+        if (flags != -1 && flagsAtStart != -1 && ((flags ^ flagsAtStart) & O_NONBLOCK))
+            fcntl(fd, F_SETFL, flags ^ O_NONBLOCK);
+
         if (!bun_stdio_tty[fd])
             continue;
         if (pipeline_producer && !bun_stdio_modified[fd])
@@ -835,6 +844,7 @@ extern "C" void bun_initialize_process()
                 anyTTYs = true;
             }
         }
+        status_flags_to_restore_later[fd] = fcntl(fd, F_GETFL);
     }
 
     // Restore TTY state on exit

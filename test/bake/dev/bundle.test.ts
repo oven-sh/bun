@@ -80,6 +80,36 @@ devTest('uses "development" condition', {
     await dev.fetch("/").equals("Environment: development");
   },
 });
+// The server graph has the main fields of a browser (a defect of its own), so a route takes the
+// "browser" file of a package. It takes the same file when a preload reads the package first.
+for (const [reader, bunfig] of [
+  ["the server graph", ""],
+  ["a preload", `preload = ["dual"]`],
+]) {
+  devTest(`a route takes the same file of a package when ${reader} reads it first`, {
+    framework: minimalFramework,
+    files: {
+      "bunfig.toml": bunfig,
+      "node_modules/dual/package.json": JSON.stringify({
+        name: "dual",
+        version: "1.0.0",
+        main: "./node.js",
+        browser: "./browser.js",
+      }),
+      "node_modules/dual/node.js": `module.exports = "node.js";`,
+      "node_modules/dual/browser.js": `module.exports = "browser.js";`,
+      "routes/index.ts": `
+        import file from 'dual';
+        export default function (req, meta) {
+          return new Response('dual: ' + file);
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("dual: browser.js");
+    },
+  });
+}
 devTest("importing a file before it is created", {
   files: {
     "index.html": emptyHtmlFile({

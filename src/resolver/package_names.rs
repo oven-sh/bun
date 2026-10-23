@@ -422,7 +422,10 @@ impl Resolver<'_> {
             let names_main_file = self
                 .read_dir_info_ignore_error(place.source_path)
                 .and_then(|directory| directory.package_json())
-                .is_some_and(|manifest| manifest.main_fields.count() > 0);
+                .is_some_and(|manifest| {
+                    let mut names = self.opts.main_fields.iter();
+                    names.any(|name| manifest.main_field(name).is_some())
+                });
             if !names_main_file {
                 continue;
             }

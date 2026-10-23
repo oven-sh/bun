@@ -254,8 +254,7 @@ pub struct Config {
     /// Default is `true`.
     pub(crate) animation: bool,
 
-    /// Whether to scope container names.
-    /// Default is `true`.
+    /// Whether to scope container names. Default is `true`.
     pub(crate) container: bool,
 
     /// Whether to scope custom identifiers

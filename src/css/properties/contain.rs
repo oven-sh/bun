@@ -1,6 +1,3 @@
-//! Container query properties: `container-type`, `container-name` and the
-//! `container` shorthand.
-
 use crate as css;
 use crate::css_rules::container::ContainerName as ContainerIdent;
 use crate::{Parser, PrintErr, Printer, Result as CssResult, SmallList};
@@ -15,8 +12,6 @@ pub enum ContainerSizeType {
 }
 
 /// A value for the [container-type](https://drafts.csswg.org/css-contain-3/#container-type) property.
-///
-/// `normal | [ [ size | inline-size ] || scroll-state ]`
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ContainerType {
     /// The size query container type, if any.
@@ -81,8 +76,6 @@ impl ContainerType {
 }
 
 /// A value for the [container-name](https://drafts.csswg.org/css-contain-3/#container-name) property.
-///
-/// `none | <custom-ident>+`
 #[derive(Clone, css::CssEql, css::DeepClone)]
 pub enum ContainerName {
     /// The `none` keyword.
@@ -122,8 +115,6 @@ impl ContainerName {
 }
 
 /// A value for the [container](https://drafts.csswg.org/css-contain-3/#container-shorthand) shorthand property.
-///
-/// `<'container-name'> [ / <'container-type'> ]?`
 #[derive(Clone, css::CssEql, css::DeepClone)]
 pub struct Container {
     /// The container name.

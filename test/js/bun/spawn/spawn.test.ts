@@ -2270,9 +2270,9 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
     // before it execs, and each open waits for a reader. When the observer has opened the first
     // one, this process is inside the spawn call and stays there until the observer opens the second.
     // /proc/<pid>/fdinfo shows FD_CLOEXEC as O_CLOEXEC in "flags".
-    const stdinMemfd = (closeFirst: boolean) => {
-      const dir = tmpdirSync();
-      const [stdout, stderr] = [join(dir, "stdout.fifo"), join(dir, "stderr.fifo")];
+    const stdinMemfd = async (closeFirst: boolean) => {
+      using dir = tempDir("spawn-stdin-memfd", {});
+      const [stdout, stderr] = [join(String(dir), "stdout.fifo"), join(String(dir), "stderr.fifo")];
       expect(spawnSync({ cmd: ["mkfifo", stdout, stderr] }).exitCode).toBe(0);
       const observer = `
         const fs = require("node:fs");
@@ -2294,7 +2294,7 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
           fs.closeSync(fs.openSync(${JSON.stringify(stderr)}, "r"));
         }
       `;
-      return run(`
+      return await run(`
         ${closeFirst ? "fs.closeSync(1);" : ""}
         const observer = Bun.spawn({
           cmd: [process.execPath, "-e", ${JSON.stringify(observer)}],

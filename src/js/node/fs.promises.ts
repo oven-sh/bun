@@ -1573,7 +1573,7 @@ function throwEBADFIfNecessary(fn: string, fd) {
 async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
   const writer = Bun.file(fd).writer();
 
-  const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
+  const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "buffer");
   let totalBytesWritten = 0;
 
   try {

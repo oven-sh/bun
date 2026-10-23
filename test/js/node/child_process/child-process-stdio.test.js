@@ -118,35 +118,55 @@ describe("process.stdin", () => {
     });
     expect(result).toEqual("data: File read successfully");
   });
+});
 
-  it("decodes the chunk passed to child.stdin.write(chunk, encoding)", done => {
+describe("child.stdin", () => {
+  it("write(chunk, encoding) decodes the chunk and throws on an unknown encoding", async () => {
     const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], {
       env: bunEnv,
       stdio: ["pipe", "pipe", "inherit"],
     });
     const chunks = [];
     child.stdout.on("data", chunk => chunks.push(chunk));
-    child.stdout.on("error", done);
-    child.on("error", done);
-    // 'close' rather than 'exit': the stdio streams may still be draining when
-    // the child terminates.
-    child.on("close", code => {
+    // 'close' and not 'exit': the child's stdout can still hold data when the child exits.
+    const closed = once(child, "close");
+
+    const thrown = [
+      ["x", "nope"],
+      ["x", "buffer"],
+      [Buffer.from("x"), "nope"],
+      ["x", 123],
+      [null, "nope"],
+    ].map(args => {
       try {
-        expect(Buffer.concat(chunks).toString("hex")).toBe("48490a414243");
-        expect(code).toBe(0);
-        done();
+        return `returned ${child.stdin.write(...args)}`;
       } catch (err) {
-        done(err);
+        return err.code;
       }
     });
-    child.stdin.write("48490a", "hex");
+    child.stdin.write("A");
+    child.stdin.write("00", "hex");
+    child.stdin.write("B");
+    child.stdin.write("\u00e9", "latin1");
     child.stdin.setDefaultEncoding("base64");
-    child.stdin.write("QUJD");
-    child.stdin.end();
-  });
-});
+    child.stdin.write("AAEC/w==");
+    child.stdin.write("C", "utf8");
+    child.stdin.end("ff", "hex");
 
-describe("child.stdin", () => {
+    const [code] = await closed;
+    expect({ received: Buffer.concat(chunks).toString("hex"), thrown, code }).toEqual({
+      received: "410042e9000102ff43ff",
+      thrown: [
+        "ERR_UNKNOWN_ENCODING",
+        "ERR_UNKNOWN_ENCODING",
+        "ERR_UNKNOWN_ENCODING",
+        "ERR_UNKNOWN_ENCODING",
+        "ERR_STREAM_NULL_VALUES",
+      ],
+      code: 0,
+    });
+  });
+
   it("write() after child 'close' returns false and calls back with ERR_STREAM_DESTROYED", async () => {
     const child = spawn(bunExe(), ["-e", ""], {
       env: bunEnv,

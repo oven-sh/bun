@@ -1639,7 +1639,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 Named::Instance(_, name) => self.config.find_js_rule(name).flatten(),
                 _ => None,
             };
-            let js = rule.js().or(old.map(|it| &**it));
+            let js = rule.js().or_else(|| old.map(|it| &**it));
             let value = match eslint_8.map(|it| it.inline_setting(&id, &value, js)) {
                 Some(Ok(setting)) => Json::Array(setting),
                 Some(Err(message)) => {

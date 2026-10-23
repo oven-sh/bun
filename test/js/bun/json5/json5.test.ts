@@ -1033,6 +1033,87 @@ describe("whitespace in all structural positions", () => {
   test("mixed whitespace and comments", () => {
     expect(JSON5.parse(" \t\n /* comment */ \r\n // line comment\n 42 \t ")).toEqual(42);
   });
+
+  describe("multi-byte whitespace after true, false, null and a signed Infinity or NaN", () => {
+    // Every JSON5 white space code point above U+007F.
+    const whitespace = [
+      0x00a0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028,
+      0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+    ].map(code => [code.toString(16).toUpperCase().padStart(4, "0"), String.fromCodePoint(code)]);
+    const literals: [string, unknown][] = [
+      ["true", true],
+      ["false", false],
+      ["null", null],
+      ["+Infinity", Infinity],
+      ["-Infinity", -Infinity],
+      ["+NaN", NaN],
+      ["-NaN", NaN],
+    ];
+
+    describe.each(whitespace)("U+%s", (_, ws) => {
+      test.each(literals)("after %s", (literal, value) => {
+        const inputs: [string, unknown][] = [
+          [`${literal}${ws}`, value],
+          [`${literal}${ws}// comment`, value],
+          [`[${literal}${ws}]`, [value]],
+          [`[${literal}${ws}, 1]`, [value, 1]],
+          [`{a: ${literal}${ws}}`, { a: value }],
+          [`{a: ${literal}${ws}, b: 1}`, { a: value, b: 1 }],
+          [`{a: [{b: ${literal}${ws}}]}`, { a: [{ b: value }] }],
+        ];
+        for (const [input, expected] of inputs) {
+          expect(JSON5.parse(input)).toEqual(expected);
+          expect(JSON5.parse(Buffer.from(input) as any)).toEqual(expected);
+        }
+      });
+    });
+
+    const syntaxError = (message: string) => new SyntaxError(`JSON5 Parse error: ${message}`);
+
+    test("a keyword followed by a multi-byte identifier character is one identifier", () => {
+      // U+00E9 can start an identifier. U+200C and U+0301 can continue one.
+      expect(JSON5.parse("{true\u00E9: 1}")).toEqual({ "true\u00E9": 1 });
+      expect(JSON5.parse("{false\u200C: 1}")).toEqual({ "false\u200C": 1 });
+      expect(JSON5.parse("{null\u0301: 1}")).toEqual({ "null\u0301": 1 });
+      expect(() => JSON5.parse("[true\u00E9]")).toThrow(syntaxError("Unexpected token"));
+      expect(() => JSON5.parse("[false\u200C]")).toThrow(syntaxError("Unexpected token"));
+      expect(() => JSON5.parse("[null\u0301]")).toThrow(syntaxError("Unexpected token"));
+      expect(() => JSON5.parse("[+Infinity\u00E9]")).toThrow(syntaxError("Unexpected character"));
+      expect(() => JSON5.parse("[-NaN\u200C]")).toThrow(syntaxError("Unexpected character"));
+    });
+
+    test("a keyword followed by an ASCII identifier character or an escape is one identifier", () => {
+      expect(JSON5.parse("{trueish: 1}")).toEqual({ trueish: 1 });
+      expect(JSON5.parse("{true\\u0061: 1}")).toEqual({ truea: 1 });
+      expect(() => JSON5.parse("[trueish]")).toThrow(syntaxError("Unexpected token"));
+      expect(() => JSON5.parse("[true\\u0061]")).toThrow(syntaxError("Unexpected token"));
+    });
+
+    test("a multi-byte character after a literal that is not whitespace is an unexpected character", () => {
+      // U+2026 is not white space and cannot be in an identifier, like "@".
+      expect(() => JSON5.parse("[true@]")).toThrow(syntaxError("Unexpected character"));
+      expect(() => JSON5.parse("[true\u2026]")).toThrow(syntaxError("Unexpected character"));
+      expect(() => JSON5.parse("[-Infinity\u2026]")).toThrow(syntaxError("Unexpected character"));
+      // A 0xA0 byte alone is not U+00A0.
+      const loneByte = Buffer.concat([Buffer.from("[true"), Buffer.from([0xa0]), Buffer.from("]")]);
+      expect(() => JSON5.parse(loneByte as any)).toThrow(syntaxError("Unexpected character"));
+    });
+
+    test("whitespace between a sign and Infinity or NaN throws", () => {
+      expect(() => JSON5.parse("+\u00A0Infinity")).toThrow(syntaxError("Unexpected character"));
+      expect(() => JSON5.parse("-\u00A0NaN")).toThrow(syntaxError("Unexpected character"));
+    });
+
+    test("a signed Infinity or NaN is not a key", () => {
+      expect(() => JSON5.parse("{-Infinity : 1}")).toThrow(syntaxError("Invalid identifier start character"));
+      expect(() => JSON5.parse("{-Infinity\u00A0: 1}")).toThrow(syntaxError("Invalid identifier start character"));
+      expect(() => JSON5.parse("{+NaN\u00A0: 1}")).toThrow(syntaxError("Invalid identifier start character"));
+    });
+
+    test("true, false and null are keys when whitespace follows them", () => {
+      expect(JSON5.parse("{true\u00A0: 1, false\u2028: 2, null\uFEFF: 3}")).toEqual({ true: 1, false: 2, null: 3 });
+    });
+  });
 });
 
 describe("unicode identifier keys", () => {

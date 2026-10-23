@@ -8074,6 +8074,8 @@ try {
       [".prettierrc.json", `{ "semi": false }`],
       [".prettierrc.yaml", `semi: false\n`],
       [".prettierrc.json5", `{ semi: false, }`],
+      // U+00A0 is JSON5 white space.
+      [".prettierrc.json5", `{ semi: false\u00A0}`],
       [".prettierrc.toml", `semi = false\n`],
       [".prettierrc.yml", `\ufeffsemi: false\n`],
       [".prettierrc", `x: &x\n  semi: false\noverrides:\n  - files: "*.ts"\n    options: *x\n`],

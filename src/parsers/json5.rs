@@ -592,6 +592,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(())
     }
 
+    #[inline]
     fn scan_keyword(&mut self, keyword: &'static [u8]) -> bool {
         if self.pos + keyword.len() > self.source.len() {
             return false;
@@ -602,11 +603,30 @@ impl<'a> JSON5Parser<'a> {
         // Check word boundary
         if self.pos + keyword.len() < self.source.len() {
             let next = self.source[self.pos + keyword.len()];
-            if is_ident_continue_ascii(next) || next == b'\\' || next >= 0x80 {
+            if is_ident_continue_ascii(next) || next == b'\\' {
                 return false;
+            }
+            if next >= 0x80 {
+                return self.scan_keyword_before_non_ascii(keyword.len());
             }
         }
         self.pos += keyword.len();
+        true
+    }
+
+    /// The keyword ends here unless `scan_identifier` would take the next character into the word.
+    #[cold]
+    #[inline(never)]
+    fn scan_keyword_before_non_ascii(&mut self, keyword_len: usize) -> bool {
+        let start = self.pos;
+        self.pos += keyword_len;
+        if self
+            .read_codepoint()
+            .is_some_and(|next| identifier::is_identifier_part(next.cp as u32))
+        {
+            self.pos = start;
+            return false;
+        }
         true
     }
 
@@ -749,13 +769,15 @@ impl<'a> JSON5Parser<'a> {
                 Ok(Expr::init(E::String::init(s), loc))
             }
             TokenData::Number(_) => Err(ParseError::InvalidIdentifier),
+            // JSON5 member names are IdentifierNames: `true`, `false` and `null` are string keys.
             TokenData::Boolean(b) => {
                 self.scan()?;
-                Ok(Expr::init(E::Boolean { value: b }, loc))
+                let name: &'static [u8] = if b { b"true" } else { b"false" };
+                Ok(Expr::init(E::String::from_static(name), loc))
             }
             TokenData::Null => {
                 self.scan()?;
-                Ok(Expr::init(E::Null {}, loc))
+                Ok(Expr::init(E::String::from_static(b"null"), loc))
             }
             TokenData::Eof => Err(ParseError::UnexpectedEof),
             _ => Err(ParseError::InvalidIdentifier),

@@ -113,6 +113,9 @@ public:
         // reads the raw slot, so the fetch/server push-side is unaffected.
         if (m_nativeTextMode)
             return {};
+        // The native source of an errored stream only knows that it ended; the stored error is here.
+        if (m_state == ReadableStreamState::Errored)
+            return {};
         return m_nativePtr.get(); // may be empty
     }
     // Transferred to a node:stream Readable, drained as a Body, or detached: the handle is off limits.
@@ -120,10 +123,7 @@ public:
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
     }
-    // A native handle that no consumer has started or claimed: a taker (node:stream's
-    // NativeReadable) may drive it directly. Once materialized or cancelled, the stream's
-    // controller owns the handle and its queue may hold chunks, so the only way to the data is
-    // a reader. A native sink that attached without a reader (m_lockedWithoutReader) owns it too.
+    // No consumer has started or claimed the native handle, so a taker (node:stream's NativeReadable) may drive it.
     bool hasPendingNativeSource() const
     {
         if (m_bunMode != BunStreamMode::NativePending || m_state != ReadableStreamState::Readable)
@@ -132,6 +132,12 @@ public:
             return false;
         JSC::JSValue handle = nativePtrForJS();
         return handle && handle.isObject();
+    }
+    // A Body consumer holds this stream now. It stays disturbed and locked after the consumer lets go of it.
+    void markConsumedAsBody()
+    {
+        m_disturbed = true;
+        m_consumedAsBody = true;
     }
 
 private:

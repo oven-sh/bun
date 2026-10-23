@@ -17,8 +17,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionReadableStreamToBytes);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReadableStreamToJSON);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReadableStreamToBlob);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReadableStreamToFormData);
-// If arg0 hasPendingNativeSource(): {m_transferred = true, m_disturbed = true}, returns the handle;
-// else undefined. userJS: no. Referenced by src/js/internal/streams/native-readable.ts via $newCppFunction.
+// body: if arg0 hasPendingNativeSource(): {m_transferred = true, m_disturbed = true}, returns the handle; else undefined.
+// Referenced by src/js/internal/streams/native-readable.ts via $newCppFunction.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream);
 
 } // namespace WebCore

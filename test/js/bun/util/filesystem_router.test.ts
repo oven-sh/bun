@@ -1,4 +1,5 @@
 import { FileSystemRouter } from "bun";
+import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
@@ -231,6 +232,15 @@ it("should support catch-all routes", () => {
   }
 });
 
+it.each([
+  [["[team]/settings.tsx", "[team]/[section]/[item].tsx"], { team: "bob", section: "settings", item: "profile" }],
+  [["[a]/settings.tsx", "[z]/[b]/[c].tsx"], { z: "bob", b: "settings", c: "profile" }],
+])("params from a route that didn't match aren't included in the result: %j", (files, params) => {
+  const { dir } = make(files);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(router.match("/bob/settings/profile")!.params).toEqual(params);
+});
+
 it("should support index routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx"]);
@@ -314,6 +324,42 @@ it("assetPrefix, src, and origin", async () => {
   }
 });
 
+it("src keeps a protocol-relative origin and a one-character host", () => {
+  using dir = tempDir("fsr-origin", {
+    "pages/index.tsx": "export default 1;",
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+
+  const srcFor = (origin: string) =>
+    new Bun.FileSystemRouter({
+      dir: path.join(String(dir), "pages"),
+      style: "nextjs",
+      assetPrefix: "/_next/static/",
+      origin,
+    }).match("/posts/hello-world")!.src;
+
+  // `//host` used to parse with an empty host, and so did `a/` (any second byte
+  // of `/` was taken as the start of a protocol-relative URL). Both silently
+  // dropped the origin and the assetPrefix from `src`.
+  expect({
+    "//nextjs.org": srcFor("//nextjs.org"),
+    "//nextjs.org:8080": srcFor("//nextjs.org:8080"),
+    "//nextjs.org/ignored": srcFor("//nextjs.org/ignored"),
+    "a/": srcFor("a/"),
+    "https://nextjs.org/ignored": srcFor("https://nextjs.org/ignored"),
+    "nextjs.org:8080": srcFor("nextjs.org:8080"),
+    "ab/": srcFor("ab/"),
+  }).toEqual({
+    "//nextjs.org": "//nextjs.org/_next/static/posts/[id].tsx",
+    "//nextjs.org:8080": "//nextjs.org:8080/_next/static/posts/[id].tsx",
+    "//nextjs.org/ignored": "//nextjs.org/_next/static/posts/[id].tsx",
+    "a/": "a/_next/static/posts/[id].tsx",
+    "https://nextjs.org/ignored": "https://nextjs.org/_next/static/posts/[id].tsx",
+    "nextjs.org:8080": "nextjs.org:8080/_next/static/posts/[id].tsx",
+    "ab/": "ab/_next/static/posts/[id].tsx",
+  });
+});
+
 it(".query works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);
@@ -386,6 +432,22 @@ it(".query skips empty-key pairs instead of terminating the parse", () => {
   }
 });
 
+it(".query and .params hold a name that is an index once", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  for (const read of [() => router.match("/posts?0=a&x=y")!.query, () => router.match("/a")!.params]) {
+    expect(Object.values(read()).filter(value => value === "a")).toHaveLength(1);
+    expect(Object.isFrozen(Object.freeze(read()))).toBe(true);
+    const written = read();
+    written[0] = "b";
+    expect(Object.entries(written)[0]).toEqual(["0", "b"]);
+    const deleted = read();
+    expect(delete deleted[0]).toBe(true);
+    expect(Object.keys(deleted)).not.toContain("0");
+  }
+});
+
 it("reload() works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);
@@ -425,6 +487,27 @@ it("reload() works with new dirs/files", () => {
   createTree(dir, ["test/test2/index.ts"]);
   router.reload();
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
+});
+
+it("the constructor and reload() don't create allocator heaps", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+  const heapsCreatedBy = (fn: () => void) => {
+    const before = heapStats().mimalloc.heaps.total;
+    for (let i = 0; i < 50; i++) fn();
+    return heapStats().mimalloc.heaps.total - before;
+  };
+
+  for (const fileExtensions of [undefined, [".tsx", ".ts"]]) {
+    const create = () => new FileSystemRouter({ dir, style: "nextjs", fileExtensions });
+    // The first router warms the resolver's directory cache.
+    const router = create();
+    router.reload();
+
+    // The allocator counts another thread's heaps late, so a few can show up here.
+    expect(heapsCreatedBy(create)).toBeLessThan(10);
+    expect(heapsCreatedBy(() => router.reload())).toBeLessThan(10);
+    expect(Object.keys(router.routes).sort()).toEqual(["/", "/posts/[id]"]);
+  }
 });
 
 it(".query works with dynamic routes, including params", () => {
@@ -471,7 +554,7 @@ it("dir should be validated", async () => {
     new Bun.FileSystemRouter({
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -479,7 +562,7 @@ it("dir should be validated", async () => {
       dir: undefined,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -487,7 +570,14 @@ it("dir should be validated", async () => {
       dir: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir must be a string");
+});
+
+it("rejects a dir with a null byte", () => {
+  const { dir } = make(["index.tsx"]);
+  expect(() => new FileSystemRouter({ style: "nextjs", dir: `${dir}\0suffix` })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
 });
 
 it("origin should be validated", async () => {
@@ -500,7 +590,76 @@ it("origin should be validated", async () => {
       origin: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected origin to be a string");
+  }).toThrow("FileSystemRouterOptions.origin must be a string");
+});
+
+function routesWithExtension(extension: String) {
+  using dir = tempDir("fsr-string-object", { "posts.tsx": "", "about.mdx": "" });
+  const router = new Bun.FileSystemRouter({
+    dir: String(dir),
+    style: "nextjs",
+    // @ts-expect-error
+    fileExtensions: [extension],
+  });
+  return Object.keys(router.routes);
+}
+
+it("reads an extension that is a String object with its toString()", () => {
+  expect(routesWithExtension(Object.assign(new String(""), { toString: () => ".mdx" }))).toEqual(["/about"]);
+});
+
+it("skips an extension that is a String object whose toString() is empty", () => {
+  // None is left, so the default ones are used.
+  expect(routesWithExtension(Object.assign(new String(".mdx"), { toString: () => "" }))).toEqual(["/posts"]);
+});
+
+it("takes options that are an array", () => {
+  using dir = tempDir("fsr-array-options", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter(Object.assign([], { dir: String(dir), style: "nextjs" as const }));
+  expect(Object.keys(router.routes)).toEqual(["/posts"]);
+});
+
+it("names a directory that is absent as it was joined", () => {
+  using dir = tempDir("fsr-absent", {});
+  for (const absent of [`${dir}${path.sep}absent`, `${dir}${path.sep}absent${path.sep}`]) {
+    expect(() => new Bun.FileSystemRouter({ dir: absent, style: "nextjs" })).toThrow(
+      expect.objectContaining({ name: "Error", message: `Unable to find directory: ${absent}` }),
+    );
+  }
+});
+
+it("refuses options that are not an object, and a route that is not a string, Request or Response", () => {
+  using dir = tempDir("fsr-wrong-arguments", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
+  const refusal = (message: string) =>
+    expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+  for (const wrong of [undefined, null, 1, "posts"]) {
+    // @ts-expect-error
+    expect(() => new Bun.FileSystemRouter(wrong)).toThrow(refusal("Expected object"));
+  }
+  for (const wrong of [undefined, null, 1, {}]) {
+    // @ts-expect-error
+    expect(() => router.match(wrong)).toThrow(refusal("Expected string, Request or Response"));
+  }
+});
+
+it("assetPrefix and origin are what the router was given, or null", () => {
+  using tmp = tempDir("fsr-asset-prefix", { "posts.tsx": "" });
+  const dir = String(tmp);
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "_next/static/",
+    origin: "https://a.test",
+  });
+  expect(router.assetPrefix).toBe("_next/static/");
+  expect(router.origin).toBe("https://a.test");
+  const bare = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(bare.assetPrefix).toBeNull();
+  expect(bare.origin).toBeNull();
+  const empty = new Bun.FileSystemRouter({ dir, style: "nextjs", assetPrefix: "", origin: "" });
+  expect(empty.assetPrefix).toBeNull();
+  expect(empty.origin).toBeNull();
 });
 
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
@@ -579,7 +738,7 @@ it("MatchedRoute.params does not leak", async () => {
   // garbage-collected. Use long segment values so any leak is large enough to
   // dominate RSS noise.
   const code = /* ts */ `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(path.join(String(dir), "pages"))},
       style: "nextjs",
@@ -1068,3 +1227,88 @@ it.skipIf(isWindows || isMacOS)(
     expect(exitCode).toBe(0);
   },
 );
+
+it("an absolute dir with '..' in it names routes like its normalized spelling", async () => {
+  const { dir } = make([
+    `pages/index.tsx`,
+    `pages/api/x.tsx`,
+    `pages/a-long-directory-name/deeper/page.tsx`,
+    `other/keep.tsx`,
+  ]);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const routes = dir => Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs" }).routes).sort();
+      console.log(JSON.stringify([routes(process.argv[1] + "/pages"), routes(process.argv[1] + "/other/../pages")]));
+      `,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const routes = ["/", "/a-long-directory-name/deeper/page", "/api/x"];
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([routes, routes]) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limit", async () => {
+  using dir = tempDir("fsr-string-limit", { "index.tsx": "export default 1;" });
+  const code = /* js */ `
+    const dir = process.argv[1];
+    const LIMIT = 64 * 1024;
+    const pad = (prefix, len) => prefix + Buffer.alloc(len - prefix.length, "x").toString();
+    const attempt = (key, value) => {
+      try {
+        new Bun.FileSystemRouter({ dir, style: "nextjs", [key]: value });
+        return "ok";
+      } catch (e) {
+        return e?.code ?? e?.name;
+      }
+    };
+    console.log(
+      JSON.stringify({
+        originAtLimit: attempt("origin", pad("https://a.example/", LIMIT)),
+        originPastLimit: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        originPastLimitAgain: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        assetPrefixPastLimit: attempt("assetPrefix", pad("/static/", LIMIT + 1)),
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code, String(dir)],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    stdout: {
+      originAtLimit: "ok",
+      originPastLimit: "ERR_STRING_TOO_LONG",
+      originPastLimitAgain: "ERR_STRING_TOO_LONG",
+      assetPrefixPastLimit: "ERR_STRING_TOO_LONG",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it(".query and .params support names that look like array indices", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const query = router.match("/posts?0=a&0=b&1=c&x=y")!.query;
+  expect(query).toEqual({ 0: ["a", "b"], 1: "c", x: "y" });
+  expect(query[0]).toEqual(["a", "b"]);
+
+  const params = router.match("/hello")!.params;
+  expect(params).toEqual({ 0: "hello" });
+  expect(params[0]).toBe("hello");
+});

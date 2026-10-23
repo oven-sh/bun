@@ -421,7 +421,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // file, replace all but the last copy with just the layers that are in that
     // file. This works because in CSS, the last instance of a declaration
     // overrides all previous instances of that declaration.
-    // Unlike esbuild: with such an entry, a `layer(...)` that only one of two condition lists has is not ignored.
+    // Unlike esbuild: with a file's pre-import layers in the order, a `layer(...)` that only one of two condition lists has is not ignored.
     let layers_matter = order.slice().iter().any(|entry| {
         matches!(
             entry.kind,

@@ -1470,19 +1470,7 @@ impl Layers {
 impl CssImportOrder {
     /// Whether this entry prints only "@layer" statements, which may precede an "@import".
     pub(crate) fn prints_as_layer_statements(&self) -> bool {
-        let CssImportOrderKind::Layers(layers) = &self.kind else {
-            return false;
-        };
-        match self.conditions.slice() {
-            [] => true,
-            [only] => {
-                layers.inner().is_empty()
-                    && only.layer.as_ref().is_some_and(|layer| layer.v.is_some())
-                    && only.supports.is_none()
-                    && only.media.media_queries.is_empty()
-            }
-            _ => false,
-        }
+        matches!(self.kind, CssImportOrderKind::Layers(_)) && self.conditions.is_empty()
     }
 
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {

@@ -1129,20 +1129,25 @@ export function ospath(path: string) {
  * at or above the folder of its dependent. That folder has to hold the package the lockfile resolves it to: an npm
  * package by name and version, a workspace package by its folder. Any other package only has to be there.
  *
- * An install does not follow the lockfile for a package for another os or cpu, for an optional or bundled
- * dependency, and for the copy that a peer dependency loads. Those are not compared.
+ * An install does not follow the lockfile everywhere. A package for another os or cpu and a bundled dependency are
+ * not compared, an optional dependency can be missing, and a peer dependency can load another copy.
  */
 export function toMatchNodeModulesAt(lockfile: any, root: string) {
   root = fs.realpathSync(root);
+  // Where the isolated linker keeps the packages. The hoisted linker does not make this folder.
+  const store = join(root, "node_modules", ".bun");
+  const isolated = fs.existsSync(store);
   const problems: string[] = [];
   const where = (path: string) => relative(root, path).replaceAll("\\", "/") || ".";
   const memberFolder = (pkg: any) => join(root, pkg.resolution.value.slice("workspace:".length));
   const runsHere = (pkg: any) =>
     (!pkg.os || pkg.os.includes(process.platform)) && (!pkg.arch || pkg.arch.includes(process.arch));
 
-  // Stops at `root`, so that a `node_modules` above the project never satisfies a dependency.
+  // Stops at `root`, so that a `node_modules` above the project never satisfies a dependency. Stops at `store` too:
+  // a package in it has a link to each of its dependencies next to it, and `store/node_modules` only serves the
+  // imports that a package does not declare.
   function lookup(name: string, from: string): string | undefined {
-    for (let dir = from; ; dir = dirname(dir)) {
+    for (let dir = from; dir !== store; dir = dirname(dir)) {
       const folder = join(dir, "node_modules", name);
       if (basename(dir) !== "node_modules" && fs.existsSync(folder)) return fs.realpathSync(folder);
       if (dir === root || dir === dirname(dir)) return;
@@ -1155,7 +1160,7 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
       case "npm": {
         let manifest: { name?: unknown; version?: unknown };
         try {
-          manifest = JSON.parse(fs.readFileSync(join(folder, "package.json"), "utf8"));
+          manifest = JSON.parse(fs.readFileSync(join(folder, "package.json"), "utf8").replace(/^\uFEFF/, ""));
         } catch {
           return "has no package.json that can be read";
         }
@@ -1188,11 +1193,11 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
       const target = lockfile.packages[dep.package_id];
       if (!target || !runsHere(target) || dep.behavior.bundled) continue;
 
-      // The root lists every workspace package. One has no link in `node_modules` if another dependency of the root
-      // took its name, so this goes to its folder.
+      // The root lists every workspace package, and the dependencies of one are followed from its own folder. Only
+      // the hoisted linker links it into the root's `node_modules`, unless another dependency of the root has its name.
       if (dep.behavior.workspace && target.resolution.tag === "workspace") {
         visit(target, fs.realpathSync(memberFolder(target)));
-        continue;
+        if (isolated || lockfile.trees[0]?.dependencies[dep.name]?.id !== id) continue;
       }
 
       const found = lookup(dep.name, folder);
@@ -1200,11 +1205,13 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
       const wrong = found === undefined ? `there is no node_modules/${dep.name}` : mismatch(target, found);
       if (found !== undefined && wrong === undefined) {
         visit(target, found);
-      } else if (!dep.behavior.optional && !(dep.behavior.peer && found !== undefined)) {
+      } else if (found === undefined ? !dep.behavior.optional : !dep.behavior.peer) {
         const dependent = folder === root ? "the root package" : where(folder);
-        const locked = `${target.name}@${target.resolution.value}`;
+        const wanted = dep.behavior.workspace
+          ? `has the workspace package ${dep.name}`
+          : `depends on ${dep.name}@${dep.literal}`;
         problems.push(
-          `${dependent} depends on ${dep.name}@${dep.literal} (lockfile: ${locked}), ` +
+          `${dependent} ${wanted} (lockfile: ${target.name}@${target.resolution.value}), ` +
             `but ${found === undefined ? wrong : `${where(found)} ${wrong}`}`,
         );
       }

@@ -1,7 +1,7 @@
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { runBunInstall, toMatchNodeModulesAt } from "harness";
+import { libcFamily, runBunInstall, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
 import { installEnv, TestRegistry, type BunfigOptions } from "registry";
 const { parseLockfile } = install_test_helpers;
@@ -92,21 +92,36 @@ describe.concurrent("toMatchNodeModulesAt", () => {
 
   test("follows the links of an isolated install", async () => {
     const dir = await install(
-      { "package.json": { name: "foo", dependencies: { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0" } } },
+      { "package.json": { name: "foo", dependencies: { "one-fixed-dep": "1.0.0" } } },
       { linker: "isolated", globalStore: false },
     );
     expect(problems(dir)).toEqual([]);
 
     // one-fixed-dep loads its no-deps@1.0.0 from the store.
     const store = join(dir, "node_modules", ".bun");
-    editJson(join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json"), json => (json.version = "1.0.1"));
+    const oneFixedDep = "node_modules/.bun/one-fixed-dep@1.0.0/node_modules/one-fixed-dep";
+    const noDeps = join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json");
+    editJson(noDeps, json => (json.version = "1.0.1"));
     expect(problems(dir)).toEqual([
-      "node_modules/.bun/one-fixed-dep@1.0.0/node_modules/one-fixed-dep depends on no-deps@1.0.0 " +
-        "(lockfile: no-deps@1.0.0), but node_modules/.bun/no-deps@1.0.0/node_modules/no-deps is no-deps@1.0.1",
+      `${oneFixedDep} depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), ` +
+        "but node_modules/.bun/no-deps@1.0.0/node_modules/no-deps is no-deps@1.0.1",
+    ]);
+    editJson(noDeps, json => (json.version = "1.0.0"));
+    expect(problems(dir)).toEqual([]);
+
+    // `.bun/node_modules` is for the imports that a package does not declare. The same no-deps there does not
+    // replace the link that one-fixed-dep has to have.
+    const undeclared = join(store, "node_modules", "no-deps");
+    rmSync(undeclared, { recursive: true, force: true });
+    mkdirSync(undeclared, { recursive: true });
+    writeFileSync(join(undeclared, "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" }));
+    rmSync(join(store, "one-fixed-dep@1.0.0", "node_modules", "no-deps"), { recursive: true, force: true });
+    expect(problems(dir)).toEqual([
+      `${oneFixedDep} depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), but there is no node_modules/no-deps`,
     ]);
   });
 
-  test("reads the package.json of a package whose exports hide it", async () => {
+  test("reads the package.json of the package itself", async () => {
     const dir = await install({ "package.json": { name: "foo", dependencies: { "one-fixed-dep": "2.0.0" } } });
     // `require.resolve("no-deps/package.json")` now gives lib/package.json, which has no name or version.
     const noDeps = join(dir, "node_modules", "no-deps");
@@ -114,13 +129,19 @@ describe.concurrent("toMatchNodeModulesAt", () => {
     mkdirSync(join(noDeps, "lib"));
     writeFileSync(join(noDeps, "lib", "package.json"), JSON.stringify({ type: "module" }));
     expect(problems(dir)).toEqual([]);
+
+    // A byte order mark before the JSON.
+    writeFileSync(join(noDeps, "package.json"), "\uFEFF" + readFileSync(join(noDeps, "package.json"), "utf8"));
+    expect(problems(dir)).toEqual([]);
   });
 
   test("follows the dependencies of a workspace package from its folder", async () => {
+    // The root's no-deps@2.0.0 has the name of packages/c in node_modules, so packages/c gets no link there.
     const dir = await install({
       "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
       "packages/a/package.json": { name: "a", dependencies: { "no-deps": "1.0.0", "b": "workspace:*" } },
       "packages/b/package.json": { name: "b", devDependencies: { "a-dep": "1.0.1" } },
+      "packages/c/package.json": { name: "no-deps", version: "1.5.0" },
     });
     expect(problems(dir)).toEqual([]);
 
@@ -129,15 +150,19 @@ describe.concurrent("toMatchNodeModulesAt", () => {
       "packages/a depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
     ]);
 
-    // A copy of the workspace package is not the workspace package.
+    // A copy of a workspace package is not the workspace package, and nothing but the root needs the link to a.
     rmSync(join(dir, "node_modules", "b"), { recursive: true, force: true });
     mkdirSync(join(dir, "node_modules", "b"));
     writeFileSync(join(dir, "node_modules", "b", "package.json"), JSON.stringify({ name: "b" }));
+    rmSync(join(dir, "node_modules", "a"), { recursive: true, force: true });
     rmSync(join(dir, "node_modules", "a-dep"), { recursive: true });
     expect(problems(dir).sort()).toEqual([
       "packages/a depends on b@workspace:* (lockfile: b@workspace:packages/b), but node_modules/b is not packages/b",
       "packages/a depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
       "packages/b depends on a-dep@1.0.1 (lockfile: a-dep@1.0.1), but there is no node_modules/a-dep",
+      "the root package has the workspace package a (lockfile: a@workspace:packages/a), but there is no node_modules/a",
+      "the root package has the workspace package b (lockfile: b@workspace:packages/b), " +
+        "but node_modules/b is not packages/b",
     ]);
   });
 
@@ -159,7 +184,14 @@ describe.concurrent("toMatchNodeModulesAt", () => {
     const nodeModules = join(dir, "node_modules");
     expect(problems(dir)).toEqual([]);
 
-    // An optional dependency can be missing. Which of the two is installed depends on the platform.
+    // An optional dependency that is installed has to be the package of the lockfile. It can also be missing.
+    // Which of native-libc-glibc and native-libc-musl is installed depends on the platform.
+    const native = `native-libc-${libcFamily}`;
+    editJson(join(nodeModules, native, "package.json"), json => (json.version = "2.0.0"));
+    expect(problems(dir)).toEqual([
+      `node_modules/optional-native depends on ${native}@1.0.0 (lockfile: ${native}@1.0.0), ` +
+        `but node_modules/${native} is ${native}@2.0.0`,
+    ]);
     for (const name of ["native-libc-glibc", "native-libc-musl"]) {
       rmSync(join(nodeModules, name), { recursive: true, force: true });
     }

@@ -6,6 +6,7 @@ use crate::shell::interpreter::{
 use crate::shell::io::{IO, InKind, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
+use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
 use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
@@ -20,6 +21,8 @@ pub(crate) struct Pipeline {
     pub(crate) exited_count: u32,
     /// `None` until `setup_commands` has inited every child.
     pub(crate) cmds: Option<Box<[CmdOrResult]>>,
+    /// The pipe ends of each assignment-only member, held until it reports: `Assigns` has no IO.
+    assign_io: Vec<(NodeId, IO)>,
     pub(crate) state: PipelineState,
 }
 
@@ -60,12 +63,28 @@ impl Pipeline {
             io,
             exited_count: 0,
             cmds: None,
+            assign_io: Vec::new(),
             state: PipelineState::default(),
         }))
     }
 
     pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
+    }
+
+    /// Ctrl+C killed `child`. The pipeline takes that from its rightmost member. A member
+    /// with only assignment-only members to its right counts as the rightmost.
+    pub(crate) fn takes_interrupt_from(&self, child: NodeId) -> bool {
+        self.cmds
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .position(|slot| matches!(slot, CmdOrResult::Cmd(id) if *id == child))
+            .is_some_and(|idx| {
+                self.node.items[idx + 1..]
+                    .iter()
+                    .all(|item| matches!(item, ast::PipelineItem::Assigns(_)))
+            })
     }
 
     /// Queried by the trampoline (`Yield::run`) to manage the pipeline stack.
@@ -139,18 +158,13 @@ impl Pipeline {
             (me.node, me.base.shell, interp.event_loop)
         };
         let items: &[ast::PipelineItem] = node.items;
-        let cmd_count = items
-            .iter()
-            .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
-            .count();
+        debug_assert!(
+            items.len() >= 2,
+            "the parser builds a pipeline from two or more items"
+        );
 
-        if cmd_count == 0 {
-            // An empty pipeline finishes with 0.
-            return Some(Self::finish(interp, this, 0));
-        }
-
-        let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count - 1);
-        for _ in 0..cmd_count - 1 {
+        let mut pipes: Vec<Pipe> = Vec::with_capacity(items.len() - 1);
+        for _ in 0..items.len() - 1 {
             // On POSIX use a
             // UNIX stream socketpair via `socketpairForShell` — on macOS
             // that variant intentionally skips SO_NOSIGPIPE so the
@@ -179,30 +193,24 @@ impl Pipeline {
         }
 
         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-        let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
-        for item in items {
-            if matches!(item, ast::PipelineItem::Assigns(_)) {
-                continue;
-            }
-            // Position among runnable children (indexes `pipes[]`/`cmds[]`).
-            let cmd_idx = cmds.len();
-
+        let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(items.len());
+        for (item_idx, item) in items.iter().enumerate() {
             let child_io = {
                 let me = interp.as_pipeline(this);
-                let stdin = if cmd_idx == 0 {
+                let stdin = if item_idx == 0 {
                     me.io.stdin.clone()
                 } else {
-                    let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
+                    let r = IOReader::init(pipes[item_idx - 1][0], evtloop);
                     r.set_interp(interp_ptr);
                     InKind::Fd(r)
                 };
-                let stdout = if cmd_idx == cmd_count - 1 {
+                let stdout = if item_idx == items.len() - 1 {
                     me.io.stdout.clone()
                 } else {
                     // `is_socket` is set on POSIX — the POSIX
                     // pipe is actually a socketpair end (see above).
                     let w = IOWriter::init(
-                        pipes[cmd_idx][1],
+                        pipes[item_idx][1],
                         io_writer::Flags {
                             pollable: true,
                             is_socket: cfg!(unix),
@@ -234,10 +242,10 @@ impl Pipeline {
                 Err(e) => {
                     // Close the pipe ends that neither `child_io` nor an inited child owns.
                     drop(child_io);
-                    for p in &pipes[cmd_idx..] {
+                    for p in &pipes[item_idx..] {
                         closefd(p[0]);
                     }
-                    for p in &pipes[core::cmp::min(cmd_idx + 1, pipes.len())..] {
+                    for p in &pipes[core::cmp::min(item_idx + 1, pipes.len())..] {
                         closefd(p[1]);
                     }
                     interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
@@ -255,7 +263,14 @@ impl Pipeline {
                 ast::PipelineItem::Subshell(s) => Subshell::init(interp, duped, s, this, child_io),
                 ast::PipelineItem::If(f) => If::init(interp, duped, f, this, child_io),
                 ast::PipelineItem::CondExpr(c) => CondExpr::init(interp, duped, c, this, child_io),
-                ast::PipelineItem::Assigns(_) => unreachable!("skipped above"),
+                ast::PipelineItem::Assigns(a) => {
+                    let child = Assigns::init(interp, duped, a, this, AssignCtx::Shell);
+                    interp
+                        .as_pipeline_mut(this)
+                        .assign_io
+                        .push((child, child_io));
+                    child
+                }
             };
             cmds.push(CmdOrResult::Cmd(child));
         }
@@ -340,9 +355,9 @@ impl Pipeline {
         );
         // Find the child in `cmds` and replace with its result.
         Self::record_result(interp, this, child, exit_code);
-        // We duped a ShellExecEnv per child in `next_starting`. Cmd/If/CondExpr
+        // We duped a ShellExecEnv per child in `setup_commands`. Cmd/If/CondExpr/Assigns
         // do NOT free `base.shell` in their own `deinit`, so free it here.
-        // Subshell frees its own; Assigns is skipped.
+        // Subshell frees its own.
         Self::deinit_child_duped_env(interp, child);
         interp.deinit_node(child);
         if interp.failed() {
@@ -360,16 +375,10 @@ impl Pipeline {
         if cmds.is_empty() || (me.exited_count as usize) < cmds.len() {
             return Yield::suspended();
         }
-        // Exit code = last command's exit code (bash semantics).
-        // For a single-runnable pipeline `last_exit_code` stays 0: only
-        // inspect `cmds[len-1]` when `len >= 2`.
-        let exit = if cmds.len() >= 2 {
-            match cmds.last() {
-                Some(CmdOrResult::Result(e)) => *e,
-                _ => 0,
-            }
-        } else {
-            0
+        // Exit code = last member's exit code (bash semantics).
+        let exit = match cmds.last() {
+            Some(CmdOrResult::Result(e)) => *e,
+            _ => 0,
         };
         interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: exit };
         Yield::Next(this)
@@ -385,6 +394,9 @@ impl Pipeline {
                     break;
                 }
             }
+        }
+        if let Some(i) = me.assign_io.iter().position(|(id, _)| *id == child) {
+            drop(me.assign_io.swap_remove(i));
         }
     }
 
@@ -416,13 +428,13 @@ impl Pipeline {
         interp.as_pipeline_mut(this).state = PipelineState::Pending;
     }
 
-    /// Free the per-child env duped in `next_starting` for child kinds that
+    /// Free the per-child env duped in `setup_commands` for child kinds that
     /// don't free `base.shell` themselves.
     fn deinit_child_duped_env(interp: &Interpreter, child: NodeId) {
         let kind = interp.node(child).kind();
         if matches!(
             kind,
-            StateKind::Cmd | StateKind::IfClause | StateKind::Condexpr
+            StateKind::Cmd | StateKind::IfClause | StateKind::Condexpr | StateKind::Assign
         ) {
             if let Some(base) = interp.node_mut(child).base_mut() {
                 let shell = core::mem::replace(&mut base.shell, core::ptr::null_mut());

@@ -258,6 +258,36 @@ for (const mode of ctrlCModes) {
   });
 }
 
+// A pipeline takes the Ctrl+C from its rightmost member. An assignment-only member runs no
+// command, so it does not take that place from the member before it.
+test.concurrent.each([
+  ["only an assignment follows it", "bun child.js | FOO=1", true],
+  ["a command follows it", "bun child.js | FOO=1 | true", false],
+])("a pipeline member killed by Ctrl+C, %s", async (_, pipeline, stops) => {
+  using dir = tempDir("run-ctrl-c-pipeline", {
+    "package.json": JSON.stringify({
+      name: "t",
+      scripts: { go: `${pipeline} ; bun -e "console.log(String.fromCharCode(78,79,80,69))"` },
+    }),
+    "child.js": `${raiseCtrlC}
+      setInterval(() => {}, 1000);
+      raiseCtrlC();
+    `,
+  });
+
+  const { text, exitCode, signalCode } = await runInTerminal([bunExe(), "run", "--shell=bun", "go"], String(dir));
+  if (!stops) {
+    expect(text).toContain("NOPE");
+    expect(exitCode).toBe(0);
+  } else if (isWindows) {
+    expect(text).not.toContain("NOPE");
+    expect(exitCode).toBe(0x3a);
+  } else {
+    expect(text).not.toContain("NOPE");
+    expect(signalCode).toBe("SIGINT");
+  }
+});
+
 // A signal that arrives before `bun run` knows the script's pid is forwarded once the spawn returns.
 // `bun run` blocks every signal during the spawn, which is visible in /proc/<pid>/status.
 test.skipIf(!isLinux)(

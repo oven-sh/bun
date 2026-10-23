@@ -1,5 +1,5 @@
-//! In pipeline expressions, assigns (e.g. `FOO=bar BAR=baz | echo hi`) have
-//! no effect on the environment of the shell, so we can skip them.
+//! `NAME=value` words with no command name (`AssignCtx::Shell`): a statement, or a pipeline
+//! member on that member's own copy of the env. Or the prefix of a command (`AssignCtx::Cmd`).
 
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};

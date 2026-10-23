@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux } from "harness";
 import { createTestBuilder } from "./util";
 
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -173,10 +175,10 @@ describe("shell: piping assignments into command", () => {
 
   // Pipeline with assignments and input/output redirection
   TestBuilder.command`echo "test" | A=1 B=2 | cat`
-    .stdout("test\n")
+    .stdout("")
     .stderr("")
     .exitCode(0)
-    .runAsTest("should pass through stdin when assignments are in pipeline");
+    .runAsTest("should not pass stdin through assignments in the middle of a pipeline");
 
   // Assignments with underscores and numbers
   TestBuilder.command`ARR_0=a ARR_1=b | echo array`
@@ -201,10 +203,10 @@ describe("shell: piping assignments into command", () => {
 
   // Pipeline with assignments and background processes (if supported)
   TestBuilder.command`A=1 | echo fg | B=2`
-    .stdout("fg\n")
+    .stdout("")
     .stderr("")
     .exitCode(0)
-    .runAsTest("should handle assignments with foreground processes");
+    .runAsTest("should send the output of a command to the assignment after it");
 
   // Assignments that look like commands
   TestBuilder.command`echo=notecho ls=notls | echo real`
@@ -230,10 +232,10 @@ describe("shell: piping assignments into command", () => {
 
   // Edge case: assignment-like patterns that aren't assignments
   TestBuilder.command`echo A=1 | B=2 | cat`
-    .stdout("A=1\n")
+    .stdout("")
     .stderr("")
     .exitCode(0)
-    .runAsTest("should distinguish between assignment and assignment-like echo output");
+    .runAsTest("should not pass assignment-like echo output through an assignment");
 
   // Verify assignments don't affect the shell environment
   TestBuilder.command`TEST_VAR=should_not_persist | echo $TEST_VAR`
@@ -269,4 +271,109 @@ describe("shell: piping assignments into command", () => {
     .stderr("")
     .exitCode(0)
     .runAsTest("should handle tabs and spaces in assignment values");
+});
+
+// bash and dash run every member of a pipeline, also a member that has only assignments.
+describe("shell: an assignment-only pipeline member runs like any other member", () => {
+  TestBuilder.command`echo hi | FOO=bar`.runAsTest("takes the output of the member before it");
+
+  TestBuilder.command`FOO=1 | false`.exitCode(1).runAsTest("as the first member, leaves the status to the last member");
+
+  TestBuilder.command`true | false | FOO=1`.runAsTest("as the last member, gives the status");
+
+  TestBuilder.command`A=1 | B=2`.runAsTest("as every member");
+
+  TestBuilder.command`true | FOO=$(echo x > side.txt)`
+    .fileEquals("side.txt", "x\n")
+    .runAsTest("as the last member, runs its command substitution");
+
+  TestBuilder.command`FOO=$(echo x > side.txt) | true`
+    .fileEquals("side.txt", "x\n")
+    .runAsTest("as the first member, runs its command substitution");
+
+  TestBuilder.command`echo up | FOO=$(echo inner) | cat`.runAsTest(
+    "as a middle member, writes nothing to the next member",
+  );
+
+  TestBuilder.command`true | A=1 B=$(echo "[$A]" > side.txt)`
+    .fileEquals("side.txt", "[1]\n")
+    .runAsTest("a later assignment sees an earlier assignment of the same member");
+
+  TestBuilder.command`true | FOO=1; echo "[$FOO]"`.stdout("[]\n").runAsTest("does not set a variable of the shell");
+
+  TestBuilder.command`FOO=old; true | FOO=new; echo "[$FOO]"`
+    .stdout("[old]\n")
+    .runAsTest("does not change a variable of the shell");
+
+  TestBuilder.command`echo "[$(echo hi | FOO=bar)]"`.stdout("[]\n").runAsTest("in a command substitution");
+
+  TestBuilder.command`(echo hi | FOO=bar)`.runAsTest("in a subshell");
+
+  TestBuilder.command`if echo hi | FOO=bar; then echo yes; fi`.stdout("yes\n").runAsTest("in an if condition");
+
+  TestBuilder.command`false || echo hi | FOO=bar`.runAsTest("after ||");
+
+  // `cat` reads to the end of its input. The end comes when the member before it is done.
+  TestBuilder.command`FOO=$(${bunExe()} -e ${"require('fs').writeFileSync('side.txt', 'x\\n')"}) | (cat; cat side.txt)`
+    .ensureTempDir()
+    .env(bunEnv)
+    .stdout("x\n")
+    .runAsTest("keeps its pipe ends open until it is done");
+
+  TestBuilder.command`echo late | ${bunExe()} exec ${"FOO=bar | cat"}`
+    .env(bunEnv)
+    .runAsTest("in bun exec, the member after it does not read the stdin of the shell");
+
+  TestBuilder.command`${bunExe()} script.sh`
+    .file("script.sh", "echo hi | FOO=bar\nFOO=1 | false\n")
+    .env(bunEnv)
+    .exitCode(1)
+    .runAsTest("in a .sh file");
+
+  // The status of a pipeline is the status of its last member. So it is the status of the
+  // same assignment as a statement, for any status that statement reports.
+  test.each(["FOO=$(false)", "FOO=$(exit 3)", "A=1 B=$(false)", "FOO=$(exit 3) BAR=lit"])(
+    "`true | %s` has the status of the assignment alone",
+    async assignment => {
+      const alone = await $`${{ raw: assignment }}`.quiet().nothrow();
+      const piped = await $`${{ raw: `true | ${assignment}` }}`.quiet().nothrow();
+      expect(piped.exitCode).toBe(alone.exitCode);
+    },
+  );
+
+  test("a member that writes without end stops when the assignment after it is done", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", "yes | FOO=bar"],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isLinux)("frees the env and the pipe ends of each member", async () => {
+    const fixture = [
+      'import { $ } from "bun";',
+      'import { readdirSync } from "node:fs";',
+      'const lines = ["A=1 | B=2 | true", "true | FOO=bar", "FOO=$(echo x) | BAR=$(false) | true"];',
+      "const run = async () => { for (const raw of lines) await $`${{ raw }}`.quiet().nothrow(); };",
+      "for (let i = 0; i < 5; i++) await run();",
+      'const before = readdirSync("/proc/self/fd").length;',
+      "for (let i = 0; i < 50; i++) await run();",
+      'console.log(readdirSync("/proc/self/fd").length - before);',
+    ].join("\n");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("0\n");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -853,11 +853,7 @@ impl Interpreter {
             bun_spawn::ctrl_c::exit_like_child();
         }
         if let Node::Pipeline(p) = self.node(parent) {
-            let rightmost = p.cmds.as_deref().is_none_or(|c| {
-                c.len() < 2
-                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
-            });
-            if rightmost {
+            if p.takes_interrupt_from(child) {
                 self.as_pipeline_mut(parent).base.interrupted = true;
             }
             return;

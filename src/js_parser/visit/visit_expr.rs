@@ -214,7 +214,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e_.ref_ = name_ref;
             }
 
+            // A graph scan does not report it: the write throws only when it runs.
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
+                && !p.options.features.graph_scan
             {
                 // TODO: silence this for runtime transpiler
                 let r = js_lexer::range_of_identifier(p.source, expr.loc);
@@ -1139,6 +1141,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .inner_index() as usize]
                 .kind
                 == js_ast::symbol::Kind::Import
+            && p.raises_bundle_only_errors()
         {
             let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
             p.log().add_range_error_fmt(

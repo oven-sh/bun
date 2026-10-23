@@ -132,6 +132,10 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
+    /// The bundle returns before `link()`, and its caller reads only import records. The parser
+    /// then keeps the import records of a file that a linked bundle refuses (`Features::graph_scan`).
+    pub(crate) scan_only: bool,
+
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
     /// track requested export names for deduplication and cycle detection.
@@ -3314,6 +3318,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
+                scan_only: false,
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
@@ -4596,6 +4601,7 @@ pub mod bv2_impl {
         ) -> Result<Box<BundleV2<'a>>, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
+            this.scan_only = true;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);

@@ -281,10 +281,7 @@ private:
             int readError = code > LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN ? code : 0;
             httpContextData->nodeHttpHooks->onClosed(httpResponseData->socketData, readError, (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0);
         }
-        /* Signal broken HTTP request only if we have a pending request */
-        if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
-            httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
-        }
+        ((HttpResponse<SSL> *) s)->abortRequest();
 
 
         /* Destruct the type onOpen<IsNodeHttp> constructed */
@@ -688,8 +685,7 @@ private:
 
                 /* Todo: can this handle timeout for non-post as well? */
                 if (fin) {
-                    /* If we just got the last chunk (or empty chunk), disable timeout. Keep it while a Bun.serve response
-                     * write is blocked, because nothing else closes a connection whose peer never reads. */
+                    /* If we just got the last chunk (or empty chunk), disable timeout. Keep it while a Bun.serve response write is blocked. */
                     if (!IsNodeHttp && ((struct us_socket_t *) user)->flags.last_write_failed) [[unlikely]] {
                         ((HttpResponse<SSL> *) user)->resetTimeout();
                     } else {

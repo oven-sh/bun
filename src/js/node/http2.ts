@@ -2850,7 +2850,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   write(chunk, encoding?, callback?) {
-    // Drop a write if user code didn't end the writable side and the stream is closed, or its 'error' would be uncaught (a handler that answers HEAD like GET).
+    // respond() (HEAD, 204, 304) and the peer's reset end the writable side themselves. A write() after that is dropped, unless the stream is open and has an 'error' listener.
     const status = this[bunHTTP2StreamStatus];
     if ((status & StreamState.EndedForUser) !== 0 && (this.listenerCount("error") === 0 || isClosedOnWire(this))) {
       if (typeof encoding === "function") callback = encoding;
@@ -3269,7 +3269,7 @@ function afterOpen(options, headers, err, fd) {
   fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
 }
 
-// Like node's kMaybeDestroy, RST_STREAM(NO_ERROR) closes an answered stream whose request was never read, or it stays open for as long as the peer likes.
+// Like node's kMaybeDestroy, RST_STREAM(NO_ERROR) closes an answered stream whose request was never read.
 function maybeCloseUnreadServerStream(stream: ServerHttp2Stream) {
   // An ended request closes through streamEnd(7).
   if (stream._readableState.ended || stream.destroyed || stream.closed) return;

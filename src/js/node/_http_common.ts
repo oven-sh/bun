@@ -142,7 +142,7 @@ const MAX_HEADER_PAIRS = 2000;
 // across multiple TCP packets or too large to be
 // processed in a single run. This method is also
 // called to process trailing HTTP headers.
-// Node makes kOnHeaders and kOnBody with MakeCallback(), which runs the ticks and the microtasks when the read came from the handle.
+// Node makes kOnHeaders and kOnBody with MakeCallback(), which runs the ticks and microtasks when the read came from the handle. Its other callbacks skip them.
 function runTaskQueues(parser) {
   // A tick could hand the parser what the socket still holds, in the middle of this read.
   if (parser._consumed && parser.socket.readableLength === 0) drainMicrotasks();
@@ -246,6 +246,10 @@ function parserOnMessageComplete() {
       parser._headers = [];
       parser._url = "";
     }
+
+    // JS feeds this parser, so user frames can be on the stack and no queue has run. A read that the 'request' listener scheduled counts as begun.
+    const state = stream._readableState;
+    if (!parser._consumed && (state.resumeScheduled || state.readableListening)) stream._consuming = true;
 
     // For emit end event
     stream.push(null);

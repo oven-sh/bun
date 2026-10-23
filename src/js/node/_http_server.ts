@@ -66,6 +66,7 @@ const {
   fakeSocketSymbol,
   kOutHeaders,
   kNeedDrain,
+  kFailHeldWrites,
   kFinishesWithoutLastWrite,
   onDataIncomingMessage,
   RE_CONN_CLOSE,
@@ -1796,10 +1797,11 @@ function abortIncoming(incoming) {
 }
 
 function abortOutgoing(outgoing) {
+  // The responses that waited on one connection share one error.
   let error;
   while (outgoing.length) {
     const res = outgoing.shift();
-    if (res.outputData?.length) failHeldOutput(res, (error ??= $ERR_STREAM_DESTROYED("write")));
+    res[kFailHeldWrites]?.((error ??= $ERR_STREAM_DESTROYED("write")));
     res.destroy(new ConnResetException("aborted"));
   }
 }
@@ -1997,7 +1999,7 @@ function resOnFinish(req, res, socket, state, server) {
       socket.setTimeout(idleTimeout);
       socket[kKeepAliveTimeoutSet] = true;
     }
-  } else {
+  } else if (socket.writable) {
     sendNextResponse(socket, state);
   }
 }
@@ -2014,7 +2016,7 @@ const kDispatchThrew = Symbol("kDispatchThrew");
 
 function sendNextResponse(socket, state) {
   const m = state.outgoing.shift();
-  // Node assigns a destroyed response too, and the connection hangs until requestTimeout. Nothing can fill its slot, so close.
+  // Nothing can fill a destroyed response's slot, so close (Node assigns it).
   if (m === undefined) return;
   if (m[kDispatchThrew] && !m.finished) m.destroy();
   if (m.destroyed) {
@@ -3349,7 +3351,11 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // Socket already gone: like Node's _writeRaw(), report false and drop the callback.
+    // Socket already gone, and 'close' is still to come.
+    if (callback) {
+      this[kPendingCallbacks].push(callback);
+      failPendingWriteCallbacks(this, this[kSocket]?.errored);
+    }
     return false;
   }
 
@@ -3628,23 +3634,10 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (socket) {
     socket.destroy(err);
   } else {
-    if (this.outputData.length) failHeldOutput(this, $ERR_STREAM_DESTROYED("write"));
     process.nextTick(emitCloseNT, this);
   }
   return this;
 };
-
-// What a response wrote while it waited for the connection can't be sent any more, so its callbacks get to know. Node drops them.
-function failHeldOutput(res, err) {
-  const held = res.outputData;
-  res.outputData = [];
-  res._onPendingData(-res.outputSize);
-  res.outputSize = 0;
-  for (let i = 0; i < held.length; i++) {
-    const callback = held[i].callback;
-    if (typeof callback === "function") process.nextTick(callback, err);
-  }
-}
 
 ServerResponse.prototype.emit = function (event) {
   if (event === "close") {
@@ -3657,10 +3650,21 @@ ServerResponse.prototype.emit = function (event) {
       process.nextTick(emitResponseFinishedThenClose, this, callback);
       return false;
     }
+    // The callbacks of what it couldn't send run ahead of 'close'.
+    const pending = this[kPendingCallbacks].length !== 0;
+    if (pending) failPendingWriteCallbacks(this, undefined);
+    if (this[kFailHeldWrites]() || pending) {
+      process.nextTick(emitClose, this);
+      return false;
+    }
     callCloseCallback(this);
   }
   return Stream.prototype.emit.$apply(this, arguments);
 };
+
+function emitClose(res) {
+  res.emit("close");
+}
 
 function emitResponseFinishedThenClose(res, callback) {
   emitResponseFinished(res, callback);

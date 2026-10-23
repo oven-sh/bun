@@ -2257,7 +2257,7 @@ impl H2FrameParser {
 
     /// Runs at the start of a read, before any frame of it is parsed.
     fn begin_batch(&self) {
-        // Only a drained transport resets the count, or a peer that never reads would stay under the limit forever.
+        // Only a drained transport resets the count.
         if !self.has_unsent_output() {
             self.engine.note_outbound_drained();
         }

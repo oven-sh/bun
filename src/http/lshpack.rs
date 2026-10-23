@@ -281,7 +281,7 @@ pub const MAX_SIZE_UPDATE_BYTES: usize = 12;
 /// RFC 9113 §6.5.2: both sides start at this SETTINGS_HEADER_TABLE_SIZE.
 const DEFAULT_HEADER_TABLE_SIZE: u32 = 4096;
 
-/// Node's default `maxDeflateDynamicTableSize`, so a peer can't make us retain more header history.
+/// Node's default `maxDeflateDynamicTableSize`.
 const MAX_ENCODER_TABLE_SIZE: u32 = 4096;
 
 /// One connection's HPACK encoder and decoder, kept in step with both sides' SETTINGS_HEADER_TABLE_SIZE.

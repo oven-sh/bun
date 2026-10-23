@@ -1270,8 +1270,9 @@ test.concurrent("a listener that destroys the connection and then throws sends n
 test("res.write()/end() after req.socket.destroy() inside the handler", async () => {
   // The request handler destroys its own socket before writing: write() must
   // report false (Node.js's OutgoingMessage._writeRaw returns false for a
-  // destroyed socket) and end() must still transition to `finished` /
-  // `writableEnded` and emit 'prefinish', without emitting 'finish'.
+  // destroyed socket) and fail its callback (since v26.12.1), and end() must
+  // still transition to `finished` / `writableEnded` and emit 'prefinish',
+  // without emitting 'finish'.
   const events: string[] = [];
   const { promise: resClosed, resolve: resolveResClosed } = Promise.withResolvers<void>();
   let writeResult: boolean | undefined;
@@ -1319,7 +1320,7 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
       endReturnedSelf: true,
       finishedAfterEnd: true,
       writableEndedAfterEnd: true,
-      writeCbCalled: false,
+      writeCbCalled: true,
       endCbCalled: false,
       events: ["res.prefinish", "res.close"],
     });

@@ -12,7 +12,7 @@ import {
   withoutAggressiveGC,
 } from "harness";
 import { once } from "node:events";
-import { closeSync, existsSync, openSync, truncateSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, truncateSync } from "node:fs";
 import net from "node:net";
 import { createServer as createTlsServer } from "node:tls";
 import { tmpdir } from "os";
@@ -424,6 +424,50 @@ describe("a body that can't be read rejects with a TypeError", () => {
     expect(await bodyError(fetch(url, { method: "POST", body: Bun.file(fd) }))).toMatchObject({ code: "EBADF", fd });
   });
 });
+
+// A unix socket, because its send buffer is small and has a known size.
+test.skipIf(!isLinux)(
+  "a Bun.file() body waits for the socket when the request head has filled the send buffer",
+  async () => {
+    using dir = tempDir("fetch-file-full-buffer", {});
+    const content = Buffer.alloc(100_000, "0123456789");
+    await Bun.write(join(String(dir), "body"), content);
+    const sendBuffer = Number(readFileSync("/proc/sys/net/core/wmem_default", "utf8"));
+    using other = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+
+    for (const [i, extra] of [-2048, 0, 2048, 4096].entries()) {
+      const unix = join(String(dir), `${i}.sock`);
+      const { promise: accepted, resolve: onConnection } = Promise.withResolvers<net.Socket>();
+      const server = net.createServer({ pauseOnConnect: true }, onConnection);
+      await once(server.listen(unix), "listening");
+      try {
+        const headers = { "x-pad": Buffer.alloc(sendBuffer + extra, "a").latin1Slice() };
+        const upload = fetch("http://localhost/", {
+          unix,
+          method: "PUT",
+          body: Bun.file(join(String(dir), "body")),
+          headers,
+        });
+        const socket = await accepted;
+        // The HTTP thread has written what it can of the upload by the time it has finished a request that was queued later.
+        await (await fetch(other.url)).text();
+
+        let received = Buffer.alloc(0);
+        socket.on("data", data => {
+          received = Buffer.concat([received, data]);
+          const headEnd = received.indexOf("\r\n\r\n");
+          if (headEnd < 0 || received.length < headEnd + 4 + content.length) return;
+          const whole = received.subarray(headEnd + 4).equals(content);
+          socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${String(whole).length}\r\nConnection: close\r\n\r\n${whole}`);
+        });
+        socket.resume();
+        expect(await (await upload).text()).toBe("true");
+      } finally {
+        server.close();
+      }
+    }
+  },
+);
 
 // Windows reads the whole file before it sends the head.
 describe.skipIf(isWindows)("a file that becomes shorter during the upload", () => {

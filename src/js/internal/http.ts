@@ -278,6 +278,7 @@ const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kFinishesWithoutLastWrite = Symbol("kFinishesWithoutLastWrite");
+const kFailHeldWrites = Symbol("kFailHeldWrites");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
@@ -453,6 +454,7 @@ export {
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
+  kFailHeldWrites,
   kFinishesWithoutLastWrite,
   kHandle,
   kHeaderSource,

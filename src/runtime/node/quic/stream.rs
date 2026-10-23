@@ -492,7 +492,7 @@ impl QuicStream {
         }
     }
 
-    /// `on_stream_read` drains lsquic, which returns the peer's credit. Without this, an unread stream grows without bound.
+    /// `on_stream_read` drains lsquic, which returns the peer's credit. Holding the window ties the credit to what the application has read.
     fn update_window_hold(&self) {
         let changed = self.inbound.with_mut(|i| {
             let mark = if i.window_held {

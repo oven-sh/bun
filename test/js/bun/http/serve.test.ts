@@ -3906,8 +3906,10 @@ it("allow custom timeout per request", async () => {
 
 // Not concurrent: a forced sweep moves every socket in this process one tick closer to its timeout.
 describe("idle timeout with a forced sweep", () => {
-  function rawClient(port: number, secure: boolean) {
-    const client = secure ? nodeTls.connect({ port, host: "127.0.0.1", ca: tls.cert }) : net.connect(port, "127.0.0.1");
+  function rawClient(port: number, secure: boolean, maxVersion?: nodeTls.SecureVersion) {
+    const client = secure
+      ? nodeTls.connect({ port, host: "127.0.0.1", ca: tls.cert, maxVersion })
+      : net.connect(port, "127.0.0.1");
     client.on("error", () => {});
     return client;
   }
@@ -3993,7 +3995,8 @@ describe("idle timeout with a forced sweep", () => {
     using short = serve(1);
     const closed: string[] = [];
     const connect = (name: string, port: number) => {
-      const client = rawClient(port, secure);
+      // In TLS 1.2 the server sends the last message of the handshake, so at 'secureConnect' the server is through it too.
+      const client = rawClient(port, secure, "TLSv1.2");
       client.on("close", () => closed.push(name));
       // An unfinished head, because the kernel only hands a connection to accept() once it has sent something.
       client.write("GET / HTTP/1.1\r\n");
@@ -7011,6 +7014,89 @@ describe("requests pipelined in one read", () => {
         errors: [],
         hadError: false,
       });
+    });
+  });
+});
+
+// The server keeps a refused connection open until the client has closed its side. The request doesn't wait for that.
+describe("a body read fails as soon as the request is refused", () => {
+  const readers = {
+    "text()": (req: Request) => req.text(),
+    "json()": (req: Request) => req.json(),
+    "arrayBuffer()": (req: Request) => req.arrayBuffer(),
+    "a reader": async (req: Request) => {
+      const reader = req.body!.getReader();
+      while (!(await reader.read()).done);
+    },
+    "for await": async (req: Request) => {
+      for await (const _ of req.body!);
+    },
+    "no read, only req.signal": (req: Request) =>
+      new Promise((_, reject) => req.signal.addEventListener("abort", () => reject(req.signal.reason))),
+  };
+  const long = Buffer.alloc(40_000, "a").toString();
+  const refusals = {
+    "400": "zz\r\n",
+    "400 behind a chunk": "5\r\nhelloXX",
+    "400 at the end of the body": "0\r\nno colon\r\n\r\n",
+    "431": `0\r\nx-a: ${long}\r\n\r\n`,
+    "413": `5;${long}\r\nhello\r\n`,
+  };
+
+  async function refuse(read: (req: Request) => Promise<unknown>, rest: string, secure: boolean) {
+    const reading = Promise.withResolvers<void>();
+    let outcome: string | undefined;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      idleTimeout: 0,
+      async fetch(req) {
+        const pending = read(req);
+        reading.resolve();
+        outcome = await pending.then(
+          () => "resolved",
+          error => error.name,
+        );
+        return new Response();
+      },
+    });
+    const options = { port: server.port!, host: "127.0.0.1", allowHalfOpen: true };
+    const client = secure ? nodeTls.connect({ ...options, ca: tls.cert }) : net.connect(options);
+    let closed = false;
+    let reply = "";
+    client.on("error", () => {});
+    client.on("close", () => (closed = true));
+    client.on("data", data => (reply += data.toString("latin1")));
+    try {
+      client.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+      await reading.promise;
+      client.write(rest);
+      // The client has the server's answer and its FIN, and hasn't closed its own side.
+      await once(client, "end");
+      const settledAtTheRefusal = outcome;
+      while (server.pendingRequests > 0) await new Promise(setImmediate);
+      return { status: reply.slice(9, 12), outcome: settledAtTheRefusal, closed };
+    } finally {
+      client.destroy();
+    }
+  }
+
+  describe.each(["http", "https"])("over %s", protocol => {
+    it.concurrent.each(Object.keys(readers) as (keyof typeof readers)[])("%s", async reader => {
+      expect(await refuse(readers[reader], refusals["400"], protocol === "https")).toEqual({
+        status: "400",
+        outcome: "AbortError",
+        closed: false,
+      });
+    });
+  });
+
+  it.concurrent.each(Object.keys(refusals) as (keyof typeof refusals)[])("with %s", async refusal => {
+    expect(await refuse(readers["text()"], refusals[refusal], false)).toEqual({
+      status: refusal.slice(0, 3),
+      outcome: "AbortError",
+      closed: false,
     });
   });
 });

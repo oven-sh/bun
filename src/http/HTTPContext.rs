@@ -1059,8 +1059,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                             // Same guard as the pool path (`existing_socket`).
                             && client.socket_verification().admits(s.verification)
                     });
-                if let Some(session) = reusable {
-                    h2::ClientSession::adopt(session, client);
+                if let Some(session) = reusable
+                    && h2::ClientSession::adopt(session, client)
+                {
                     return Ok(None);
                 }
                 let cfg_nn = cfg.and_then(|p| NonNull::new(p.cast_mut()));
@@ -1099,7 +1100,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 0
             };
-            if let Some(mut found) = self.existing_socket(
+            while let Some(mut found) = self.existing_socket(
                 client.socket_verification(),
                 client.target_verification(),
                 hostname,
@@ -1139,8 +1140,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     let session = session.into_this_ptr();
                     Self::tag_as_h2(sock, session.as_ptr());
                     self.register_h2(session.as_ptr());
-                    h2::ClientSession::adopt(session, client);
-                    return Ok(None);
+                    if h2::ClientSession::adopt(session, client) {
+                        return Ok(None);
+                    }
+                    client.flags.reused_socket_verification = PeerVerification::None;
+                    continue;
                 }
                 if let Some(tunnel) = found.tunnel {
                     // Reattach the pooled tunnel BEFORE onOpen so the

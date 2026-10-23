@@ -27,10 +27,10 @@ const skip = !fault.available() || isWindows;
 // low-prio fixture does not use it. It needs fault injection, so on macOS only
 // a local debug build runs it and no CI lane does: a change of its transport
 // could not be checked there.
-async function runFixture(name: string) {
+async function runFixture(name: string, ...args: string[]) {
   using unixDir = isMacOS ? tempDir("tlsq", {}) : undefined;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, name)],
+    cmd: [bunExe(), join(import.meta.dir, name), ...args],
     env: { ...bunEnv, TLS_FIXTURE_UNIX_DIR: unixDir && String(unixDir) },
     stdout: "pipe",
     stderr: "pipe",
@@ -171,11 +171,46 @@ test.concurrent(
   "TLS low-prio queue: a parked socket's timeout fires after the queue releases it",
   async () => {
     expect(await runFixture("tls-parked-handshake-timeout-fixture.ts")).toEqual({
-      summary: { opened: 20, shortest: [5, 0, 15], unarmed: [0, 0], parkedTooLong: [5, 15], errors: 0 },
+      summary: {
+        opened: 20,
+        shortest: [5, 0, 15],
+        unarmed: [0, 0],
+        parkedTooLong: [5, 15],
+        parkedAgain: [],
+        errors: 0,
+      },
       signalCode: null,
       exitCode: 0,
       stderrTail: "",
     });
+  },
+  60_000,
+);
+
+// The 30 ticks belong to the timeout the owner armed, not to one stay in the queue. The fixture arms one timeout and
+// parks 15 of the 20 sockets four times, for 10 ticks each: [timeouts in the first two stays, in the last two].
+test.concurrent(
+  "TLS low-prio queue: the time a handshake waits for its turn is added to its deadline at most once",
+  async () => {
+    const result = await runFixture("tls-parked-handshake-timeout-fixture.ts", "again");
+    expect(result).toEqual({
+      summary: {
+        opened: 20,
+        shortest: [],
+        unarmed: [],
+        parkedTooLong: [],
+        parkedAgain: [expect.any(Number), expect.any(Number)],
+        errors: 0,
+      },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+    const [early, late] = (result.summary as { parkedAgain: number[] }).parkedAgain;
+    // At least 10 sockets were parked in both of the first two stays, whichever 5 each round read.
+    expect(early).toBeGreaterThanOrEqual(5);
+    expect(early).toBeLessThanOrEqual(10);
+    expect(early + late).toBe(20);
   },
   60_000,
 );

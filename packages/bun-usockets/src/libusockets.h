@@ -335,10 +335,11 @@ void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in
- * finalize, closing here would be a UAF on the owner's raw pointer). */
-void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) nonnull_fn_decl;
+ * finalize, closing here would be a UAF on the owner's raw pointer).
+ * `thread_ends`: a TLS socket whose close would wait for the peer ends with a FIN, as at the exit of a process. Otherwise it is reset. */
+void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners, int thread_ends) nonnull_fn_decl;
 
-/* Teardown: close_all_ex(g, 0) on every group currently linked to the loop
+/* Teardown: close_all_ex(g, 0, 1) on every group currently linked to the loop
  * (Listener-, App-, and RareData-owned alike). Returns 1 if any group had open
  * connections, 0 if the loop was already idle. Listen sockets are NOT closed
  * (see close_all_ex). */

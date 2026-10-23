@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
-import { Writable } from "node:stream";
+import { duplexPair, Writable } from "node:stream";
 
 test("aborting a connection settles every queued pipelined response callback once", async () => {
   const queued = Promise.withResolvers<void>();
@@ -115,3 +116,74 @@ test("a request body that was put back on its socket before emit('connection') i
     front.close();
   }
 });
+
+type Reader = (req: IncomingMessage, res: ServerResponse, take: (chunk: Buffer) => void, end: () => void) => void;
+const readers: [string, Reader][] = [
+  [
+    "pipe() into a slow Writable",
+    (req, _res, take, end) => {
+      req.on("end", end).pipe(
+        new Writable({
+          highWaterMark: 1,
+          write(chunk, _encoding, callback) {
+            take(chunk);
+            setImmediate(callback);
+          },
+        }),
+      );
+    },
+  ],
+  [
+    "on('data') and pause()",
+    (req, _res, take, end) => {
+      req.on("end", end).on("data", chunk => {
+        take(chunk);
+        req.pause();
+        setImmediate(() => req.resume());
+      });
+    },
+  ],
+  [
+    "once('data') then pause(), and the rest once the response has closed",
+    (req, res, take, end) => {
+      req.once("data", chunk => {
+        take(chunk);
+        req.pause();
+      });
+      res.on("close", () => setImmediate(() => req.on("end", end).on("data", take).resume()));
+    },
+  ],
+];
+test.each(readers.flatMap(([how, read]) => [true, false].map(flowing => [how, flowing, read] as const)))(
+  "a request body on a stream that is not a socket is delivered whole to a listener that reads it at once with %s and answers (stream flowing: %p)",
+  async (_, flowing, read) => {
+    const { promise, resolve } = Promise.withResolvers<{ bytes: number; end: boolean }>();
+    const server = createServer((req, res) => {
+      const seen = { bytes: 0, end: false };
+      req.on("close", () => setImmediate(resolve, seen));
+      read(
+        req,
+        res,
+        chunk => (seen.bytes += chunk.length),
+        () => (seen.end = true),
+      );
+      res.end("ok");
+    });
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      clientSide.on("error", () => {}).resume();
+      // The server's side flows from the next tick on.
+      if (flowing) await new Promise(resolve => setImmediate(resolve));
+      clientSide.write(
+        "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n" +
+          Array.from("abcd", fill => `400\r\n${fill.repeat(1024)}\r\n`).join("") +
+          "0\r\n\r\n",
+      );
+      expect(await promise).toEqual({ bytes: 4096, end: true });
+    } finally {
+      clientSide.destroy();
+      server.closeAllConnections();
+    }
+  },
+);

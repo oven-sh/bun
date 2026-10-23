@@ -99,6 +99,7 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
     s->timeout = us_internal_timeout_tick(s->group->loop, seconds);
+    s->low_prio_ticks = 0;
 }
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {

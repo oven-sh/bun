@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { release } from "node:os";
@@ -297,6 +297,59 @@ test.concurrent.each([
       uploads: 1,
       whole: true,
     });
+  } finally {
+    server.close();
+  }
+});
+
+// The client is a subprocess so that it runs in parallel with the server. Debug builds are too slow to need many rounds.
+test("PUT of a Bun.file() is delivered once per request while reused connections keep dropping", async () => {
+  const size = 70_000;
+  const rounds = isDebug || isASAN ? 25 : 250;
+  using dir = tempDir("fetch-keepalive-file-drops", {
+    "client.js": `
+      const [url, path, rounds] = process.argv.slice(2);
+      let ok = 0;
+      for (let i = 0; i < +rounds; i++) {
+        await fetch(url, { method: "POST", body: "warm" }).then(res => res.text(), () => {});
+        const res = await fetch(url, { method: "PUT", body: Bun.file(path) });
+        if ((await res.text()) === "ok") ok++;
+      }
+      console.log(ok);
+    `,
+  });
+  await Bun.write(join(String(dir), "body"), Buffer.alloc(size, "0123456789"));
+
+  let uploads = 0;
+  const server = createServer(socket => {
+    let buffered = Buffer.alloc(0);
+    socket.on("error", () => {});
+    socket.on("data", data => {
+      buffered = Buffer.concat([buffered, data]);
+      const headEnd = buffered.indexOf("\r\n\r\n");
+      if (headEnd < 0) return;
+      const isUpload = buffered.toString("latin1", 0, 4) === "PUT ";
+      if (buffered.length < headEnd + 4 + (isUpload ? size : 4)) return;
+      buffered = Buffer.alloc(0);
+      if (isUpload) uploads++;
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", () => {
+        if (!isUpload) socket.resetAndDestroy();
+      });
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "client.js", url, join(String(dir), "body"), String(rounds)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), uploads }).toEqual({ stdout: String(rounds), uploads: rounds });
+    expect(exitCode).toBe(0);
   } finally {
     server.close();
   }

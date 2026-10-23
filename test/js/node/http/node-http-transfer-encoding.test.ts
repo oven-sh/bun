@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import { ClientRequest, createServer, get, IncomingMessage, request, ServerResponse } from "http";
+import { Agent, ClientRequest, createServer, get, IncomingMessage, request, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
 import type { Duplex } from "stream";
@@ -2325,4 +2325,42 @@ describe("a chunked request body written under req.cork()", () => {
       expect(echoed).toBe(body);
     },
   );
+
+  test("'drain' comes before the callbacks of the writes that a corked request or a reused socket flushes", async () => {
+    const body = Buffer.alloc(64 * 1024, "a").toString();
+    const corked: string[] = [];
+    await echo(async req => {
+      req.on("drain", () => corked.push("drain"));
+      req.cork();
+      req.write(body, () => corked.push("callback"));
+      const drained = once(req, "drain");
+      req.uncork();
+      await drained;
+      req.end();
+    }, true);
+    expect(corked).toEqual(["drain", "callback"]);
+
+    const server = createServer(async (req, res) => res.end(await text(req)));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const options = { host: "127.0.0.1", port: (server.address() as AddressInfo).port, method: "POST", agent };
+      const free = once(agent, "free");
+      const first = request(options).end("first");
+      await text((await once(first, "response"))[0]);
+      await free;
+
+      const reused: string[] = [];
+      const req = request(options);
+      req.on("drain", () => reused.push("drain"));
+      expect(req.write(body, () => reused.push("callback"))).toBe(false);
+      await once(req, "drain");
+      req.end();
+      expect(await text((await once(req, "response"))[0])).toBe(body);
+      expect({ reusedSocket: req.reusedSocket, reused }).toEqual({ reusedSocket: true, reused: ["drain", "callback"] });
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
 });

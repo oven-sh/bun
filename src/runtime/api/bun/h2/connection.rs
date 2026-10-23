@@ -1174,7 +1174,7 @@ impl Connection {
             );
             return DataAdmission::Fatal;
         }
-        // An empty DATA frame that doesn't end the stream is only useful for flooding.
+        // Like node's HandleDataFrame, an empty DATA frame that doesn't end the stream counts as invalid.
         if frame_len == 0 && !hdr.has(flags::END_STREAM) && self.count_invalid_frame(sink) {
             return DataAdmission::Fatal;
         }

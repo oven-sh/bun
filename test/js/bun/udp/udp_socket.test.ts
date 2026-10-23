@@ -705,8 +705,8 @@ describe("udpSocket()", () => {
     expect(exitCode).toBe(0);
   });
 
-  // In its own process, because a starved event loop can't run the test's timeout either.
-  test("a socket that always has a datagram waiting doesn't starve the event loop", async () => {
+  // In its own process, so a failure can't hold up the test's own timeout.
+  test("setImmediate() runs between batches of datagrams", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

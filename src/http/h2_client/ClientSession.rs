@@ -279,8 +279,10 @@ impl ClientSession {
 
     /// Multiplex `client` onto an established (registered or pool-resumed)
     /// session; see [`Self::adopt_client`].
-    pub(crate) fn adopt(this: SessionPtr, client: &mut HTTPClient) {
-        Self::enter(this, |s| s.adopt_client(client));
+    pub(crate) fn adopt(this: SessionPtr, client: &mut HTTPClient) -> bool {
+        let mut adopted = false;
+        Self::enter(this, |s| adopted = s.adopt_client(client));
+        adopted
     }
 
     /// Open the first stream on a session `create` just returned, for the
@@ -446,7 +448,8 @@ impl ClientSession {
             && strings::eql_long(&self.hostname, hostname, true)
     }
 
-    fn adopt_client(&mut self, client: &mut HTTPClient) {
+    /// Returns false if the session has no room for `client`, which `connect()` then places elsewhere.
+    fn adopt_client(&mut self, client: &mut HTTPClient) -> bool {
         // Park instead of attaching when (a) we're inside onData's deliver
         // loop — attach() mustn't mutate `streams` under iteration — or (b)
         // the server's first SETTINGS hasn't arrived yet, so the real
@@ -454,16 +457,16 @@ impl ClientSession {
         // shouldn't risk a REFUSED_STREAM. The leader bypasses adopt() and
         // attaches directly so the preface still goes out.
         if self.delivering || !self.settings_received {
-            return self.park(client);
+            self.park(client);
+            return true;
         }
         // Belt-and-suspenders: callers gate on hasHeadroom(), but a session
         // pulled from the keep-alive pool (HTTPContext.existingSocket) may have
         // remote_max_concurrent_streams == 0 if a mid-connection SETTINGS
-        // dropped it. Re-dispatch instead of asserting in attach().
+        // dropped it.
         if !self.has_headroom() {
-            client.retry_after_h2_coalesce();
             self.maybe_release();
-            return;
+            return false;
         }
         self.attach(client);
         if self.streams.count() == 0 {
@@ -471,6 +474,7 @@ impl ClientSession {
             self.goaway_received = true;
             self.maybe_release();
         }
+        true
     }
 
     /// Park a request that was coalesced onto this session's connect until the

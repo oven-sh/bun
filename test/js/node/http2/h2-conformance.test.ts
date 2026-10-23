@@ -1074,7 +1074,7 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     expect({ destroyed: pushed.destroyed, pushedClosed }).toEqual({ destroyed: true, pushedClosed: true });
   });
 
-  // Node emits 'error' on the pushed stream here, which is uncaught.
+  // Node emits 'error' on the pushed stream here.
   test("a GOAWAY with an error code closes a pushed stream that has no 'error' listener, without 'end'", async () => {
     using ctx = await openRequest();
     const { raw, client, req } = ctx;
@@ -3738,7 +3738,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
 
   // A request on an id below the highest one never reaches a handler, so its reset cancels nothing.
   // nghttp2 charges each dropped block to its glitch limiter instead (burst 10,000, refill 330/s).
-  test("a flood of requests on ids below the highest one runs no handler and ends the session", async () => {
+  test("requests on ids below the highest one run no handler and count against the glitch limit", async () => {
     const { server, state } = respondingServer();
     await withClient(server, async c => {
       c.send(upload(40_001));
@@ -3774,7 +3774,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
 
 // nghttp2 charges every frame it drops without a reply to one token bucket per session: 10,000
 // tokens, 330 back per second. An empty bucket ends the session with GOAWAY(ENHANCE_YOUR_CALM).
-describe("floods of ignored frames (nghttp2's glitch rate limit)", () => {
+describe("ignored frames count against nghttp2's glitch rate limit", () => {
   const BURST = 10_000;
   const originEntry = Buffer.concat([Buffer.from([0, 1]), Buffer.from("x")]);
   const PRIORITY = encodeFrame(FrameType.PRIORITY, 0, 1001, Buffer.from([0, 0, 0, 0, 16]));
@@ -5764,7 +5764,7 @@ describe("flushing the queued frames of many streams", () => {
   });
 
   // 3000 streams take about 15 s on a debug build. The tests above cover the same flush there.
-  test.skipIf(isDebug || isASAN)("3000 queued streams don't overflow the stack", async () => {
+  test.skipIf(isDebug || isASAN)("3000 queued streams are all flushed when the window opens", async () => {
     const fixture = String.raw`
       const http2 = require("node:http2");
       const net = require("node:net");
@@ -5808,7 +5808,7 @@ describe("flushing the queued frames of many streams", () => {
 });
 
 // Like Node through v26, RST_STREAM(NO_ERROR) closes a server stream once its response has left and its
-// request was never read. Nothing else releases the stream while the client keeps the request open.
+// request was never read.
 describe("an answered server stream whose request was never read", () => {
   // A loaded debug build can need more than waitFor()'s default 2 s.
   const WAIT = 10_000;

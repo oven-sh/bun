@@ -4628,6 +4628,117 @@ describe.each([
   });
 });
 
+// The peer stops reading before the server writes, so most of the 16 MB is still unsent when the server leaves.
+// The relay sees how the TCP connection to the server ends.
+describe("a Bun.listen() TLS connection with unsent data", () => {
+  it.concurrent.each([
+    { name: "is reset by stop(true)", leaves: "stop(true)", events: ["error ECONNRESET", "close true"] },
+    { name: "ends with a FIN when its Worker ends", leaves: "worker", events: ["end", "close false"] },
+  ])("$name", async ({ leaves, events: expected }) => {
+    using dir = tempDir("leaves-with-unsent-data", {
+      "server.mjs": `
+        import { isMainThread, parentPort } from "node:worker_threads";
+        const say = line => (isMainThread ? console.log(line) : parentPort.postMessage(line));
+        export const listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: ${JSON.stringify(COMMON_CERT_)},
+          socket: {
+            data(socket) {
+              socket.write(Buffer.alloc(16 << 20, "b"));
+              say("written");
+            },
+          },
+        });
+        say("port " + listener.port);
+      `,
+      "main.mjs": `
+        import { Worker } from "node:worker_threads";
+        let leave;
+        if (process.argv[2] === "stop(true)") {
+          const { listener } = await import("./server.mjs");
+          leave = () => listener.stop(true);
+        } else {
+          const worker = new Worker(new URL("./server.mjs", import.meta.url));
+          worker.on("message", line => console.log(line));
+          leave = () => worker.terminate();
+        }
+        process.stdin.once("data", async () => {
+          await leave();
+          console.log("left");
+        });
+        process.stdin.on("end", () => process.exit(0));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs", leaves],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const said = {
+      port: Promise.withResolvers<string>(),
+      written: Promise.withResolvers<string>(),
+      left: Promise.withResolvers<string>(),
+    };
+    const stdout = (async () => {
+      let text = "";
+      for await (const chunk of proc.stdout) {
+        text += Buffer.from(chunk).toString();
+        for (const line of text.split("\n").slice(0, -1)) {
+          const [name, value] = line.split(" ");
+          said[name as keyof typeof said]?.resolve(value);
+        }
+      }
+      return text;
+    })();
+
+    const port = Number(await said.port.promise);
+    const upstream = Promise.withResolvers<net.Socket>();
+    const closed = Promise.withResolvers<string[]>();
+    await using relay = net.createServer(client => {
+      const events: string[] = [];
+      const server = net.connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.on("data", chunk => server.write(chunk));
+      server.on("data", chunk => void client.write(chunk));
+      server.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      server.on("end", () => events.push("end"));
+      server.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        client.destroy();
+        closed.resolve(events);
+      });
+      upstream.resolve(server);
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+
+    const client = tls.connect({
+      port: (relay.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      servername: "localhost",
+      ca: COMMON_CERT_.cert,
+    });
+    client.on("error", () => {});
+    await once(client, "secureConnect");
+    const server = await upstream.promise;
+    server.pause();
+    client.write("go");
+    await said.written.promise;
+    proc.stdin.write("leave\n");
+    await said.left.promise;
+    server.resume();
+
+    expect(await closed.promise).toEqual(expected);
+    proc.stdin.end();
+    const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Runs report(mode, version) of a fixture module in node, for every row at
 // once. Resolves with node's version and the reports in the order of the rows.
 async function reportsFromNode(fixture: string, rows: (readonly [version: string, mode: string])[]) {

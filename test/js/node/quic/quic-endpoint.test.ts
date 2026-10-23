@@ -1232,7 +1232,7 @@ describe("a server session and its handshake", () => {
     });
   });
 
-  test("a failed handshake closes its own session, not another connection's from the same client endpoint", async () => {
+  test("a failed handshake closes only its own session", async () => {
     const sessions: Promise<unknown>[] = [];
     await using server = await listen(
       session => {

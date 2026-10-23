@@ -71,7 +71,7 @@ server.close();
 console.log(JSON.stringify({ iters: ITERS, aborted, errored }));
 `;
 
-test.skipIf(!isASAN)("abort racing a TLS handshake failure does not reach a freed socket", async () => {
+test.skipIf(!isASAN)("abort racing a TLS handshake failure leaves no request on a closed socket", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", handshakeFailFixture],
     env: bunEnv,
@@ -134,7 +134,7 @@ for (let i = 0; i < ITERS; i++) {
 console.log(JSON.stringify({ iters: ITERS, settled }));
 `;
 
-test.skipIf(!isASAN)("abort racing a TLS Connection: close response does not reach a freed socket", async () => {
+test.skipIf(!isASAN)("abort racing a TLS Connection: close response leaves no request on a closed socket", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", connectionCloseFixture],
     env: bunEnv,

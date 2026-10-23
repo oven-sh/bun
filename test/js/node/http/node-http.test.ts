@@ -6515,10 +6515,21 @@ it("the response that closes a connection is sent before the connection's parse 
   expect(received()).toStartWith("HTTP/1.1 200 OK\r\n");
 });
 
-it("what a 'request' listener queued runs before the parser reports a long list of headers", async () => {
+it.each([
+  [
+    "after every 'request' of the same read",
+    0,
+    ["request /1", "request /2", "tick /1", "tick /2", "microtask /1", "microtask /2"],
+  ],
+  [
+    "before the parser reports a long list of headers",
+    40,
+    ["request /1", "tick /1", "microtask /1", "request /2", "tick /2", "microtask /2"],
+  ],
+])("what a 'request' listener queued runs %s", async (_, headers, expected) => {
   const { events } = await eventsOverEmittedConnection(
     "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n" +
-      `GET /2 HTTP/1.1\r\nHost: x\r\n${Array.from({ length: 40 }, (_, i) => `h${i}: v\r\n`).join("")}\r\n`,
+      `GET /2 HTTP/1.1\r\nHost: x\r\n${Array.from({ length: headers }, (_, i) => `h${i}: v\r\n`).join("")}\r\n`,
     async (req, res, log) => {
       log(`request ${req.url}`);
       process.nextTick(log, `tick ${req.url}`);
@@ -6528,7 +6539,7 @@ it("what a 'request' listener queued runs before the parser reports a long list 
     },
     "microtask /2",
   );
-  expect(events).toEqual(["request /1", "tick /1", "microtask /1", "request /2", "tick /2", "microtask /2"]);
+  expect(events).toEqual(expected);
 });
 
 it.each([
@@ -8737,6 +8748,134 @@ it.each([
     }
   },
 );
+
+describe.each([
+  ["server.listen()", false],
+  ["server.emit('connection')", true],
+])("the callbacks of write() and end() when the connection has failed, over %s", (_, emitted) => {
+  type Callback = (name: string) => (err?: Error | null) => void;
+  const body = Buffer.alloc(70000, "x").toString();
+  const moments: Record<string, (run: () => void) => void> = {
+    "at once": run => run(),
+    "in a setImmediate()": run => setImmediate(run),
+    "in a second setImmediate()": run => setImmediate(() => setImmediate(run)),
+  };
+  const operations: Record<string, [string[], (res: ServerResponse, callback: Callback) => void]> = {
+    "write()": [["write"], (res, callback) => res.write(body, callback("write"))],
+    "a small write()": [["write"], (res, callback) => res.write("x", callback("write"))],
+    "flushHeaders(), write()": [["write"], (res, callback) => (res.flushHeaders(), res.write(body, callback("write")))],
+    "write(), end()": [
+      ["write", "end"],
+      (res, callback) => (res.write(body, callback("write")), res.end("y", callback("end"))),
+    ],
+    "a write() of the whole Content-Length, end()": [
+      ["write", "end"],
+      (res, callback) => (
+        res.setHeader("Content-Length", 1),
+        res.write("x", callback("write")),
+        res.end(callback("end"))
+      ),
+    ],
+    "end()": [["end"], (res, callback) => res.end(body, callback("end"))],
+    "flushHeaders(), end()": [["end"], (res, callback) => (res.flushHeaders(), res.end(body, callback("end")))],
+    "cork(), flushHeaders(), write()": [
+      ["write"],
+      (res, callback) => (res.cork(), res.flushHeaders(), res.write(body, callback("write"))),
+    ],
+  };
+  const rows = Object.keys(moments).flatMap(moment => Object.keys(operations).map(name => [name, moment] as const));
+
+  it.each(rows)("%s %s", async (name, moment) => {
+    const [expected, operation] = operations[name];
+    const called: string[] = [];
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    let client: import("node:net").Socket;
+    const server = createServer((req, res) => {
+      req.on("error", () => {});
+      res.on("close", onClosed);
+      client.resetAndDestroy();
+      moments[moment](() => operation(res, callback => () => called.push(callback)));
+    });
+    const listener = emitted
+      ? createNetServer({ allowHalfOpen: true }, socket => server.emit("connection", socket))
+      : server;
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    client = connect((listener.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await closed;
+      // The second setImmediate() can come after 'close'.
+      for (let turn = 0; turn < 3; turn++) await new Promise(resolve => setImmediate(resolve));
+      // After a turn of the loop the server can know that the connection is gone, and like Node it drops the callback of such an end().
+      const dropped = moment !== "at once" && !called.includes("end");
+      expect(called).toEqual(dropped ? expected.filter(name => name !== "end") : expected);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      listener.close();
+    }
+  });
+
+  it("write() fails its callback, end() drops it and emits no 'finish' when the connection was gone before them", async () => {
+    const events: string[] = [];
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      res.on("finish", () => events.push("finish"));
+      res.on("close", onClosed);
+      req.socket.destroy();
+      res.write("x", err => events.push(`write ${(err as NodeJS.ErrnoException)?.code}`));
+      res.end((err?: NodeJS.ErrnoException) => events.push(`end ${err?.code}`));
+    });
+    const listener = emitted ? createNetServer(socket => server.emit("connection", socket)) : server;
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const client = connect((listener.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await closed;
+      await new Promise(resolve => setImmediate(resolve));
+      expect(events).toEqual(["write ERR_STREAM_DESTROYED"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      listener.close();
+    }
+  });
+
+  it("are called for a response that got its turn on a connection that had failed", async () => {
+    const called: string[] = [];
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    let client: import("node:net").Socket;
+    let first: ServerResponse;
+    const server = createServer((req, res) => {
+      req.on("error", () => {});
+      if (req.url === "/first") return void (first = res);
+      res.on("close", onClosed);
+      client.resetAndDestroy();
+      res.write(body, () => called.push("write"));
+      res.end("z", () => called.push("end"));
+      first.write(body, () => called.push("first write"));
+      first.end(() => called.push("first end"));
+    });
+    const listener = emitted
+      ? createNetServer({ allowHalfOpen: true }, socket => server.emit("connection", socket))
+      : server;
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    client = connect((listener.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+      await closed;
+      await new Promise(resolve => setImmediate(resolve));
+      expect(called.sort()).toEqual(["end", "first end", "first write", "write"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      listener.close();
+    }
+  });
+});
 
 it.each([
   ["server.listen()", false],

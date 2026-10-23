@@ -101,6 +101,10 @@ impl SendFile {
             self.offset = u64::try_from(signed_offset).expect("int cast") as usize;
 
             let errcode = bun_sys::get_errno(val);
+            // The send buffer is full, for example with this request's own head.
+            if errcode == bun_sys::E::EAGAIN {
+                return Status::Again;
+            }
 
             self.remain = (self.remain as u64)
                 .saturating_sub((self.offset as u64).saturating_sub(begin as u64))

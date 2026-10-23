@@ -123,6 +123,12 @@ impl SocketGroup {
         unsafe { us_socket_group_close_all(self) }
     }
 
+    /// [`close_all`](Self::close_all) for a thread that ends: see `thread_ends` in libusockets.h.
+    pub fn close_all_as_thread_ends(&mut self) {
+        // SAFETY: forwarding to C; `self` is a valid initialized group.
+        unsafe { us_socket_group_close_all_ex(self, 1, 1) }
+    }
+
     /// Recover the embedding owner. Only valid for groups whose `init` passed a
     /// non-null owner (Listener, uWS App/Context). Per-kind VM groups in
     /// `RareData` pass null, so callers must know which they have.
@@ -326,6 +332,11 @@ unsafe extern "C" {
     // `close_all` reenters Rust callbacks that touch this group via aliasing
     // pointers (`us_socket_group(s)`).
     fn us_socket_group_close_all(group: *mut SocketGroup);
+    fn us_socket_group_close_all_ex(
+        group: *mut SocketGroup,
+        also_listeners: c_int,
+        thread_ends: c_int,
+    );
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,

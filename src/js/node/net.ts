@@ -1241,7 +1241,7 @@ const SocketHandlers = {
     } else if (tlsError && !self[kWriteReq]) {
       self._emitTLSError(error);
     } else if (self.isServer) {
-      // Node leaves the socket alive. Bun's tls.Server completes the handshake of a peer that already reset, and that error would be uncaught.
+      // Node leaves the socket alive. Destroy it, and pass the error on only if something listens for 'error'.
       self.emit("_tlsError", error);
       self.destroy(self.listenerCount("error") > 0 ? error : undefined);
     } else {

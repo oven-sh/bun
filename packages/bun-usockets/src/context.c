@@ -74,7 +74,7 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
  * is 1:1 owned by a Zig Listener / uWS App that holds a raw pointer to it and
  * closes it in finalize(), so closing+freeing it here turns that into a UAF
  * (the original LSAN was only the *accepted* sockets, not the listener). */
-void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
+void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners, int thread_ends) {
     struct us_loop_t *loop = group->loop;
     if (!loop) {
         /* A Windows named-pipe Listener never initializes its group. */
@@ -120,7 +120,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
          * reply. Callers (e.g. Listener.deinit) free the embedding storage
          * next, which would leave s->group dangling. */
         if (!us_socket_is_closed(s)) {
-            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, 0);
+            us_internal_socket_close_raw(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
         }
     }
     group->iterator = 0;
@@ -158,7 +158,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
 }
 
 void us_socket_group_close_all(struct us_socket_group_t *group) {
-    us_socket_group_close_all_ex(group, 1);
+    us_socket_group_close_all_ex(group, 1, 0);
 }
 
 __attribute__((always_inline)) struct us_loop_t *us_socket_group_loop(struct us_socket_group_t *group) {

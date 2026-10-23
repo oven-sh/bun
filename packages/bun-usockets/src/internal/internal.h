@@ -428,7 +428,7 @@ struct us_socket_t {
     /* Once send_rejected is set nothing is sent again, and this is what us_socket_rejected_send_error decodes. */
     unsigned char rejected_send_error;
   };
-  /* Timer-sweep ticks this socket has spent parked in the low-priority queue. Fits in the same gap. */
+  /* Timer-sweep ticks this socket has spent parked in the low-priority queue since us_socket_timeout() armed its timeout. Fits in the same gap. */
   unsigned char low_prio_ticks;
 
   struct us_socket_group_t *group;

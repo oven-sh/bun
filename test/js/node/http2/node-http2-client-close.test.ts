@@ -723,7 +723,7 @@ for (const transport of transports) {
       });
     }
 
-    // Node holds 'end' back here too, so a handler that only waits for 'end' before it answers hangs there.
+    // Node holds 'end' back here too.
     test("emits 'end' for a listener the 'stream' event attached, even if nothing reads the stream", async () => {
       const expected = process.versions.bun
         ? { events: ["end"], readableFlowing: true, readableEnded: true }
@@ -979,9 +979,9 @@ describe("a stream that errors after both halves have closed", () => {
   });
 });
 
-// respond() ends these responses itself. Node emits 'error' for the write(), which is uncaught here.
+// respond() ends these responses itself, so the handler's write() comes after the end. Node emits 'error' for it.
 test(
-  "a handler that answers HEAD, 204 and 304 like GET doesn't crash the server",
+  "write() after respond() ended a HEAD, 204 or 304 response is dropped",
   { skip: !process.versions.bun },
   async () => {
     const script = `

@@ -2317,6 +2317,13 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
         self.carrier = Carrier::None;
 
+        // `start_` is on the stack. It finds the socket closed and calls this again.
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
+            return;
+        }
         if self.signals.get(signals::Field::Aborted) {
             self.fail(crate::Error::Aborted);
             return;
@@ -2847,7 +2854,13 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// While this is on the stack, `fail` and `on_close` only record: its end dispatches the result or starts the next attempt, once.
     fn start_<const IS_SSL: bool>(&mut self) {
+        debug_assert!(
+            !self
+                .flags
+                .defer_terminal_dispatch_until_connecting_is_complete
+        );
         self.carrier = Carrier::None;
 
         // Mark that we are connecting: a terminal result reached inside this
@@ -2991,13 +3004,13 @@ impl<'a> HTTPClient<'a> {
             }
         };
 
-        if socket.is_closed()
-            && (self.state.response_stage != ResponseStage::Done
-                && self.state.response_stage != ResponseStage::Fail)
-        {
+        if socket.is_closed() {
             GenHttpContext::<IS_SSL>::mark_socket_as_dead(socket);
-            self.fail(crate::Error::ConnectionClosed);
+            let in_progress = self.is_in_progress();
             self.complete_connecting_process();
+            if in_progress {
+                self.on_close();
+            }
             return;
         }
 
@@ -3554,23 +3567,19 @@ impl<'a> HTTPClient<'a> {
                                 self.state.request_stage = RequestStage::Done;
                                 return;
                             }
-                            // sendfile(2) reports at once what `socket.write()` leaves to the close event.
-                            crate::send_file::Status::Err(crate::Error::Sys(
+                            // A short `socket.write()` already polls for writable.
+                            crate::send_file::Status::Again if copy => {}
+                            // A peer that is gone is left to the close event, as `socket.write()` leaves it.
+                            crate::send_file::Status::Again
+                            | crate::send_file::Status::Err(crate::Error::Sys(
                                 bun_errno::SystemErrno::EPIPE | bun_errno::SystemErrno::ECONNRESET,
                             )) => {
-                                GenHttpContext::<IS_SSL>::terminate_socket(socket);
-                                self.on_close();
-                                return;
+                                uws::SocketTCP::from_any(socket.socket)
+                                    .mark_needs_more_for_sendfile();
                             }
                             crate::send_file::Status::Err(err) => {
                                 self.close_and_fail::<IS_SSL>(err, socket);
                                 return;
-                            }
-                            // A short `socket.write()` already polls for writable.
-                            crate::send_file::Status::Again if copy => {}
-                            crate::send_file::Status::Again => {
-                                uws::SocketTCP::from_any(socket.socket)
-                                    .mark_needs_more_for_sendfile();
                             }
                         }
                     }

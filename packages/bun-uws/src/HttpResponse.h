@@ -187,9 +187,28 @@ public:
             Super::close();
         } else {
             Super::uncork();
-            /* How long the peer takes to answer the FIN holds up neither stop() nor the process. */
+            /* How long the peer takes to answer the FIN holds up neither stop(), nor the process, nor a handler that still waits for the request body. */
             reportGone();
+            abortRequest();
+            if (us_socket_is_closed((us_socket_t *) this)) {
+                return;
+            }
+            /* A TLS socket still delivers what the peer sends ahead of its close_notify. In this state onData drops it. */
+            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+            httpResponseData->state = (httpResponseData->state | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) & ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
             us_socket_close_lingering((us_socket_t *) this);
+        }
+    }
+
+    /* Tells the handler of the request in flight, once, that it lost the connection. This is the last callback it gets. Runs JavaScript, which can close the socket. */
+    void abortRequest() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        httpResponseData->inStream = nullptr;
+        httpResponseData->onWritable = nullptr;
+        httpResponseData->onTimeout = nullptr;
+        auto onAborted = std::exchange(httpResponseData->onAborted, nullptr);
+        if (onAborted != nullptr && httpResponseData->userData != nullptr) {
+            onAborted(this, httpResponseData->userData);
         }
     }
 
@@ -829,10 +848,7 @@ public:
     void refuseRequestBody() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_REQUEST_BODY_TOO_LARGE;
-        httpResponseData->inStream = nullptr;
-        if (auto onAborted = std::exchange(httpResponseData->onAborted, nullptr)) {
-            onAborted(this, httpResponseData->userData);
-        }
+        abortRequest();
         if (us_socket_is_closed((us_socket_t *) this)) {
             return;
         }

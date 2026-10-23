@@ -6,7 +6,14 @@ const { validateString } = require("internal/validators");
 const { isUint8Array } = require("node:util/types");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, kFinishesWithoutLastWrite, utcDate, RE_CONN_CLOSE } = require("internal/http");
+const {
+  kOutHeaders,
+  kNeedDrain,
+  kFailHeldWrites,
+  kFinishesWithoutLastWrite,
+  utcDate,
+  RE_CONN_CLOSE,
+} = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -341,18 +348,14 @@ OutgoingMessage.prototype.uncork = function uncork() {
     const len = this[kChunkedLength];
     const buf = this[kChunkedBuffer];
     if (this.destroyed || socket?.destroyed) {
-      const error = this[kErrored] || socket?._writableState?.errored || $ERR_STREAM_DESTROYED("write");
-      for (let n = 2; n < buf.length; n += 3) {
-        if (buf[n] !== nop) {
-          process.nextTick(buf[n], error);
-        }
-      }
-      buf.length = 0;
-      this[kChunkedLength] = 0;
+      failCorkedChunks(this, this[kErrored] || socket?._writableState?.errored || $ERR_STREAM_DESTROYED("write"));
       return;
     }
 
     $assert(this.chunkedEncoding);
+
+    // Node emits 'drain' at the end of uncork(), where a listener that is added after uncork() returns misses it.
+    if (this[kNeedDrain]) process.nextTick(emitDrainIfFlushedNT, this);
 
     let callbacks;
     this._send(len.toString(16), "latin1", null);
@@ -371,12 +374,31 @@ OutgoingMessage.prototype.uncork = function uncork() {
   } finally {
     socket?.uncork();
   }
+};
 
-  // Node emits 'drain' right here, where a listener that is added after uncork() returns misses it.
-  if (this[kNeedDrain] && this.writableLength === 0) {
-    this[kNeedDrain] = false;
-    process.nextTick(emitDrainNT, this);
+function failCorkedChunks(msg, err) {
+  const buf = msg[kChunkedBuffer];
+  for (let n = 2; n < buf.length; n += 3) {
+    if (buf[n] !== nop) process.nextTick(buf[n], err);
   }
+  buf.length = 0;
+  msg[kChunkedLength] = 0;
+}
+
+// Fails the callbacks of what the message holds and can't send any more. Node drops them.
+OutgoingMessage.prototype[kFailHeldWrites] = function (err?) {
+  const held = this.outputData;
+  if (held.length === 0 && this[kChunkedBuffer].length === 0) return false;
+  err ??= $ERR_STREAM_DESTROYED("write");
+  failCorkedChunks(this, err);
+  this.outputData = [];
+  this._onPendingData(-this.outputSize);
+  this.outputSize = 0;
+  for (let i = 0; i < held.length; i++) {
+    const callback = held[i].callback;
+    if (typeof callback === "function") process.nextTick(callback, err);
+  }
+  return true;
 };
 
 function runChunkCallbacks(callbacks, err) {
@@ -455,18 +477,20 @@ OutgoingMessage.prototype._send = function _send(data, encoding, callback, byteL
 OutgoingMessage.prototype._writeRaw = _writeRaw;
 function _writeRaw(this: any, data, encoding, callback, _size?) {
   const conn = this[kSocket];
-  if (conn?.destroyed) {
-    // The socket was destroyed. If we're still trying to write to it,
-    // then we haven't gotten the 'close' event yet.
-    return false;
-  }
-
   if (typeof encoding === "function") {
     callback = encoding;
     encoding = null;
   }
 
-  if (conn && conn._httpMessage === this && conn.writable) {
+  if (conn?.destroyed) {
+    // The socket was destroyed. If we're still trying to write to it,
+    // then we haven't gotten the 'close' event yet.
+    if (typeof callback === "function") process.nextTick(callback, conn.errored ?? $ERR_STREAM_DESTROYED("write"));
+    return false;
+  }
+
+  // A socket whose last write failed takes this one too, and fails its callback before it closes.
+  if (conn && conn._httpMessage === this && (conn.writable || conn.errored)) {
     // There might be pending data in the this.output buffer.
     if (this.outputData.length) {
       this._flushOutput(conn);
@@ -1152,11 +1176,13 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
   }
 
   const finish = onFinish.bind(undefined, this);
+  // As in Node, a last write to a connection that was gone before end() doesn't complete the message or call the callback.
+  const lastWrite = this[kSocket]?.destroyed ? nop : finish;
 
   if (this._hasBody && this.chunkedEncoding) {
-    this._send("0\r\n" + this._trailer + "\r\n", "latin1", finish);
+    this._send("0\r\n" + this._trailer + "\r\n", "latin1", lastWrite);
   } else if (!this._headerSent || this.writableLength || chunk) {
-    this._send("", "latin1", finish);
+    this._send("", "latin1", lastWrite);
   } else {
     process.nextTick(finish);
   }
@@ -1210,21 +1236,21 @@ OutgoingMessage.prototype._flush = function _flush() {
   const socket = this[kSocket];
 
   if (socket?.writable) {
+    if (this[kNeedDrain]) process.nextTick(emitDrainIfFlushedNT, this);
     // There might be remaining data in this.output; write it out
     this._flushOutput(socket);
 
     if (this.finished) {
       // This is a queue to the server or client to bring in the next this.
       this._finish();
-    } else if (this[kNeedDrain] && this.writableLength === 0) {
-      this[kNeedDrain] = false;
-      // In Node the socket reports backpressure for as much as this, and 'drain' follows its own a tick later.
-      process.nextTick(emitDrainNT, this);
     }
   }
 };
 
-function emitDrainNT(msg) {
+// Queued ahead of a flush: as in Node, 'drain' comes a tick later than the flush and before the callbacks of the writes it sent.
+function emitDrainIfFlushedNT(msg) {
+  if (!msg[kNeedDrain] || msg.writableLength !== 0) return;
+  msg[kNeedDrain] = false;
   if (!msg.destroyed && !msg.finished) msg.emit("drain");
 }
 

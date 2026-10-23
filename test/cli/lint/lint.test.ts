@@ -6724,6 +6724,40 @@ maybe(() => { return f; });
       expect(reports).toEqual(expected);
     });
 
+    // From ESLint 8.57.1 too.
+    describe("before ESLint 10, no-shadow allows the name of a function expression anywhere in the variable's declaration", () => {
+      const source = `const A = wrap(function A() {});
+const B = function B() {};
+const { C } = wrap(function C() {});
+const D = wrap(class D {});
+const E = wrap(() => function E() {});
+function f(G = wrap(function G() {})) {}
+let H; H = wrap(function H() {});
+const I = [function I() {}];
+console.log(A, B, C, D, E, f, H, I);
+`;
+      const flat = { "eslint.config.mjs": `export default [{ rules: { "no-shadow": "error" } }];` };
+      const legacy = {
+        ".eslintrc.json": JSON.stringify({
+          root: true,
+          parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+          rules: { "no-shadow": "error" },
+        }),
+      };
+      test.each([
+        ["8.57.1", legacy, "EGH"],
+        ["9.39.5", flat, "EGH"],
+        ["10.12.0", flat, "ACDEGHI"],
+      ])("eslint %s", async (version, config, expected) => {
+        const installed = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }) };
+        const { raw } = await lint({ "a.js": source, ...config, ...installed }, ["-f", "json", "a.js"]);
+        const names = (JSON.parse(raw)[0].messages as any[]).map(
+          it => /^'(\w)' is already declared/.exec(it.message)?.[1],
+        );
+        expect(names.join("")).toBe(expected);
+      });
+    });
+
     // Since ESLint 10, `eslint-scope` treats a JSX element's name as a reference. Before that, a plugin's rule has to
     // mark the variables that an element uses, like `react/jsx-uses-vars`. Here that rule is `local/uses-vars`, and
     // MARKS=off turns it off.

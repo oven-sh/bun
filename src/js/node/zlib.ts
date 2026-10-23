@@ -3,9 +3,9 @@
 const BufferModule = require("node:buffer");
 
 const crc32 = $bindgen("node_zlib_binding.bind.ts", "crc32");
-const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
-const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
-const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
+const NativeZlib = $bindgen("node_zlib_binding.bind.ts", "NativeZlib");
+const NativeBrotli = $bindgen("node_zlib_binding.bind.ts", "NativeBrotli");
+const NativeZstd = $bindgen("node_zlib_binding.bind.ts", "NativeZstd");
 
 const ObjectKeys = Object.keys;
 const ArrayPrototypePush = Array.prototype.push;
@@ -155,7 +155,7 @@ interface FlushOptions {
 }
 
 interface ZlibHandle {
-  [owner_symbol]: ZlibBase;
+  [owner_symbol]?: ZlibBase;
   onerror: typeof zlibOnError;
   reset(): void;
   close(): void;

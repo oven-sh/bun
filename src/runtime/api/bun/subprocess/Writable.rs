@@ -20,8 +20,6 @@ pub(crate) enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter<'a>>),
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Inherit,
     Ignore,
 }
@@ -55,7 +53,6 @@ impl<'a> Writable<'a> {
         match self {
             Writable::Pipe(pipe) => pipe.memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
-            // TODO: memfd
             _ => 0,
         }
     }
@@ -226,7 +223,7 @@ impl<'a> Writable<'a> {
                 Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
-                Stdio::Ipc | Stdio::Capture(_) => {
+                Stdio::Ipc | Stdio::Capture => {
                     return Ok(Writable::Ignore);
                 }
                 // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
@@ -303,23 +300,10 @@ impl<'a> Writable<'a> {
                     super::source_from_blob(blob),
                 )))
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Stdio::Memfd(_) => {
-                // Transfer ownership: `Stdio`'s Drop would close the memfd, so
-                // take it out via ManuallyDrop (same pattern as the Blob arm)
-                // to keep the caller's `stdio[0]` drop from double-closing the
-                // fd that Writable now owns.
-                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let Stdio::Memfd(fd) = &*owned else {
-                    unreachable!()
-                };
-                debug_assert!(*fd != Fd::INVALID);
-                Ok(Writable::Memfd(*fd))
-            }
             Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-            Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+            Stdio::Ipc | Stdio::Capture => Ok(Writable::Ignore),
             // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
             Stdio::SocketFd => unreachable!("SocketFd at stdin"),
         }
@@ -332,11 +316,6 @@ impl<'a> Writable<'a> {
             Writable::Fd(fd) => {
                 subprocess.stdin.set(Writable::Fd(fd));
                 fd.to_js(global_this)
-            }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                subprocess.stdin.set(Writable::Memfd(fd));
-                JSValue::UNDEFINED
             }
             Writable::Ignore => JSValue::UNDEFINED,
             Writable::Buffer(buffer) => {
@@ -429,10 +408,6 @@ impl<'a> Writable<'a> {
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(&buffer).update_ref(false);
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                fd.close();
-            }
             Writable::Ignore => {}
             Writable::Fd(fd) => {
                 subprocess.stdin.set(Writable::Fd(fd));
@@ -447,11 +422,6 @@ impl<'a> Writable<'a> {
         match self {
             Writable::Pipe(pipe) => {
                 let _ = pipe.end(None);
-            }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                fd.close();
-                *self = Writable::Ignore;
             }
             Writable::Fd(_) => {
                 *self = Writable::Ignore;

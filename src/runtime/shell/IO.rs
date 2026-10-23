@@ -4,7 +4,7 @@
 
 use bun_collections::VecExt;
 
-use crate::api::bun_spawn::stdio::{Capture, Stdio};
+use crate::api::bun_spawn::stdio::Stdio;
 use crate::shell::interpreter::OutputNeedsIOSafeGuard;
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;
@@ -140,13 +140,8 @@ impl OutKind {
         match self {
             OutKind::Fd(val) => {
                 *shellio = Some(std::sync::Arc::clone(&val.writer));
-                if let Some(cap) = val.captured {
-                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                    let _ = cap;
-                    Stdio::Capture(Capture {
-                        #[cfg(any(target_os = "linux", target_os = "android"))]
-                        buf: cap,
-                    })
+                if val.captured.is_some() {
+                    Stdio::Capture
                 } else {
                     // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
                     // once the fd has been handed off to libuv, so the

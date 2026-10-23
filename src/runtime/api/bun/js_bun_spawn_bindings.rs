@@ -945,12 +945,12 @@ fn spawn_maybe_sync(
     }
     let _ = &inherited_env_storage;
 
-    // A memfd left in `stdio` at any return is closed by `Stdio`'s Drop.
+    // The child's stdin bytes. Ours only until `spawn_process` has given the child its own descriptor.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd() && stdio[fd_index].use_memfd(fd_index as u32) {
-            jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
-        }
+    let mut stdin_memfd = stdio[0].take_as_memfd();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if stdin_memfd.is_some() {
+        jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
     }
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
@@ -1155,6 +1155,11 @@ fn spawn_maybe_sync(
         cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
         ..Default::default()
     };
+    // `stdio[0]` is `Ignore` then: the child's stdin is the memfd, lent for the call.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(memfd) = &stdin_memfd {
+        spawn_options.stdin = SpawnOptionsStdio::Pipe(memfd.handle());
+    }
 
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
@@ -1247,6 +1252,13 @@ fn spawn_maybe_sync(
             sys::Result::Ok(result) => result,
         },
     };
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(memfd) = stdin_memfd.take() {
+        // The child has its own descriptor for the memfd now. `spawned.stdin` is the number of ours.
+        spawned.stdin = None;
+        drop(memfd);
+    }
 
     // Use the isolated loop for spawnSync operations
     //
@@ -1432,7 +1444,7 @@ fn spawn_maybe_sync(
     // event_loop points to the live JSC EventLoop for this thread.
     let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout.set(Readable::init(
-        core::mem::replace(&mut stdio[1], Stdio::Ignore),
+        &stdio[1],
         event_loop_nn,
         subprocess_nn,
         spawned_stdout,
@@ -1440,7 +1452,7 @@ fn spawn_maybe_sync(
         is_sync,
     ));
     subprocess.stderr.set(Readable::init(
-        core::mem::replace(&mut stdio[2], Stdio::Ignore),
+        &stdio[2],
         event_loop_nn,
         subprocess_nn,
         spawned_stderr,

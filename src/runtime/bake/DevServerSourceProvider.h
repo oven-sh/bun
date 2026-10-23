@@ -16,22 +16,24 @@ extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSource
 class DevServerSourceProvider final : public JSC::StringSourceProvider {
 public:
     static Ref<DevServerSourceProvider> create(
-        JSC::JSGlobalObject* globalObject,
         const String& source,
-        const char* sourceMapJSONPtr,
-        size_t sourceMapJSONLength,
         const JSC::SourceOrigin& sourceOrigin,
         String&& sourceURL,
         const TextPosition& startPosition,
         JSC::SourceProviderSourceType sourceType)
     {
-        auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-        auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
-        auto specifier = Bun::toString(provider->sourceURL());
-        provider->m_bunVM = zigGlobalObject->bunVM();
-        provider->m_specifier = specifier;
-        Bun__addDevServerSourceProvider(provider->m_bunVM, provider.ptr(), &specifier);
-        return provider;
+        return adoptRef(*new DevServerSourceProvider(source, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
+    }
+
+    // Takes ownership of the JSON and registers this provider for stack trace remapping. Registering replaces the
+    // provider that holds the URL, so call this once the source has loaded.
+    void attachSourceMap(JSC::JSGlobalObject* globalObject, const char* sourceMapJSONPtr, size_t sourceMapJSONLength)
+    {
+        ASSERT(!m_bunVM);
+        m_sourceMapJSON = MiString(sourceMapJSONPtr, sourceMapJSONLength);
+        m_bunVM = uncheckedDowncast<::Zig::GlobalObject>(globalObject)->bunVM();
+        m_specifier = Bun::toString(sourceURL());
+        Bun__addDevServerSourceProvider(m_bunVM, this, &m_specifier);
     }
 
     MiCString sourceMapJSON() const
@@ -42,8 +44,6 @@ public:
 private:
     DevServerSourceProvider(
         const String& source,
-        const char* sourceMapJSONPtr,
-        size_t sourceMapJSONLength,
         const JSC::SourceOrigin& sourceOrigin,
         String&& sourceURL,
         const TextPosition& startPosition,
@@ -55,7 +55,6 @@ private:
               WTF::move(sourceURL),
               startPosition,
               sourceType)
-        , m_sourceMapJSON(sourceMapJSONPtr, sourceMapJSONLength)
     {
     }
 
@@ -66,8 +65,8 @@ private:
         }
     }
 
-    MiString m_sourceMapJSON;
-    // The Rust VirtualMachine, captured at creation. Not the GC-allocated
+    MiString m_sourceMapJSON { nullptr, 0 };
+    // The Rust VirtualMachine, captured by attachSourceMap. Not the GC-allocated
     // Zig::GlobalObject: this destructor runs from JSC sweep, by which point
     // the global object cell may already have been swept.
     void* m_bunVM { nullptr };

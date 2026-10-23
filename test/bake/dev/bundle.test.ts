@@ -1684,6 +1684,294 @@ devTest("a route module that throws when a save reloads it is reported and recov
     await dev.fetch("/").equals("index v3");
   },
 });
+// The bundler accepts some code that JavaScriptCore does not parse, such as the pattern of a regular expression. The
+// server runtime loads the server files of a bundle as one chunk, and a chunk with such a file used to abort the process.
+devTest("a server file that the server runtime does not parse is a build error", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export const pattern = /a**/;
+      export default function (req, meta) {
+        return new Response("index");
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response("other");
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/", {
+        errors: ["routes/index.ts:1:24: error: Invalid regular expression: nothing to repeat"],
+      });
+    }
+    expect((await dev.fetch("/")).status).toBe(500);
+    // The framework's server entry point is in the chunk of the rejected file. It is loaded.
+    await dev.fetch("/other").equals("other");
+
+    await dev.write(
+      "routes/index.ts",
+      `
+        export const pattern = /a*/;
+        export default function (req, meta) {
+          return new Response("index " + pattern.source);
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index a*");
+  },
+});
+devTest("a hot update with a file that the server runtime does not parse loads its other files", {
+  framework: minimalFramework,
+  files: {
+    "version.ts": `export const version = "v1";`,
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response("index v1");
+      }
+    `,
+    "routes/other.ts": `
+      import { version } from "../version";
+      export default function (req, meta) {
+        return new Response("other " + version);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index v1");
+    await dev.fetch("/other").equals("other v1");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write(
+        "routes/index.ts",
+        `
+          export class Page {
+            constructor() {}
+            constructor() {}
+          }
+          export default function (req, meta) {
+            return new Response("index v2");
+          }
+        `,
+      );
+      await dev.write("version.ts", `export const version = "v2";`);
+    }
+    await dev.fetch("/other").equals("other v2");
+    {
+      await using c = await dev.client("/", {
+        errors: ["routes/index.ts:3:17: error: Cannot declare multiple constructors in a single class."],
+      });
+      // A save that is rejected again replaces the failure of the file.
+      await dev.write(
+        "routes/index.ts",
+        `
+          again: again: ;
+          export default function (req, meta) {
+            return new Response("index v3");
+          }
+        `,
+        { errors: ["routes/index.ts:1:8: error: Unexpected token ';'. Attempted to redeclare the label 'again'."] },
+      );
+    }
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function (req, meta) {
+          return new Response("index v4");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index v4");
+    await dev.fetch("/other").equals("other v2");
+  },
+});
+devTest("every file of a chunk that the server runtime does not parse is reported", {
+  framework: minimalFramework,
+  files: {
+    "rejected/regex-in-function.ts": `
+      export function match(text) {
+        return /(/.test(text);
+      }
+    `,
+    "rejected/regex-last-in-array.ts": `
+      export const patterns = [
+        /ok/,
+        /[b-a]/
+      ];
+    `,
+    "rejected/regex-group-name.ts": `export const pattern = /(?<name>.)(?<name>.)/;`,
+    "rejected/new-target.ts": `export const target = new.target;`,
+    "rejected/new-target-in-arrow.ts": `export const target = () => new.target;`,
+    "accepted.ts": `export const accepted = "accepted";`,
+    "routes/index.ts": `
+      import "../rejected/regex-in-function";
+      import "../rejected/regex-last-in-array";
+      import "../rejected/regex-group-name";
+      import "../rejected/new-target";
+      import "../rejected/new-target-in-arrow";
+      import { accepted } from "../accepted";
+      export default function (req, meta) {
+        return new Response("index " + accepted);
+      }
+    `,
+    "routes/other.ts": `
+      import { accepted } from "../accepted";
+      export default function (req, meta) {
+        return new Response("other " + accepted);
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/", {
+        errors: [
+          "rejected/regex-in-function.ts:2:10: error: Invalid regular expression: missing )",
+          "rejected/regex-last-in-array.ts:3:3: error: Invalid regular expression: range out of order in character class",
+          "rejected/regex-group-name.ts:1:24: error: Invalid regular expression: duplicate group specifier name",
+          "rejected/new-target.ts:1:23: error: new.target is not valid inside arrow functions in global code.",
+          "rejected/new-target-in-arrow.ts:1:29: error: new.target is not valid inside arrow functions in global code.",
+        ],
+      });
+    }
+    // A route that imports none of the rejected files works, with the accepted file of that chunk.
+    await dev.fetch("/other").equals("other accepted");
+
+    for (const file of [
+      "regex-in-function",
+      "regex-last-in-array",
+      "regex-group-name",
+      "new-target",
+      "new-target-in-arrow",
+    ]) {
+      await dev.write(`rejected/${file}.ts`, `export {};`, { errors: null });
+    }
+    await dev.fetch("/").equals("index accepted");
+  },
+});
+// The server graph has one record for a client component: the server's reference to it and the copy of it that the SSR
+// graph bundles.
+devTest("a client component that the server runtime does not parse is a build error", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "components/Button.ts": `
+      "use client";
+      export const pattern = /a**/;
+      export function Button() {}
+    `,
+    "routes/index.ts": `
+      import * as components from '../components/Button';
+      export default function (req, meta) {
+        return new Response('page: ' + (typeof components.Button));
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/", {
+        errors: ["components/Button.ts:2:24: error: Invalid regular expression: nothing to repeat"],
+      });
+    }
+    await dev.write(
+      "components/Button.ts",
+      `
+        "use client";
+        export const pattern = /a*/;
+        export function Button() {}
+      `,
+    );
+    await dev.fetch("/").equals("page: object");
+  },
+});
+// JavaScriptCore does not run a Program while a Proxy is in the prototype chain of the global object.
+devTest("a server chunk that throws when the server runtime loads it fails its files", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response("index");
+      }
+    `,
+    "routes/prototype.ts": `
+      const prototype = Object.getPrototypeOf(globalThis);
+      export default function (req, meta) {
+        const restore = new URL(req.url).searchParams.has("restore");
+        Object.setPrototypeOf(globalThis, restore ? prototype : new Proxy(prototype, {}));
+        return new Response(restore ? "restored" : "proxied");
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response("other");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    await dev.fetch("/prototype").equals("proxied");
+    {
+      await using c = await dev.client("/other", {
+        errors: ["routes/other.ts: error: Proxy is not allowed in the global prototype chain."],
+      });
+    }
+    // A route that was loaded before still works.
+    await dev.fetch("/").equals("index");
+
+    await dev.fetch("/prototype?restore").equals("restored");
+    await dev.fetch("/other").equals("other");
+  },
+});
+// The source map of the last loaded server chunk is registered under the one URL that all server chunks have. A chunk
+// that is not loaded must leave it there.
+devTest("a server chunk that is not loaded keeps the source map of the loaded code", {
+  framework: minimalFramework,
+  files: {
+    "fail.ts": `
+      export function fail() {
+        throw new Error("failed");
+      }
+    `,
+    "routes/index.ts": `
+      import { fail } from "../fail";
+      export default function (req, meta) {
+        try {
+          fail();
+        } catch (error) {
+          return new Response(error.stack);
+        }
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response("other");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/other").equals("other");
+    // The chunk of this route is the last one that the server runtime loads.
+    const stack = await dev.fetch("/").text();
+    expect(stack).toMatch(/at \w+ \(.*fail\.ts:\d+:\d+\)/);
+
+    await dev.write(
+      "routes/other.ts",
+      `
+        export const pattern = /a**/;
+        export default function (req, meta) {
+          return new Response("other");
+        }
+      `,
+    );
+    expect(await dev.fetch("/").text()).toBe(stack);
+  },
+});
 devTest("a route loads after a request for it was answered with 413", {
   files: {
     "routes/about.ts": `

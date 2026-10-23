@@ -15,3 +15,13 @@ extern "C" MiCString DevServerSourceProvider__getSourceMapJSON(Bake::DevServerSo
 {
     return provider->sourceMapJSON();
 }
+
+extern "C" void DevServerSourceProvider__attachSourceMap(Bake::DevServerSourceProvider* provider, JSC::JSGlobalObject* globalObject, const char* sourceMapJSONPtr, size_t sourceMapJSONLength)
+{
+    provider->attachSourceMap(globalObject, sourceMapJSONPtr, sourceMapJSONLength);
+}
+
+extern "C" void DevServerSourceProvider__deref(Bake::DevServerSourceProvider* provider)
+{
+    provider->deref();
+}

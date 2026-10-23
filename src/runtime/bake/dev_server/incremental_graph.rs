@@ -9,6 +9,7 @@
 //! per-side behaviour is dispatched on the `SIDE` const parameter.
 
 use core::mem::offset_of;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
@@ -236,11 +237,11 @@ pub(crate) struct ReceiveChunkSourceMap {
     pub(crate) escaped_source: Option<Box<[u8]>>,
 }
 
-pub(crate) enum ReceiveChunkContent {
+pub(crate) enum ReceiveChunkContent<'a> {
     Js {
-        /// Allocated by `dev.arena()`; ownership transferred to the graph
-        /// (client) or to `current_chunk_code` (server).
-        code: Box<[u8]>,
+        /// The client graph keeps the code. The server graph does not: the
+        /// server runtime loaded it before the graph received the chunk.
+        code: Cow<'a, [u8]>,
         source_map: Option<ReceiveChunkSourceMap>,
     },
     Css(u64),
@@ -295,15 +296,14 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Freed edge slots for reuse by `new_edge`.
     pub(crate) edges_free_list: Vec<EdgeIndex>,
     // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
-    /// Total byte length of the current JS chunk being assembled.
+    /// Client side: total byte length of the current JS chunk being assembled.
+    /// Server side: unused.
     pub(crate) current_chunk_len: usize,
     /// Client side: file indices contributing to the current chunk (emit order).
-    /// Server side: unused (server stores code slices in `current_chunk_code`).
+    /// Server side: unused.
     pub(crate) current_chunk_parts: Vec<FileIndex<SIDE>>,
-    /// Server side: owned code slices contributing to the current chunk.
-    /// Client side: unused.
-    pub(crate) current_chunk_code: Vec<Box<[u8]>>,
-    /// Server side: `{file_index, source_map}` parallel to `current_chunk_code`.
+    /// Server side: `{file_index, source_map}` of each file of the chunk the
+    /// server runtime loaded, in the chunk's order.
     pub(crate) current_chunk_source_maps: Vec<CurrentChunkSourceMapData>,
     /// Client side: CSS asset content-hashes referenced by the current chunk.
     pub(crate) current_css_files: Vec<u64>,
@@ -410,7 +410,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
             Side::Server => {
-                graph += self.current_chunk_code.capacity() * size_of::<Box<[u8]>>();
                 graph += self.current_chunk_source_maps.capacity()
                     * size_of::<CurrentChunkSourceMapData>();
                 for item in &self.current_chunk_source_maps {
@@ -434,8 +433,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 self.current_css_files.clear();
             }
             Side::Server => {
-                // `Box<[u8]>` drops on clear; ditto `Shared` in source_maps.
-                self.current_chunk_code.clear();
                 self.current_chunk_source_maps.clear();
             }
         }
@@ -555,14 +552,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // ────────────────────────────────────────────────────────────────────────
 
     /// Tracks a bundled code chunk for cross-bundle chunks, ensuring it has an
-    /// entry in `bundled_files`. For client, takes ownership of the code slice;
-    /// for server, the code is kept in `current_chunk_code` until
-    /// `take_js_bundle` consumes it.
+    /// entry in `bundled_files`. For client, keeps the code; for server, the
+    /// server runtime already loaded it.
     pub(crate) fn receive_chunk(
         &mut self,
         ctx: &mut HotUpdateContext<'_>,
         index: impl Into<bun_ast::Index>,
-        content: ReceiveChunkContent,
+        content: ReceiveChunkContent<'_>,
         is_ssr_graph: bool,
     ) -> Result<(), crate::Error> {
         let index: bun_ast::Index = index.into();
@@ -646,6 +642,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         (Content::CssRoot(css), packed_map::Shared::None, None)
                     }
                     ReceiveChunkContent::Js { code, source_map } => {
+                        let code = code.into_owned().into_boxed_slice();
                         let len = code.len();
                         let kind = if ctx.loaders[index.get() as usize].is_javascript_like() {
                             Content::Js(code)
@@ -775,11 +772,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
 
                 if let ReceiveChunkContent::Js { code, source_map } = content {
-                    let code_len = code.len();
-                    let line_count = strings::count_char(&code, b'\n') as u32;
-                    self.current_chunk_code.push(code);
-                    self.current_chunk_len += code_len;
-
                     let packed = match source_map {
                         Some(mut sm)
                             if sm.chunk.buffer.len() > 0 && sm.escaped_source.is_some() =>
@@ -789,7 +781,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 sm.escaped_source.take().unwrap(),
                             ))
                         }
-                        _ => packed_map::Shared::LineCount(packed_map::LineCount::init(line_count)),
+                        _ => packed_map::Shared::LineCount(packed_map::LineCount::init(
+                            strings::count_char(&code, b'\n') as u32,
+                        )),
                     };
                     self.current_chunk_source_maps
                         .push(CurrentChunkSourceMapData {
@@ -1783,16 +1777,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // takeJSBundle / takeSourceMap
     // ────────────────────────────────────────────────────────────────────────
 
-    /// `IncrementalGraph(.server).takeJSBundle` — server-side overload.
-    pub(crate) fn take_js_bundle_server(
-        &mut self,
-        opts: &TakeJSBundleOptionsServer,
-    ) -> Result<Vec<u8>, crate::Error> {
-        let mut chunk = Vec::new();
-        self.take_js_bundle_to_list_server(&mut chunk, opts)?;
-        Ok(chunk)
-    }
-
     /// `IncrementalGraph(.client).takeJSBundle` — client-side overload (kept
     /// under the side-agnostic name for existing call sites).
     pub(crate) fn take_js_bundle(
@@ -1943,14 +1927,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// `IncrementalGraph(.server).takeJSBundleToList` (spec :1713).
-    fn take_js_bundle_to_list_server(
-        &mut self,
-        list: &mut Vec<u8>,
+    /// The text of a server chunk that holds `files`: one Program that
+    /// evaluates to the object of their modules. Also returns where the first
+    /// file starts in the text.
+    pub(crate) fn server_js_bundle<'a>(
+        files: impl Iterator<Item = &'a [u8]> + Clone,
         options: &TakeJSBundleOptionsServer,
-    ) -> Result<(), crate::Error> {
+    ) -> (Vec<u8>, usize) {
         debug_assert!(matches!(SIDE, Side::Server));
-        debug_assert!(self.current_chunk_len > 0);
 
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
@@ -1964,16 +1948,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let end: &[u8] = b"})";
 
         let runtime_code = runtime.code.as_bytes();
-        let start = list.len();
-        list.reserve_exact(self.current_chunk_len + runtime_code.len() + end.len());
+        let files_len: usize = files.clone().map(|code| code.len()).sum();
+        let mut list = Vec::with_capacity(runtime_code.len() + files_len + end.len());
         list.extend_from_slice(runtime_code);
-        for code in &self.current_chunk_code {
+        for code in files {
             list.extend_from_slice(code);
         }
         list.extend_from_slice(end);
 
-        let _ = start;
-        Ok(())
+        (list, runtime_code.len())
     }
 
     /// `IncrementalGraph(side).takeSourceMap` (spec :1843).

@@ -1,5 +1,8 @@
 //! Finishing a bundle: applying results to the graphs and sending hot updates.
 
+use std::borrow::Cow;
+use std::rc::Rc;
+
 use super::*;
 
 pub(crate) struct HotUpdateContext<'a> {
@@ -149,6 +152,249 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
     }
 }
 
+/// Why the server runtime did not load a part of a bundle's server code.
+enum ServerPartRejection {
+    /// JavaScriptCore's parser stopped at this token of the part's code. The
+    /// position is zero-based, and `column` counts UTF-16 code units.
+    Parse {
+        message: BunString,
+        line: i32,
+        column: i32,
+    },
+    /// A failure of the chunk that names no place in the part's code.
+    Chunk(Rc<[u8]>),
+}
+
+impl ServerPartRejection {
+    /// `failure` is from a parse of `prefix` followed by the part's code.
+    fn from_parse_failure(failure: server_hmr_ffi::ParseFailure, prefix: &[u8]) -> Self {
+        let line = failure.line - strings::count_char(prefix, b'\n') as i32;
+        let column = if line == 0 {
+            let line_start = strings::last_index_of_char(prefix, b'\n').map_or(0, |i| i + 1);
+            failure.column - (prefix.len() - line_start) as i32
+        } else {
+            failure.column
+        };
+        Self::Parse {
+            message: failure.message,
+            line,
+            column,
+        }
+    }
+}
+
+/// What the server runtime did with the server code of a bundle.
+#[derive(Default)]
+struct ServerPatch {
+    /// The object of the loaded modules, and the provider of their source.
+    /// `None` if the bundle has no server code, or the runtime loaded none.
+    /// The object is in a root handle: a copy of the value left in the frame
+    /// of `finalize_bundle` keeps the chunk alive after the bundle is done.
+    loaded: Option<(jsc::Strong, server_hmr_ffi::ServerPatchProvider)>,
+    /// How many parts `loaded` holds.
+    loaded_count: usize,
+    /// By the position of a part in the chunk. Empty if the runtime rejected none.
+    rejected: Vec<Option<ServerPartRejection>>,
+}
+
+impl ServerPatch {
+    fn rejection(&self, part_position: usize) -> Option<&ServerPartRejection> {
+        self.rejected.get(part_position)?.as_ref()
+    }
+}
+
+/// Loads the server code of a bundle into the server runtime. This runs before
+/// the graph receives the code, so the graph never records a part the runtime
+/// rejects as built.
+fn load_server_patch(
+    dev: &DevServer,
+    js_chunk: &bundler::chunk::Chunk,
+    targets: &[bun_ast::Target],
+) -> ServerPatch {
+    let mut patch = ServerPatch::default();
+    if dev.frontend_only {
+        return patch;
+    }
+
+    let parts = &js_chunk.content.javascript().parts_in_chunk_in_order;
+    // The position in the chunk and the code of each part for the server.
+    let mut files: Vec<(usize, &[u8])> = Vec::new();
+    for (position, (part_range, compile_result)) in parts
+        .iter()
+        .zip(js_chunk.compile_results_for_chunk.iter())
+        .enumerate()
+    {
+        if matches!(
+            compile_result,
+            bundler::CompileResult::Javascript {
+                result: bun_js_printer::PrintResult::Result(_),
+                ..
+            }
+        ) && targets[part_range.source_index.get() as usize].bake_graph() != bake::Graph::Client
+        {
+            files.push((position, compile_result.code()));
+        }
+    }
+    if files.is_empty() {
+        return patch;
+    }
+
+    let global = dev.global();
+    let options = incremental_graph::TakeJSBundleOptionsServer {
+        kind: ChunkKind::HmrChunk,
+    };
+    let load = |files: &[(usize, &[u8])]| {
+        let (code, _) = IncrementalGraph::<{ bake::Side::Server }>::server_js_bundle(
+            files.iter().map(|file| file.1),
+            &options,
+        );
+        server_hmr_ffi::bake_load_server_hmr_patch(global, BunString::clone_utf8(&code))
+    };
+
+    let mut loading = load(&files);
+    if matches!(
+        loading,
+        Err((
+            _,
+            server_hmr_ffi::ServerPatchFailure::SyntaxError
+                | server_hmr_ffi::ServerPatchFailure::ParserOutOfStackOrMemory
+        ))
+    ) {
+        // The failure names one place in the chunk. Parse each part alone to
+        // find every part JavaScriptCore rejects, then load the others.
+        patch.rejected.resize_with(parts.len(), || None);
+        let count = files.len();
+        files.retain(|&(position, file)| {
+            let (code, file_start) = IncrementalGraph::<{ bake::Side::Server }>::server_js_bundle(
+                ::core::iter::once(file),
+                &options,
+            );
+            match server_hmr_ffi::bake_check_server_hmr_patch_syntax(
+                global,
+                BunString::clone_utf8(&code),
+            ) {
+                Ok(()) => true,
+                Err(failure) => {
+                    patch.rejected[position] = Some(ServerPartRejection::from_parse_failure(
+                        failure,
+                        &code[..file_start],
+                    ));
+                    false
+                }
+            }
+        });
+        if files.is_empty() {
+            return patch;
+        }
+        if files.len() < count {
+            loading = load(&files);
+        }
+    }
+
+    let (exception, failure) = match loading {
+        Ok((modules, provider)) => {
+            patch.loaded = Some((jsc::Strong::create(modules, global), provider));
+            patch.loaded_count = files.len();
+            return patch;
+        }
+        Err(failed) => failed,
+    };
+    if failure == server_hmr_ffi::ServerPatchFailure::SyntaxError {
+        // Each part of this chunk parses alone.
+        dev.vm_mut().print_error_like_object_to_console(exception);
+        panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
+    }
+    let message: Rc<[u8]> = thrown_message(global, exception).into();
+    patch.rejected.resize_with(parts.len(), || None);
+    for (position, _) in files {
+        patch.rejected[position] = Some(ServerPartRejection::Chunk(message.clone()));
+    }
+    patch
+}
+
+/// The message of what loading a server chunk threw.
+fn thrown_message(global: &JSGlobalObject, exception: JSValue) -> Vec<u8> {
+    if exception.is_termination_exception() {
+        return b"JavaScript execution was terminated while the server runtime loaded this file"
+            .to_vec();
+    }
+    match bun_ast_jsc::msg_from_js(global, Vec::new(), exception) {
+        Ok(msg) => msg.data.text.into_owned(),
+        Err(_) => {
+            let _ = global.clear_exception_except_termination();
+            b"The server runtime threw a value that could not be converted to a string".to_vec()
+        }
+    }
+}
+
+/// The failure to report for a part that the server runtime rejected.
+/// `source_map` maps the part's code to `source`.
+fn server_part_rejection_log(
+    rejection: &ServerPartRejection,
+    source: &bun_ast::Source,
+    source_map: Option<&bun_sourcemap::Chunk>,
+) -> Log {
+    let mut log = Log::init();
+    match rejection {
+        ServerPartRejection::Parse {
+            message,
+            line,
+            column,
+        } => log.add_error(
+            Some(source),
+            source_map
+                .and_then(|map| source_loc_before(source, map, *line, *column))
+                .unwrap_or(bun_ast::Loc::EMPTY),
+            message.to_owned_slice(),
+        ),
+        ServerPartRejection::Chunk(message) => {
+            log.add_error(Some(source), bun_ast::Loc::EMPTY, message.to_vec())
+        }
+    }
+    log
+}
+
+/// Where in `source` the code before (`line`, `column`) of its generated code
+/// came from. JavaScriptCore's parser stops at the token after a construct it
+/// rejects as a whole, such as a regular expression.
+fn source_loc_before(
+    source: &bun_ast::Source,
+    map: &bun_sourcemap::Chunk,
+    line: i32,
+    column: i32,
+) -> Option<bun_ast::Loc> {
+    let mappings = bun_sourcemap::mapping::parse(
+        map.buffer.list.as_slice(),
+        None,
+        1,
+        bun_sourcemap::mapping::ParseOptions::default(),
+    )
+    .ok()?;
+    let mut original: Option<bun_sourcemap::LineColumnOffset> = None;
+    mappings.for_each_mapping(|mapping| {
+        let generated = (
+            mapping.generated.lines.zero_based(),
+            mapping.generated.columns.zero_based(),
+        );
+        if generated < (line, column) {
+            original = Some(mapping.original);
+        }
+    });
+    let original = original?;
+    let (line, column) = (
+        u64::try_from(original.lines.zero_based()).ok()?,
+        u64::try_from(original.columns.zero_based()).ok()?,
+    );
+    let offset = if (line, column) == (0, 0) {
+        0
+    } else {
+        bun_ast::Source::line_col_to_byte_offset(&source.contents, 1, 1, line + 1, column + 1)?
+    };
+    Some(bun_ast::Loc {
+        start: i32::try_from(offset).ok()?,
+    })
+}
+
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
 pub(super) fn finalize_bundle(
@@ -281,27 +527,32 @@ pub(super) fn finalize_bundle(
     };
 
     let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
-    // Pass 1, update the graph's nodes, resolving every bundler source
-    // index into its `IncrementalGraph(...).FileIndex`
     debug_assert_eq!(
         js_chunk.content.javascript().parts_in_chunk_in_order.len(),
         js_chunk.compile_results_for_chunk.len()
     );
-    for (part_range, compile_result) in js_chunk
+
+    let mut server_patch = load_server_patch(dev, js_chunk, targets);
+
+    // Pass 1, update the graph's nodes, resolving every bundler source
+    // index into its `IncrementalGraph(...).FileIndex`
+    for (part_position, (part_range, compile_result)) in js_chunk
         .content
         .javascript()
         .parts_in_chunk_in_order
         .iter()
         .zip(js_chunk.compile_results_for_chunk.iter())
+        .enumerate()
     {
         let index = part_range.source_index;
-        // Report a part that failed to print as its file's failure, like a parse error.
-        if let bundler::CompileResult::Javascript {
+        // Report a part that failed to print, or that the server runtime rejected, as its
+        // file's failure, like a parse error.
+        let source = &ctx.sources[index.get() as usize];
+        let failure: Option<Log> = if let bundler::CompileResult::Javascript {
             result: bun_js_printer::PrintResult::Err(err),
             ..
         } = compile_result
         {
-            let source = &ctx.sources[index.get() as usize];
             let mut log = Log::init();
             match err {
                 bun_js_printer::Error::StackOverflow => log.add_error(
@@ -315,6 +566,13 @@ pub(super) fn finalize_bundle(
                     format_args!("Failed to generate code for this file ({})", err.name()),
                 ),
             }
+            Some(log)
+        } else {
+            server_patch.rejection(part_position).map(|rejection| {
+                server_part_rejection_log(rejection, source, compile_result.source_map_chunk())
+            })
+        };
+        if let Some(log) = failure {
             let graph = targets[index.get() as usize].bake_graph();
             let key = incremental_graph::InsertFailureKey::AbsPath(
                 source.path.key_for_incremental_graph(),
@@ -353,7 +611,7 @@ pub(super) fn finalize_bundle(
                 &mut ctx,
                 index,
                 incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
+                    code: Cow::Borrowed(compile_result.code()),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
                         // `quoted_contents` lives in the per-bundle AST heap,
@@ -371,7 +629,7 @@ pub(super) fn finalize_bundle(
                 &mut ctx,
                 index,
                 incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
+                    code: Cow::Borrowed(compile_result.code()),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
                         // `quoted_contents` lives in the per-bundle AST heap,
@@ -536,7 +794,7 @@ pub(super) fn finalize_bundle(
             &mut ctx,
             index,
             incremental_graph::ReceiveChunkContent::Js {
-                code: generated_js,
+                code: Cow::Owned(generated_js.into_vec()),
                 source_map: None,
             },
             false,
@@ -597,21 +855,24 @@ pub(super) fn finalize_bundle(
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
-    for (part_range, compile_result) in js_chunk
+    for (part_position, (part_range, compile_result)) in js_chunk
         .content
         .javascript()
         .parts_in_chunk_in_order
         .iter()
         .zip(js_chunk.compile_results_for_chunk.iter())
+        .enumerate()
     {
-        // Pass 1 didn't resolve a file index for a part that failed to print.
+        // Pass 1 didn't resolve a file index for a part that failed to print, or that the
+        // server runtime rejected.
         if matches!(
             compile_result,
             bundler::CompileResult::Javascript {
                 result: bun_js_printer::PrintResult::Err(_),
                 ..
             }
-        ) {
+        ) || server_patch.rejection(part_position).is_some()
+        {
             continue;
         }
         match targets[part_range.source_index.get() as usize].bake_graph() {
@@ -666,89 +927,38 @@ pub(super) fn finalize_bundle(
         );
     }
 
-    // Load all new chunks into the server runtime.
-    if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
-        // Generate a script_id for server bundles
-
-        // Get the source map if available and render to JSON
-        let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
-            'json: {
-                // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry {
-                    ref_count: 1,
-                    ..Default::default()
-                };
-
-                // Fill the source map entry
-                dev.server_graph.take_source_map(&mut source_map_entry)?;
-                // Note: erase to raw ptr so `render_json` can borrow the entry
-                // while the cleanup guard is armed.
-                let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
-                scopeguard::defer! {
-                    // SAFETY: `source_map_entry` is a stack local that outlives this guard.
-                    unsafe {
-                        (*entry_ptr).ref_count = 0;
-                        (*entry_ptr).deinit();
-                    }
-                };
-
-                let json_data =
-                    source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
-                break 'json Some(json_data);
-            }
-        } else {
-            None
-        };
-
-        let server_bundle = dev.server_graph.take_js_bundle_server(
-            &incremental_graph::TakeJSBundleOptionsServer {
-                kind: ChunkKind::HmrChunk,
-            },
-        )?;
-
+    // Give the server runtime the source map and the modules of the code it loaded.
+    if let Some((server_modules, provider)) = server_patch.loaded.take() {
+        debug_assert_eq!(
+            dev.server_graph.current_chunk_source_maps.len(),
+            server_patch.loaded_count
+        );
         let global = dev.global();
-        let server_modules = if let Some(json) = source_map_json {
-            // This memory will be owned by the `DevServerSourceProvider` in C++
-            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
+        {
+            // Create a temporary source map entry to render
+            let mut source_map_entry = source_map_store::Entry {
+                ref_count: 1,
+                ..Default::default()
+            };
 
-            match server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
-                global,
-                BunString::clone_utf8(&server_bundle),
-                json.as_ptr(),
-                json.len(),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
+            // Fill the source map entry
+            dev.server_graph.take_source_map(&mut source_map_entry)?;
+            // Note: erase to raw ptr so `render_json` can borrow the entry
+            // while the cleanup guard is armed.
+            let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
+            scopeguard::defer! {
+                // SAFETY: `source_map_entry` is a stack local that outlives this guard.
+                unsafe {
+                    (*entry_ptr).ref_count = 0;
+                    (*entry_ptr).deinit();
                 }
-            }
-        } else {
-            match server_hmr_ffi::bake_load_server_hmr_patch(
-                global,
-                BunString::clone_latin1(&server_bundle),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
-                }
-            }
-        };
+            };
+
+            let json =
+                source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
+            provider.attach_source_map(global, json);
+        }
+
         // Note: `make_array_for_server_components_patch` needs `&mut self`
         // while reading `self.incremental_result.client_components_{added,removed}`.
         // It only touches `server_graph.bundled_files.keys()`, so reborrow the
@@ -766,7 +976,7 @@ pub(super) fn finalize_bundle(
             global,
             global.to_js_value(),
             &[
-                server_modules,
+                server_modules.get(),
                 dev.make_array_for_server_components_patch(global, added)?,
                 dev.make_array_for_server_components_patch(global, removed)?,
             ],

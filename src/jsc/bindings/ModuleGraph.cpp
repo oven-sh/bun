@@ -667,8 +667,10 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!disposed())
+    if (!disposed()) {
         m_loader->clearAll();
+        vm.heap.reportAbandonedObjectGraph();
+    }
     // Everything the graph's script opened goes: servers, sockets, timers, in-flight requests,
     // child processes, workers.
     m_context->stop();

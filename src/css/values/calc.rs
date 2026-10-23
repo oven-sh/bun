@@ -141,6 +141,11 @@ pub trait CalcValue:
     + protocol::ToCss
     + protocol::IsCompatible
 {
+    /// Whether a math function can stay in a calculation of this type. A type that takes only
+    /// a calculation that reduces to one value never prints a product, and opts out of the
+    /// code that keeps its numbers exact.
+    const KEEPS_MATH_FUNCTIONS: bool = true;
+
     fn add_internal(self, rhs: Self) -> Self;
     /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
@@ -1066,7 +1071,7 @@ impl<V: CalcValue> Calc<V> {
                 expression,
             } => {
                 let negates = matches!(scale, Scale::By(by) if by == -1.0);
-                if matches!(*expression, Calc::Sum { .. }) && !negates {
+                if V::KEEPS_MATH_FUNCTIONS && matches!(*expression, Calc::Sum { .. }) && !negates {
                     return Self::scale_kept_sum(*expression, number, divisor, scale);
                 }
                 let (number, divisor) = product_numbers(number, divisor, scale);
@@ -1116,48 +1121,19 @@ impl<V: CalcValue> Calc<V> {
 
     /// Scales a sum that keeps a math function and is already times `number` and over
     /// `divisor`.
-    ///
-    /// A value of the sum takes one folded number. So numerals go into the terms only when
-    /// they leave a numeral in every value. If not, they stay on the whole sum:
-    /// `(3*min(..) + 3px)/7`.
     fn scale_kept_sum(sum: Self, number: f32, divisor: f32, scale: Scale) -> Self {
-        let exact = exact_ratio(number, divisor, scale)
-            .and_then(|(times, over)| Some((times, over, times.to_f32()?, over.to_f32()?)));
-        let Some((times, over, number, divisor)) = exact else {
-            // One folded number scales every term, as before.
-            return sum
-                .scale_terms(Scale::By(number))
-                .scale_terms(Scale::By(1.0 / divisor))
-                .scale_terms(Scale::By(scale.factor()));
-        };
-
-        if divisor == 1.0 && number.abs() == 1.0 {
-            return sum.scale_terms(Scale::By(number));
-        }
-        if sum.scales_exactly(times, over) {
-            return sum
-                .scale_terms(Scale::Times(number))
-                .scale_terms(Scale::Over(divisor));
-        }
-        if number == -1.0 {
-            return Calc::Product {
-                number: 1.0,
-                divisor: -divisor,
-                expression: Box::new(sum),
-            };
-        }
-        if number != 1.0 && sum.scales_exactly(times, Numeral::ONE) {
-            return Calc::Product {
-                number: 1.0,
+        let scales_exactly = |times, over| sum.scales_exactly(times, over);
+        match sum_scale(number, divisor, scale, &scales_exactly) {
+            SumScale::Terms(scales) => scales.into_iter().fold(sum, Self::scale_terms),
+            SumScale::Whole {
+                times,
+                number,
                 divisor,
-                expression: Box::new(sum.scale_terms(Scale::Times(number))),
-            };
-        }
-        let (number, divisor) = numerals_to_numbers(times, over).unwrap_or((number, divisor));
-        Calc::Product {
-            number,
-            divisor,
-            expression: Box::new(sum),
+            } => Calc::Product {
+                number,
+                divisor,
+                expression: Box::new(sum.scale_terms(Scale::Times(times))),
+            },
         }
     }
 
@@ -1181,6 +1157,9 @@ impl<V: CalcValue> Calc<V> {
 
     /// Whether a math function stays in the output of this expression.
     fn keeps_function(&self) -> bool {
+        if !V::KEEPS_MATH_FUNCTIONS {
+            return false;
+        }
         match self {
             Calc::Value(_) | Calc::Number(_) => false,
             Calc::Sum { left, right } => left.keeps_function() || right.keeps_function(),
@@ -1270,6 +1249,7 @@ fn try_parse_atan2_args<Value: CalcValue>(input: &mut css::Parser) -> CssResult<
 /// Where a math function takes a number, the token is the longest run of sign, digit, `.`
 /// and `e` bytes before its end. A nested calculation ends with `)` and a constant with a
 /// letter.
+#[inline(never)]
 fn ends_with_numeral(input: &[u8]) -> bool {
     if !input.last().is_some_and(u8::is_ascii_digit) {
         return false;
@@ -1331,7 +1311,7 @@ impl Numeral {
     };
     const MOST_DIGITS: i64 = 999_999;
 
-    fn new(mut digits: i128, mut exponent: i32) -> Option<Numeral> {
+    fn new(mut digits: i64, mut exponent: i32) -> Option<Numeral> {
         if digits == 0 {
             exponent = 0;
         } else {
@@ -1340,7 +1320,6 @@ impl Numeral {
                 exponent += 1;
             }
         }
-        let digits = i64::try_from(digits).ok()?;
         (digits.abs() <= Self::MOST_DIGITS).then_some(Numeral { digits, exponent })
     }
 
@@ -1354,7 +1333,7 @@ impl Numeral {
     /// not all of it.
     fn printed(number: f32, in_full: bool) -> Option<Numeral> {
         if number.fract() == 0.0 && number.abs() <= Self::MOST_DIGITS as f32 {
-            return Self::new(number as i128, 0);
+            return Self::new(number as i64, 0);
         }
 
         let mut buf = [0u8; 129];
@@ -1363,7 +1342,7 @@ impl Numeral {
             return None;
         }
 
-        let mut digits: i128 = 0;
+        let mut digits: i64 = 0;
         let mut exponent: i32 = 0;
         let mut in_fraction = false;
         let mut rest = text.strip_prefix(b"-").unwrap_or(text);
@@ -1371,8 +1350,8 @@ impl Numeral {
             rest = tail;
             if *byte == b'.' {
                 in_fraction = true;
-            } else if in_fraction || digits < i128::from(Self::MOST_DIGITS) {
-                digits = digits * 10 + i128::from(byte - b'0');
+            } else if in_fraction || digits < Self::MOST_DIGITS {
+                digits = digits * 10 + i64::from(byte - b'0');
                 exponent -= i32::from(in_fraction);
             } else {
                 // The printer fills a long integer with zeros after its 6 digits.
@@ -1414,22 +1393,20 @@ impl Numeral {
 
     /// `self * times / over`, when that is a numeral too.
     fn scaled(self, times: Numeral, over: Numeral) -> Option<Numeral> {
-        let divisor = i128::from(over.digits);
+        let divisor = over.digits;
         if divisor == 0 {
             return None;
         }
-        let mut digits = i128::from(self.digits) * i128::from(times.digits);
+        let mut digits = self.digits * times.digits;
         let mut exponent = self.exponent + times.exponent - over.exponent;
-        // A quotient of 6 digits and a divisor of 6 digits make a dividend of 12 digits.
-        for _ in 0..12 {
-            if digits % divisor == 0 {
-                break;
+        // The dividend takes one more digit until the division is exact. A dividend this
+        // long gives a quotient of more than 6 digits.
+        while digits % divisor != 0 {
+            if digits.abs() > Self::MOST_DIGITS * divisor.abs() {
+                return None;
             }
             digits *= 10;
             exponent -= 1;
-        }
-        if digits % divisor != 0 {
-            return None;
         }
         Self::new(digits / divisor, exponent)
     }
@@ -1463,9 +1440,9 @@ fn exact_ratio(number: f32, divisor: f32, scale: Scale) -> Option<(Numeral, Nume
         divisor = divisor.times(by)?;
     }
 
-    let (mut above, mut below) = (i128::from(number.digits), i128::from(divisor.digits));
+    let (mut above, mut below) = (number.digits, divisor.digits);
     let shift = number.exponent - divisor.exponent;
-    let power = 10i128.checked_pow(shift.unsigned_abs())?;
+    let power = 10i64.checked_pow(shift.unsigned_abs())?;
     if shift < 0 {
         below = below.checked_mul(power)?;
     } else {
@@ -1504,6 +1481,71 @@ fn folded_numbers(number: f32) -> (f32, f32) {
         (1.0, inverse)
     } else {
         (number, 1.0)
+    }
+}
+
+/// How a sum that keeps a math function takes a number.
+enum SumScale {
+    /// Every term takes these, one after the other.
+    Terms([Scale; 3]),
+    /// Every term is multiplied by `times`. Then `number` and `divisor` stay on the whole sum.
+    Whole {
+        times: f32,
+        number: f32,
+        divisor: f32,
+    },
+}
+
+/// The scale of a sum that keeps a math function and is already times `number` and over
+/// `divisor`. `scales_exactly` says whether every value of the sum is a numeral after
+/// `* times / over`.
+///
+/// A value takes one folded number. So numerals go into the terms only when they leave a
+/// numeral in every value. If not, they stay on the whole sum: `(3*min(..) + 3px)/7`.
+#[inline(never)]
+fn sum_scale(
+    number: f32,
+    divisor: f32,
+    scale: Scale,
+    scales_exactly: &dyn Fn(Numeral, Numeral) -> bool,
+) -> SumScale {
+    const SAME: Scale = Scale::By(1.0);
+    let exact = exact_ratio(number, divisor, scale)
+        .and_then(|(times, over)| Some((times, over, times.to_f32()?, over.to_f32()?)));
+    let Some((times, over, number, divisor)) = exact else {
+        // One folded number scales every term, as before.
+        return SumScale::Terms([
+            Scale::By(number),
+            Scale::By(1.0 / divisor),
+            Scale::By(scale.factor()),
+        ]);
+    };
+
+    if divisor == 1.0 && number.abs() == 1.0 {
+        return SumScale::Terms([Scale::By(number), SAME, SAME]);
+    }
+    if scales_exactly(times, over) {
+        return SumScale::Terms([Scale::Times(number), Scale::Over(divisor), SAME]);
+    }
+    if number == -1.0 {
+        return SumScale::Whole {
+            times: 1.0,
+            number: 1.0,
+            divisor: -divisor,
+        };
+    }
+    if number != 1.0 && scales_exactly(times, Numeral::ONE) {
+        return SumScale::Whole {
+            times: number,
+            number: 1.0,
+            divisor,
+        };
+    }
+    let (number, divisor) = numerals_to_numbers(times, over).unwrap_or((number, divisor));
+    SumScale::Whole {
+        times: 1.0,
+        number,
+        divisor,
     }
 }
 
@@ -1910,6 +1952,8 @@ fn absf(a: f32) -> f32 {
 // inherent method.
 
 impl CalcValue for CSSNumber {
+    const KEEPS_MATH_FUNCTIONS: bool = false;
+
     #[inline]
     fn add_internal(self, rhs: Self) -> Self {
         self + rhs
@@ -1928,6 +1972,8 @@ impl CalcValue for CSSNumber {
 }
 
 impl CalcValue for Angle {
+    const KEEPS_MATH_FUNCTIONS: bool = false;
+
     #[inline]
     fn add_internal(self, rhs: Self) -> Self {
         Angle::add_internal(self, rhs)
@@ -2065,6 +2111,8 @@ calc_protocol_forwarders!(Percentage {
     parse_to_css: forward_copy,
 });
 impl CalcValue for Percentage {
+    const KEEPS_MATH_FUNCTIONS: bool = false;
+
     #[inline]
     fn add_internal(self, rhs: Self) -> Self {
         Percentage::add_internal(self, rhs)
@@ -2107,6 +2155,8 @@ calc_protocol_forwarders!(Time {
     is_compatible: always_true,
 });
 impl CalcValue for Time {
+    const KEEPS_MATH_FUNCTIONS: bool = false;
+
     #[inline]
     fn add_internal(self, rhs: Self) -> Self {
         Time::add_internal(self, rhs)

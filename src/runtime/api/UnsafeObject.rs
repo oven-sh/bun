@@ -35,12 +35,10 @@ pub(crate) fn array_buffer_to_string<'a>(
             let bytes = array_buffer.byte_slice();
             match bytemuck::try_cast_slice::<u8, u16>(bytes) {
                 Ok(utf16) => Ok(EncodedSlice::utf16(utf16).to_js(global)),
-                // Not at an even address: an `ArrayBuffer` over external memory, or the empty slice
-                // of a detached view.
+                // An odd address: external memory, or the empty slice of a detached view.
                 Err(_) => {
                     let string = encoding::to_bun_string(bytes, Encoding::Utf16le);
-                    // Like `to_js`: the empty string when a string cannot hold the units, or
-                    // cannot be allocated.
+                    // Like `to_js`, too many units or no memory give the empty string.
                     if string.is_dead() {
                         return Ok(JSValue::js_empty_string(global));
                     }

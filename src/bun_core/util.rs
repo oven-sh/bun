@@ -58,8 +58,7 @@ impl<T: Copy> Unaligned<T> {
 }
 
 impl<T: bytemuck::Pod> Unaligned<T> {
-    /// The `T`s in `bytes`, in place, for `bytes` at any address. Trailing bytes that do not fill
-    /// a `T` are left out.
+    /// The whole `T`s in `bytes`, in place. `bytes` can be at any address.
     #[inline]
     pub fn slice_from_bytes(bytes: &[u8]) -> &[Self] {
         const { assert!(size_of::<T>() != 0) };
@@ -3108,11 +3107,8 @@ pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
 // ─── Slice reinterpretation (canonical) ───────────────────────────────────────
 // Split by mutability, with three safety surfaces:
 //   - `cast_slice` / `cast_slice_mut`  → SAFE, bytemuck-bounded, panics on
-//     misalign or `len % size_of::<B>() != 0`. Use to narrow (u16 → u8), or to
-//     widen bytes that Bun put at the alignment of `B`.
-//   - `Unaligned::slice_from_bytes` / `slice_from_bytes_mut` → SAFE, never
-//     panics, TRUNCATES trailing bytes. Use for bytes at any address, such as
-//     the storage of a JS `ArrayBuffer`.
+//     misalign or `len % size_of::<B>() != 0`. Use for Pod↔Pod (u8↔u16 etc.).
+//   - `Unaligned::slice_from_bytes` / `_mut` → SAFE, no panic. Use for bytes at any address.
 //   - `bytes_as_slice_mut`             → UNSAFE escape hatch, unbounded `T`,
 //     TRUNCATES trailing bytes. Use only when `T` is not
 //     `AnyBitPattern` or the input length is intentionally not a multiple.
@@ -5166,8 +5162,8 @@ impl From<f16> for f32 {
     }
 }
 // SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid
-// `f16`, no padding, `Copy + 'static`. Enables the safe cast of `&[u8]` to
-// `&[Unaligned<f16>]` for Float16Array printing (ConsoleObject).
+// `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
+// from `&[u8]` for Float16Array printing (ConsoleObject).
 unsafe impl bytemuck::Zeroable for f16 {}
 // SAFETY: `#[repr(transparent)]` over `u16` — no padding, every bit pattern is
 // valid, `Copy + Zeroable + 'static`; satisfies all `bytemuck::Pod` invariants.

@@ -679,9 +679,7 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
-    /// The bytes as elements of `T`, read in place. There is no `&[T]` accessor: storage that JSC
-    /// adopted (`bun:ffi`, N-API, `Bun.mmap`, a `Blob` slice) starts at any address, and a transfer
-    /// keeps that address.
+    /// The elements, in place. Storage that JSC adopted starts at any address: there is no `&[T]`.
     #[inline]
     pub fn elements<T: bytemuck::Pod>(&self) -> &[bun_core::Unaligned<T>] {
         bun_core::Unaligned::slice_from_bytes(self.byte_slice())

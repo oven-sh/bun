@@ -1656,7 +1656,8 @@ describe.concurrent("TypedArray over an ArrayBuffer at an unaligned address", ()
         return new Response(slice);
       }
       const response = responseOfSlice();
-      while (collected < 2) {
+      for (let turns = 0; collected < 2; turns++) {
+        if (turns === 100) throw new Error("the Blob and its slice were not collected");
         Bun.gc(true);
         await new Promise(resolve => setImmediate(resolve));
       }

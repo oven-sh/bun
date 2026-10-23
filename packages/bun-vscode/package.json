@@ -33,7 +33,8 @@
   "categories": [
     "Programming Languages",
     "Debuggers",
-    "Testing"
+    "Testing",
+    "Formatters"
   ],
   "contributes": {
     "configuration": {
@@ -44,6 +45,11 @@
           "description": "A path to the `bun` executable. By default, the extension looks for `bun` in the `PATH`, but if set, it will use the specified path instead.",
           "scope": "window",
           "default": null
+        },
+        "bun.fmt.bunfig": {
+          "type": "string",
+          "description": "Optional fallback `bunfig.toml` for `bun fmt`, such as `~/.bunfig.toml`. The nearest project `bunfig.toml` containing `[fmt]` takes precedence. Relative paths are resolved from the workspace folder.",
+          "scope": "resource"
         },
         "bun.diagnosticsSocket.enabled": {
           "type": "boolean",
@@ -116,6 +122,11 @@
         "category": "Bun",
         "enablement": "!inDebugMode && resourceLangId =~ /^(javascript|typescript|javascriptreact|typescriptreact)$/ && !isInDiffEditor && resourceScheme == 'untitled'",
         "icon": "$(play-circle)"
+      },
+      {
+        "command": "extension.bun.formatter.showOutput",
+        "title": "Show Formatter Output",
+        "category": "Bun"
       }
     ],
     "menus": {

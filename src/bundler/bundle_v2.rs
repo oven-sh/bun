@@ -4275,14 +4275,7 @@ pub mod bv2_impl {
             let mut new_source = source_without_index;
             let source_index = self.graph.input_files.len();
             new_source.index = bun_ast::Index(source_index as u32);
-            // `bun_ast::Source: !Clone` — manually dup the (all-Clone) fields.
-            let task_source = bun_ast::Source {
-                path: new_source.path,
-                contents: new_source.contents.clone(),
-                contents_is_recycled: new_source.contents_is_recycled,
-                identifier_name: new_source.identifier_name.clone(),
-                index: new_source.index,
-            };
+            let task_source = new_source.clone();
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: new_source,
                 loader: Loader::Js,

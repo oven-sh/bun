@@ -210,6 +210,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
                     }),
                     index: source_ref.index,
+                    id: source_ref.id,
                 };
                 &source_storage
             } else {

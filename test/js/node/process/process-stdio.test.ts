@@ -387,6 +387,50 @@ describe.concurrent.skipIf(isWindows)(
       },
     );
 
+    // The reader exits while a write waits for it. Nothing is queued behind a write that failed, so an empty write has
+    // nothing to wait for: its callback runs, as in Node.
+    //
+    // The writable poll has to be what finds the hangup: the flush at the end of a turn of the writer's event loop ends
+    // the sink when it finds it first. So the writer reports from a later turn, and is idle when the reader leaves.
+    test('process.stdout.write("", cb) calls back after a write to a full real pipe failed', async () => {
+      const writer = `const report = v => require("fs").writeSync(2, JSON.stringify(v) + "\\n");
+        process.stdout.on("error", error => {
+          const calls = [];
+          const inHandler = process.stdout.write("", () => calls.push("in the handler"));
+          setImmediate(() => {
+            const later = process.stdout.write("", () => calls.push("later"));
+            setImmediate(() => report({ error: error.code, inHandler, later, calls }));
+          });
+        });
+        const parked = process.stdout.write(Buffer.alloc(1 << 20, "A")) === false;
+        setImmediate(() => report({ parked }));`;
+      const leavingReader = `process.on("SIGUSR1", () => process.exit(0));
+        setInterval(() => {}, 1 << 30);
+        require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");`;
+      await using proc = spawn({
+        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), writer, leavingReader],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const events = jsonLines(proc.stderr);
+      let readerPid: number | undefined, parked: boolean | undefined;
+      while (readerPid === undefined || parked === undefined) {
+        const v = await events.next();
+        if ("reader" in v) readerPid = v.reader;
+        if ("parked" in v) parked = v.parked;
+      }
+      expect(parked).toBe(true);
+      process.kill(readerPid!, "SIGUSR1");
+      expect(await events.next()).toEqual({
+        error: "EPIPE",
+        inHandler: true,
+        later: true,
+        calls: ["in the handler", "later"],
+      });
+      expect(await proc.exited).toBe(0);
+    });
+
     // Bun.spawn's "pipe" is a socketpair; these go through sh so fd 1 is a real pipe(2).
     test("console.log and process.stdout.write are not truncated over a real pipe", async () => {
       await using proc = spawn({

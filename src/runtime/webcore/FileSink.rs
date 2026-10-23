@@ -1474,7 +1474,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     }
     /// Behind the chunks the fd refused, like any other chunk written now.
     fn write_empty(&mut self) -> streams::Writable {
-        if self.done.get() || !self.writer.get().is_backed_up() {
+        let writer = self.writer.get();
+        // After a write error the writer is done and drains nothing, but `is_backed_up()` can still be true.
+        if self.done.get() || writer.is_done || !writer.is_backed_up() {
             return streams::Writable::Temporary(0);
         }
         self.to_result(WriteResult::Pending(0), 0)

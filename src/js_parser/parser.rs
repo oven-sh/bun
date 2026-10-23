@@ -1793,7 +1793,7 @@ pub enum WrapMode {
 /// 1. For all Components (which is defined as any top-level function/function variable, that is
 ///    named with a capital letter; see `isComponentishName`), register them to the runtime using
 ///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.handleReactRefreshRegister`
-///    HOC components are also registered, but only through a special case for `export default`
+///    A component in wrapper calls, as in `memo(fn)`: see `p.register_react_refresh_wrapper`.
 ///
 /// 2. For all functions which call a Hook (a hook is an identifier matching /^use[A-Z]/):
 ///     a. Outside of the function, create a signature function `const _s = $RefreshSig$();`
@@ -1823,6 +1823,9 @@ pub struct ReactRefresh<'a> {
     /// we must insert an import statement to it.
     pub(crate) register_used: bool,
     pub(crate) signature_used: bool,
+
+    /// A function, not a wrapper call, was registered: the module emits `hmr.reactRefreshAccept()`.
+    pub(crate) function_registered: bool,
 
     /// $RefreshReg$ is called on all top-level variables that are
     /// components, as well as HOCs found in the `export default` clause.
@@ -1862,35 +1865,53 @@ pub struct ReactRefresh<'a> {
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.
     pub(crate) hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
 
-    /// This is the most recently generated `_s` call. This is used to compare
-    /// against seen calls to plain identifiers when in "export default" and in
-    /// "const Component =" to know if an expression had been wrapped in a hook
-    /// signature function.
-    pub(crate) latest_signature_ref: Ref,
-
-    _phantom: core::marker::PhantomData<&'a ()>,
+    /// The components registered so far by name, newest first. `hoc(Name)` needs `Name` in it.
+    pub(crate) registered: Option<&'a RegisteredComponent<'a>>,
 }
+
+// `P` holds one of these for every file, with or without React Fast Refresh.
+const _: () = assert!(core::mem::size_of::<ReactRefresh<'static>>() <= 56);
 
 impl<'a> Default for ReactRefresh<'a> {
     fn default() -> Self {
         Self {
             register_used: false,
             signature_used: false,
+            function_registered: false,
             register_ref: Ref::NONE,
             create_signature_ref: Ref::NONE,
             force_reset: false,
             last_hook_seen: None,
             hook_ctx_storage: None,
-            latest_signature_ref: Ref::NONE,
-            _phantom: core::marker::PhantomData,
+            registered: None,
         }
     }
+}
+
+pub(crate) struct RegisteredComponent<'a> {
+    pub(crate) binding: Ref,
+    /// The hook signature of its function, when that function calls hooks.
+    pub(crate) signature: Option<crate::p::ReactRefreshSignature>,
+    pub(crate) next: Option<&'a RegisteredComponent<'a>>,
 }
 
 pub struct HookContext {
     pub(crate) hasher: Wyhash,
     pub(crate) signature_cb: Ref,
     pub(crate) user_hooks: ArrayHashMap<Ref, Expr>,
+}
+
+impl<'a> ReactRefresh<'a> {
+    pub(crate) fn registered_component(&self, binding: Ref) -> Option<&'a RegisteredComponent<'a>> {
+        let mut entry = self.registered;
+        while let Some(component) = entry {
+            if component.binding == binding {
+                return Some(component);
+            }
+            entry = component.next;
+        }
+        None
+    }
 }
 
 impl ReactRefresh<'_> {

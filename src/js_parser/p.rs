@@ -235,6 +235,111 @@ pub enum ReactRefreshExportKind {
     Default,
 }
 
+impl ReactRefreshExportKind {
+    /// The name in the id of a registration: "file.ts:Name" or "file.ts:default".
+    fn name(self, original_name: &[u8]) -> &[u8] {
+        match self {
+            Self::Named => original_name,
+            Self::Default => b"default",
+        }
+    }
+}
+
+/// A function that React Fast Refresh registers, found in the value of a module-scope binding.
+#[derive(Clone, Copy)]
+struct ReactRefreshComponent {
+    /// The function is the first argument of a call: `memo(fn)`, not `fn`.
+    is_wrapped: bool,
+    /// The hook signature of the function, when it calls hooks.
+    signature: Option<ReactRefreshSignature>,
+}
+
+/// The arguments of a `_s(fn, "<hash>", force, () => [useCustom])` call after the function.
+#[derive(Clone, Copy)]
+pub(crate) struct ReactRefreshSignature {
+    /// `_s`
+    callback: Ref,
+    hash: js_ast::StoreStr,
+    force: Option<bool>,
+    custom_hooks: Option<js_ast::StoreRef<E::Array>>,
+}
+
+impl ReactRefreshSignature {
+    /// Reads back a `P::react_refresh_signature_call` call. Only generated code has no location.
+    fn read(expr: Expr) -> Option<Self> {
+        let js_ast::ExprData::ECall(call) = expr.data else {
+            return None;
+        };
+        if expr.loc != bun_ast::Loc::EMPTY {
+            return None;
+        }
+        let js_ast::ExprData::EIdentifier(callback) = call.target.data else {
+            return None;
+        };
+        let mut args = call.args.slice().iter().skip(1);
+        let js_ast::ExprData::EString(hash) = args.next()?.data else {
+            return None;
+        };
+        let mut signature = ReactRefreshSignature {
+            callback: callback.ref_,
+            hash: hash.data,
+            force: None,
+            custom_hooks: None,
+        };
+        if let Some(force) = args.next() {
+            let js_ast::ExprData::EBoolean(force) = force.data else {
+                return None;
+            };
+            signature.force = Some(force.value);
+        }
+        if let Some(getter) = args.next() {
+            // () => [useCustom1, useCustom2]
+            let js_ast::ExprData::EArrow(getter) = getter.data else {
+                return None;
+            };
+            let Some(js_ast::StmtData::SReturn(ret)) =
+                getter.body.stmts.slice().first().map(|stmt| stmt.data)
+            else {
+                return None;
+            };
+            let Some(js_ast::ExprData::EArray(custom_hooks)) = ret.value.map(|value| value.data)
+            else {
+                return None;
+            };
+            signature.custom_hooks = Some(custom_hooks);
+        }
+        Some(signature)
+    }
+
+    /// `s_function` pushes the `_s(Name, "hash")` statement of a function with hooks last.
+    fn of_declaration(stmts: &[Stmt], name: Ref) -> Option<Self> {
+        let js_ast::StmtData::SExpr(signed) = stmts.last()?.data else {
+            return None;
+        };
+        let js_ast::ExprData::ECall(call) = signed.value.data else {
+            return None;
+        };
+        match call.args.slice().first()?.data {
+            js_ast::ExprData::EIdentifier(signed_name) if signed_name.ref_ == name => {
+                Self::read(signed.value)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// "file.ts:" and then `name`, the id of a React Fast Refresh registration.
+fn react_refresh_id<'a>(arena: &'a Bump, file: &[u8], name: &[&[u8]]) -> &'a [u8] {
+    let len = file.len() + 1 + name.iter().map(|part| part.len()).sum::<usize>();
+    let mut id = BumpVec::with_capacity_in(len, arena);
+    id.extend_from_slice(file);
+    id.push(b':');
+    for part in name {
+        id.extend_from_slice(part);
+    }
+    id.into_bump_slice()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
@@ -8468,11 +8573,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(self.current_scope == self.module_scope);
 
         if ReactRefresh::is_componentish_name(original_name) {
-            self.emit_react_refresh_register(stmts, original_name, r#ref, export_kind)?;
+            self.register_react_refresh_function(stmts, original_name, r#ref, export_kind)?;
         }
         Ok(())
     }
 
+    /// Registers a function declaration at module scope.
+    #[inline(never)] // PERF: only the React Fast Refresh path of `s_function` pays for this.
+    fn register_react_refresh_function(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        original_name: &'a [u8],
+        r#ref: Ref,
+        export_kind: ReactRefreshExportKind,
+    ) -> Result<(), crate::Error> {
+        let signature = ReactRefreshSignature::of_declaration(stmts, r#ref);
+        self.emit_react_refresh_register(stmts, original_name, r#ref, export_kind)?;
+        self.note_react_refresh_component(r#ref, signature);
+        Ok(())
+    }
+
+    /// Registers a function under the name of its binding, or as the default export.
     pub(crate) fn emit_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -8480,24 +8601,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref: Ref,
         export_kind: ReactRefreshExportKind,
     ) -> Result<(), crate::Error> {
+        // $RefreshReg$(component, "file.ts:Original Name")
+        let id = react_refresh_id(
+            self.arena,
+            self.source.path.pretty,
+            &[export_kind.name(original_name)],
+        );
+        self.push_react_refresh_register(stmts, r#ref, id);
+        self.react_refresh.function_registered = true;
+        Ok(())
+    }
+
+    fn push_react_refresh_register(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        r#ref: Ref,
+        id: &'a [u8],
+    ) {
         debug_assert!(self.options.features.react_fast_refresh);
         debug_assert!(self.current_scope == self.module_scope);
 
-        // $RefreshReg$(component, "file.ts:Original Name")
         let loc = bun_ast::Loc::EMPTY;
-        let label: &'a [u8] = self.arena.alloc_slice_copy(&strings::concat(&[
-            self.source.path.pretty,
-            b":",
-            match export_kind {
-                ReactRefreshExportKind::Named => original_name,
-                ReactRefreshExportKind::Default => b"default",
-            },
-        ]));
-        let label_expr = self.new_expr(E::String::init(label), loc);
+        let id_expr = self.new_expr(E::String::init(id), loc);
         let call = self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.react_refresh.register_ref, loc),
-                args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
+                args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), id_expr]),
                 ..Default::default()
             },
             loc,
@@ -8512,7 +8641,277 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.record_usage(r#ref);
         self.react_refresh.register_used = true;
+    }
+
+    fn note_react_refresh_component(
+        &mut self,
+        binding: Ref,
+        signature: Option<ReactRefreshSignature>,
+    ) {
+        let next = self.react_refresh.registered;
+        self.react_refresh.registered =
+            Some(self.arena.alloc(crate::parser::RegisteredComponent {
+                binding,
+                signature,
+                next,
+            }));
+    }
+
+    /// A function, or calls that each take one as first argument: `memo(fn)`, `hoc(Registered)`.
+    fn react_refresh_component(&self, value: Expr) -> Option<ReactRefreshComponent> {
+        let mut expr = value;
+        let mut is_wrapped = false;
+        loop {
+            match expr.data {
+                js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {
+                    return Some(ReactRefreshComponent {
+                        is_wrapped,
+                        signature: None,
+                    });
+                }
+                js_ast::ExprData::ECall(call) => {
+                    if let Some(signature) = ReactRefreshSignature::read(expr) {
+                        return Some(ReactRefreshComponent {
+                            is_wrapped,
+                            signature: Some(signature),
+                        });
+                    }
+                    self.react_refresh_wrapper_name(&call)?;
+                    is_wrapped = true;
+                    expr = call.args.slice()[0];
+                }
+                js_ast::ExprData::EIdentifier(id) if is_wrapped => {
+                    let component = self.react_refresh.registered_component(id.ref_)?;
+                    return Some(ReactRefreshComponent {
+                        is_wrapped,
+                        signature: component.signature,
+                    });
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// `memo` for `memo(fn)` and for `React.memo(fn)`. None for a call that is not a wrapper call.
+    fn react_refresh_wrapper_name(&self, call: &E::Call) -> Option<&'a [u8]> {
+        if call.was_jsx_element || call.optional_chain.is_some() || call.args.len_u32() == 0 {
+            return None;
+        }
+        let callee = match call.target.data {
+            js_ast::ExprData::EIdentifier(id) => id.ref_,
+            js_ast::ExprData::EImportIdentifier(id) => id.ref_,
+            js_ast::ExprData::EDot(dot) => return Some(dot.name.slice()),
+            _ => return None,
+        };
+        let name: &'a [u8] = self.symbols[callee.inner_index() as usize]
+            .original_name
+            .slice();
+        // Like react-refresh/babel: a `require` or `import` helper loads a module.
+        if name.starts_with(b"require") || name.starts_with(b"import") {
+            return None;
+        }
+        Some(name)
+    }
+
+    /// `decls` are those of the module-scope statement that was pushed last.
+    #[inline(never)] // PERF: only the React Fast Refresh path of `s_local` pays for this.
+    pub(crate) fn register_react_refresh_decls(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        decls: &mut [G::Decl],
+    ) -> Result<(), crate::Error> {
+        for decl in decls {
+            let js_ast::binding::Data::BIdentifier(binding) = decl.binding.data else {
+                continue;
+            };
+            let Some(value) = decl.value.as_mut() else {
+                continue;
+            };
+            let original_name = self.symbols[binding.r#ref.inner_index() as usize]
+                .original_name
+                .slice();
+            if !ReactRefresh::is_componentish_name(original_name) {
+                continue;
+            }
+            let Some(component) = self.react_refresh_component(*value) else {
+                continue;
+            };
+            self.register_react_refresh_component(
+                stmts,
+                component,
+                value,
+                binding.r#ref,
+                original_name,
+                ReactRefreshExportKind::Named,
+            )?;
+        }
         Ok(())
+    }
+
+    /// `export default memo(fn)` -> `const default_export = memo(fn); export default default_export`
+    #[inline(never)] // PERF: only the React Fast Refresh path of `s_export_default` pays for this.
+    pub(crate) fn register_react_refresh_default_export(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        expr: &mut Expr,
+        loc: bun_ast::Loc,
+    ) -> Result<(), crate::Error> {
+        let Some(component) = self.react_refresh_component(*expr) else {
+            return Ok(());
+        };
+        let temp_id = self.generate_temp_ref(Some(b"default_export"));
+        self.record_declared_symbol(temp_id);
+
+        let mut value = *expr;
+        let declaration_index = stmts.len();
+        self.register_react_refresh_component(
+            stmts,
+            component,
+            &mut value,
+            temp_id,
+            b"default",
+            ReactRefreshExportKind::Default,
+        )?;
+        stmts.insert(
+            declaration_index,
+            Stmt::alloc(
+                S::Local {
+                    kind: S::Kind::KConst,
+                    decls: G::DeclList::from_slice(&[G::Decl {
+                        binding: Binding::alloc(self.arena, B::Identifier { r#ref: temp_id }, loc),
+                        value: Some(value),
+                    }]),
+                    ..Default::default()
+                },
+                loc,
+            ),
+        );
+        *expr = Expr::init_identifier(temp_id, loc);
+        Ok(())
+    }
+
+    /// The statements that this pushes go after the declaration of `binding`.
+    fn register_react_refresh_component(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        component: ReactRefreshComponent,
+        value: &mut Expr,
+        binding: Ref,
+        original_name: &'a [u8],
+        export_kind: ReactRefreshExportKind,
+    ) -> Result<(), crate::Error> {
+        if component.is_wrapped {
+            let name = export_kind.name(original_name);
+            self.register_react_refresh_wrapper(stmts, component.signature, value, binding, name);
+        } else {
+            self.emit_react_refresh_register(stmts, original_name, binding, export_kind)?;
+        }
+        if export_kind == ReactRefreshExportKind::Named {
+            self.note_react_refresh_component(binding, component.signature);
+        }
+        Ok(())
+    }
+
+    /// `Name = a(b(fn))` becomes `Name = a(Name$a = b(Name$a$b = fn))`, and each value is registered.
+    fn register_react_refresh_wrapper(
+        &mut self,
+        stmts: &mut ListManaged<'a, Stmt>,
+        signature: Option<ReactRefreshSignature>,
+        value: &mut Expr,
+        binding: Ref,
+        name: &'a [u8],
+    ) {
+        let loc = bun_ast::Loc::EMPTY;
+
+        // "Name$a$b", and then "(Inner)" for `a(b(Inner))`.
+        let mut path = BumpVec::<u8>::new_in(self.arena);
+        path.extend_from_slice(name);
+        // Each call, outermost first, with the offset of the `$` before its name.
+        let mut calls = BumpVec::<(js_ast::StoreRef<E::Call>, usize)>::new_in(self.arena);
+        let mut innermost = *value;
+        while let js_ast::ExprData::ECall(call) = innermost.data
+            && ReactRefreshSignature::read(innermost).is_none()
+            && let Some(callee) = self.react_refresh_wrapper_name(&call)
+        {
+            calls.push((call, path.len()));
+            path.push(b'$');
+            path.extend_from_slice(callee);
+            innermost = call.args.slice()[0];
+        }
+        let names_end = path.len();
+        // `b(Inner)`: `Inner` has its own registration.
+        let is_registered = if let js_ast::ExprData::EIdentifier(id) = innermost.data {
+            path.push(b'(');
+            path.extend_from_slice(
+                self.symbols[id.ref_.inner_index() as usize]
+                    .original_name
+                    .slice(),
+            );
+            path.push(b')');
+            true
+        } else {
+            false
+        };
+        let path: &'a [u8] = path.into_bump_slice();
+
+        // A handle is a `var` that takes the first argument of a call on its way in.
+        let mut handles = G::DeclList::init_capacity(calls.len());
+        let mut registrations = BumpVec::<Stmt>::new_in(self.arena);
+        for level in (0..calls.len()).rev() {
+            let mut call = calls[level].0;
+            let inner_call = calls.get(level + 1).map(|&(_, separator)| separator);
+            if inner_call.is_none() && is_registered {
+                continue;
+            }
+            let argument = &mut call.args.slice_mut()[0];
+            let mut passed = *argument;
+            // A wrapper may call `fn` inside its own component, so it gets the hook signature of `fn`.
+            if inner_call.is_some()
+                && let Some(signature) = signature
+            {
+                passed = self.react_refresh_sign(signature, passed);
+            }
+            let handle = self.generate_temp_var(&path[..inner_call.unwrap_or(names_end)]);
+            self.record_usage(handle);
+            *argument = Expr::assign(Expr::init_identifier(handle, passed.loc), passed);
+            VecExt::append(
+                &mut handles,
+                G::Decl {
+                    binding: self.b(B::Identifier { r#ref: handle }, loc),
+                    value: None,
+                },
+            );
+            let id = match inner_call {
+                Some(separator) => self.react_refresh_wrapper_id(path, separator),
+                None => react_refresh_id(self.arena, self.source.path.pretty, &[path]),
+            };
+            self.push_react_refresh_register(&mut registrations, handle, id);
+        }
+        if let Some(signature) = signature {
+            *value = self.react_refresh_sign(signature, *value);
+        }
+        let id = self.react_refresh_wrapper_id(path, calls[0].1);
+        self.push_react_refresh_register(&mut registrations, binding, id);
+
+        if handles.len_u32() > 0 {
+            stmts.push(self.s(
+                S::Local {
+                    decls: handles,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
+        stmts.extend_from_slice(registrations.as_slice());
+    }
+
+    /// "file.tsx:Name$a%b". The id spells every call, so an edit of the wrappers makes new ids.
+    fn react_refresh_wrapper_id(&self, path: &[u8], separator: usize) -> &'a [u8] {
+        react_refresh_id(
+            self.arena,
+            self.source.path.pretty,
+            &[&path[..separator], b"%", &path[separator + 1..]],
+        )
     }
 
     pub(crate) fn wrap_value_for_server_component_reference(
@@ -8708,7 +9107,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
         let loc = bun_ast::Loc::EMPTY;
-        self.react_refresh.latest_signature_ref = signal_cb_ref;
         // var s_ = $RefreshSig$();
         let binding = self.b(
             B::Identifier {
@@ -8737,8 +9135,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ctx: &mut crate::HookContext,
         function_with_hook_calls: Expr,
     ) -> Expr {
-        let loc = bun_ast::Loc::EMPTY;
-
         let final_ = ctx.hasher.final_();
         let hash_data =
             self.arena
@@ -8751,26 +9147,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let have_custom_hooks = ctx.user_hooks.count() > 0;
         let have_force_arg = have_custom_hooks || self.react_refresh.force_reset;
 
-        let n_args = 2 + usize::from(have_force_arg) + usize::from(have_custom_hooks);
+        self.react_refresh_signature_call(
+            ctx.signature_cb,
+            function_with_hook_calls,
+            hash_data,
+            have_force_arg.then_some(self.react_refresh.force_reset),
+            ctx.user_hooks.values(),
+        )
+    }
+
+    /// `_s(value, "<hash>", force, () => [useCustom])`
+    fn react_refresh_signature_call(
+        &mut self,
+        signature_cb: Ref,
+        value: Expr,
+        hash: &[u8],
+        force: Option<bool>,
+        custom_hooks: &[Expr],
+    ) -> Expr {
+        let loc = bun_ast::Loc::EMPTY;
+
+        let n_args = 2 + usize::from(force.is_some()) + usize::from(!custom_hooks.is_empty());
         let mut args = BumpVec::with_capacity_in(n_args, self.arena);
 
-        args.push(function_with_hook_calls);
-        args.push(self.new_expr(E::String::init(hash_data), loc));
+        args.push(value);
+        args.push(self.new_expr(E::String::init(hash), loc));
 
-        if have_force_arg {
-            args.push(self.new_expr(
-                E::Boolean {
-                    value: self.react_refresh.force_reset,
-                },
-                loc,
-            ));
+        if let Some(force) = force {
+            args.push(self.new_expr(E::Boolean { value: force }, loc));
         }
 
-        if have_custom_hooks {
+        if !custom_hooks.is_empty() {
             // () => [useCustom1, useCustom2]
             let array = self.new_expr(
                 E::Array {
-                    items: ExprNodeList::from_slice(ctx.user_hooks.values()),
+                    items: ExprNodeList::from_slice(custom_hooks),
                     ..Default::default()
                 },
                 loc,
@@ -8789,14 +9200,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
 
-        // _s(func, "<hash>", force, () => [useCustom])
         self.new_expr(
             E::Call {
-                target: Expr::init_identifier(ctx.signature_cb, loc),
+                target: Expr::init_identifier(signature_cb, loc),
                 args: ExprNodeList::from_slice(args.as_slice()),
                 ..Default::default()
             },
             loc,
+        )
+    }
+
+    /// One more call of the signature function, for `value`.
+    fn react_refresh_sign(&mut self, signature: ReactRefreshSignature, value: Expr) -> Expr {
+        let custom_hooks: &[Expr] = signature
+            .custom_hooks
+            .as_ref()
+            .map_or(&[], |array| array.items.slice());
+
+        self.record_usage(signature.callback);
+        for hook in custom_hooks {
+            match hook.data {
+                js_ast::ExprData::EIdentifier(id) => self.record_usage(id.ref_),
+                js_ast::ExprData::EImportIdentifier(id) => self.record_usage(id.ref_),
+                js_ast::ExprData::ECommonjsExportIdentifier(id) => self.record_usage(id.ref_),
+                _ => {}
+            }
+        }
+        self.react_refresh_signature_call(
+            signature.callback,
+            value,
+            signature.hash.slice(),
+            signature.force,
+            custom_hooks,
         )
     }
 }

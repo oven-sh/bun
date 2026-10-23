@@ -68,13 +68,14 @@ impl FlagValues {
 pub(super) fn of_nodes<'a>(file: &'a File<'a>, flag_values: FlagValues, words: &mut Vec<u32>) {
     let offsets = Utf16OffsetTable::without_bom(file.text());
     let writer = ast::walk(file, &offsets, &[]);
-    let mut rows: Vec<[u32; 6]> = (writer.ranges())
-        .filter_map(|(node, [start, end, node_type])| {
+    let mut rows: Vec<[u32; 6]> = (writer.view().nodes.iter())
+        .filter_map(|node| {
             let ty = node.type_at_location()?;
+            let (node_type, span) = node.type_and_span();
             Some([
-                start,
-                end,
-                node_type,
+                offsets.to_utf16(span.start),
+                offsets.to_utf16(span.end),
+                node_type as u32,
                 flag_values.of(ty.flags()),
                 ty.get_call_signatures().len() as u32,
                 ty.get_construct_signatures().len() as u32,

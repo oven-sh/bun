@@ -311,14 +311,6 @@ impl<'a> Writer<'a, '_> {
         }
     }
 
-    /// Each node with its `range` and its [`NodeType`].
-    pub(super) fn ranges(&self) -> impl Iterator<Item = (VNode<'a>, [u32; 3])> {
-        let tree = &self.tree;
-        let ranges = tree.starts.iter().zip(&tree.ends).zip(&tree.types);
-        (self.nodes.iter().copied())
-            .zip(ranges.map(|((start, end), node_type)| [*start, *end, u32::from(*node_type)]))
-    }
-
     /// The nodes that match each of the selectors.
     pub(super) fn matches(&self) -> &[Vec<u32>] {
         &self.matches

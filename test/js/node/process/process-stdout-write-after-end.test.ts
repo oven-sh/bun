@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -25,8 +25,8 @@ test.concurrent.each(["stdout", "stderr"] as const)(
     const report = JSON.parse(lines[lines.length - 1]);
 
     expect(report).toEqual({
-      writableEnded: true,
-      writable: false,
+      writableEnded: isWindows,
+      writable: !isWindows,
       ret: false,
       cbErr: "ERR_STREAM_WRITE_AFTER_END",
       ev: ["err:ERR_STREAM_WRITE_AFTER_END"],

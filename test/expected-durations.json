@@ -34981,13 +34981,6 @@
     "windows": 150,
     "windows-aarch64": 140
   },
-  "js/node/util/parse_args/default-args.test.mjs": {
-    "default": 200,
-    "asan": 1590,
-    "musl": 150,
-    "windows": 200,
-    "windows-aarch64": 330
-  },
   "js/node/util/parse_args/parse-args-null-config.test.ts": {
     "default": 40,
     "asan": 130,

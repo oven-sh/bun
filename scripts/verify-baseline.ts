@@ -239,12 +239,25 @@ if (values["skip-emulation"]) {
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
   await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
 
-  const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
-  const aotProgram = join(aotDir, "baseline-cpu.ts");
-  const aotExecutable = join(aotDir, isWindows ? "baseline-cpu.exe" : "baseline-cpu");
-  copyFileSync(join(repoRoot, "test", "aot", "programs", "language", "baseline-cpu.ts"), aotProgram);
-  if (await runTest("Ahead-of-time compiler", ["build", "--compile", "--aot", aotProgram, "--outfile", aotExecutable]))
-    await runTest("Ahead-of-time compiled program", [], { executable: aotExecutable });
+  // `bun` is built without the ahead-of-time compiler and `bun-aot` with it. One without it says so before it looks for
+  // the entry point, if it may not fetch the other.
+  const asked = Bun.spawnSync([...config.runnerCmd, binary, "build", "--compile", "--aot", "./no-such-file.ts"], {
+    cwd: config.cwd,
+    env: { ...process.env, BUN_AOT_DISABLE_DOWNLOAD: "1" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  if (/^error: --aot isn't available /m.test(asked.stderr.toString())) {
+    console.log("--- Skipping the ahead-of-time compiler (this Bun is built without it)");
+  } else {
+    const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
+    const aotProgram = join(aotDir, "baseline-cpu.ts");
+    const aotExecutable = join(aotDir, isWindows ? "baseline-cpu.exe" : "baseline-cpu");
+    copyFileSync(join(repoRoot, "test", "aot", "programs", "language", "baseline-cpu.ts"), aotProgram);
+    const build = ["build", "--compile", "--aot", aotProgram, "--outfile", aotExecutable];
+    if (await runTest("Ahead-of-time compiler", build))
+      await runTest("Ahead-of-time compiled program", [], { executable: aotExecutable });
+  }
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

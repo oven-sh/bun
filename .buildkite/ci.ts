@@ -1018,6 +1018,8 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
     // TODO: until all code that is generated directly has been seen to run on arm64 (test/aot/joined-programs.ts).
     if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/joined-programs-all-code-direct");
+    // The engine's own CI tests Linux alone: nothing else runs its tests on macOS.
+    if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/engine-tests");
     if (profile === "asan") args.push("--always-draw=aot/exception-checks");
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {

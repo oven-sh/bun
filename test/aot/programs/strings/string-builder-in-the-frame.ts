@@ -127,5 +127,5 @@ const steps = acrossYield(["a", "bc", repeat("d", 200)]);
 console.log(steps.next().value, steps.next().value, steps.next().value, checksum(steps.next().value as string));
 console.log(twoAtOnce([1, 2, 3, 4, 5, 6]), checksum(twoAtOnce(Array.from({ length: 200 }, (_, i) => i * 3))));
 console.log(recursive(0), recursive(2), checksum(recursive(6)));
-try { repeat(repeat("M", 1 << 20), 4096); console.log("no error"); } catch (error) { console.log((error as Error).constructor.name); }
+try { console.log(repeat(repeat("M", 1 << 20), 4096).length); } catch (error) { console.log((error as Error).constructor.name); }
 acrossAwait(["a", "b", repeat("c", 200)]).then(text => console.log(checksum(text)));

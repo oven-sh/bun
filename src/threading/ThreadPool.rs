@@ -843,8 +843,13 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
 
 /// Set in a process that runs an ahead-of-time compiled program, which starts
 /// its threads late, when a limit on threads may have been reached.
-pub static EXITS_WITHOUT_ANY_THREAD: core::sync::atomic::AtomicBool =
+static EXITS_WITHOUT_ANY_THREAD: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ThreadPool__exitWithoutAnyThread() {
+    EXITS_WITHOUT_ANY_THREAD.store(true, Ordering::Relaxed);
+}
 
 /// A refused thread is the environment's limit, not a bug: no crash reporter.
 #[cold]

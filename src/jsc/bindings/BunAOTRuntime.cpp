@@ -90,6 +90,8 @@ void discardBackEndOptionsOfEnvironment()
 
 #if ENABLE(AOT)
 
+extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
+
 extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
 {
     if (!JSC::AOT::BuiltinBindings::hasHost())
@@ -103,6 +105,8 @@ extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, co
         RELEASE_ASSERT(!result);
         Bun::exitForCageError(result.error());
     }
+    if (JSC::AOT::Image::isRegistered())
+        Bun__ThreadPool__exitWithoutAnyThread();
     return verdict;
 }
 

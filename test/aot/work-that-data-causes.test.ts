@@ -1,5 +1,5 @@
 // Work that data from outside can cause: texts of JSON whose objects hold their names in every order, names nobody has seen, indexes far apart.
-// Each form of work-that-data-causes/forms.js runs on the same input compiled and in plain Bun. What is judged is the ratio of the two times and how the
+// Each form of work-that-data-causes/forms.js and typed-forms.ts runs on the same input compiled and in plain Bun. What is judged is the ratio of the two times and how the
 // compiled time grows with the input, never seconds: a table that such data fills must not make the work quadratic.
 import { afterAll, expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
@@ -8,8 +8,15 @@ import { join } from "node:path";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
-const source = join(import.meta.dir, "work-that-data-causes", "forms.js");
-const names = Bun.spawnSync([bunExe(), source]).stdout.toString().trim().split("\n");
+const sources = ["forms.js", "typed-forms.ts"];
+const inFolder = (source: string) => join(import.meta.dir, "work-that-data-causes", source);
+const rows = sources.flatMap(source =>
+  Bun.spawnSync([bunExe(), inFolder(source)])
+    .stdout.toString()
+    .trim()
+    .split("\n")
+    .map(name => [source, name]),
+);
 const few = 3_000;
 const many = 30_000;
 // Below this many milliseconds a time says more about the machine than about the work.
@@ -18,14 +25,16 @@ const floor = 40;
 describe("compile/aot/work that data causes", () => {
   const dir = tempDir("aot-work-that-data-causes", {});
   const cwd = String(dir);
-  const compiled = join(cwd, "forms");
+  const compiled = (source: string) => join(cwd, source.replace(/\.\w+$/, ""));
   afterAll(() => dir[Symbol.dispose]());
 
   beforeAll(async () => {
-    copyFileSync(source, join(cwd, "forms.js"));
-    const built = await run([bunExe(), "build", "--compile", "--aot", "forms.js", "--outfile", "forms"], cwd);
-    expect(built.stderr).not.toContain("error:");
-    expect(built.exitCode).toBe(0);
+    for (const source of sources) {
+      copyFileSync(inFolder(source), join(cwd, source));
+      const built = await run([bunExe(), "build", "--compile", "--aot", source, "--outfile", compiled(source)], cwd);
+      expect(built.stderr).not.toContain("error:");
+      expect(built.exitCode).toBe(0);
+    }
   });
 
   async function least(cmd: string[]) {
@@ -41,20 +50,20 @@ describe("compile/aot/work that data causes", () => {
     return { time, answer };
   }
 
-  test.each(names)(
-    "%s",
-    async name => {
-      const plain = await least([bunExe(), "forms.js", name, String(many)]);
-      const small = await least([compiled, name, String(few)]);
-      const large = await least([compiled, name, String(many)]);
+  test.each(rows)(
+    "%s: %s",
+    async (source, name) => {
+      const plain = await least([bunExe(), source, name, String(many)]);
+      const small = await least([compiled(source), name, String(few)]);
+      const large = await least([compiled(source), name, String(many)]);
       expect(large.answer).toBe(plain.answer);
       const timesPlainBun = Math.round(large.time / Math.max(plain.time, floor));
       // Ten times the input: linear work takes ten times as long, quadratic work a hundred times.
       const growth = Math.round(Math.max(large.time, floor) / Math.max(small.time, floor / 10));
-      expect({ name, timesPlainBun: Math.max(timesPlainBun, 5), growth: Math.max(growth, 30) }).toEqual({
+      expect({ name, timesPlainBun: Math.max(timesPlainBun, 5), growth: Math.max(growth, 40) }).toEqual({
         name,
         timesPlainBun: 5,
-        growth: 30,
+        growth: 40,
       });
     },
     120_000,

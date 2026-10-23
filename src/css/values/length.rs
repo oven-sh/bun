@@ -4,7 +4,7 @@ use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
-use crate::values::number::CSSNumber;
+use crate::values::number::{CSSNumber, NumericRange};
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
 
@@ -424,6 +424,34 @@ impl Length {
 
         let len = LengthValue::parse(input)?;
         Ok(Self::Value(len))
+    }
+
+    /// Parses a length for a slot with `range` (lightningcss `Length::parse_with_range`).
+    pub(crate) fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Length> {
+        // A literal and a math function start with different tokens, so the cheap one goes first.
+        if let Ok(value) = input.try_parse(LengthValue::parse) {
+            if range == NumericRange::NonNegative && value.value() < 0.0 {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
+            return Ok(Self::Value(value));
+        }
+        match Calc::<Length>::parse(input)? {
+            Calc::Value(length) => Ok(match *length {
+                // NaN is 0 too: it does not escape a top-level calculation.
+                Self::Value(value)
+                    if range == NumericRange::NonNegative
+                        && (value.value() < 0.0 || value.value().is_nan()) =>
+                {
+                    Self::zero()
+                }
+                length => length,
+            }),
+            calc @ Calc::Function(_) => Ok(Self::Calc(Box::new(calc))),
+            // Not a length: a number, or the bare sum or product of a one-argument min(), max() or hypot().
+            Calc::Number(_) | Calc::Sum { .. } | Calc::Product { .. } => {
+                Err(input.new_custom_error(css::ParserError::invalid_value))
+            }
+        }
     }
 
     // to_css — provided by #[derive(css::ToCss)] (Box<Calc<Length>> auto-derefs

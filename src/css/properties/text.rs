@@ -3,7 +3,8 @@ use crate as css;
 use crate::PrintErr;
 use crate::Printer;
 use crate::css_values::color::CssColor;
-use crate::css_values::length::LengthValue as Length;
+use crate::css_values::length::Length;
+use crate::css_values::number::NumericRange;
 
 /// A value for the [text-shadow](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-shadow-property) property.
 #[derive(Clone, PartialEq)]
@@ -29,11 +30,25 @@ impl TextShadow {
         loop {
             if lengths.is_none() {
                 let value = input.try_parse(|i: &mut css::Parser| -> css::Result<Lengths> {
-                    let horizontal = Length::parse(i)?;
-                    let vertical = Length::parse(i)?;
-                    let blur = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
-                    let spread = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
-                    Ok((horizontal, vertical, blur, spread))
+                    let horizontal = Length::parse_with_range(i, NumericRange::All)?;
+                    let vertical = Length::parse_with_range(i, NumericRange::All)?;
+                    let non_negative = |i: &mut css::Parser| {
+                        i.try_parse(|i| Length::parse_with_range(i, NumericRange::NonNegative))
+                            .ok()
+                    };
+                    let blur = non_negative(i);
+                    // A length that is not a blur radius is not a spread either.
+                    let spread = if blur.is_some() {
+                        non_negative(i)
+                    } else {
+                        None
+                    };
+                    Ok((
+                        horizontal,
+                        vertical,
+                        blur.unwrap_or_else(Length::zero),
+                        spread.unwrap_or_else(Length::zero),
+                    ))
                 });
 
                 if let Ok(v) = value {

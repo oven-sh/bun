@@ -5,6 +5,14 @@ use crate::values::calc::Calc;
 
 pub type CSSNumber = f32;
 
+/// The values a numeric slot takes (lightningcss `NumericRange`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NumericRange {
+    All,
+    /// `[0,∞]`: a negative literal is invalid, a negative math result is 0.
+    NonNegative,
+}
+
 pub struct CSSNumberFns;
 
 impl CSSNumberFns {

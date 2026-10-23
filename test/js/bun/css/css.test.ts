@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -5024,9 +5024,135 @@ describe("css tests", () => {
     minify_test(".foo { font-family: 'revert', foo, sans-serif; }", '.foo{font-family:"revert",foo,sans-serif}');
     minify_test(".foo { font-family: ''; }", '.foo{font-family:""}');
 
+    // A browser reads `serif foo` as the generic family and then rejects `foo`.
+    for (const generic of [
+      "serif",
+      "sans-serif",
+      "cursive",
+      "fantasy",
+      "monospace",
+      "system-ui",
+      "emoji",
+      "math",
+      "fangsong",
+      "ui-serif",
+      "ui-sans-serif",
+      "ui-monospace",
+      "ui-rounded",
+    ]) {
+      minify_test(`.foo { font-family: "${generic} foo"; }`, `.foo{font-family:"${generic} foo"}`);
+    }
+    minify_test('.foo { font-family: "SANS-SERIF foo"; }', '.foo{font-family:"SANS-SERIF foo"}');
+    minify_test('.foo { font-family: "Cursive standard", cursive; }', '.foo{font-family:"Cursive standard",cursive}');
+    minify_test(
+      '.foo { font-family: "serif bar", "bar serif", "serifa bar"; }',
+      '.foo{font-family:"serif bar",bar serif,serifa bar}',
+    );
+    minify_test('.foo { font: 12px "serif bar"; }', '.foo{font:12px "serif bar"}');
+    minify_test('.foo { font: 12px x; font-family: "serif x"; }', '.foo{font:12px "serif x"}');
+    // The identifiers print only when they are shorter than the string.
+    minify_test(
+      '.foo { font-family: "Font Awesome 5 Free", "a.b c", "serif bar"; }',
+      '.foo{font-family:"Font Awesome 5 Free",a\\.b c,"serif bar"}',
+    );
+    // A css-wide keyword or `default` is reserved only as the whole name.
+    minify_test(
+      '.foo { font-family: "x default", "revert-layer foo", "initial unset", "inherit  foo", "unset "; }',
+      '.foo{font-family:x default,revert-layer foo,initial unset,"inherit  foo","unset "}',
+    );
+    // Identifiers join with one space each, so a name with an empty word has no identifier form.
+    minify_test('.foo { font-family: " Arial"; }', '.foo{font-family:" Arial"}');
+    minify_test('.foo { font-family: "Arial "; }', '.foo{font-family:"Arial "}');
+    minify_test('.foo { font-family: "Times  New Roman"; }', '.foo{font-family:"Times  New Roman"}');
+    minify_test('.foo { font-family: " "; }', '.foo{font-family:" "}');
+    // The same names, written as identifiers with escaped spaces.
+    minify_test(".foo { font-family: serif\\ bar; }", '.foo{font-family:"serif bar"}');
+    minify_test(".foo { font-family: \\ Arial; }", '.foo{font-family:" Arial"}');
+    minify_test(".foo { font-family: a\\ \\ b; }", '.foo{font-family:"a  b"}');
+    // The attribute selector and the family name both use the printer's scratch buffer.
+    minify_test(
+      '[data-f="Helvetica"] { font-family: "Times New Roman", "sans-serif foo"; }',
+      '[data-f=Helvetica]{font-family:Times New Roman,"sans-serif foo"}',
+    );
+    // The backslash is escaped, so the identifier reads back as the name `s\65rif`, not as `serif`.
+    minify_test('.foo { font-family: "s\\\\65rif"; }', ".foo{font-family:s\\\\65rif}");
+
+    test("bun build keeps the quotes of a family name that has no identifier form", async () => {
+      const source =
+        '.a{font-family:"sans-serif foo"}.b{font-family:" Arial"}.c{font-family:"Times  New Roman"}.d{font:12px "serif bar"}.e{font-family:" "}\n';
+      using dir = tempDir("css-font-family-quotes", { "ff.css": source });
+
+      async function build(...flags: string[]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", ...flags, "./ff.css"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+
+      const [minified, pretty, api] = await Promise.all([
+        build("--minify"),
+        build(),
+        Bun.build({ entrypoints: [join(String(dir), "ff.css")], minify: true }).then(result =>
+          result.outputs[0].text(),
+        ),
+      ]);
+      expect(minified).toEqual({ stdout: source, stderr: "", exitCode: 0 });
+      expect(pretty).toEqual({
+        stdout: `/* ff.css */
+.a {
+  font-family: "sans-serif foo";
+}
+
+.b {
+  font-family: " Arial";
+}
+
+.c {
+  font-family: "Times  New Roman";
+}
+
+.d {
+  font: 12px "serif bar";
+}
+
+.e {
+  font-family: " ";
+}
+`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(api).toBe(source);
+    });
+
     // fonTfamily in @font-face
     minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
     minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
+    minify_test(
+      '@font-face { font-family: "serif bar"; src: local("serif bar"), local(" Arial"), local("Times New Roman"); }',
+      '@font-face{font-family:"serif bar";src:local("serif bar"),local(" Arial"),local(Times New Roman)}',
+    );
+
+    prefix_test(
+      `
+      .foo {
+        font-family: system-ui, "fantasy q";
+      }
+    `,
+      indoc`
+      .foo {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, "fantasy q";
+      }
+`,
+      {
+        safari: 8 << 16,
+      },
+    );
 
     prefix_test(
       `
@@ -7935,6 +8061,10 @@ describe("css tests", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",
       "@font-palette-values --x{font-family:Foo;base-palette:2}",
+    );
+    minify_test(
+      '@font-palette-values --x{font-family:"cursive standard";base-palette:2}',
+      '@font-palette-values --x{font-family:"cursive standard";base-palette:2}',
     );
     minify_test("@font-palette-values --x{base-palette:light}", "@font-palette-values --x{base-palette:light}");
     minify_test("@font-palette-values --x{base-palette:65535}", "@font-palette-values --x{base-palette:65535}");

@@ -19,6 +19,7 @@ use bun_alloc::ArenaVecExt as _;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
+use css_values::ident::is_reserved_custom_ident;
 use css_values::length::{LengthPercentage, LengthValue};
 use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
@@ -377,33 +378,10 @@ impl FontFamily {
             FontFamily::FamilyName(val_ptr) => {
                 // SAFETY: arena-owned slice valid for 'bump (parser/printer arena outlives FontFamily)
                 let val: &[u8] = unsafe { crate::arena_str(*val_ptr) };
-                // Generic family names such as sans-serif must be quoted if parsed as a string.
-                // CSS wide keywords, as well as "default", must also be quoted.
-                // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
-
-                if !val.is_empty()
-                    && !css::parse_utility::parse_string::<GenericFontFamily>(
-                        dest.arena,
-                        val,
-                        GenericFontFamily::parse,
-                    )
-                    .is_ok()
-                {
-                    // AST crate: std.Io.Writer.Allocating on dest.arena (arena) → bumpalo Vec
-                    let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.arena);
-                    let mut first = true;
-                    for slice in bun_core::strings::split(val, b" ") {
-                        if first {
-                            first = false;
-                        } else {
-                            id.push(b' ');
-                        }
-                        // `ArenaVec<u8>: WriteAll<Error = Infallible>` — cannot fail.
-                        let _ = css::serializer::serialize_identifier(slice, &mut id);
-                    }
-                    if id.len() < val.len() + 2 {
-                        return dest.write_str(&id[..]);
-                    }
+                dest.scratchbuf.clear();
+                if family_name_as_idents(val, &mut dest.scratchbuf) {
+                    let len = dest.scratchbuf.len();
+                    return dest.write_scratchbuf(0..len);
                 }
                 dest.serialize_string(val)
             }
@@ -419,6 +397,35 @@ impl FontFamily {
 
     // eql / hash / deepClone — `PartialEq`/`Clone` hand-impls below; bridged to
     // `CssEql`/`DeepClone` via `bridge_clone_partialeq!` in `generics.rs`.
+}
+
+/// Writes `name` to `out` as identifiers. Returns false when the name has to print as a string:
+/// a browser would read the identifiers as another value, or they are not shorter.
+/// https://drafts.csswg.org/css-fonts-4/#family-name-syntax
+///
+/// Not the lightningcss rule on purpose: that one tests the whole name against the keyword table.
+fn family_name_as_idents(name: &[u8], out: &mut bun_alloc::ArenaVec<'_, u8>) -> bool {
+    for (i, word) in bun_core::strings::split(name, b" ").enumerate() {
+        // Identifiers join with one space each: a leading, trailing or doubled space is lost.
+        if word.is_empty() {
+            return false;
+        }
+        if i == 0 {
+            // `serif foo` reads as the generic family, then a stray identifier. The table also
+            // lists the css-wide keywords and `default`, which are keywords only as the whole
+            // name: `inherit foo` is a name.
+            if <GenericFontFamily as css::EnumProperty>::from_ascii_case_insensitive(word).is_some()
+                && (word.len() == name.len() || !is_reserved_custom_ident(word))
+            {
+                return false;
+            }
+        } else {
+            out.push(b' ');
+        }
+        // `ArenaVec<u8>: WriteAll<Error = Infallible>` — cannot fail.
+        let _ = css::serializer::serialize_identifier(word, out);
+    }
+    out.len() < name.len() + 2
 }
 
 // With `*const [u8]`, derived `PartialEq`/`Hash` would compare pointers;

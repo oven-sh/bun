@@ -510,6 +510,9 @@ fn message_with_type_and_level_(
             let _ = writer.flush();
             return Ok(());
         }
+        // Node logs only `tabularData` here, so `properties` is not a format argument:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L558-L559
+        print_length = 1;
     }
 
     if message_type == MessageType::Dir && len >= 2 {

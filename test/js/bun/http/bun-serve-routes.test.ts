@@ -721,6 +721,79 @@ describe("many route params", () => {
   });
 });
 
+describe("':' that does not start a segment is literal text", () => {
+  // uWS's router only treats a segment as a parameter when the segment starts with ':'.
+  // The params object has to use the same grammar, otherwise the identifiers it pairs
+  // with the router's captured values are shifted.
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/files:batchGet/:id": req => Response.json(req.params),
+        "/v1:beta/:name/x": req => Response.json(req.params),
+        "/users:search": req => Response.json(req.params),
+        "/:org/repos:list/:repo": req => Response.json(req.params),
+        "/docs:export/:id": {
+          GET: req => Response.json(req.params),
+        },
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it.each([
+    ["/files:batchGet/123", { id: "123" }],
+    ["/v1:beta/bob/x", { name: "bob" }],
+    ["/users:search", {}],
+    ["/oven-sh/repos:list/bun", { org: "oven-sh", repo: "bun" }],
+    ["/docs:export/7", { id: "7" }],
+  ])("%s only names the ':'-prefixed segments in req.params", async (path, params) => {
+    const res = await fetch(new URL(path, server.url));
+    expect(await res.json()).toEqual(params);
+    expect(res.status).toBe(200);
+  });
+
+  it.each(["/files/123", "/v1/bob/x", "/users", "/oven-sh/repos/bun"])("%s does not match", async path => {
+    const res = await fetch(new URL(path, server.url));
+    expect(await res.text()).toBe("fallback");
+  });
+});
+
+describe("route parameter validation uses the segment grammar", () => {
+  it.each(["/n/:id:undelete", "/range/:from-:to", "/:a:b/c"])(
+    "throws when a parameter segment contains another ':' (%s)",
+    path => {
+      expect(() => Bun.serve({ port: 0, routes: { [path]: () => new Response("test") } })).toThrow(
+        `Invalid route "${path}". A route parameter must span the whole path segment`,
+      );
+      expect(() => Bun.serve({ port: 0, routes: { [path]: { GET: () => new Response("test") } } })).toThrow(
+        `Invalid route "${path}". A route parameter must span the whole path segment`,
+      );
+    },
+  );
+
+  it("ignores the text after a ':' inside a literal segment", async () => {
+    // Neither the digit after "v1:" nor the "x" after "a:" is a parameter name.
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/v1:2/:id": req => Response.json(req.params),
+        "/a:x/:x": req => Response.json(req.params),
+      },
+    });
+
+    expect(await fetch(new URL("/v1:2/5", server.url)).then(res => res.json())).toEqual({ id: "5" });
+    expect(await fetch(new URL("/a:x/1", server.url)).then(res => res.json())).toEqual({ x: "1" });
+  });
+});
+
 it("throws a validation error when a route parameter name starts with a number", () => {
   expect(() => {
     Bun.serve({

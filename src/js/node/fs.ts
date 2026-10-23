@@ -4,10 +4,21 @@ const types = require("node:util/types");
 const {
   validateFunction,
   validateInteger,
+  validateInt32,
+  validateBuffer,
+  validateObject,
+  kValidateObjectAllowNullable,
   validateEncoding,
   getValidatedPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
+const {
+  coerceReadLength,
+  validateReadPosition,
+  validateReadRange,
+  validateWriteRange,
+} = require("internal/fs/read-write");
+const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -243,17 +254,14 @@ var access = function access(path, mode, callback?) {
     fs.fdatasyncCb(callback, fd);
   },
   read = function read(fd, buffer, offsetOrOptions?, length?, position?, callback?) {
-    // fd = getValidatedFd(fd); DEFERRED TO NATIVE
+    validateInt32(fd, "fd", 0);
     let offset = offsetOrOptions;
     let params: any = null;
     const argc = arguments.length;
     if (argc <= 4) {
       if (argc === 4) {
         // This is fs.read(fd, buffer, options, callback)
-        // validateObject(params, 'options', kValidateObjectAllowNullable);
-        if (typeof params !== "object" || $isArray(params)) {
-          throw $ERR_INVALID_ARG_TYPE("options", "object", params);
-        }
+        validateObject(offsetOrOptions, "options", kValidateObjectAllowNullable);
         callback = length;
         params = offsetOrOptions;
       } else if (argc === 3) {
@@ -271,17 +279,20 @@ var access = function access(path, mode, callback?) {
       }
 
       if (params !== undefined) {
-        // validateObject(params, 'options', kValidateObjectAllowNullable);
-        if (typeof params !== "object" || $isArray(params)) {
-          throw $ERR_INVALID_ARG_TYPE("options", "object", params);
-        }
+        validateObject(params, "options", kValidateObjectAllowNullable);
       }
       ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
-    if (!callback) {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = wrapFsCallback(callback);
+    validateBuffer(buffer);
+    callback = ensureCallback(callback);
+    if (offset == null) offset = 0;
+    else validateInteger(offset, "offset", 0);
+    // Node's callback/sync reads coerce length; FileHandle.read defaults it instead.
+    // https://github.com/nodejs/node/blob/v24.21.0/lib/fs.js#L707
+    length = coerceReadLength(length);
+    validateReadPosition(position, length);
+    if (length === 0) return nextTick(callback, null, 0, buffer);
+    validateReadRange(buffer, offset, length);
     fs.readCb(
       (err, bytesRead) => (err ? callback(err, 0, buffer) : callback(null, bytesRead, buffer)),
       fd,
@@ -297,6 +308,7 @@ var access = function access(path, mode, callback?) {
       else callback(null, bytesWritten, buffer);
     }
 
+    validateInt32(fd, "fd", 0);
     // $isTypedArrayView excludes DataView, so a DataView would fall through
     // to the string signature. Use Node's predicate, like writeSync below.
     if (types.isArrayBufferView(buffer)) {
@@ -311,6 +323,11 @@ var access = function access(path, mode, callback?) {
         } = offsetOrOptions ?? {});
       }
 
+      if (offsetOrOptions == null || typeof offsetOrOptions === "function") offsetOrOptions = 0;
+      else validateInteger(offsetOrOptions, "offset", 0);
+      if (typeof length !== "number") length = buffer.byteLength - offsetOrOptions;
+      if (typeof position !== "number") position = null;
+      validateWriteRange(buffer, offsetOrOptions, length);
       fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length, position);
       return;
     }
@@ -334,7 +351,13 @@ var access = function access(path, mode, callback?) {
     callback = position;
     callback = ensureCallback(callback);
 
-    fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length);
+    fs.writeCb(
+      onWritten,
+      fd,
+      buffer,
+      offsetOrOptions,
+      typeof length === "string" ? normalizeEncoding(length) : undefined,
+    );
   },
   readdir = function readdir(path, options, callback?) {
     if ($isCallable(options)) {
@@ -493,36 +516,51 @@ var access = function access(path, mode, callback?) {
   },
   openSync = fs.openSync.bind(fs),
   readSync = function readSync(fd, buffer, offsetOrOptions?, length?, position?) {
+    validateBuffer(buffer);
     let offset = offsetOrOptions;
     if (arguments.length <= 3 || typeof offsetOrOptions === "object") {
       if (offsetOrOptions !== undefined) {
-        // validateObject(offsetOrOptions, 'options', kValidateObjectAllowNullable);
-        if (typeof offsetOrOptions !== "object" || $isArray(offsetOrOptions)) {
-          throw $ERR_INVALID_ARG_TYPE("options", "object", offsetOrOptions);
-        }
+        validateObject(offsetOrOptions, "options", kValidateObjectAllowNullable);
       }
 
       ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
     }
 
+    if (offset === undefined) offset = 0;
+    else validateInteger(offset, "offset", 0);
+    length = coerceReadLength(length);
+    validateReadPosition(position, length);
+    if (length === 0) return 0;
+    validateReadRange(buffer, offset, length);
+    validateInt32(fd, "fd", 0);
     return fs.readSync(fd, buffer, offset, length, position);
   },
   writeSync = function writeSync(fd, buffer, offsetOrOptions?, length?, position?) {
     try {
       if (types.isArrayBufferView(buffer)) {
         let offset = offsetOrOptions;
-        if (typeof offset === "object" && offset !== null) {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
-          return fs.writeSync(fd, buffer, offset, length, position);
+        if (typeof offset === "object") {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? kEmptyObject);
         }
-        return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);
+        if (offset == null) offset = 0;
+        else validateInteger(offset, "offset", 0);
+        if (typeof length !== "number") length = buffer.byteLength - offset;
+        validateWriteRange(buffer, offset, length);
+        validateInt32(fd, "fd", 0);
+        return fs.writeSync(fd, buffer, offset, length, position);
       }
       if (typeof buffer !== "string") {
         throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
       }
       // writeSync(fd, string[, position[, encoding]]): `length` is the encoding.
       validateEncoding(buffer, length);
-      return fs.writeSync(fd, buffer, offsetOrOptions, length);
+      validateInt32(fd, "fd", 0);
+      return fs.writeSync(
+        fd,
+        buffer,
+        offsetOrOptions,
+        typeof length === "string" ? normalizeEncoding(length) : undefined,
+      );
     } catch (err: any) {
       // Node's fs binding reports sync write failures by assigning the error
       // context onto a plain object with ordinary assignment semantics, so

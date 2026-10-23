@@ -52,6 +52,27 @@ static Structure* getStructure(Zig::GlobalObject* globalObject)
     return globalObject->m_JSDirentClassStructure.get(globalObject);
 }
 
+// The key of the entry type, Node's `kType`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L66
+static SymbolImpl& direntTypeSymbolImpl()
+{
+    static SymbolImpl::StaticSymbolImpl impl { "type"_s };
+    return impl;
+}
+
+static PropertyName direntTypeSymbol()
+{
+    return PropertyName(&direntTypeSymbolImpl());
+}
+
+// Inline slots of the Dirent structure. The type is last, as in Node's constructor. `path` is a Bun-only key.
+namespace DirentSlot {
+static constexpr PropertyOffset name = 0;
+static constexpr PropertyOffset path = 1;
+static constexpr PropertyOffset parentPath = 2;
+static constexpr PropertyOffset type = 3;
+static constexpr unsigned count = 4;
+}
+
 // Prototype class
 class JSDirentPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -130,20 +151,26 @@ private:
     {
         Base::finishCreation(vm, 3, "Dirent"_s);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        // Entries hold only the SymbolImpl. This keeps the Symbol cell alive, so a WeakMap keyed by it keeps its entry.
+        putDirectWithoutTransition(vm, Bun::builtinNames(vm).typePrivateName(), Symbol::create(vm, direntTypeSymbolImpl()), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     }
 };
 
 JSC::Structure* createJSDirentObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto* prototype = JSDirentPrototype::create(vm, globalObject, JSDirentPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 4);
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, DirentSlot::count);
 
     // Add property transitions for all dirent fields
     PropertyOffset offset = 0;
     structure = structure->addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
+    ASSERT(offset == DirentSlot::name);
     structure = structure->addPropertyTransition(vm, structure, Bun::builtinNames(vm).pathPublicName(), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, Bun::builtinNames(vm).dataPrivateName(), 0, offset);
+    ASSERT(offset == DirentSlot::path);
     structure = structure->addPropertyTransition(vm, structure, Identifier::fromString(vm, "parentPath"_s), 0, offset);
+    ASSERT(offset == DirentSlot::parentPath);
+    structure = structure->addPropertyTransition(vm, structure, direntTypeSymbol(), 0, offset);
+    ASSERT(offset == DirentSlot::type);
 
     return structure;
 }
@@ -184,13 +211,13 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     if (structure->id() != originalStructure->id()) {
         object->putDirect(vm, vm.propertyNames->name, name, 0);
         object->putDirect(vm, Bun::builtinNames(vm).pathPublicName(), path, 0);
-        object->putDirect(vm, Bun::builtinNames(vm).dataPrivateName(), type, 0);
         object->putDirect(vm, Identifier::fromString(vm, "parentPath"_s), path, 0);
+        object->putDirect(vm, direntTypeSymbol(), type, 0);
     } else {
-        object->putDirectOffset(vm, 0, name);
-        object->putDirectOffset(vm, 1, path);
-        object->putDirectOffset(vm, 2, type);
-        object->putDirectOffset(vm, 3, path);
+        object->putDirectOffset(vm, DirentSlot::name, name);
+        object->putDirectOffset(vm, DirentSlot::path, path);
+        object->putDirectOffset(vm, DirentSlot::parentPath, path);
+        object->putDirectOffset(vm, DirentSlot::type, type);
     }
 
     return JSValue::encode(object);
@@ -198,6 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
 
 static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* globalObject)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = value.getObject();
     if (!object) [[unlikely]] {
         return std::numeric_limits<int32_t>::max();
@@ -205,16 +233,19 @@ static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* glo
     auto* structure = getStructure(globalObject);
     JSValue type;
     if (structure->id() != object->structure()->id()) {
-        type = object->get(globalObject, Bun::builtinNames(vm).dataPrivateName());
-        if (!type) [[unlikely]] {
-            return std::numeric_limits<int32_t>::max();
-        }
+        type = object->get(globalObject, direntTypeSymbol());
+        RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
     } else {
-        type = object->getDirect(2);
+        type = object->getDirect(DirentSlot::type);
     }
 
-    if (type.isAnyInt()) {
-        return JSC::toInt32(type.asNumber());
+    // Fast path. The check below accepts an int32 too, but converts it through a double.
+    if (type.isInt32()) [[likely]] {
+        return type.asInt32();
+    }
+    // JSC can box an integer as a double, and Node's `===` still matches it.
+    if (type.isInt32AsAnyInt()) {
+        return type.asInt32AsAnyInt();
     }
 
     return std::numeric_limits<int32_t>::max();
@@ -358,10 +389,10 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
     auto nameString = name.transferToWTFString();
     auto nameValue = jsString(vm, WTF::move(nameString));
     auto typeValue = jsNumber(type);
-    object->putDirectOffset(vm, 0, nameValue);
-    object->putDirectOffset(vm, 1, pathValue);
-    object->putDirectOffset(vm, 2, typeValue);
-    object->putDirectOffset(vm, 3, pathValue);
+    object->putDirectOffset(vm, DirentSlot::name, nameValue);
+    object->putDirectOffset(vm, DirentSlot::path, pathValue);
+    object->putDirectOffset(vm, DirentSlot::parentPath, pathValue);
+    object->putDirectOffset(vm, DirentSlot::type, typeValue);
 
     return JSValue::encode(object);
 }

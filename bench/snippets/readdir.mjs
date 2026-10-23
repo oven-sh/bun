@@ -42,6 +42,19 @@ bench(`await readdir("${dir}", {recursive: false})`, async () => {
   await readdir(dir, { recursive: false });
 });
 
+bench(`readdirSync("${dir}", {recursive: true, withFileTypes: true})`, () => {
+  readdirSync(dir, { recursive: true, withFileTypes: true });
+});
+
+const entries = readdirSync(dir, { recursive: true, withFileTypes: true });
+bench(`isDirectory() x ${entries.length}`, () => {
+  let directories = 0;
+  for (const entry of entries) {
+    if (entry.isDirectory()) directories++;
+  }
+  return directories;
+});
+
 await run();
 
 if (!process?.env?.BENCHMARK_RUNNER) {

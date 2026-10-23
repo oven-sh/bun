@@ -6,6 +6,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import sync from "./require-json.json";
 
 const { path, dir, dirname, filename } = import.meta;
@@ -85,6 +86,71 @@ it("import.meta.main follows a Bun.main override but not an own path property, i
 
 it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
+});
+
+it("import.meta.resolveSync accepts a URL instance as parent", () => {
+  expect(import.meta.resolveSync("./" + import.meta.file, new URL(import.meta.url))).toBe(path);
+  expect(import.meta.resolveSync("./" + import.meta.file, { paths: [new URL(import.meta.url)] })).toBe(path);
+});
+
+// https://github.com/oven-sh/bun/issues/41318
+it("import.meta.resolve(specifier, parent) accepts a URL instance as parent", () => {
+  const parent = new URL("./sub/dir/mod.mjs", import.meta.url);
+  const expected = new URL("./sub/dir/sibling.mjs", import.meta.url).href;
+  expect(import.meta.resolve("./sibling.mjs", parent.href)).toBe(expected);
+  expect(import.meta.resolve("./sibling.mjs", parent)).toBe(expected);
+  expect(import.meta.resolve("../up.mjs", parent)).toBe(import.meta.resolve("../up.mjs", parent.href));
+  expect(import.meta.resolve("../up.mjs", parent)).toBe(new URL("./sub/up.mjs", import.meta.url).href);
+  // `undefined` and `null` fall back to this module, like Node (`parentURL ?? moduleURL`).
+  expect(import.meta.resolve("./sibling.mjs", undefined)).toBe(new URL("./sibling.mjs", import.meta.url).href);
+  expect(import.meta.resolve("./sibling.mjs", null)).toBe(new URL("./sibling.mjs", import.meta.url).href);
+  // A relative specifier resolves against a non-file URL parent as a URL.
+  expect(import.meta.resolve("./sibling.mjs", new URL("https://example.com/sub/mod.mjs"))).toBe(
+    "https://example.com/sub/sibling.mjs",
+  );
+  // Bun extension: `{ paths: [...] }` is still accepted, with a string or a URL entry.
+  expect(() => import.meta.resolve("./sibling.mjs", { paths: [dir] })).not.toThrow();
+  expect(import.meta.resolve("./sibling.mjs", { paths: [parent] })).toBe(expected);
+});
+
+// The `@mikro-orm/cli` shape from #41318: a bare specifier with `pathToFileURL(from)` as parent. The
+// directory name has a space, so the parent only works if the file: URL is decoded to a path first.
+it("import.meta.resolve(bare specifier, URL parent) searches node_modules from the parent", () => {
+  using tmp = tempDir("import-meta-resolve url-parent", {
+    "sub/node_modules/import-meta-resolve-url-parent-pkg/package.json": JSON.stringify({
+      name: "import-meta-resolve-url-parent-pkg",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "sub/node_modules/import-meta-resolve-url-parent-pkg/index.js": "module.exports = 1;",
+    "sub/sibling.mjs": "export default 1;",
+  });
+  const parent = pathToFileURL(join(String(tmp), "sub", "mod.mjs"));
+  const resolvedPath = join(String(tmp), "sub", "node_modules", "import-meta-resolve-url-parent-pkg", "index.js");
+  expect(import.meta.resolve("import-meta-resolve-url-parent-pkg", parent)).toBe(pathToFileURL(resolvedPath).href);
+  expect(import.meta.resolveSync("import-meta-resolve-url-parent-pkg", parent)).toBe(resolvedPath);
+  expect(import.meta.resolveSync("./sibling.mjs", parent)).toBe(join(String(tmp), "sub", "sibling.mjs"));
+});
+
+it.each([
+  ["number", 42, "type number (42)"],
+  ["boolean", true, "type boolean (true)"],
+  ["boolean false", false, "type boolean (false)"],
+  ["bigint", 100n, "type bigint (100n)"],
+  ["plain object", {}, "an instance of Object"],
+  ["symbol", Symbol("x"), "type symbol (Symbol(x))"],
+  ["function", () => {}, "function "],
+])("import.meta.resolve(specifier, parent) throws ERR_INVALID_ARG_TYPE for a %s parent", (_label, parent, received) => {
+  let error = null;
+  try {
+    import.meta.resolve("./sibling.mjs", parent);
+  } catch (e) {
+    error = { code: e.code, message: e.message };
+  }
+  expect(error).toEqual({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "parentURL" argument must be of type string or an instance of URL. Received ' + received,
+  });
 });
 
 it("Module.createRequire", () => {

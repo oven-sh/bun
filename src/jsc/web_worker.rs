@@ -304,21 +304,18 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        let mut temp_log = bun_ast::Log::default();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
-        // are scoped to each statement.
-        let prev_log = unsafe {
-            let prev = (*parent).transpiler.log;
-            (*parent).transpiler.set_log(&raw mut temp_log);
-            prev
-        };
+        // SAFETY: `parent` is the calling thread's live VM (BACKREF).
+        let prev_log = unsafe { (*parent).transpiler.log };
         // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard(temp_log, move |log| {
+        let mut restore = scopeguard::guard(bun_ast::Log::default(), move |log| {
             // SAFETY: `parent` outlives the guard (this call's frame).
             unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
-        let temp_log = &mut *restore;
+        // The log is inside the guard already, so `set_log` gets its final address.
+        // SAFETY: `parent` is the calling thread's live VM; the guard restores
+        // `prev_log` before the temp log drops.
+        unsafe { (*parent).transpiler.set_log(&raw mut *restore) };
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -335,9 +332,9 @@ impl WebWorker {
             }
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
-            if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
-            } {
+            let preload =
+                unsafe { resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message) };
+            if let Some(preload) = preload {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
 
@@ -814,19 +811,14 @@ impl WebWorker {
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
         let mut resolve_error = BunString::EMPTY;
-        let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
-            resolve_entry_point_specifier(
-                vm_ptr,
-                &self.unresolved_specifier,
-                &mut resolve_error,
-                vm_log,
-            )
+            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &mut resolve_error)
         } {
             Some(p) => p,
             None => {
                 vm.as_mut().exit_handler.exit_code = 1;
+                let vm_log = vm.log_mut().unwrap();
                 if vm_log.errors == 0 && !resolve_error.is_empty() {
                     let err = resolve_error.to_utf8();
                     // `Log::add_error` takes `impl IntoText`; pass an owned
@@ -1252,14 +1244,13 @@ fn on_unhandled_rejection(
 ///
 /// # Safety
 /// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because callers hold other borrows into the VM (its
+/// pointer (not `&mut`) because callers hold other borrows into the VM (not its
 /// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
 /// the single expression.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
     error_message: &mut BunString,
-    log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
@@ -1305,6 +1296,9 @@ unsafe fn resolve_entry_point_specifier<'s>(
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);
+            // SAFETY: `transpiler.log` is never null, and per fn contract no caller
+            // holds a reference to that log across this call.
+            let log = unsafe { &*(*parent).transpiler.log };
             let out: jsc::JsResult<BunString> = (|| {
                 let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
                 out.to_bun_string(global)

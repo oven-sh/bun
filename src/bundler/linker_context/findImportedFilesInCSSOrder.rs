@@ -422,12 +422,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // file. This works because in CSS, the last instance of a declaration
     // overrides all previous instances of that declaration.
     // Unlike esbuild: with a file's pre-import layers in the order, a `layer(...)` that only one of two condition lists has is not ignored.
-    let layers_matter = order.slice().iter().any(|entry| {
-        matches!(
-            entry.kind,
-            CssImportOrderKind::Layers(Layers::PreImport(_))
-        )
-    });
+    let layers_matter = order
+        .slice()
+        .iter()
+        .any(|entry| matches!(entry.kind, CssImportOrderKind::Layers(Layers::PreImport(_))));
     // The positions of the external imports that this pass masks, last one first.
     let mut masked_external_imports: Vec<u32> = Vec::new();
     {
@@ -455,7 +453,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
                         let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
-                        if is_conditional_import_redundant(&entry.conditions, later, layers_matter) {
+                        if is_conditional_import_redundant(&entry.conditions, later, layers_matter)
+                        {
                             // This import is redundant, but it might have @layer rules.
                             // So we should keep the @layer rules so that the cascade ordering of layers
                             // is preserved
@@ -483,7 +482,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
                         let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
-                        if is_conditional_import_redundant(&entry.conditions, later, layers_matter) {
+                        if is_conditional_import_redundant(&entry.conditions, later, layers_matter)
+                        {
                             // Don't remove duplicates entirely. The import conditions may
                             // still introduce layers to the layer order. Represent this as a
                             // file with an empty layer list.

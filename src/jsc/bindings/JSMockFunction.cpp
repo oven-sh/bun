@@ -1552,8 +1552,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     }
 
     {
-        // A lazy export of a builtin module (fs.ReadStream, https.Server) is an accessor until its first read, which
-        // replaces it with a data property. Read it now so that the spy lands on that data property.
+        // A builtin module's lazy export (fs.ReadStream) is an accessor until its first read. Read it, then spy on the value.
         JSC::PropertySlot probe(object, JSC::PropertySlot::InternalMethodType::HasProperty);
         bool has = object->getPropertySlot(globalObject, propertyKey, probe);
         RETURN_IF_EXCEPTION(scope, {});

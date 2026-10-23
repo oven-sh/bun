@@ -4340,9 +4340,7 @@ http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
-// The methods this module defines on Server.prototype, captured before user code can patch them. https.Server takes
-// them as own properties of its own prototype: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122
-// The descriptors have no prototype, so a later Object.prototype.get or .set does not reach defineProperties.
+// Own properties of https.Server.prototype, captured before user code can patch them (node: lib/https.js#L115-L122).
 const serverPrototypeDescriptors: PropertyDescriptorMap = Object.create(null);
 for (const key of Reflect.ownKeys(Server.prototype)) {
   if (key === "constructor") continue;

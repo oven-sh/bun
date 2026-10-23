@@ -617,10 +617,7 @@ function Server(options, requestListener): void {
   }
   return this;
 }
-// Like node, https.Server extends tls.Server and carries http.Server's prototype methods as its own properties, so
-// http.Server.prototype is not on its chain: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122
-// The parent is tls.Server. The link is made on the first use of Server so that loading node:https does not load
-// node:tls; until then the prototype sits on EventEmitter, where every Server chain ends.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122, with the tls.Server link deferred to first use.
 $toClass(Server, "Server", require("node:events"));
 ObjectDefineProperties(Server.prototype, httpServerParts.serverPrototypeDescriptors!);
 // A listener of this class speaks TLS whatever its options hold.
@@ -634,9 +631,7 @@ function linkServerClass() {
   serverClassLinked = true;
 }
 
-// The first read of `https.Server` replaces the accessor on `exports` with a data property. Once user code has sealed
-// or frozen `exports` the accessor is not configurable: defineProperty returns false instead of throwing and the
-// accessor stays in place.
+// Replaces the accessor with a data property. On a frozen `exports` defineProperty returns false and the accessor stays.
 function materializeServerExport(value) {
   ReflectDefineProperty(https, "Server", { value, writable: true, configurable: true });
   return value;

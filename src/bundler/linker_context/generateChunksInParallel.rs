@@ -1,9 +1,7 @@
 use crate::mal_prelude::*;
 use std::borrow::Cow;
-use std::io::Write as _;
 
 use bun_collections::AutoBitSet;
-use bun_collections::StringArrayHashMap;
 use bun_collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
@@ -30,8 +28,6 @@ use crate::linker_context::prepare_css_asts_for_chunk::{
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
-
-use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 // `Chunk.final_rel_path` is an owned `Box<[u8]>`; assignments
 // below move the boxed buffer directly — no lifetime promotion needed.
@@ -387,17 +383,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     // TODO: enforceNoCyclicChunkImports()
-    {
-        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
-
-        #[derive(Default)]
-        struct DuplicateEntry {
-            // `BackRef` (not `*mut`) — entries point at elements of the
-            // stack-owned `chunks: &mut [Chunk]` above, which outlives the
-            // `duplicates_map`; reads go through safe `Deref`.
-            sources: Vec<bun_ptr::BackRef<Chunk>>,
-        }
-        let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
+    let mut output_files = {
         let mut has_unusable_output_path = false;
         // Without an output directory the paths are only returned, so they can have any length.
         let opens_output_paths =
@@ -442,110 +428,18 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             }
 
-            let claimed = path_names_map.get_or_put(&rel_path)?;
-            if claimed.found_existing {
-                let first = *claimed.value_ptr as usize;
-                let dup = duplicates_map.get_or_put(&rel_path)?;
-                if !dup.found_existing {
-                    *dup.value_ptr = DuplicateEntry::default();
-                    dup.value_ptr
-                        .sources
-                        .push(bun_ptr::BackRef::new(&chunks[first]));
-                }
-                dup.value_ptr
-                    .sources
-                    .push(bun_ptr::BackRef::new(&chunks[index]));
-                continue;
-            }
-            *claimed.value_ptr = index as u32;
-
-            chunks[index].final_rel_path = rel_path.into_boxed_slice();
+            chunk.final_rel_path = rel_path.into_boxed_slice();
         }
 
-        if duplicates_map.count() > 0 {
-            let mut msg: Vec<u8> = Vec::new();
-            // errdefer msg.deinit() — handled by Drop
-
-            let mut entry_naming: Option<&[u8]> = None;
-            let mut chunk_naming: Option<&[u8]> = None;
-            let mut asset_naming: Option<&[u8]> = None;
-
-            writeln!(&mut msg, "Multiple files share the same output path")?;
-
-            let kinds = c.graph.files.items_entry_point_kind();
-
-            for (key, dup) in duplicates_map
-                .keys()
-                .iter()
-                .zip(duplicates_map.values().iter())
-            {
-                writeln!(&mut msg, "  {}:", bstr::BStr::new(key))?;
-                for chunk in dup.sources.iter() {
-                    if chunk.entry_point.is_entry_point() {
-                        if kinds[chunk.entry_point.source_index() as usize]
-                            == EntryPoint::Kind::UserSpecified
-                        {
-                            entry_naming = Some(&chunk.template.data);
-                        } else {
-                            chunk_naming = Some(&chunk.template.data);
-                        }
-                    } else {
-                        asset_naming = Some(&chunk.template.data);
-                    }
-
-                    let source_index = chunk.entry_point.source_index();
-                    let file: &bun_ast::Source =
-                        &c.parse_graph().input_files.items_source()[source_index as usize];
-                    writeln!(
-                        &mut msg,
-                        "    from input {}",
-                        bstr::BStr::new(&file.path.pretty)
-                    )?;
-                }
-            }
-
-            c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
-
-            for (name, template) in [
-                ("entry", entry_naming),
-                ("chunk", chunk_naming),
-                ("asset", asset_naming),
-            ] {
-                let Some(template) = template else { continue };
-
-                let mut text: Vec<u8> = Vec::new();
-                if crate::options::path_template_hash_len(template).is_some() {
-                    write!(
-                        &mut text,
-                        "{} naming is '{}'; these inputs produce identical content",
-                        name,
-                        bstr::BStr::new(template),
-                    )?;
-                } else {
-                    write!(
-                        &mut text,
-                        "{} naming is '{}', consider adding '[hash]' to make filenames unique",
-                        name,
-                        bstr::BStr::new(template),
-                    )?;
-                }
-                c.log_mut().add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Note,
-                    data: bun_ast::Data {
-                        text: Cow::Owned(text),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                });
-            }
-
-            return Err(crate::Error::DuplicateOutputPath);
-        }
+        // Fails the build when two output files would get one path, before anything below reads a chunk's path or
+        // writes a file.
+        let output_files = OutputFileListBuilder::init(c, chunks)?;
 
         if has_unusable_output_path {
             return Err(crate::Error::BuildFailed);
         }
-    }
+        output_files
+    };
 
     // After final_rel_path is computed for all chunks, fix up module_info
     // cross-chunk import specifiers. During printing, cross-chunk imports use
@@ -702,9 +596,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    let mut output_files =
-        OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
-
     // Copy the `ParentRef` out (not `c.resolver()`) so `root_path` borrows the
     // local, not `c`, avoiding the split-borrow with `&mut *c` passed to
     // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
@@ -799,10 +690,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .expect("Failed to allocate memory for external source map");
 
                     if tag == SourceMapOption::Linked {
-                        let mut source_map_final_rel_path: Vec<u8> =
-                            Vec::with_capacity(chunks[ci].final_rel_path.len() + b".map".len());
-                        source_map_final_rel_path.extend_from_slice(&chunks[ci].final_rel_path);
-                        source_map_final_rel_path.extend_from_slice(b".map");
+                        let source_map_final_rel_path = output_files.source_map_path(ci);
 
                         // The chunk content is inlined into the HTML document,
                         // so the sourceMappingURL resolves relative to the HTML
@@ -811,7 +699,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
-                                &source_map_final_rel_path,
+                                source_map_final_rel_path,
                             )
                         } else {
                             let entry_point_id = chunks[ci].entry_point.entry_point_id();
@@ -833,13 +721,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             cheap_prefix_normalizer(
                                 b"",
                                 if html_dir.is_empty() {
-                                    &source_map_final_rel_path
+                                    source_map_final_rel_path
                                 } else {
                                     path::resolve_path::relative_platform::<
                                         path::platform::Posix,
                                         false,
                                     >(
-                                        html_dir, &source_map_final_rel_path
+                                        html_dir, source_map_final_rel_path
                                     )
                                 },
                             )
@@ -918,10 +806,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     standalone_sourcemaps[chunk_index_in_chunks_list].take()
                 {
                     let chunk = &chunks[chunk_index_in_chunks_list];
-                    let mut source_map_final_rel_path: Vec<u8> =
-                        Vec::with_capacity(chunk.final_rel_path.len() + b".map".len());
-                    source_map_final_rel_path.extend_from_slice(&chunk.final_rel_path);
-                    source_map_final_rel_path.extend_from_slice(b".map");
+                    let source_map_final_rel_path =
+                        output_files.take_source_map_path(chunk_index_in_chunks_list);
                     let input_path: &[u8] = if chunk.entry_point.is_entry_point() {
                         c.parse_graph().input_files.items_source()
                             [chunk.entry_point.source_index() as usize]
@@ -939,7 +825,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             hash: None,
                             loader: Loader::Json,
                             input_loader: Loader::File,
-                            output_path: source_map_final_rel_path.into_boxed_slice(),
+                            output_path: source_map_final_rel_path,
                             output_kind: options::OutputKind::Sourcemap,
                             input_path: strings::concat(&[input_path, b".map"]),
                             side: None,
@@ -1051,10 +937,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .output_source_map
                         .finalize(&code_result.shifts)
                         .expect("Failed to allocate memory for external source map");
-                    let mut source_map_final_rel_path: Vec<u8> =
-                        Vec::with_capacity(chunk.final_rel_path.len() + b".map".len());
-                    source_map_final_rel_path.extend_from_slice(&chunk.final_rel_path);
-                    source_map_final_rel_path.extend_from_slice(b".map");
+                    let source_map_final_rel_path =
+                        output_files.take_source_map_path(chunk_index_in_chunks_list);
 
                     if tag == SourceMapOption::Linked {
                         let [a, b]: [&[u8]; 2] = if public_path.len() > 0 {
@@ -1087,7 +971,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             hash: None,
                             loader: Loader::Json,
                             input_loader: Loader::File,
-                            output_path: source_map_final_rel_path.into_boxed_slice(),
+                            output_path: source_map_final_rel_path,
                             output_kind: options::OutputKind::Sourcemap,
                             input_path: strings::concat(&[&input_path[..], b".map"]),
                             side: None,
@@ -1125,6 +1009,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
                     if c.chunk_gets_bytecode(chunk) {
+                        let bytecode_path =
+                            output_files.take_bytecode_path(chunk_index_in_chunks_list);
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
@@ -1143,9 +1029,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             ))
                         } else {
                             BunString::create_format(format_args!(
-                                "{}{}",
-                                bstr::BStr::new(&chunk.final_rel_path),
-                                BYTECODE_EXTENSION
+                                "{}",
+                                bstr::BStr::new(&bytecode_path)
                             ))
                         };
 
@@ -1184,13 +1069,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     }
                                 )
                             );
-                            let mut input_path_buf: Vec<u8> = Vec::new();
-                            input_path_buf.extend_from_slice(&chunk.final_rel_path);
-                            input_path_buf.extend_from_slice(BYTECODE_EXTENSION.as_bytes());
-
                             break 'brk Some(options::OutputFile::init(options::OutputFileInit {
                                 output_path: Box::from(source_provider_url_str.slice()),
-                                input_path: input_path_buf.into_boxed_slice(),
+                                input_path: bytecode_path,
                                 input_loader: Loader::Js,
                                 hash: chunk.template.placeholder.hash.map(|_| {
                                     chunk.template.content_hash(bun_wyhash::hash(&bytecode))
@@ -1998,6 +1879,5 @@ fn chunk_load_order(
     (position, startup_count.unwrap_or(0))
 }
 
-use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::{BakeExtra, BakeRouteKind};

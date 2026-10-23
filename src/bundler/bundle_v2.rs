@@ -4771,36 +4771,12 @@ pub mod bv2_impl {
                     let index = reachable_source.get() as usize;
                     let key: &[u8] = &unique_key_for_additional_files[index];
                     if !key.is_empty() {
-                        let loader = loaders[index];
                         let target = targets[index];
-                        let mut template: options::PathTemplate = if loader == Loader::Text {
-                            // Text modules ignore `--asset-naming`: without `[hash]`
-                            // two same-named files would share one path.
-                            options::PathTemplate::ASSET.into()
-                        } else {
-                            let mut template: options::PathTemplate =
-                                if self.graph.html_imports.server_source_indices.len() != 0
-                                    && self.transpiler.options.asset_naming.is_empty()
-                                {
-                                    options::PathTemplate::ASSET_WITH_TARGET.into()
-                                } else {
-                                    options::PathTemplate::ASSET.into()
-                                };
-
-                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                            // never touches `graph.input_files`.
-                            let asset_naming = unsafe {
-                                &(*self_ptr)
-                                    .transpiler_for_target(target)
-                                    .options
-                                    .asset_naming
-                            };
-                            if !asset_naming.is_empty() {
-                                template.data.clone_from(asset_naming);
-                            }
-                            template
-                        };
+                        // SAFETY: see `self_ptr` note above — `asset_path_template` needs
+                        // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                        // never touches `graph.input_files`.
+                        let mut template: options::PathTemplate =
+                            unsafe { (*self_ptr).asset_path_template(loaders[index], target) };
 
                         {
                             let source = &sources[index];
@@ -4924,6 +4900,32 @@ pub mod bv2_impl {
                 }
             }
             Ok(())
+        }
+
+        /// The naming template of a copied asset, with no placeholder filled in.
+        pub(crate) fn asset_path_template(
+            &mut self,
+            loader: Loader,
+            target: options::Target,
+        ) -> options::PathTemplate {
+            if loader == Loader::Text {
+                // Text modules ignore `--asset-naming`: without `[hash]`
+                // two same-named files would share one path.
+                return options::PathTemplate::ASSET.into();
+            }
+            let mut template: options::PathTemplate =
+                if self.graph.html_imports.server_source_indices.len() != 0
+                    && self.transpiler.options.asset_naming.is_empty()
+                {
+                    options::PathTemplate::ASSET_WITH_TARGET.into()
+                } else {
+                    options::PathTemplate::ASSET.into()
+                };
+            let asset_naming = &self.transpiler_for_target(target).options.asset_naming;
+            if !asset_naming.is_empty() {
+                template.data.clone_from(asset_naming);
+            }
+            template
         }
 
         pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {

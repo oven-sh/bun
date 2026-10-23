@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use std::io::Write as _;
 
 use crate::Error;
 use bun_alloc::MaxHeapAllocator;
@@ -24,8 +23,6 @@ use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
     write_file_with_path_buffer,
 };
-
-use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
@@ -97,7 +94,8 @@ pub(crate) fn write_output_files_to_disk(
                     .get_mut(chunk_index_in_chunks_list)
                     .and_then(Option::take)
             {
-                let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
+                let source_map_final_rel_path =
+                    output_files.take_source_map_path(chunk_index_in_chunks_list);
 
                 let rel_parent = paths::resolve_path::dirname::<paths::platform::Posix>(
                     &source_map_final_rel_path,
@@ -298,7 +296,8 @@ pub(crate) fn write_output_files_to_disk(
                     .unwrap_or_else(|_| {
                         panic!("Failed to allocate memory for external source map")
                     });
-                let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
+                let source_map_final_rel_path =
+                    output_files.take_source_map_path(chunk_index_in_chunks_list);
 
                 if tag == SourceMapOption::Linked {
                     let [a, b] = if !public_path.is_empty() {
@@ -386,11 +385,10 @@ pub(crate) fn write_output_files_to_disk(
         let bytecode_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
                 if c.chunk_gets_bytecode(chunk) {
-                    let mut fdpath = bun_paths::path_buffer_pool::get();
+                    let bytecode_path = output_files.take_bytecode_path(chunk_index_in_chunks_list);
                     let source_provider_url = BunString::create_format(format_args!(
-                        "{}{}",
-                        bstr::BStr::new(&chunk.final_rel_path),
-                        BYTECODE_EXTENSION,
+                        "{}",
+                        bstr::BStr::new(&bytecode_path)
                     ));
 
                     if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
@@ -402,10 +400,9 @@ pub(crate) fn write_output_files_to_disk(
                         None,
                     ) {
                         let bytecode = crate::bytecode_sidecar::frame(bytecode);
-                        let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
                             "Bytecode cache generated {}: {}",
-                            bstr::BStr::new(source_provider_url_str.slice()),
+                            bstr::BStr::new(&bytecode_path),
                             bun_core::fmt::size(
                                 bytecode.len(),
                                 bun_core::fmt::SizeFormatterOptions {
@@ -413,10 +410,6 @@ pub(crate) fn write_output_files_to_disk(
                                 }
                             ),
                         );
-                        let frp: &[u8] = &chunk.final_rel_path;
-                        fdpath[..frp.len()].copy_from_slice(frp);
-                        fdpath[frp.len()..frp.len() + BYTECODE_EXTENSION.len()]
-                            .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
                         match write_file_with_path_buffer(
                             &mut pathbuf,
                             &WriteFileArgs {
@@ -428,9 +421,7 @@ pub(crate) fn write_output_files_to_disk(
                                     0o644
                                 },
                                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(
-                                    &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
-                                ),
+                                file: PathOrFileDescriptor::Path(&bytecode_path),
                             },
                         ) {
                             Ok(_) => {}
@@ -448,18 +439,9 @@ pub(crate) fn write_output_files_to_disk(
                             }
                         }
 
-                        let mut input_path_buf: Vec<u8> = Vec::new();
-                        write!(
-                            &mut input_path_buf,
-                            "{}{}",
-                            bstr::BStr::new(&chunk.final_rel_path),
-                            BYTECODE_EXTENSION
-                        )
-                        .expect("unreachable");
-
                         break 'brk Some(OutputFile::init(OutputFileInit {
-                            output_path: Box::<[u8]>::from(source_provider_url_str.slice()),
-                            input_path: input_path_buf.into_boxed_slice(),
+                            output_path: bytecode_path.clone(),
+                            input_path: bytecode_path,
                             input_loader: Loader::File,
                             hash: chunk
                                 .template
@@ -606,10 +588,12 @@ pub(crate) fn write_output_files_to_disk(
             parse_graph.additional_output_files.len(),
             additional_output_files.len()
         );
-        for (src, dest) in parse_graph
+        let mut repeated_assets = output_files.repeated_assets.iter().copied().peekable();
+        for (i, (src, dest)) in parse_graph
             .additional_output_files
             .iter_mut()
             .zip(additional_output_files.iter_mut())
+            .enumerate()
         {
             let bytes = if let OutputFileValue::Buffer { bytes } = &mut src.value {
                 core::mem::take(bytes)
@@ -619,8 +603,11 @@ pub(crate) fn write_output_files_to_disk(
             // `defer src.value.buffer.arena.free(bytes)` — `bytes` is now an
             // owned Box that drops at end of scope.
 
+            // An earlier asset put the same bytes at this path.
+            let is_repeat = repeated_assets.next_if_eq(&(i as u32)).is_some();
+
             let rel_parent = paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
-            if !rel_parent.is_empty() {
+            if !is_repeat && !rel_parent.is_empty() {
                 if let Err(e) = root_dir.make_path(rel_parent) {
                     c.log_mut().add_error_fmt(
                         None,
@@ -636,19 +623,18 @@ pub(crate) fn write_output_files_to_disk(
                 }
             }
 
-            match bun_sys::File::write_file(
-                bun_sys::Fd::from_std_dir(&root_dir),
-                paths::resolve_path::z(&src.dest_path, &mut pathbuf),
-                &bytes,
-            ) {
-                Err(e) => {
-                    c.log_mut().add_sys_error(
-                        &e,
-                        format_args!("writing file {}", quote(src.src_path.text)),
-                    );
-                    return Err(crate::Error::WriteFailed);
-                }
-                Ok(_) => {}
+            if !is_repeat
+                && let Err(e) = bun_sys::File::write_file(
+                    bun_sys::Fd::from_std_dir(&root_dir),
+                    paths::resolve_path::z(&src.dest_path, &mut pathbuf),
+                    &bytes,
+                )
+            {
+                c.log_mut().add_sys_error(
+                    &e,
+                    format_args!("writing file {}", quote(src.src_path.text)),
+                );
+                return Err(crate::Error::WriteFailed);
             }
 
             let bytes_len = bytes.len();

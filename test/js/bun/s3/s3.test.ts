@@ -1486,6 +1486,49 @@ describe("s3-server", () => {
     }
   });
 
+  describe.concurrent("an endpoint with trailing slashes", () => {
+    // The endpoint is a base, and a base has no trailing slash: `https://host`, `https://host/` and
+    // `https://host//` all sign and request `/bucket/key`.
+    const rows: [string, string][] = [
+      ["", "/buntest/hello.txt"],
+      ["/", "/buntest/hello.txt"],
+      ["//", "/buntest/hello.txt"],
+      ["/prefix/", "/prefix/buntest/hello.txt"],
+      ["/prefix//", "/prefix/buntest/hello.txt"],
+    ];
+    const options = { accessKeyId: "test", secretAccessKey: "test", bucket: "buntest" };
+
+    it.each(rows)("presigns /bucket/key below %j", (tail, pathname) => {
+      const s3 = S3({ ...options, endpoint: `https://s3.example.com${tail}` });
+      expect(new URL(s3.presign("hello.txt")).pathname).toBe(pathname);
+    });
+
+    it.each([
+      ["/prefix//", "/prefix"],
+      ["/a", "/a"],
+      ["//", ""],
+      ["", ""],
+    ])("presigns /bucket/key below an endpoint that new URL() rejects: %j", (tail, prefix) => {
+      // A port above 65535 fails the WHATWG parser, so the endpoint is read as written.
+      const s3 = S3({ ...options, endpoint: `https://s3.example.com:70000${tail}` });
+      expect(s3.presign("hello.txt")).toStartWith(`https://s3.example.com:70000${prefix}/buntest/hello.txt?`);
+    });
+
+    it.each(rows)("requests /bucket/key below %j", async (tail, pathname) => {
+      const paths: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          paths.push(new URL(req.url).pathname);
+          return new Response("Hello Bun!");
+        },
+      });
+      const s3 = S3({ ...options, endpoint: `${server.url.origin}${tail}` });
+      expect(await s3.file("hello.txt").text()).toBe("Hello Bun!");
+      expect(paths).toEqual([pathname]);
+    });
+  });
+
   describe.concurrent("should accept / or \\ in start and end of bucket name", () => {
     let bucketPrefixI = 0;
     for (let start of ["/", "\\", ""]) {

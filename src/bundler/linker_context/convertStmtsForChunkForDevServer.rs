@@ -12,7 +12,6 @@ use bun_collections::VecExt;
 
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
-/// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
 /// The conversion logic is completely different for format .internal_bake_dev
 ///
 /// For ESM, this function populates all three lists:
@@ -65,6 +64,9 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
             && loaders[record.source_index.get() as usize] == Loader::Css
         {
             record.path.is_disabled = true;
+            record
+                .flags
+                .insert(ImportRecordFlags::IS_DEV_SERVER_STYLESHEET);
             continue;
         }
         // Make sure the printer gets the resolved path
@@ -78,17 +80,34 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
         match &stmt.data {
             StmtData::SImport(st) => {
                 let record = &mut ast.import_records[st.import_record_index as usize];
-                if record.path.is_disabled {
-                    continue;
-                }
 
-                if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
-                    // Barrel optimization: this import was deferred (unused submodule).
-                    // Don't add to dep array, but declare the namespace ref as an
-                    // empty object so body code referencing it doesn't throw.
-                    // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
-                    let items_len = st.items.len();
-                    if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
+                // A disabled module or a deferred barrel import is not a dependency, but the body still reads its namespace.
+                let is_deferred = record.flags.contains(ImportRecordFlags::IS_UNUSED);
+                if record.path.is_disabled || is_deferred {
+                    let has_bindings = !st.star_name_loc.is_empty()
+                        || st.items.len() > 0
+                        || st.default_name.is_some();
+                    // A stylesheet is not a disabled module: its binding gets no stand-in here (#18258).
+                    let is_stylesheet = record
+                        .flags
+                        .contains(ImportRecordFlags::IS_DEV_SERVER_STYLESHEET);
+                    if has_bindings && !is_stylesheet {
+                        let namespace = if is_deferred {
+                            Expr::init(E::Object::default(), stmt.loc)
+                        } else {
+                            // `() => ({})` is the value `print_disabled_import` gives this import in `bun build`.
+                            Expr::init(
+                                E::Arrow {
+                                    prefer_expr: true,
+                                    body: G::FnBody::init_return_expr(
+                                        bump,
+                                        Expr::init(E::Object::default(), stmt.loc),
+                                    )?,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            )
+                        };
                         stmts
                             .inside_wrapper_prefix
                             .append_non_dependency(Stmt::alloc(
@@ -102,7 +121,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             },
                                             stmt.loc,
                                         ),
-                                        value: Some(Expr::init(E::Object::default(), stmt.loc)),
+                                        value: Some(namespace),
                                     }]),
                                     ..Default::default()
                                 },

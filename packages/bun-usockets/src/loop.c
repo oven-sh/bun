@@ -808,8 +808,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     if (length > 0) {
-                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
-                                   : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        if (!s->ssl) {
+                            s = us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        } else if (!s->ssl_raw_tap) {
+                            s = us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        } else {
+                            /* upgradeTLS: the [raw, _] half sees the ciphertext before SSL_read consumes it. */
+                            s = us_dispatch_ssl_raw_tap(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                            if (s && !us_socket_is_closed(s) && s->ssl) {
+                                s = us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                            }
+                        }
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
                         // loop->num_ready_polls isn't accessible on Windows.

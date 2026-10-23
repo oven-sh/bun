@@ -1122,7 +1122,7 @@ pub struct WatchItem {
     pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
-    /// The size of a file at its last event. See `Watcher::report_truncations`.
+    /// The size of the file at the last read, or 0 when the first read failed. See `Watcher::report_truncations`.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub size: u64,
 }

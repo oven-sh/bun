@@ -3326,10 +3326,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
-                        && self.options.target != bun_ast::Target::Node
-                    {
-                        // Node.js doesn't support import.meta.main
+                    if self.options.module_type == bundle_opts::Format::Esm {
                         // Most of the time, leave it in there
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
@@ -3363,13 +3360,8 @@ pub(crate) mod __gated_printer {
                         }
 
                         if self.options.target == bun_ast::Target::Node {
-                            // "__require.module"
-                            if let Some(require) = self.options.require_ref {
-                                self.print_symbol(require);
-                                self.print(b".module");
-                            } else {
-                                self.print(b"module");
-                            }
+                            // The output file's own `module`, not a `__commonJS` wrapper's parameter.
+                            self.print(b"module");
                         } else if self.options.commonjs_module_ref.is_valid() {
                             self.print_symbol(self.options.commonjs_module_ref);
                         } else {

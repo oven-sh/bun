@@ -2354,12 +2354,200 @@ describe("bundler", () => {
       `,
     },
     target: "node",
-    capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
+    capture: [
+      "false",
+      "false",
+      "import.meta.main ?? __require.main == __require.module",
+      "import.meta.main ?? __require.main == __require.module",
+    ],
     onAfterBundle(api) {
       // This should not be marked as a CommonJS module
       api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
+  });
+  // Node.js runs the output as the entry point, then as a module that the entry point loads.
+  for (const format of ["esm", "cjs"] as const) {
+    const ext = format === "esm" ? "mjs" : "cjs";
+    for (const minify of [false, true]) {
+      itBundled(`edgecase/ImportMetaMainTargetNodeImported+${format}${minify ? "+minify" : ""}`, {
+        files: {
+          "/entry.ts": /* js */ `
+            console.log(JSON.stringify([import.meta.main, require.main === module, require.main !== module]));
+          `,
+        },
+        runtimeFiles: {
+          [`/importer.${ext}`]: format === "esm" ? `import "./out.mjs";` : `require("./out.cjs");`,
+        },
+        outfile: `/out.${ext}`,
+        target: "node",
+        format,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        run: [
+          { runtime: "node", stdout: "[true,true,false]" },
+          { runtime: "node", file: `/importer.${ext}`, stdout: "[false,false,true]" },
+        ],
+      });
+    }
+  }
+  // `import.meta.main ?? ...` needs parentheses next to most operators. "/old-node.mjs" runs the
+  // output with an `import.meta` that has no `main`, like Node.js before v22.18.0 and v24.2.0.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/ImportMetaMainTargetNodePrecedence${minify ? "+minify" : ""}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          console.log(JSON.stringify([
+            !import.meta.main,
+            typeof import.meta.main,
+            import.meta.main.toString(),
+            (require.main !== module).toString(),
+            (require.main !== module) ** 2,
+            import.meta.main ? "entry" : "imported",
+            import.meta.main || "imported",
+            import.meta.main && "entry",
+            import.meta.main ?? "unreachable",
+            "is entry: " + import.meta.main,
+            "main" in import.meta,
+          ]));
+        `,
+      },
+      runtimeFiles: {
+        "/importer.mjs": `import "./out.mjs";`,
+        "/old-node.mjs": /* js */ `
+          import { readFileSync } from "node:fs";
+          import * as nodeModule from "node:module";
+          import { SourceTextModule, SyntheticModule } from "node:vm";
+
+          const url = new URL("./out.mjs", import.meta.url);
+          const output = new SourceTextModule(readFileSync(url, "utf8"), {
+            identifier: url.href,
+            initializeImportMeta(meta) {
+              meta.url = url.href;
+            },
+          });
+          await output.link(
+            () =>
+              new SyntheticModule(Object.keys(nodeModule), function () {
+                for (const name of Object.keys(nodeModule)) this.setExport(name, nodeModule[name]);
+              }),
+          );
+          await output.evaluate();
+        `,
+      },
+      outfile: "/out.mjs",
+      target: "node",
+      format: "esm",
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      run: [
+        {
+          runtime: "node",
+          stdout: `[false,"boolean","true","false",0,"entry",true,"entry",true,"is entry: true",true]`,
+        },
+        {
+          runtime: "node",
+          file: "/importer.mjs",
+          stdout: `[true,"boolean","false","true",1,"imported","imported",false,false,"is entry: false",true]`,
+        },
+        {
+          runtime: "node",
+          bunArgs: ["--experimental-vm-modules"],
+          file: "/old-node.mjs",
+          stdout: `[false,"boolean","true","false",0,"entry",true,"entry",true,"is entry: true",false]`,
+        },
+      ],
+    });
+  }
+  // With --splitting, a module that two chunks import is in a shared chunk, and `import.meta` there
+  // is the chunk's. The check is then false in every process, as with the bun target (#40601).
+  itBundled("edgecase/ImportMetaMainTargetNodeSplitting", {
+    files: {
+      "/cli.ts": /* js */ `
+        import { libIsMain } from "./lib";
+        console.log(JSON.stringify({ cli: import.meta.main, lib: libIsMain }));
+      `,
+      "/lib.ts": /* js */ `
+        export const libIsMain = import.meta.main;
+        if (import.meta.main) console.log("lib is the entry point");
+      `,
+    },
+    entryPoints: ["/cli.ts", "/lib.ts"],
+    splitting: true,
+    outdir: "/out",
+    target: "node",
+    format: "esm",
+    run: [
+      { runtime: "node", file: "/out/cli.js", stdout: `{"cli":true,"lib":false}` },
+      // "/out/lib.js" is the entry point here, but it only re-exports from the shared chunk.
+      { runtime: "node", file: "/out/lib.js", stdout: "" },
+    ],
+  });
+  // One entry point is enough: "/command.ts" is a chunk of its own and imports "/entry.ts" back.
+  itBundled("edgecase/ImportMetaMainTargetNodeSplittingBackImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        export const version = "1.0.0";
+        if (import.meta.main) import("./command").then(command => command.run());
+      `,
+      "/command.ts": /* js */ `
+        import { version } from "./entry";
+        export function run() {
+          console.log("ran " + version);
+        }
+      `,
+    },
+    splitting: true,
+    outdir: "/out",
+    target: "node",
+    format: "esm",
+    run: { runtime: "node", file: "/out/entry.js", stdout: "" },
+  });
+  // A "#!/usr/bin/env bun" entry point is parsed for bun, which has no `__require`.
+  itBundled("edgecase/ImportMetaMainTargetNodeBunShebang", {
+    files: {
+      "/entry.ts": `#!/usr/bin/env bun
+console.log(import.meta.main, require.main === module);`,
+    },
+    target: "node",
+    format: "esm",
+    run: { stdout: "true true" },
+  });
+  // A require function has no `module` property.
+  itBundled("edgecase/ImportMetaMainTargetNodeIife", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(capture(import.meta.main), capture(require.main !== module));
+      `,
+    },
+    target: "node",
+    format: "iife",
+    capture: ["__require.main == module", "__require.main != module"],
+  });
+  // "/entry.cjs" is wrapped in __commonJS. `module` has to be the output file's own.
+  itBundled("edgecase/RequireMainTargetNodeCjsWrappedEntry", {
+    files: {
+      "/entry.cjs": /* js */ `
+        module.exports = { name: "entry" };
+        const other = require("./other.cjs");
+        if (require.main === module) console.log("main ran", other.sawEntry);
+      `,
+      "/other.cjs": /* js */ `
+        const entry = require("./entry.cjs");
+        module.exports = { sawEntry: typeof entry };
+      `,
+    },
+    runtimeFiles: {
+      "/importer.cjs": `require("./out.cjs"); console.log("required only");`,
+    },
+    outfile: "/out.cjs",
+    target: "node",
+    format: "cjs",
+    run: [
+      { runtime: "node", stdout: "main ran object" },
+      { runtime: "node", file: "/importer.cjs", stdout: "required only" },
+    ],
   });
   itBundled("edgecase/build-cjs-module#20308", {
     files: {
@@ -3885,9 +4073,9 @@ describe("bundler", () => {
     },
     run: { stdout: "true" },
   });
-  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
-  // that prints as `__require.main == __require.module` without its own paren
-  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  // `import.meta.main` is rewritten to EImportMetaMain; in CommonJS output
+  // that prints as `require.main == module` without its own paren wrap, so an
+  // unwrapped `delete` would bind to `require.main`.
   itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
     files: {
       "/entry.js": /* js */ `
@@ -3908,6 +4096,19 @@ describe("bundler", () => {
     target: "node",
     onAfterBundle: api => {
       expect(api.readFile("out.js")).not.toMatch(/delete\s+__require\.main\b/);
+    },
+    run: { runtime: "node", stdout: "true" },
+  });
+  itBundled("edgecase/DeleteFoldedImportMetaMainRefNodeCjs", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+require\.main\b/);
     },
     run: { runtime: "node", stdout: "true" },
   });

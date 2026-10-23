@@ -667,8 +667,8 @@ module.exports = { scope };
     }
   });
 
-  // The base types of an interface that two files declare have an error in each file. The task of the second file leaves
-  // the error in the first file to that file's task, which is done later here, because the file is long.
+  // The base types of an interface that two files declare have an error in each file. The task of the second file doesn't
+  // report the error in the first file. That file's task does, and it's done later here, because the file is long.
   test("reports the errors of one query in two files, whichever file's task is done first", async () => {
     const names = Array.from({ length: 4 }, (_, i) => `C${i}`);
     using dir = project({
@@ -6305,7 +6305,7 @@ dynamic.getSSRProps = binding => {
     });
 
     // TypeScript measures the variances of all the type parameters of a generic type when one of them is first read. What it
-    // gets, and what the measurement leaves in the cache of comparisons, depends on that moment and on that order.
+    // gets, and what the measurement stores in the cache of comparisons, depends on that moment and on that order.
     describe("what depends on when variances are measured", () => {
       // TypeScript measures all the variances of G and H together, with the first of the two in progress. H's second one reads
       // as independent then. Measured alone, later, it's covariant.
@@ -6416,7 +6416,7 @@ interface Self<T> { self: Self<{ x: 1; y: 2 }> extends Self<{ x: 1 }> ? { [K in 
       });
 
       // Measuring A compares `First<B, sub>` with `First<B, super>`, which measures `First` and `Second`. Their measurement
-      // restarts and leaves a failure in the cache for the same two types. The comparison that started it replaces that.
+      // restarts and stores a failure in the cache for the same two types. The comparison that started it replaces that.
       test("a comparison whose result replaces what a restarted measurement stored", async () => {
         using dir = project({
           "a.ts": `

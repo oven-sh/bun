@@ -1431,7 +1431,7 @@ impl Config {
         }
     }
 
-    /// Adds what holds for a rule however it's turned on. The config file, `--rule` and bunfig.toml end up in `rules`. A
+    /// Adds what applies to a rule however it's turned on. The config file, `--rule` and bunfig.toml end up in `rules`. A
     /// comment in a file starts from what the config has for the rule, so a setting that's off takes it there.
     fn add_implied_settings(&self, rules: &mut Vec<RuleSetting>) {
         fn setting_of<'r>(

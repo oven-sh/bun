@@ -5,7 +5,7 @@
 //! blocking. The threads that load the project's files only queue a command for it and then wait in
 //! `Connection::wait`. What a program writes is passed on as is. The checker decodes and validates it.
 //!
-//! The process may go on after the check, as it does for `Bun.build`. `Programs::close` leaves nothing behind: the
+//! The process may go on after the check, as it does for `Bun.build`. `Programs::close` cleans up everything: the
 //! programs have exited, the pipes and the loop are closed, and the thread has ended.
 
 use core::ffi::CStr;

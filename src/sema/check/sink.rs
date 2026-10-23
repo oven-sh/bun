@@ -363,7 +363,7 @@ impl super::Program<'_> {
     pub(super) fn publish_reported(&self, task: u64, reported: Logged) {
         let mut owners = self.sink.owners.lock();
         for (owner, diagnostic) in reported {
-            // Per file: a task for a later file leaves the diagnostics in an earlier one to that file's task.
+            // Per file: a task for a later file doesn't report the diagnostics in an earlier one. That file's task does.
             let file = diagnostic.file;
             if owner.is_some_and(|q| *owners.entry((q, file)).or_insert(task) != task) {
                 continue;

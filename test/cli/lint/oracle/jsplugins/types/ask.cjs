@@ -9,7 +9,7 @@ function services(context) {
   return services;
 }
 
-// A name or a literal also goes by where it is.
+// For a name or a literal, where it is counts too.
 function kindOf(node) {
   if (!["Identifier", "Literal", "JSXIdentifier", "PrivateIdentifier"].includes(node.type)) return node.type;
   const { parent } = node;

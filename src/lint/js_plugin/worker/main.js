@@ -376,7 +376,7 @@ function lookAlike(name, members) {
 let typed = null;
 
 // What typescript-eslint's parser gives with type information, as far as `types.rs` knows it. Only for a rule that has asked for
-// types before, by throwing. `null` for any other: a rule that uses types if there are any goes on without them.
+// types before, by throwing. `null` for any other: a rule that uses types if there are any continues without them.
 function typedServices() {
   typed ??= readTypes();
   return typed.asked.has(currentRule?.position) ? typed.services : null;
@@ -438,7 +438,7 @@ function readTypes() {
     const at = find(node.range[0], node.range[1], kind[0]);
     if (at === -1) {
       if (words[1] !== 1 || kind.includes(undefined)) refuse(`getTypeAtLocation(${node.type})`);
-      // The rules run again, with the types of such nodes. Until then this stands in for the type.
+      // The rules run again, with the types of such nodes. Until then this is a placeholder for the type.
       native.askWords(WANTED_TYPE, kind.join(" "), 0);
     }
     const word = offset => (at === -1 ? 0 : words[at + offset]);

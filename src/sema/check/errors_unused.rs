@@ -768,7 +768,7 @@ impl Checker<'_, '_> {
     }
 
     /// The start of `markPropertyAsReferenced`, up to `isSelfTypeAccess`, for the property `name` of the apparent type
-    /// `receiver`, accessed in `file`: the class member it goes on to mark. `at` is the same as for
+    /// `receiver`, accessed in `file`: the class member it then marks. `at` is the same as for
     /// `mark_property_as_referenced`.
     fn private_property_read(
         &mut self,

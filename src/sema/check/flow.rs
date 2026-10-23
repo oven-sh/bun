@@ -597,7 +597,7 @@ impl NarrowingSubjects for NodeSubjects {
 enum Paths {
     /// It starts with the declared type, so it stops at the first antecedent that's reachable.
     First,
-    /// All. It ends at the declaration of a name, from where `isReachableFlowNode` goes on.
+    /// All. It ends at the declaration of a name, from where `isReachableFlowNode` continues.
     ToDeclaration,
 }
 
@@ -5441,7 +5441,7 @@ impl<'p, 's> Checker<'p, 's> {
         if before.intersects(about) {
             return false;
         }
-        // The walk ends at the declaration of the name, where `isReachableFlowNode` goes on.
+        // The walk ends at the declaration of the name, where `isReachableFlowNode` continues.
         let mut ends_at_declaration = false;
         // Every path ends at a start, with `initialType`.
         let starts_as_declared = |c: &Self| {

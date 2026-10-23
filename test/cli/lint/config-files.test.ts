@@ -4767,7 +4767,7 @@ export const p = \`a\${/* c */ 'x'}\`;
         const [plain, strict, invalid] = await Promise.all(
           [`"error"`, `["error", { "allowThrowingUnknown": false }]`, `["error", { "allowRethrowing": true }]`].map(
             it =>
-              // The comment goes at the end of the first line, so that the positions stay.
+              // The comment is added at the end of the first line, so that the positions stay.
               lint({ ...files, "a.ts": files["a.ts"].replace("\n", ` ${on}${it} */\n`) }, ["a.ts"]),
           ),
         );

@@ -686,8 +686,8 @@ struct ConnectionState {
     terminal: Option<CallError>,
 }
 
-/// `ipc.AsyncConn` over JSON-RPC: the protocol state of one process. It doesn't read or write anything itself. Whoever
-/// owns the process passes on the bytes in both directions.
+/// `ipc.AsyncConn` over JSON-RPC: the protocol state of one process. It doesn't read or write anything itself. The
+/// process's owner passes on the bytes in both directions.
 #[derive(Default)]
 pub struct Connection {
     state: Guarded<ConnectionState>,

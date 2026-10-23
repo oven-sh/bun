@@ -42,6 +42,7 @@ public:
         case SyntheticModuleType::PackageJSONTypeCommonJS:
         // ESM tag is used by builtins that ship real JS source (e.g. bun:wrap).
         // Their providers are constant across globals, so caching is safe.
+        // A text, Markdown or sqlite module has this tag too, and is keyed by path like JS.
         case SyntheticModuleType::ESM:
             return true;
         default:

@@ -240,40 +240,41 @@ function getLazy<T>(initializer: () => T) {
 }
 
 // ─── Node-style performance-entry observation ────────────────────────────────
-// For entry types the native (WebCore) PerformanceObserver does not implement
-// ('net', 'dns', ...). Mirrors lib/internal/perf/observe.js: producers check
-// hasObserver() before doing any work, startPerf() stashes a context on the
-// producing object, and stopPerf() builds a plain entry and dispatches it to
-// the registered observers on a fresh tick.
-// https://github.com/nodejs/node/blob/v25.2.1/lib/internal/perf/observe.js
+// Node's hasObserver(), startPerf() and stopPerf(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L540-L566
 
-const observerCounts = new Map();
-const kObservers = new Set<NodeEntryObserver>();
+// The copy that hasObserver() reads of the observer counts that native code keeps (Performance::observedTypesDidChange).
+const observerCounts = [0, 0, 0, 0, 0, 0, 0];
 
-/** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
+// An entry type's index in observerCounts, which is PerformanceEntry::nodeTypeIndex (PerformanceEntry.h).
+const kEntryTypeGc = 0;
+const kEntryTypeHttp = 1;
+const kEntryTypeHttp2 = 2;
+const kEntryTypeNet = 3;
+const kEntryTypeDns = 4;
+const kEntryTypeQuic = 5;
+const kEntryTypeFunction = 6;
 
-function hasObserver(type) {
-  return (observerCounts.get(type) ?? 0) > 0;
+function hasObserver(type: number): boolean {
+  $assert(typeof type === "number", "hasObserver() takes a kEntryType* constant");
+  return observerCounts[type] > 0;
 }
+
+type QueueNodeEntry = (entry: PerformanceNodeEntry, type: number) => void;
+let queueNodeEntry: QueueNodeEntry | undefined;
 
 /**
  * Hand a finished entry to every registered observer. Used by callers that
  * construct the entry themselves (e.g. perf_hooks timerify) instead of the
  * startPerf/stopPerf pair.
  */
-function enqueueNodeEntry(entry) {
-  for (const observer of kObservers) {
-    observer.bufferEntry(entry);
-  }
+function enqueueNodeEntry(entry: PerformanceNodeEntry, type: number) {
+  queueNodeEntry ??= $newCppFunction("Performance.cpp", "jsFunctionQueueNodePerformanceEntry", 2) as QueueNodeEntry;
+  queueNodeEntry(entry, type);
 }
 
 // Node's PerformanceNodeEntry — the shape used by every JS-side entry type
 // ('function', 'net', 'dns', 'http'). Lives here (not in perf_hooks.ts) so
-// stopPerf can construct it without a circular require. The prototype chain
-// is linked to PerformanceEntry by perf_hooks.ts at load time using its
-// captured global (every construction is gated behind hasObserver(), which
-// is only true after perf_hooks has loaded).
+// stopPerf can construct it without a circular require.
 class PerformanceNodeEntry {
   name;
   entryType;
@@ -305,7 +306,8 @@ function startPerf(target, key, context) {
   target[key] = context;
 }
 
-function stopPerf(target, key, context?) {
+/** `type` is the kEntryType* constant for the `type` that the context got at startPerf(). */
+function stopPerf(target, key, type: number, context?) {
   const ctx = target[key];
   if (!ctx) {
     return;
@@ -316,102 +318,16 @@ function stopPerf(target, key, context?) {
   // passed to stopPerf() (e.g. http entries carry both req and res).
   const detail =
     ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined;
-  enqueueNodeEntry(new PerformanceNodeEntry(ctx.name, ctx.type, startTime, performance.now() - startTime, detail));
+  enqueueNodeEntry(
+    new PerformanceNodeEntry(ctx.name, ctx.type, startTime, performance.now() - startTime, detail),
+    type,
+  );
 }
 
-/**
- * One registered observer of node-only entry types. The PerformanceObserver
- * wrapper in node:perf_hooks owns one of these when it observes such a type.
- */
 const isFrameOfStoppedModuleGraph = $newCppFunction("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph", 1);
 /** Whether the script that is running is a disposed `Bun.ModuleGraph`'s (what it had queued still runs). */
 function isStoppedModuleGraphRunning() {
   return isFrameOfStoppedModuleGraph(require("internal/async_context_frame").current());
-}
-
-class NodeEntryObserver {
-  callback;
-  owner;
-  types = new Set();
-  buffer: PerformanceNodeEntry[] = [];
-  scheduled = false;
-  // The frame of the Bun.ModuleGraph the observer was made in, if any. Entries are delivered in
-  // that graph's context (or the host's), not the one of whatever produced the entry: set from a
-  // graph that is then disposed, the immediate would be cancelled with `scheduled` left true, and
-  // this observer would never be called again. An observer made in a graph goes with it: see
-  // bufferEntry.
-  frame;
-
-  constructor(callback, owner) {
-    this.callback = callback;
-    this.owner = owner;
-    this.frame = require("internal/async_context_frame").currentGraphFrame();
-  }
-
-  observe(types) {
-    for (const type of this.types) {
-      observerCounts.set(type, (observerCounts.get(type) ?? 1) - 1);
-    }
-    this.types = new Set(types);
-    for (const type of this.types) {
-      observerCounts.set(type, (observerCounts.get(type) ?? 0) + 1);
-    }
-    kObservers.add(this);
-  }
-
-  disconnect() {
-    for (const type of this.types) {
-      observerCounts.set(type, (observerCounts.get(type) ?? 1) - 1);
-    }
-    this.types.clear();
-    this.buffer = [];
-    kObservers.delete(this);
-  }
-
-  bufferEntry(entry) {
-    if (!this.types.has(entry.entryType)) {
-      return;
-    }
-    // Its graph was disposed: nothing of it runs again, so it would buffer for ever (and keep
-    // the entry type produced for nobody).
-    if (isFrameOfStoppedModuleGraph(this.frame)) {
-      this.disconnect();
-      return;
-    }
-    this.buffer.push(entry);
-    if (!this.scheduled) {
-      this.scheduled = true;
-      const deliver = () => {
-        this.scheduled = false;
-        const entries = this.buffer;
-        if (entries.length === 0) {
-          return;
-        }
-        this.buffer = [];
-        this.callback.$call(undefined, makeNodeEntryList(entries), this.owner);
-      };
-      const AsyncContextFrame = require("internal/async_context_frame");
-      if (this.frame === undefined && AsyncContextFrame.currentGraph() === undefined) setImmediate(deliver);
-      else AsyncContextFrame.run(this.frame, setImmediate, undefined, deliver);
-    }
-  }
-}
-
-function makeNodeEntryList(entries) {
-  // Node's PerformanceObserverEntryList hands entries out in chronological
-  // (startTime) order and getEntriesByName takes an optional type filter.
-  const sorted = entries.slice().sort((a, b) => a.startTime - b.startTime);
-  return {
-    getEntries() {
-      return sorted.slice();
-    },
-    getEntriesByType(type) {
-      return sorted.filter(entry => entry.entryType === type);
-    },
-    getEntriesByName(name, type) {
-      return sorted.filter(entry => entry.name === name && (type === undefined || entry.entryType === type));
-    },
-  };
 }
 
 // Node's ERR_INTERNAL_ASSERTION constructor appends this automatically; bun's
@@ -442,8 +358,14 @@ export default {
   startPerf,
   stopPerf,
   enqueueNodeEntry,
-  kNodeEntryTypes,
-  NodeEntryObserver,
+  observerCounts,
+  kEntryTypeGc,
+  kEntryTypeHttp,
+  kEntryTypeHttp2,
+  kEntryTypeNet,
+  kEntryTypeDns,
+  kEntryTypeQuic,
+  kEntryTypeFunction,
   PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),

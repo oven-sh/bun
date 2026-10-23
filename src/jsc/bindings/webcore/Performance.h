@@ -39,16 +39,25 @@
 // #include "ReducedResolutionSeconds.h"
 #include "ScriptExecutionContext.h"
 // #include "Timer.h"
+#include <array>
 #include <variant>
 
 #include <wtf/ListHashSet.h>
+#include <wtf/OptionSet.h>
 #include <wtf/Seconds.h>
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
 namespace JSC {
+class JSArray;
 class JSGlobalObject;
+class JSObject;
+class VM;
+}
+
+namespace Zig {
+class GlobalObject;
 }
 
 namespace WebCore {
@@ -68,6 +77,12 @@ class PerformanceTiming;
 class ScriptExecutionContext;
 struct PerformanceMarkOptions;
 struct PerformanceMeasureOptions;
+enum class PerformanceEntryType : uint16_t;
+
+// internal/shared's enqueueNodeEntry(entry, type), where `type` is the entry type's kEntryType* index.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionQueueNodePerformanceEntry);
+// The realm's own Performance* classes, for node:perf_hooks.
+JSC::JSValue createNodePerfHooksBinding(Zig::GlobalObject*);
 
 class Performance final : public RefCounted<Performance>, public ContextDestructionObserver, public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(Performance);
@@ -106,6 +121,20 @@ public:
     // (they are registered with the realm's Performance, which would keep them and their graph).
     void disconnectObserversOf(const ScriptExecutionContext&);
 
+    // The first time in a realm, loads internal/shared, binds its copy of the counts and makes PerformanceNodeEntry a PerformanceEntry.
+    void willObserveNodeTypes(JSDOMGlobalObject&);
+    // A registered observer went from observing `before` to observing `after`.
+    void observedTypesDidChange(OptionSet<PerformanceEntryType> before, OptionSet<PerformanceEntryType> after);
+    // A registered observer has entries queued that no delivery is scheduled for yet.
+    void scheduleDelivery(PerformanceObserver&);
+    // `entry` is the wrapper of a mark or of a measure, or an entry of one of Node's types.
+    void queueEntry(JSC::VM& vm, JSC::JSObject& entry, PerformanceEntryType type)
+    {
+        if (!m_observers.isEmpty())
+            queueEntryForObservers(vm, entry, type);
+    }
+    void deliverOnImmediate();
+
     static Seconds reduceTimeResolution(Seconds);
 
     MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
@@ -127,8 +156,10 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void queueEntry(PerformanceEntry&);
+    void queueEntryForObservers(JSC::VM&, JSC::JSObject&, PerformanceEntryType);
     void scheduleTaskIfNeeded();
+    void scheduleImmediateDelivery(PerformanceObserver&);
+    void scheduleImmediateIfNeeded();
 
     // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;
@@ -136,12 +167,19 @@ private:
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
 
     bool m_hasScheduledTimingBufferDeliveryTask { false };
+    bool m_hasScheduledImmediateDelivery { false };
 
     MonotonicTime m_timeOrigin;
 
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
     ListHashSet<RefPtr<PerformanceObserver>> m_observers;
+    // In the order they got their first entry, or made a buffered observe(), since the last immediate: the order node calls them in.
+    ListHashSet<RefPtr<PerformanceObserver>> m_observersPendingOnImmediate;
+    // Registered observers per Node entry type, by PerformanceEntry::nodeTypeIndex.
+    std::array<uint32_t, 7> m_nodeObserverCounts {};
+    // internal/shared's observerCounts, the copy that hasObserver() reads. The module keeps it alive.
+    JSC::Weak<JSC::JSArray> m_nodeObserverCountsForScript;
 };
 
 }

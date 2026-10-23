@@ -35,6 +35,7 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
+  kEntryTypeNet,
   isStoppedModuleGraphRunning,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
@@ -3406,7 +3407,7 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
     // without a synchronous error — matching the `if (err)` failure check
     // below. Guarding on `err === undefined` never fired, so the 'net' entry
     // was never produced for the TCP path.
-    if (!err && hasObserver("net")) {
+    if (!err && hasObserver(kEntryTypeNet)) {
       startPerf(self, kPerfHooksNetConnectContext, {
         type: "net",
         name: "connect",
@@ -3539,7 +3540,7 @@ function internalConnectMultiple(context, canceled?) {
   // Match the single-address path (and Node): the 'net' perf entry starts when
   // the attempt is dispatched, not when it completes; the winning attempt's
   // context is transferred to the socket in afterConnectMultiple.
-  if (hasObserver("net")) {
+  if (hasObserver(kEntryTypeNet)) {
     startPerf(context, kPerfHooksNetConnectContext, {
       type: "net",
       name: "connect",
@@ -3626,8 +3627,8 @@ function afterConnect(status, handle, req, readable, writable) {
     self.emit("connect");
     self.emit("ready");
 
-    if (self[kPerfHooksNetConnectContext] && hasObserver("net")) {
-      stopPerf(self, kPerfHooksNetConnectContext);
+    if (self[kPerfHooksNetConnectContext] && hasObserver(kEntryTypeNet)) {
+      stopPerf(self, kPerfHooksNetConnectContext, kEntryTypeNet);
     }
 
     // Start the first read, or get an immediate EOF.
@@ -3688,7 +3689,7 @@ function afterConnectMultiple(context, current, status, handle, req, readable, w
   // The attempt's perf entry was started in internalConnectMultiple on the
   // shared context; hand it to the socket so afterConnect's stopPerf records
   // the real connect duration.
-  if (hasObserver("net") && context[kPerfHooksNetConnectContext]) {
+  if (hasObserver(kEntryTypeNet) && context[kPerfHooksNetConnectContext]) {
     self[kPerfHooksNetConnectContext] = context[kPerfHooksNetConnectContext];
   }
 

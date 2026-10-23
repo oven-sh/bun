@@ -21,23 +21,18 @@
 #pragma once
 
 #include "JSDOMWrapper.h"
-#include "PerformanceObserverEntryList.h"
 
 namespace WebCore {
 
-class JSPerformanceObserverEntryList : public JSDOMWrapper<PerformanceObserverEntryList> {
+// Holds JS values: an entry of one of Node's types is a JS object with no PerformanceEntry.
+class JSPerformanceObserverEntryList : public JSDOMObject {
 public:
-    using Base = JSDOMWrapper<PerformanceObserverEntryList>;
-    static JSPerformanceObserverEntryList* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceObserverEntryList>&& impl)
-    {
-        JSPerformanceObserverEntryList* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserverEntryList>(globalObject->vm())) JSPerformanceObserverEntryList(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
+    using Base = JSDOMObject;
+    // Takes over an observer's queue and orders it by startTime. Null, with an exception pending, if reading a startTime threw.
+    static JSPerformanceObserverEntryList* create(JSDOMGlobalObject&, JSC::JSArray& queued);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static PerformanceObserverEntryList* toWrapped(JSC::VM&, JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
@@ -55,22 +50,21 @@ public:
         return subspaceForImpl(vm);
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    DECLARE_VISIT_CHILDREN;
+
+    // No script has this array: nothing changes it once the list is made.
+    JSC::JSArray* entries() const { return m_entries.get(); }
+    // Every entry is the wrapper of a mark or of a measure.
+    bool hasOnlyPerformanceEntries() const { return m_hasOnlyPerformanceEntries; }
 
 protected:
-    JSPerformanceObserverEntryList(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceObserverEntryList>&&);
+    JSPerformanceObserverEntryList(JSC::Structure*, JSDOMGlobalObject&);
 
-    DECLARE_DEFAULT_FINISH_CREATION;
-};
+    void finishCreation(JSC::VM&, JSC::JSArray* entries, bool hasOnlyPerformanceEntries);
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceObserverEntryList&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserverEntryList* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceObserverEntryList>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<PerformanceObserverEntryList>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
-
-template<> struct JSDOMWrapperConverterTraits<PerformanceObserverEntryList> {
-    using WrapperClass = JSPerformanceObserverEntryList;
-    using ToWrappedReturnType = PerformanceObserverEntryList*;
+private:
+    JSC::WriteBarrier<JSC::JSArray> m_entries;
+    bool m_hasOnlyPerformanceEntries { false };
 };
 
 } // namespace WebCore

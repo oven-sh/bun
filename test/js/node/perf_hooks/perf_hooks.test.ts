@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { once } from "events";
+import { bunEnv, bunExe, tempDir } from "harness";
 import net from "net";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
 
@@ -271,7 +272,7 @@ test("PerformanceObserver delivers entries to a callback created in a node:vm co
              perfHooksClass: await fromTheHost(perfHooks.PerformanceObserver, { entryTypes: ["mark"] }, () =>
                performance.mark("perf_hooks"),
              ),
-             // observe({ buffered: true }) delivers before it returns, not from a task.
+             // observe({ buffered: true }) queues the entries there are. The callback gets them later.
              buffered: await fromTheHost(PerformanceObserver, { type: "measure", buffered: true }),
            }),
          );
@@ -405,4 +406,356 @@ describe("monitorEventLoopDelay with a resolution above the int32 range", () => 
       signalCode: null,
     });
   });
+});
+
+// What node does too is in perf-hooks-observer.test.ts, which also runs under Node.js. These are Bun's own.
+describe("PerformanceObserver and the entry types that only Node has", () => {
+  const timed = perf.performance.timerify(function work(..._args: unknown[]) {});
+  const delivery = async () => {
+    for (let turn = 0; turn < 2; turn++) await new Promise<void>(resolve => setImmediate(resolve));
+  };
+
+  async function run(cmd: string[], cwd?: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("queued function entries keep their arguments through garbage collection", async () => {
+    const lists: any[] = [];
+    const observer = new PerformanceObserver(list => void lists.push(list));
+    try {
+      observer.observe({ entryTypes: ["function"] });
+      for (let i = 0; i < 10; i++) {
+        const argument = { i };
+        timed(argument);
+        Bun.gc(true);
+        const [entry] = observer.takeRecords() as PerformanceNodeEntry[];
+        expect([(entry.detail as unknown[])[0], (entry as any)[0]]).toEqual([argument, argument]);
+        expect((entry.detail as unknown[])[0]).toBe(argument);
+      }
+      // And in a list that only script holds.
+      const argument = { delivered: true };
+      timed(argument);
+      await delivery();
+      Bun.gc(true);
+      expect(lists).toHaveLength(1);
+      expect((lists[0].getEntries()[0].detail as unknown[])[0]).toBe(argument);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  test.concurrent("queueing an entry calls no setter that script put on Array.prototype", async () => {
+    // (In a process of its own: the setter changes how every array in the realm is stored.)
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `const { performance, PerformanceObserver } = require("node:perf_hooks");
+       let calls = 0;
+       const observer = new PerformanceObserver(() => {});
+       observer.observe({ entryTypes: ["mark", "function"] });
+       const timed = performance.timerify(function work() {});
+       Object.defineProperty(Array.prototype, 0, { set() { calls++; }, get() {}, configurable: true });
+       performance.mark("a");
+       timed();
+       performance.mark("b");
+       const callsWhileQueueing = calls;
+       const records = observer.takeRecords();
+       delete Array.prototype[0];
+       console.log(JSON.stringify({ callsWhileQueueing, records: records.map(entry => entry.entryType) }));`,
+    ]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ callsWhileQueueing: 0, records: ["mark", "function", "mark"] });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "an entry goes to the observers of the type its producer made, whatever script wrote on it since",
+    async () => {
+      // (In a process of its own: the setter is on Object.prototype.)
+      const { stdout, stderr, exitCode } = await run([
+        "-e",
+        `const { performance, PerformanceObserver } = require("node:perf_hooks");
+       const observer = new PerformanceObserver(() => {});
+       observer.observe({ entryTypes: ["function"] });
+       Object.defineProperty(Object.prototype, 0, {
+         set() { if (this.entryType === "function") this.entryType = "mark"; },
+         configurable: true,
+       });
+       performance.timerify(function work() {})(1);
+       delete Object.prototype[0];
+       console.log(JSON.stringify(observer.takeRecords().map(entry => entry.name + " is a " + entry.entryType)));`,
+      ]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["work is a mark"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("a node: module times its work only while an observer observes its entry type", async () => {
+    const server = net.createServer(socket => socket.end());
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    // Where node:net times a connection, it leaves the key of its timing context on the socket.
+    const timesConnect = async () => {
+      const socket = net.connect(port, "127.0.0.1");
+      try {
+        await once(socket, "connect");
+        return Object.getOwnPropertySymbols(socket).some(key => key.description === "kPerfHooksNetConnectContext");
+      } finally {
+        socket.destroy();
+      }
+    };
+    const first = new PerformanceObserver(() => {});
+    const second = new PerformanceObserver(() => {});
+    try {
+      const times: Record<string, boolean> = {};
+      times.noObserver = await timesConnect();
+      first.observe({ entryTypes: ["net"] });
+      second.observe({ type: "net" });
+      times.twoObservers = await timesConnect();
+      first.disconnect();
+      times.oneLeft = await timesConnect();
+      second.disconnect();
+      times.noneLeft = await timesConnect();
+
+      // An observer that observes a type again is counted once for it.
+      first.observe({ entryTypes: ["net"] });
+      first.observe({ entryTypes: ["net", "mark"] });
+      second.observe({ type: "net" });
+      second.observe({ type: "net" });
+      first.disconnect();
+      second.disconnect();
+      second.disconnect();
+      times.observedTwiceThenDisconnected = await timesConnect();
+
+      first.observe({ entryTypes: ["net"] });
+      first.observe({ entryTypes: ["http"] });
+      times.replacedByAnotherType = await timesConnect();
+
+      first.observe({ entryTypes: ["net"] });
+      first.observe({ entryTypes: ["no such type"] } as object as Parameters<PerformanceObserver["observe"]>[0]);
+      times.unknownEntryTypes = await timesConnect();
+
+      first.observe({ entryTypes: ["net"] });
+      times.observedAgain = await timesConnect();
+
+      expect(times).toEqual({
+        noObserver: false,
+        twoObservers: true,
+        oneLeft: true,
+        noneLeft: false,
+        observedTwiceThenDisconnected: false,
+        replacedByAnotherType: false,
+        unknownEntryTypes: false,
+        observedAgain: true,
+      });
+    } finally {
+      first.disconnect();
+      second.disconnect();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  // The first observe() of one of Node's types in a realm loads what the node: modules share.
+  test.concurrent("the global class observes them in a realm where no node: module is loaded", async () => {
+    using dir = tempDir("perf-hooks-first-observe", {
+      // (The worker has to get performance.timerify() from node:perf_hooks, after it observes.)
+      "observe.js": `
+        const report = Bun.isMainThread ? message => console.log(JSON.stringify(message)) : message => postMessage(message);
+        const observer = new PerformanceObserver(list => {
+          observer.disconnect();
+          report(list.getEntries().map(entry => [entry.entryType, entry instanceof PerformanceEntry]));
+        });
+        observer.observe({ entryTypes: ["function"] });
+        require("node:perf_hooks").performance.timerify(function work() {})();
+      `,
+      "main.js": `
+        require("./observe.js");
+        const worker = new Worker(require.resolve("./observe.js"));
+        worker.onmessage = event => {
+          console.log(JSON.stringify(event.data));
+          worker.terminate();
+        };
+      `,
+      "mark-queued.js": `
+        const observer = new PerformanceObserver(list => {
+          observer.disconnect();
+          console.log(JSON.stringify(list.getEntries().map(entry => entry.entryType)));
+        });
+        observer.observe({ entryTypes: ["mark"] });
+        performance.mark("queued before the observer took a type of Node's");
+        observer.observe({ entryTypes: ["mark", "function"] });
+      `,
+    });
+    const [both, markQueued] = await Promise.all([run(["main.js"], String(dir)), run(["mark-queued.js"], String(dir))]);
+    expect(both.stderr).toBe("");
+    expect(
+      both.stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+    ).toEqual([[["function", true]], [["function", true]]]);
+    expect(both.exitCode).toBe(0);
+    expect(markQueued.stderr).toBe("");
+    expect(JSON.parse(markQueued.stdout)).toEqual(["mark"]);
+    expect(markQueued.exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "with Bun.ModuleGraph: an observer stops with its graph, and no callback keeps another graph",
+    async () => {
+      using dir = tempDir("perf-hooks-module-graph", {
+        "tenant.mjs": `
+        import { performance, PerformanceObserver } from "node:perf_hooks";
+        export const observe = () => new PerformanceObserver(() => {}).observe({ entryTypes: ["function"] });
+        // What the graph had queued when it was disposed: it runs once the host settles \`gate\`.
+        export const late = [];
+        export const observeAfter = async gate => {
+          await gate;
+          new PerformanceObserver(() => late.push("called")).observe({ entryTypes: ["function", "net"] });
+          late.push("observe() returned");
+        };
+        export const timed = performance.timerify(function tenantWork() {});
+      `,
+        "host.mjs": `
+        import { heapStats } from "bun:jsc";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        import { performance, PerformanceObserver } from "node:perf_hooks";
+        // How many observers the node: modules are told there are, per entry type of Node's.
+        const { observerCounts } = require("internal/test/binding").internalBinding("performance");
+        const observed = () => Array.from(observerCounts).join(" ");
+        const graphs = () => (Bun.gc(true), heapStats().objectTypeCounts.ModuleGraph ?? 0);
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        const turns = async count => { while (count-- > 0) await turn(); };
+        const tenantFile = import.meta.dir + "/tenant.mjs";
+        // How many graphs are alive once the event loop has nothing more of a disposed graph to stop.
+        const settled = async () => {
+          let count = graphs();
+          for (let same = 0; same < 3; ) {
+            await turn();
+            const now = graphs();
+            same = now === count ? same + 1 : 0;
+            count = now;
+          }
+          return count;
+        };
+        // How many of the graphs that \`use\` makes (after one that is not counted) stay alive.
+        const kept = async (count, use) => {
+          await use();
+          const none = await settled();
+          for (let i = 0; i < count; i++) await use();
+          return (await settled()) - none;
+        };
+        const result = {};
+        const storage = new AsyncLocalStorage();
+        const hostWork = performance.timerify(function hostWork() {});
+
+        // The delivery that was set while the realm had no graph: it calls the observer of the
+        // first graph too, and not in the store that set it.
+        const early = [];
+        const earlyObserver = new PerformanceObserver(() => early.push("the host's: " + storage.getStore()));
+        earlyObserver.observe({ entryTypes: ["function"] });
+        storage.run("the store of the host", hostWork);
+        const firstGraph = new Bun.ModuleGraph();
+        firstGraph.run(() => {
+          const observer = new PerformanceObserver(() => {
+            early.push("the graph's: " + storage.getStore());
+            observer.disconnect();
+          });
+          observer.observe({ entryTypes: ["function"] });
+          hostWork();
+        });
+        await turns(2);
+        earlyObserver.disconnect();
+        firstGraph.dispose();
+        result.setBeforeTheFirstGraph = early;
+
+        // dispose() is what lets go of the observers a graph's script made: the host queues no entry.
+        result.keptWithObservers = await kept(3, async () => {
+          const graph = new Bun.ModuleGraph();
+          const tenant = await graph.import(tenantFile);
+          graph.run(() => tenant.observe());
+          graph.dispose();
+        });
+        // (dispose() stops what is the graph's from the event loop, not before it returns.)
+        await turns(2);
+        result.observedAfterDispose = observed();
+
+        // What a disposed graph had queued runs, and its observe() observes nothing.
+        const late = [];
+        for (let i = 0; i < 3; i++) {
+          const gate = Promise.withResolvers();
+          const graph = new Bun.ModuleGraph();
+          const tenant = await graph.import(tenantFile);
+          late.push(tenant.late);
+          graph.run(() => tenant.observeAfter(gate.promise));
+          graph.dispose();
+          await turns(3);
+          gate.resolve();
+          await turns(3);
+          hostWork();
+          await turns(3);
+        }
+        result.lateObservers = late.flat();
+        result.observedAfterLateObserve = observed();
+
+        // The same once the disposed graph is collected too: here the callback is the host's, so nothing keeps the graph.
+        let callsAfterCollection = 0;
+        let orphan;
+        (() => {
+          const graph = new Bun.ModuleGraph();
+          graph.run(() => void (orphan = new PerformanceObserver(() => callsAfterCollection++)));
+          graph.dispose();
+        })();
+        await settled();
+        orphan.observe({ entryTypes: ["function"] });
+        result.observedByAnObserverOfACollectedGraph = observed();
+        hostWork();
+        result.queuedForAnObserverOfACollectedGraph = orphan.takeRecords().length;
+        await turns(3);
+        result.callsOfAnObserverOfACollectedGraph = callsAfterCollection;
+
+        // The host's callback gets the entries that a graph's script queued. What it starts then
+        // (here, something that keeps its async context) does not keep that graph or its stores.
+        const snapshots = [];
+        const stores = new Set();
+        const observer = new PerformanceObserver(list => {
+          stores.add(String(storage.getStore()));
+          snapshots.push(AsyncLocalStorage.snapshot());
+        });
+        observer.observe({ entryTypes: ["function"] });
+        result.keptByTheCallbackOfTheHost = await kept(3, async () => {
+          const graph = new Bun.ModuleGraph();
+          const tenant = await graph.import(tenantFile);
+          graph.run(() => storage.run("the store of a graph's request", () => tenant.timed()));
+          await turns(3);
+          graph.dispose();
+        });
+        observer.disconnect();
+        result.callbacksOfTheHost = snapshots.length;
+        result.storesInTheCallbackOfTheHost = [...stores];
+
+        console.log(JSON.stringify(result));
+        process.exit(0);
+      `,
+      });
+      const { stdout, stderr, exitCode } = await run(["--expose-internals", "host.mjs"], String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        setBeforeTheFirstGraph: ["the host's: undefined", "the graph's: undefined"],
+        keptWithObservers: 0,
+        observedAfterDispose: "0 0 0 0 0 0 0",
+        lateObservers: ["observe() returned", "observe() returned", "observe() returned"],
+        observedAfterLateObserve: "0 0 0 0 0 0 0",
+        observedByAnObserverOfACollectedGraph: "0 0 0 0 0 0 0",
+        queuedForAnObserverOfACollectedGraph: 0,
+        callsOfAnObserverOfACollectedGraph: 0,
+        keptByTheCallbackOfTheHost: 0,
+        callbacksOfTheHost: 4,
+        storesInTheCallbackOfTheHost: ["undefined"],
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

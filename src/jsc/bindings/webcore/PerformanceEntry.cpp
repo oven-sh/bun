@@ -85,6 +85,21 @@ std::optional<PerformanceEntry::Type> PerformanceEntry::parseEntryTypeString(con
     if (entryType == "resource"_s)
         return std::optional<Type>(Type::Resource);
 
+    if (entryType == "function"_s)
+        return std::optional<Type>(Type::Function);
+    if (entryType == "http"_s)
+        return std::optional<Type>(Type::Http);
+    if (entryType == "http2"_s)
+        return std::optional<Type>(Type::Http2);
+    if (entryType == "net"_s)
+        return std::optional<Type>(Type::Net);
+    if (entryType == "dns"_s)
+        return std::optional<Type>(Type::Dns);
+    if (entryType == "quic"_s)
+        return std::optional<Type>(Type::Quic);
+    if (entryType == "gc"_s)
+        return std::optional<Type>(Type::Gc);
+
     return std::nullopt;
 }
 

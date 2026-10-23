@@ -8297,6 +8297,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_records.truncate(snapshot.import_records_len);
     }
 
+    /// Runs `attempt` with the log off, then undoes everything it did to the parser. `None` means the attempt failed. Stack and memory exhaustion are not properties of the attempt and pass through.
+    #[inline]
+    pub(crate) fn speculate<R>(
+        &mut self,
+        attempt: impl FnOnce(&mut Self) -> Result<R, crate::Error>,
+    ) -> Result<Option<R>, crate::Error> {
+        let snapshot = self.parser_snapshot();
+        self.lexer.is_log_disabled = true;
+        // Metadata looks up type names, which adds unbound symbols to the module scope.
+        let emit_decorator_metadata =
+            core::mem::take(&mut self.options.features.emit_decorator_metadata);
+        let result = attempt(self);
+        self.restore_parser_snapshot(snapshot);
+        self.options.features.emit_decorator_metadata = emit_decorator_metadata;
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(err @ (crate::Error::StackOverflow | crate::Error::Alloc(_))) => Err(err),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// When not transpiling we dont use the renamer, so our solution is to generate really
     /// hard to collide with variables, instead of actually making things collision free
     pub(crate) fn generate_temp_ref(&mut self, default_name: Option<&'a [u8]>) -> Ref {

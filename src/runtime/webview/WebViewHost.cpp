@@ -359,6 +359,13 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
 // elementFromPoint at center returns the element or a descendant (not
 // obscured). Returns "cx,cy" on success; throws on timeout.
 //
+// The frame wait races a setTimeout bound to the deadline. A WKWebView with
+// no display (CI, a headless host) never fires CVDisplayLink, so no rAF
+// callback runs and the loop would never reach the deadline check again.
+// The timer stays at the deadline, not a shorter poll: a sample between two
+// frames could read the same rect twice within one frame and call an
+// animating element stable. Same as kActionabilityIIFE (ChromeBackend.h).
+//
 // Arguments `sel` and `timeout` are passed via the arguments: NSDictionary,
 // not string-interpolated — the selector can contain any characters.
 static constexpr const char* kActionabilityJS = R"js(
@@ -378,20 +385,27 @@ for (;;) {
     } else last = undefined;
   } else last = undefined;
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
+  await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(() => { clearTimeout(id); f(); });
+  });
 }
 )js";
 
 // Simpler than click's actionability: just wait for the element to exist,
 // then scrollIntoView. scrollIntoView itself handles "in viewport" and
 // "scrollable ancestor" logic — it's atomic page-side, no layout race.
+// Same deadline-bound frame wait as kActionabilityJS.
 static constexpr const char* kScrollToJS = R"js(
 const deadline = performance.now() + timeout;
 for (;;) {
   const el = document.querySelector(sel);
   if (el) { el.scrollIntoView({ block, behavior: 'instant' }); return; }
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "'";
-  await new Promise(f => requestAnimationFrame(f));
+  await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(() => { clearTimeout(id); f(); });
+  });
 }
 )js";
 

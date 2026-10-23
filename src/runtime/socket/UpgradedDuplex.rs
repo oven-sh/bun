@@ -48,7 +48,7 @@ pub(crate) struct UpgradedDuplex {
     pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
     pub event_loop_timer: JsCell<EventLoopTimer>,
-    pub current_timeout: Cell<u32>,
+    pub timeout_seconds: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
     ///
     /// `upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
@@ -492,7 +492,7 @@ impl UpgradedDuplex {
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::UpgradedDuplex,
             )),
-            current_timeout: Cell::new(0),
+            timeout_seconds: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_close: Cell::new(false),
             pending_shutdown: Cell::new(false),
@@ -697,25 +697,27 @@ impl UpgradedDuplex {
     }
 
     fn reset_timeout(&self) {
-        self.set_timeout_in_milliseconds(self.current_timeout.get());
+        self.arm_timeout(self.timeout_seconds.get());
     }
 
-    fn set_timeout_in_milliseconds(&self, ms: c_uint) {
+    fn arm_timeout(&self, seconds: c_uint) {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        self.current_timeout.set(ms);
+        self.timeout_seconds.set(seconds);
 
         // if the interval is 0 means that we stop the timer
-        if ms == 0 {
+        if seconds == 0 {
             return;
         }
 
         // reschedule the timer
         // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
-        let next =
-            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::ForceRealTime,
+            i64::from(seconds) * 1000,
+        );
         self.event_loop_timer.with_mut(|t| {
             t.next = ElTimespec {
                 sec: next.sec,
@@ -732,7 +734,7 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]
     pub(crate) fn set_timeout(&self, seconds: c_uint) {
         bun_output::scoped_log!(UpgradedDuplex, "setTimeout({})", seconds);
-        self.set_timeout_in_milliseconds(seconds * 1000);
+        self.arm_timeout(seconds);
     }
 
     /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).

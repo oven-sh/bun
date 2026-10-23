@@ -2901,14 +2901,24 @@ impl TestCommand {
         // lock on `reporter` for the entire function body.
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
-        let resolution = vm.transpiler.resolve_entry_point(file_name)?;
+        let resolved: &[u8] = match vm.transpiler.resolve_entry_point(file_name) {
+            Ok(resolution) => resolution.path_pair.primary.text,
+            // The loader resolves again and reports a miss as this file's failure (#44473).
+            Err(bun_bundler::Error::Resolver(_)) => {
+                let log = vm.transpiler.log_mut();
+                log.msgs.pop();
+                log.errors -= 1;
+                file_name
+            }
+            Err(err) => return Err(err.into()),
+        };
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
         let file_path: &'static [u8] = FileSystem::instance()
             .filename_store
-            .append_slice(resolution.path_pair.primary.text)
+            .append_slice(resolved)
             .expect("oom");
         let file_id = jest::Jest::runner()
             .unwrap()

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -1976,6 +1976,217 @@ function runTest({
     rmSync(cwd, { recursive: true });
   }
 }
+
+describe.concurrent("a test file that does not resolve at its turn", () => {
+  const passing = (name: string) =>
+    `import { test } from "bun:test"; test("${name}", () => { console.log("RAN ${name}"); });`;
+
+  // `a.test.ts` deletes `m.test.ts` after the scan. Its failed require() makes the resolver read
+  // the directory again, so `m.test.ts` no longer resolves when the runner reaches it.
+  const deletedAfterScan = {
+    "a.test.ts": `
+      import { test } from "bun:test";
+      test("a", async () => {
+        await Bun.file(import.meta.dir + "/m.test.ts").delete().catch(() => {});
+        try {
+          require("./missing-module");
+        } catch {}
+        console.log("RAN a");
+      });
+    `,
+    "m.test.ts": passing("m"),
+    "z.test.ts": passing("z"),
+  };
+
+  // --shard=1/1 sorts the files by path.
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--shard=1/1", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    { mode: "a plain run", args: [], totals: " 2 pass\n 1 fail\n 1 error\n", ran: "Ran 3 tests across 3 files." },
+    {
+      mode: "--isolate",
+      args: ["--isolate"],
+      totals: " 2 pass\n 1 fail\n 1 error\n",
+      ran: "Ran 3 tests across 3 files.",
+    },
+    {
+      mode: "--rerun-each=2",
+      args: ["--rerun-each=2"],
+      totals: " 4 pass\n 1 fail\n 1 error\n",
+      ran: "Ran 5 tests across 3 files.",
+    },
+  ])("fails that file, and the next one runs: $mode", async ({ args, totals, ran }) => {
+    using dir = tempDir("unresolved-test-file", deletedAfterScan);
+    const { stdout, stderr, exitCode } = await run(String(dir), ...args);
+
+    expect(stdout).toContain("RAN a");
+    expect(stdout).not.toContain("RAN m");
+    expect(stdout).toContain("RAN z");
+    expect(stderr).toContain("m.test.ts:");
+    expect(stderr).toContain("# Unhandled error between tests");
+    expect(stderr).toMatch(/error: Cannot find module '.*m\.test\.ts'/);
+    expect(stderr).not.toContain("(entry point)");
+    expect(stderr).toContain(totals);
+    expect(stderr).toContain(ran);
+    expect(exitCode).toBe(1);
+  });
+
+  test("the JUnit report and the timings are written", async () => {
+    using dir = tempDir("unresolved-test-file-reports", deletedAfterScan);
+    const { stderr, exitCode } = await run(
+      String(dir),
+      "--reporter=junit",
+      "--reporter-outfile=junit.xml",
+      "--timings=timings.json",
+      "--update-timings",
+    );
+
+    expect(stderr).toContain(" 2 pass\n 1 fail\n 1 error\n");
+    expect(await Bun.file(join(String(dir), "junit.xml")).text()).toContain('<testsuite name="z.test.ts"');
+    expect(Object.keys((await Bun.file(join(String(dir), "timings.json")).json()).files)).toContain("z.test.ts");
+    expect(exitCode).toBe(1);
+  });
+
+  test("counts toward --bail", async () => {
+    using dir = tempDir("unresolved-test-file-bail", deletedAfterScan);
+    const { stdout, stderr, exitCode } = await run(
+      String(dir),
+      "--bail=1",
+      "--reporter=junit",
+      "--reporter-outfile=junit.xml",
+    );
+
+    expect(stdout).toContain("RAN a");
+    expect(stdout).not.toContain("RAN z");
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(await Bun.file(join(String(dir), "junit.xml")).exists()).toBe(true);
+    expect(exitCode).toBe(1);
+  });
+
+  // The warning of the root tsconfig.json waits in the log until an error prints the log. The
+  // miss must not be that error, and sub/tsconfig.json gives one at z.test.ts.
+  test("prints the miss once and leaves pending warnings for the next logged error", async () => {
+    using dir = tempDir("unresolved-test-file-log", {
+      "a.test.ts": deletedAfterScan["a.test.ts"],
+      "m.test.ts": passing("m"),
+      "sub/z.test.ts": passing("z"),
+      "tsconfig.json": `{ "compilerOptions": { "importsNotUsedAsValues": "bogus" } }`,
+      "sub/tsconfig.json": `{ "compilerOptions": {`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+
+    expect(stdout).toContain("RAN z");
+    expect(stderr).not.toContain("(entry point)");
+    expect(stderr.indexOf("warn: Invalid value")).toBeGreaterThan(stderr.indexOf("z.test.ts:"));
+    expect(exitCode).toBe(1);
+  });
+
+  // The watch ends with the process. On Windows a parent process restarts the runner, which makes
+  // the reads of stderr below racy.
+  test.skipIf(isWindows)("--watch keeps watching", async () => {
+    using dir = tempDir("unresolved-test-file-watch", deletedAfterScan);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--watch", "--no-clear-screen", "--shard=1/1"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    async function waitFor(needle: string, from = 0) {
+      while (!output.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stderr closed before ${JSON.stringify(needle)}\n${output}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    }
+
+    await waitFor("Ran 3 tests across 3 files.");
+    expect(output).toContain(" 2 pass\n 1 fail\n 1 error\n");
+
+    // The next run finds two files: m.test.ts is gone.
+    const firstRun = output.length;
+    appendFileSync(join(String(dir), "z.test.ts"), "// touched\n");
+    await waitFor("Ran 2 tests across 2 files.", firstRun);
+    expect(output.slice(firstRun)).toContain(" 2 pass\n 0 fail\n");
+  });
+
+  // The scanner reads a backslash in a file name as a separator, so the path it hands to the
+  // runner does not resolve. Windows cannot create such a name.
+  test.skipIf(isWindows)("a file name with a backslash fails alone", async () => {
+    using dir = tempDir("unresolved-test-file-backslash", {
+      "test/a.test.ts": passing("a"),
+      "test/x\\y.test.ts": passing("backslash"),
+      "test/z.test.ts": passing("z"),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+
+    expect(stdout).toContain("RAN a");
+    expect(stdout).toContain("RAN z");
+    expect(stderr).toContain("# Unhandled error between tests");
+    expect(stderr).not.toContain("(entry point)");
+    expect(stderr).toContain(" 2 pass\n 1 fail\n 1 error\n");
+    expect(stderr).toContain("Ran 3 tests across 3 files.");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows).each([
+    {
+      position: "first",
+      files: {
+        "test/a\\a.test.ts": passing("backslash"),
+        "test/m.test.ts": passing("m"),
+        "test/z.test.ts": passing("z"),
+      },
+      ran: ["RAN m", "RAN z"],
+      totals: " 2 pass\n 1 fail\n 1 error\n",
+    },
+    {
+      position: "last",
+      files: {
+        "test/a.test.ts": passing("a"),
+        "test/m.test.ts": passing("m"),
+        "test/z\\z.test.ts": passing("backslash"),
+      },
+      ran: ["RAN a", "RAN m"],
+      totals: " 2 pass\n 1 fail\n 1 error\n",
+    },
+    {
+      position: "only",
+      files: { "test/x\\y.test.ts": passing("backslash") },
+      ran: [],
+      totals: " 0 pass\n 1 fail\n 1 error\n",
+    },
+  ])("sync preload beforeAll and afterAll run once when it is the $position file", async ({ files, ran, totals }) => {
+    using dir = tempDir("unresolved-test-file-preload", {
+      ...files,
+      "preload.ts": `
+        import { afterAll, beforeAll } from "bun:test";
+        beforeAll(() => console.log("PRELOAD beforeAll"));
+        afterAll(() => console.log("PRELOAD afterAll"));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "--preload", "./preload.ts");
+
+    expect(stdout.match(/^(PRELOAD|RAN) \w+$/gm)).toEqual(["PRELOAD beforeAll", ...ran, "PRELOAD afterAll"]);
+    expect(stderr).toContain(totals);
+    expect(exitCode).toBe(1);
+  });
+});
 
 describe.concurrent("test file discovery (scanner)", () => {
   test("discovers tests in deeply nested directories and prunes dot-dirs and node_modules", async () => {

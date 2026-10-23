@@ -4651,9 +4651,12 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 //
 // The envs' napi_refs are VM-level Strongs into the old realm. Like the plugin
 // and registry Strongs released below, they would keep the old global alive
-// for the rest of the run, so each env drops them here (Node drops them when
-// the env's context ends). An env adopted by an earlier swap releases only
-// what it rooted since.
+// for the rest of the run, so each env drops them here. Node has no realm swap:
+// it resets the refs only when it deletes the env. Bun keeps the env, so a ref
+// from the finished file reads empty once GC collects its value, and an
+// addon's call into that file's function is dropped like any other call into a
+// retired realm. An env adopted by an earlier swap releases only what it
+// rooted since, or everything if async work kept it rooted last time.
 void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 {
     if (oldGlobal->m_napiEnvs.isEmpty())

@@ -76,7 +76,8 @@ Runs each test file in a fresh JavaScript global object inside the same process.
 - creates a new `globalThis` (so properties a file stuck on `globalThis`, patched built-ins, and module-level state are gone),
 - clears the ESM and CommonJS module registries (every file re-evaluates its imports),
 - closes servers, sockets, file watchers and subprocesses the file left open, cancels its timers, and restores fake timers,
-- re-runs `--preload` scripts in the new global.
+- re-runs `--preload` scripts in the new global,
+- registers a native addon (`.node`) again with a fresh `napi_env`, and releases the references the previous file's `napi_env` held into its global (a `napi_ref` from an earlier file reads as empty, and `napi_reference_ref` on it reports 0).
 
 Isolating every file is how Jest and Vitest behave by default. It makes "passes alone, fails in the full suite" bugs go away at the cost of re-evaluating imports per file.
 

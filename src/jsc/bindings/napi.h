@@ -377,10 +377,13 @@ public:
     }
     void unlinkRef(uint32_t slot);
 
-    // `bun test --isolate` swapped this env's realm out: release every root the
-    // env still holds into it, the way Node resets each Reference's persistent
-    // handle in napi_env__::DeleteMe. Runs no addon code: finalizers still run
-    // from GC through the retargeted env.
+    // `bun test --isolate` swapped this env's realm out: release every strong
+    // root the env still holds into it. Node resets the refs' persistent handles
+    // only when it deletes the env. Bun keeps the env (late finalizers and
+    // in-flight work still reach it), so this runs no addon code and the
+    // finalizers still run from GC. While async work of this env is on the
+    // thread pool nothing is released, since its execute() may still use what a
+    // ref pins. The next swap walks this env again.
     void releaseRealmRoots();
 
     /// Will abort the process if a duplicate entry would be added.
@@ -859,9 +862,9 @@ class NapiRef {
     WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
-    // Returns the count to report to the addon.
+    // Both return the count to report to the addon.
     uint32_t ref();
-    void unref();
+    uint32_t unref();
 
     NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
@@ -871,13 +874,10 @@ public:
     {
     }
 
-    // Empty once the env released this ref's realm (Node: an empty persistent handle).
+    // A released ref reads through its weak handle: the value while GC has not collected it, then empty.
     JSC::JSValue value() const
     {
-        if (m_released) {
-            return JSC::JSValue();
-        }
-        if (refCount == 0 && !m_isEternal) {
+        if (m_released || (refCount == 0 && !m_isEternal)) {
             return weakValueRef.get();
         }
 
@@ -909,12 +909,15 @@ public:
         }
     }
 
-    // Node's Reference::Finalize from FinalizeAll: drop the root, keep the count. A registered
-    // symbol belongs to the VM's symbol registry, not to the realm, and stays. The weak handle
-    // stays so the finalizer (or the self-delete of a wrap ref) still runs when GC collects the value.
+    // The realm this ref points into is finished: drop the strong root and keep the count. Like
+    // Node's Reference after its persistent handle is reset, ref() and unref() then report 0 and
+    // never root again. Only a count above zero roots anything, so a weak ref is left alone (the
+    // addon can still pin its value while that value is alive). A registered symbol belongs to the
+    // VM's symbol registry, not to the realm. The weak handle stays, so the finalizer (or the
+    // self-delete of a wrap ref) still runs when GC collects the value.
     void releaseRealm()
     {
-        if (m_released || m_isEternal) {
+        if (m_released || m_isEternal || refCount == 0) {
             return;
         }
         m_released = true;

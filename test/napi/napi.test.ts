@@ -280,11 +280,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("keeps arguments moved off the stack alive", async () => {
       await checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     });
-    it("exists when bun test --isolate calls a function that an earlier file created", async () => {
+    it("releases the refs of an earlier file at the bun test --isolate swap and keeps its env usable", async () => {
       // The addon is loaded once per process. When the first file's global is swapped out, the
-      // addon's references into it are released, so the second file reads the static ref as
-      // undefined and cannot ref it back. A threadsafe function the first file created still
-      // calls the first file's function from the second file, under the second file's handle scope.
+      // addon's strong refs into it are released: the second file cannot ref the static ref back,
+      // unref reports 0 instead of failing, and the wrap finalizer runs from GC through the
+      // retargeted env. A threadsafe function the first file created still delivers in the
+      // second file (its call into the finished file's function is dropped, as every call into
+      // a retired realm is).
       const addonPath = JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"));
       using dir = tempDir("napi-isolate", {
         "a.test.ts": `
@@ -292,25 +294,27 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           const addon = require(${addonPath});
           test("creates a ref and a threadsafe function", () => {
             addon.create_wrap({ keepsStringsAlive: addon.test_napi_handle_scope_string }, true, true);
-            addon.queue_threadsafe_function_items(
-              () => addon.test_napi_handle_scope_string(() => Bun.gc(true)),
-              0,
-              false,
-            );
+            addon.queue_threadsafe_function_items(() => {}, 0, false);
           });
         `,
         "b.test.ts": `
           import { expect, test } from "bun:test";
           const addon = require(${addonPath});
-          test("reads the released ref and calls the first file's function", async () => {
-            expect(addon.get_object_from_ref()).toBeUndefined();
+          test("the released ref and the threadsafe function", async () => {
             expect(addon.ref_wrapped_value()).toBe(0);
-            expect(addon.get_object_from_ref()).toBeUndefined();
+            addon.unref_wrapped_value();
+            addon.unref_wrapped_value();
+
+            const deadline = Date.now() + 10_000;
+            while (!addon.was_wrap_finalize_called()) {
+              if (Date.now() > deadline) throw new Error("the wrap finalizer never ran");
+              Bun.gc(true);
+              await Bun.sleep(1);
+            }
 
             addon.queue_more_threadsafe_function_items(1);
-            const deadline = Date.now() + 10_000;
-            while (addon.threadsafe_function_with_queued_items_calls_into_js() < 1) {
-              if (Date.now() > deadline) throw new Error("the threadsafe function never called into JS");
+            while (addon.threadsafe_function_with_queued_items_deliveries() < 1) {
+              if (Date.now() > deadline) throw new Error("the threadsafe function never delivered");
               await Bun.sleep(1);
             }
           });
@@ -325,7 +329,66 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(" 2 pass");
-      expect(stdout).toContain("call_js: item 1, call_function 0");
+      expect(stdout).toContain("finalize_for_create_wrap, data = 42, hint = 123\ndelete_the_ref\n");
+      expect(stdout).toContain("call_js: item 1, env live, js_callback set");
+      expect(exitCode).toBe(0);
+    });
+    it("keeps the refs of an earlier file while its async work is on the thread pool under bun test --isolate", async () => {
+      // An addon pins a wrapped object with a ref while its async work runs, and the wrap
+      // finalizer frees what execute() reads. The swap leaves such an env's refs alone, and the
+      // next swap releases them once the work has completed.
+      const addonPath = JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"));
+      using dir = tempDir("napi-isolate-async", {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          const addon = require(${addonPath});
+          test("pins a wrap and starts async work", () => {
+            addon.create_wrap({}, true, true);
+            addon.hold_async_work_on_pool();
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          const addon = require(${addonPath});
+          test("the ref is still strong while the work runs", async () => {
+            try {
+              for (let i = 0; i < 3; i++) Bun.gc(true);
+              expect(addon.was_wrap_finalize_called()).toBe(false);
+              expect(addon.ref_wrapped_value()).toBe(2);
+            } finally {
+              addon.release_held_async_work();
+            }
+            const deadline = Date.now() + 10_000;
+            while (!addon.held_async_work_completed()) {
+              if (Date.now() > deadline) throw new Error("the held work never completed");
+              await Bun.sleep(1);
+            }
+          });
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          const addon = require(${addonPath});
+          test("the ref is released once the work is done", async () => {
+            expect(addon.ref_wrapped_value()).toBe(0);
+            const deadline = Date.now() + 10_000;
+            while (!addon.was_wrap_finalize_called()) {
+              if (Date.now() > deadline) throw new Error("the wrap finalizer never ran");
+              Bun.gc(true);
+              await Bun.sleep(1);
+            }
+          });
+        `,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 3 pass");
+      expect(stdout).toContain("delete_the_ref");
       expect(exitCode).toBe(0);
     });
     it("does not keep a finished file's global alive through the addon's references under bun test --isolate", async () => {

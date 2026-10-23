@@ -25,8 +25,13 @@ uint32_t NapiRef::ref()
     return refCount;
 }
 
-void NapiRef::unref()
+uint32_t NapiRef::unref()
 {
+    // Node's Reference::Unref(): an empty persistent handle reports 0 and keeps its count.
+    if (m_released) {
+        NAPI_LOG("unref %p (value released)", this);
+        return 0;
+    }
     NAPI_LOG("unref %p %u -> %u", this, refCount, refCount - 1);
     bool clear = refCount == 1;
     refCount = refCount > 0 ? refCount - 1 : 0;
@@ -35,6 +40,7 @@ void NapiRef::unref()
         // and use it to call the finalizer when GC'd
         strongRef.clear();
     }
+    return refCount;
 }
 
 void NapiRef::callFinalizerFromGC()
@@ -64,10 +70,13 @@ void NapiEnv::unlinkRef(uint32_t slot)
 
 void NapiEnv::releaseRealmRoots()
 {
+    m_pendingException.clear();
+    if (m_asyncWorkOnThreadPool.load()) {
+        return;
+    }
     for (Zig::NapiRef* ref : m_refs) {
         ref->releaseRealm();
     }
-    m_pendingException.clear();
 }
 
 void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)

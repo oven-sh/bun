@@ -1180,9 +1180,9 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
         return napi_set_last_error(env, napi_generic_failure);
     }
 
-    napiRef->unref();
+    uint32_t count = napiRef->unref();
     if (result) [[likely]] {
-        *result = napiRef->refCount;
+        *result = count;
     }
     NAPI_RETURN_SUCCESS(env);
 }

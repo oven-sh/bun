@@ -1377,7 +1377,8 @@ pub(crate) struct S3DownloadFeed {
 
 impl S3DownloadFeed {
     /// A chunk that is not the last one. `chunk` is borrowed for the duration of the call.
-    #[inline]
+    // Inlined with its callee: every chunk of every S3 download takes this path.
+    #[inline(always)]
     pub(crate) fn deliver(&self, chunk: &[u8]) {
         let Some(bytes) = self.stream.bytes() else {
             return;
@@ -1393,6 +1394,7 @@ impl S3DownloadFeed {
 
     /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`
     /// (HTTP thread).
+    #[inline(always)]
     fn after_chunk_delivered(&self, bytes: &ByteStream) {
         use crate::webcore::byte_stream::AfterDelivery;
         let task = self.task.get();

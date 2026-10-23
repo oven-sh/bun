@@ -179,18 +179,18 @@ test("only --lock-environment=off lets tests steer a hardened build by the envir
   );
 });
 
-test("only --guarded-pages=on puts what a compiled program maps for good between guard pages, each at an address of its own", () => {
+test("--guarded-pages is on with --hardened=on, and either can be had without the other where WebKit is compiled too", () => {
   using dir = tempDir("build-hardened-flags-guarded-pages", {});
   const define = "-DENABLE_AOT_GUARDED_PAGES=1";
-  for (const partial of [{ guardedPages: true }, { guardedPages: true, hardened: true }] as PartialConfig[]) {
+  for (const partial of [{ hardened: true }, { guardedPages: true }] as PartialConfig[]) {
     const flags = everyFlagOf(linuxConfig(partial, String(dir)));
     for (const list of [flags.c, flags.cxx, flags.dependencyC, flags.dependencyCxx]) expect(list).toContain(define);
   }
-  for (const partial of [{}, { hardened: true }] as PartialConfig[])
+  for (const partial of [{}, { hardened: true, guardedPages: false }] as PartialConfig[])
     expect(Object.values(everyFlagOf(linuxConfig(partial, String(dir)))).flat()).not.toContain(define);
-  expect(() => linuxConfig({ guardedPages: true, webkit: "prebuilt" }, String(dir))).toThrow(
-    "guardedPages=true requires os=linux and webkit=local",
-  );
+  expect(everyFlagOf(linuxConfig({ hardened: true, webkit: "prebuilt" }, String(dir))).cxx).toContain(define);
+  for (const partial of [{ guardedPages: true }, { hardened: true, guardedPages: false }] as PartialConfig[])
+    expect(() => linuxConfig({ ...partial, webkit: "prebuilt" }, String(dir))).toThrow("requires webkit=local");
 });
 
 test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the same calls", () => {

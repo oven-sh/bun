@@ -235,6 +235,7 @@ export const rows: Row[] = [
   ["aot/builtins/differential", 4, "./builtins/differential-cases", "differential"],
   ["aot/collector-stress/full", 30, "./collector-stress/run-collector-stress", "collectorStress", ["full"]],
   ["aot/collector-stress/young", 20, "./collector-stress/run-collector-stress", "collectorStress", ["young"]],
+  ["aot/compile-exec-argv-as-without-aot", 3, "./compile-exec-argv-as-without-aot-cases", "execArgvAsWithoutAot"],
   ["aot/each-case-alone", 20, "./each-case-alone-cases", "eachCaseAlone"],
   ["aot/generated-cases-three-ways", 8, "./three-ways/made-cases", "madeCasesOfAllTopics"],
   ["aot/generated-fresh-seeds", 3, "./generated/fresh-seeds", "freshSeeds"],

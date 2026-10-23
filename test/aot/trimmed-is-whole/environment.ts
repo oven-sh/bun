@@ -179,6 +179,7 @@ export class Bench {
       // So does what the registers held at a fault, and the code there.
       .replace(/^Registers: .*$/gm, "Registers: <registers>")
       .replace(/^Code at rip: .*$/gm, "Code at rip: <code>")
+      .replace(/\bFaults: \d+/g, "Faults: <count>")
       .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
       .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
       .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>");

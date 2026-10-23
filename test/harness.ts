@@ -149,7 +149,7 @@ for (let key in bunEnv) {
 
   // An executable that such a Bun compiles ahead of time does not start where the environment sets a variable that it
   // never reads. A test that wants one of the few that it does read sets it itself.
-  if (locksEnvironment && /^(BUN_DEBUG|BUN_JSC_|MIMALLOC_)/i.test(key)) {
+  if (locksEnvironment && /^(BUN_DEBUG|BUN_JSC_|MIMALLOC_|BUN_CRASH_REPORT_URL$)/i.test(key)) {
     delete bunEnv[key];
   }
 

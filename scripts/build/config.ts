@@ -198,7 +198,7 @@ export interface Config {
    * What an executable compiled ahead of time maps for as long as a VM or the process lives (its instance, its tables) lies
    * between two pages that cannot be touched, at an address drawn for that mapping alone: an address of one says nothing
    * about another's, nor about the C library's. So does every thread's second stack, where a hardened build has them.
-   * Costs a few system calls and 8 KB of page tables a mapping.
+   * Costs a few system calls and 8 KB of page tables a mapping. On with `hardened`. Off: a hardened build to compare with.
    */
   guardedPages: boolean;
   /**
@@ -216,7 +216,9 @@ export interface Config {
   codeGenerationFromStrings: boolean;
   /**
    * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
-   * false whatever `BUN_JSC_useWasm` says.
+   * false whatever `BUN_JSC_useWasm` says. A WebKit built from source (`webkit: "local"`) is also
+   * built with ENABLE_WEBASSEMBLY=0, which leaves the engine's WebAssembly code out of the binary;
+   * a prebuilt one keeps it.
    */
   webAssembly: boolean;
   /**
@@ -1183,7 +1185,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const hardened = partial.hardened ?? false;
   const requireMdwe = partial.requireMdwe ?? hardened;
   const lockEnvironment = partial.lockEnvironment ?? hardened;
-  const guardedPages = partial.guardedPages ?? false;
+  const guardedPages = partial.guardedPages ?? hardened;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1210,9 +1212,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!hardened || (linux && abi !== "android"), "hardened=true requires os=linux and abi=gnu or musl");
   assert(!requireMdwe || hardened, "requireMdwe=true requires hardened=true");
   assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
+  assert(!guardedPages || linux, "guardedPages=true requires os=linux");
   assert(
-    !guardedPages || (linux && webkit === "local"),
-    "guardedPages=true requires os=linux and webkit=local: no prebuilt WebKit is compiled with it",
+    guardedPages === hardened || webkit === "local",
+    "guardedPages=" + guardedPages + " with hardened=" + hardened + " requires webkit=local",
+    { hint: "The -hardened WebKit prebuilts are compiled with it, the others without" },
   );
   const jit = partial.jit ?? true;
   assert(
@@ -1904,7 +1908,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.hardened) features.push("hardened");
   if (cfg.requireMdwe !== cfg.hardened) features.push("require-mdwe:off");
   if (cfg.lockEnvironment !== cfg.hardened) features.push("lock-environment:off");
-  if (cfg.guardedPages) features.push("guarded-pages");
+  if (cfg.guardedPages !== cfg.hardened) features.push(cfg.guardedPages ? "guarded-pages" : "guarded-pages:off");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }

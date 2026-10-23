@@ -9,7 +9,8 @@ function run(args: string[], cwd: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  // On Windows the C library writes each line end of these messages as two bytes.
+  return { stdout: stdout.toString(), stderr: stderr.toString().replaceAll("\r\n", "\n"), exitCode };
 }
 
 using probe = tempDir("bun-aot-commands-probe", {});

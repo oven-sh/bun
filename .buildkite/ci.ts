@@ -1050,7 +1050,12 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   }
 
   if (hardened) {
-    args.push("--include=aot/hardened", "--vendor=false");
+    args.push(
+      "--include=aot/hardened",
+      "--include=aot/a-hardened-build",
+      "--include=aot/texts-that-tell-builds-apart",
+      "--vendor=false",
+    );
   } else if (handOver) {
     args.push(`--bun-aot-step=${aotBuildKey}`, "--include=cli/hand-over-to-the-real-bun-aot", "--vendor=false");
   } else if (aot) {
@@ -1061,6 +1066,13 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // The engine's own CI tests Linux alone: nothing else runs its tests on macOS.
     if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/engine-tests");
     if (profile === "asan") args.push("--always-draw=aot/exception-checks");
+    // What can refuse to start an executable is tested wherever one is started.
+    args.push(
+      "--always-draw=aot/an-executable-whose-image-header-names-a-range-outside-its-code-segment-does-not-start",
+      "--always-draw=aot/compiled-code-mapping",
+      "--always-draw=aot/inserted-library",
+      "--always-draw=aot/ways-to-start-an-executable",
+    );
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));

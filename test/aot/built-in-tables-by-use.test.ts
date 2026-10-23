@@ -60,8 +60,6 @@ const programs: Record<string, Program> = {
   "Function through the constructor of _defaultAgent": {
     source: `import http from "node:http"; try { http.request({ agent: false, _defaultAgent: function () {} }); } catch (error) { console.log(error.name); }`,
     runsTextAsCode: true,
-    // TODO: on Windows the compiler does not follow this call to Function.
-    ...(process.platform === "win32" && { aheadOfTime: refused }),
   },
   "Function through the keys of what assert.throws expects, seen by Error.prepareStackTrace": {
     source: `import assert from "node:assert"; let found; Error.prepareStackTrace = error => { found ??= Object.values(error.actual ?? {})[0]; return ""; }; try { assert.throws(() => { throw Object.create(function () {}); }, { constructor: 1 }); } catch {} ${attempt(`typeof found === "function" ? found("return 6 * 7")() : "not found"`)}`,

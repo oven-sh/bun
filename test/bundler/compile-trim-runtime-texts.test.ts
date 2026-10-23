@@ -200,6 +200,7 @@ const listed = said([bunExeWithEveryCommand(), "lint", "--rules", "--format", "j
 
 describe.skipIf(!canTrim)("an executable without the Bun command line holds none of its texts", () => {
   const whole = readFileSync(bunExe());
+  const withEveryCommand = readFileSync(bunExeWithEveryCommand());
   const everythingIn = (bytes: Buffer) => [bytes, ...whatIsCompressedIn(bytes)];
   const trimmed = whatIsMappedOf(file).flatMap(everythingIn);
 
@@ -215,7 +216,7 @@ describe.skipIf(!canTrim)("an executable without the Bun command line holds none
   test("the search finds them in the whole Bun", () => {
     const names = rules.map(rule => rule.value).filter(name => name.length >= 16);
     expect(names.length).toBeGreaterThan(100);
-    const everything = everythingIn(whole);
+    const everything = everythingIn(withEveryCommand);
     expect(textsFoundIn(everything, names).length).toBe(new Set(names).size);
     const descriptions = rules.map(rule => rule.description).filter(Boolean);
     expect(textsFoundIn(everything, descriptions).length).toBe(new Set(descriptions).size);
@@ -262,7 +263,7 @@ describe.skipIf(!canTrim)("an executable without the Bun command line holds none
           piecesAtWords(message).filter(piece => found.has(piece)).length >= piecesAtWords(message).length * 0.8,
       );
     };
-    expect(mostlyIn(everythingIn(whole)).length).toBeGreaterThan(messages.length / 3);
+    expect(mostlyIn(everythingIn(withEveryCommand)).length).toBeGreaterThan(messages.length / 3);
     expect(notAccountedFor(mostlyIn(trimmed))).toEqual([]);
   });
 

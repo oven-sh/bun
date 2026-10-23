@@ -145,7 +145,8 @@ export const cases: Case[] = [
   { name: "LC_MESSAGES, LC_CTYPE, LC_TIME, LC_NUMERIC, LC_COLLATE", env: { LC_MESSAGES: "de_DE.UTF-8", LC_CTYPE: "tr_TR.UTF-8", LC_TIME: "ja_JP.UTF-8", LC_NUMERIC: "de_DE.UTF-8", LC_COLLATE: "sv_SE.UTF-8" }, programs: shows },
   { name: "LANGUAGE", env: { LANGUAGE: "de:fr" }, programs: shows },
   ...["UTC", "America/Los_Angeles", "Asia/Kolkata", "Europe/Berlin", "Australia/Lord_Howe", "EST5EDT", "<+03>-3", ":/etc/localtime", "Nonsense/Zone", ""].map((zone): Case => ({ name: "TZ=" + zone, env: { TZ: zone }, programs: shows })),
-  { name: "ICU_DATA, ICU_TIMEZONE_FILES_DIR", env: { ICU_DATA: "<run>", ICU_TIMEZONE_FILES_DIR: "<run>" }, programs: shows },
+  // Where the data of ICU is linked in. On macOS ICU is the system's, which looks for its data under these names.
+  ...(process.platform === "darwin" ? [] : [{ name: "ICU_DATA, ICU_TIMEZONE_FILES_DIR", env: { ICU_DATA: "<run>", ICU_TIMEZONE_FILES_DIR: "<run>" }, programs: shows } as Case]),
 
   ...["dumb", "xterm-256color", "xterm-kitty", ""].map((term): Case => ({ name: "TERM=" + term, env: { TERM: term } })),
   { name: "NO_COLOR=1", env: { NO_COLOR: "1" } },

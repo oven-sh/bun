@@ -82,15 +82,27 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     if (hole.size < 1024 * 1024) return; // This Bun can't be cut.
 
     const found: Record<string, unknown> = {};
+    const said: string[] = [];
+    const stride = Math.floor(hole.size / 10 / 0x4000) * 0x4000;
+    const places = [0, 1, -1, 2, -2, 3, -3, 4].map(steps => hole.address + steps * stride);
     for (const how of ["call", "read", "call mapped data", "read mapped data"]) {
-      const { stdout, stderr, exitCode } = await spawned([join(folder, "main"), how, String(hole.address)]);
-      found[how] = { stdout, saysRemoved: / removed .* from this executable/.test(stderr), exits70: exitCode === 70 };
+      for (const address of how === "call" ? places : [hole.address]) {
+        const { stdout, stderr, exitCode, signalCode } = await spawned([join(folder, "main"), how, String(address)]);
+        said.push(
+          `${how}: exit ${exitCode}, signal ${signalCode}, at ${address} of ${hole.size}\n${stderr.slice(0, 1500)}`,
+        );
+        const saysRemoved = / removed .* from this executable/.test(stderr);
+        found[how] = { stdout, saysRemoved, exits70: exitCode === 70 };
+        if (saysRemoved) break;
+      }
     }
-    expect(found).toEqual({
+    const wanted = {
       "call": { stdout: "started\n", saysRemoved: true, exits70: true },
       "read": { stdout: "started\n", saysRemoved: false, exits70: false },
       "call mapped data": { stdout: "started\nmapped true\n", saysRemoved: false, exits70: false },
       "read mapped data": { stdout: "started\nmapped true\n0\n", saysRemoved: false, exits70: false },
-    });
+    };
+    if (said.length > 4 || !Bun.deepEquals(found, wanted)) console.error(said.join("\n"));
+    expect(found).toEqual(wanted);
   }, 240_000);
 });

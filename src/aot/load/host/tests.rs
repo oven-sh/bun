@@ -728,6 +728,26 @@ fn unknown_host_loader_is_an_internal_error() {
 }
 
 #[test]
+fn entry_point_with_unknown_name_that_is_not_text_is_a_file() {
+    let directory = TemporaryDirectory::new("host_binary_entry_point");
+    directory.write("tool", "\u{FFFD}\u{1}\u{2}");
+    directory.write("with.dots.in-its-name", "console.log(1);\n");
+    directory.write("main.ts", "\u{FFFD}");
+    with_host_in(directory.path(), Vec::new(), |fixture| {
+        let host = fixture.host;
+        let path = |name: &[u8]| [&from_native(directory.path())[..], b"/", name].concat();
+        let kind_of = |name: &[u8]| host_loader_kind(loader_of(host, &path(name), None));
+        let file = HostLoaderKind::Loader(Loader::File);
+        assert_eq!(kind_of(b"tool"), Some(file));
+        assert_eq!(host.script_kind(&path(b"tool")), None);
+        let tsx = HostLoaderKind::Loader(Loader::Tsx);
+        assert_eq!(kind_of(b"with.dots.in-its-name"), Some(tsx));
+        assert_eq!(kind_of(b"main.ts"), Some(HostLoaderKind::ByName));
+        assert!(fixture.take_messages().is_empty());
+    });
+}
+
+#[test]
 fn typed_file_is_typescript_and_hidden_from_plugins() {
     let directory = TemporaryDirectory::new("host_typed_file");
     directory.write_typed_package("export const x = 1;\n", "export const x: number = 1;\n");

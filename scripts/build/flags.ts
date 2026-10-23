@@ -105,7 +105,8 @@ export const cpuTargetFlags: Flag[] = [
 
 /**
  * `--hardened=on`. The same list as `HARDENING` in oven-sh/WebKit's
- * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with.
+ * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with, but for what `--guarded-pages=on` adds:
+ * that list has it, and here it is a flag of its own.
  */
 export const hardeningFlags = [
   "-fstack-protector-strong",

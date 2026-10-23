@@ -520,7 +520,11 @@ error: --sql-preconnect can't be used with this executable because --trim remove
 
 An option in `--compile-exec-argv` is part of the build, so `bun compile --trim` keeps what the option needs. With `--compile-exec-argv=--inspect` the executable has the debugger and keeps every API. `--compile-inspector` counts the same way.
 
-`-i` and `--install` install missing packages while the program runs. That takes the package manager, which is one of the tools. `trim: { allow: ["install"] }` keeps it.
+`-i` and `--install` install missing packages while the program runs. That takes the package manager, and an executable built with `--aot` never has it: [`bun-aot`](/bundler/aot), which the executable is a copy of, comes without `bun install`. Install the packages before you build. With either option in `--compile-exec-argv`, or with `trim: { allow: ["install"] }`, the build fails:
+
+```txt
+error: the Bun executable that this build starts from doesn't have bun install, bunx and the rest of the package manager, which this executable needs
+```
 
 What comes after the name of the executable on the command line is never an option of Bun. It goes to your program.
 

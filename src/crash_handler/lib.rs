@@ -2888,6 +2888,11 @@ mod draft {
             return enable_crash_reporting;
         }
 
+        // A hardened build starts no other program and opens no connection that nobody asked for.
+        if cfg!(bun_hardened) {
+            return false;
+        }
+
         // Debug builds shouldn't report to the default url by default
         if cfg!(debug_assertions) {
             return false;

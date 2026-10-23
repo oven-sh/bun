@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunExe, isLinux, tempDir } from "harness";
+import { bunExe, isASAN, isLinux, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -45,7 +45,8 @@ if (Bun.isMainThread) {
 }
 `;
 
-test.skipIf(!isLinux)(
+// A sanitizer keeps freed memory back, and its own memory is anonymous too.
+test.skipIf(!isLinux || isASAN)(
   "what a Worker's atom table holds of the program's texts goes with the Worker",
   async () => {
     using dir = tempDir("atoms-of-a-worker", { "workers.ts": program });

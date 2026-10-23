@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-dd1c9946";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-a3251c8d";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -434,9 +434,9 @@ const rows: Row[] = [
   ["ENABLE_VIDEO", 1],
   ["ENABLE_VIDEO_PRESENTATION_MODE", 0],
   ["ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN", 1],
-  ["ENABLE_WEBASSEMBLY", 1],
-  ["ENABLE_WEBASSEMBLY_BBQJIT", c => on(c.jit)],
-  ["ENABLE_WEBASSEMBLY_OMGJIT", 1],
+  ["ENABLE_WEBASSEMBLY", c => on(c.webAssembly)],
+  ["ENABLE_WEBASSEMBLY_BBQJIT", c => on(c.webAssembly && c.jit)],
+  ["ENABLE_WEBASSEMBLY_OMGJIT", c => on(c.webAssembly)],
   ["ENABLE_WEBDRIVER", 0],
   ["ENABLE_WEBDRIVER_BIDI", 0],
   ["ENABLE_WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS", 0],

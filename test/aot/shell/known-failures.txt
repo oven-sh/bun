@@ -3,9 +3,6 @@
 strings/single-characters	// CALLS- kept StringHasAt|StringEqualsLiteral
 # Open: a key that is built from a string and integers is not yet built in one piece.
 strings/strings-built-and-consumed-locally	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
-# Open: a helper that is handed `texts[i] + texts[j]` (NaN, if both reads are past the end) calls a method of it; in a program that stores under an unknown key through an unknown value the callee is then unknown, and so is every typed parameter that is handed the answer.
-strings/lookups-behind-a-helper-that-is-handed-a-sum-of-array-reads	// CALLS+ getOfThree operationAOTMapGetByKeyParts
-strings/lookups-behind-a-helper-that-is-handed-a-sum-of-array-reads	// CALLS+ hasOfTwo operationAOTHasByKeyParts
 # Open: `{ ...source, name }` over a source whose names no type knows is born as a copy of the source, and the names that are written are defined by name on the copy: 420 instructions where the form before, a layout of
 # the written names with the copied ones kept beside it, took 735. The copy and its definitions are not yet one call (the three CALLS+ lines of this program below).
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS- named PutBy

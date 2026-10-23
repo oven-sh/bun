@@ -36,7 +36,8 @@ import { built, slot, spawned, wanted } from "./run-programs";
 import { describe, test } from "./supported";
 
 const mostFunctionsAdded = 120;
-const mostCodeBytesAdded = 65536;
+// The code of an image ends at a whole page of 16 KiB, with its constants behind it, so what a line adds is counted up to a page too high.
+const mostCodeBytesAdded = 65536 + 16384;
 const mostFreeAccessesLost = 3;
 const mostAccessesByNameGained = 3;
 const mostDirectCallsLost = 2;

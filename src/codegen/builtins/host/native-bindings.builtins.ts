@@ -3,6 +3,7 @@ import * as b from "bun-builtins-table";
 import { handedOver } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
+const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
 const operandCodeOnly = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
 const converted = [b.runs("ToPrimitive")];
 
@@ -59,8 +60,8 @@ export default b.declarations(
       args: { fd: b.any.optional, mode: b.any.optional, state: b.any.optional },
       returns: b.f64,
       uses: { fd: b.inspected, mode: converted, state: [b.readsContents(), b.writesContents()] },
-      reads: externalState,
-      writes: externalState,
+      reads: [...viewHeaps, ...externalState],
+      writes: ["TypedArrayElements", ...externalState],
       implementation: b.generic,
     },
     // It defines the columns and the rows as the first two elements of the array, which it refuses if it is shorter. Given a descriptor it reads the array without asking whether one was passed.

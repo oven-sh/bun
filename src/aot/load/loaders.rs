@@ -99,20 +99,27 @@ pub(crate) fn loader_by_path<E: AsRef<[u8]>>(
     path: &[u8],
     kind: CodeImportKind,
 ) -> Loader {
+    match (loader_named_by_path(table, path), kind) {
+        (Some(loader), _) => loader,
+        (None, _) if PathName::init(path).ext.is_empty() => Loader::Tsx,
+        (None, CodeImportKind::EntryPoint) => Loader::Tsx,
+        (None, CodeImportKind::Require) => Loader::Ts,
+        (None, CodeImportKind::Import) => Loader::File,
+    }
+}
+
+pub(crate) fn loader_named_by_path<E: AsRef<[u8]>>(
+    table: &[(E, Loader)],
+    path: &[u8],
+) -> Option<Loader> {
     let name = PathName::init(path);
     let found = match table.binary_search_by(|(extension, _)| extension.as_ref().cmp(name.ext)) {
         Ok(index) => Some(table[index].1),
         Err(_) => Loader::from_string(name.ext),
     };
-    if matches!(found, None | Some(Loader::Json)) && is_jsonc_file_name(name.filename) {
-        return Loader::Jsonc;
-    }
-    match (found, kind) {
-        (Some(loader), _) => loader,
-        (None, _) if name.ext.is_empty() => Loader::Tsx,
-        (None, CodeImportKind::EntryPoint) => Loader::Tsx,
-        (None, CodeImportKind::Require) => Loader::Ts,
-        (None, CodeImportKind::Import) => Loader::File,
+    match matches!(found, None | Some(Loader::Json)) && is_jsonc_file_name(name.filename) {
+        true => Some(Loader::Jsonc),
+        false => found,
     }
 }
 
@@ -273,6 +280,17 @@ mod tests {
         assert_eq!(loaded_as(require, b"/project/x.unknown"), Loader::Ts);
         assert_eq!(loaded_as(require, b"/project/tool"), Loader::Tsx);
         assert_eq!(loaded_as(require, b"/project/x.txt"), Loader::Text);
+    }
+
+    #[test]
+    fn only_known_extension_names_loader() {
+        let named = |path: &[u8]| loader_named_by_path(DEFAULT_LOADERS, path);
+        assert_eq!(named(b"/project/x.unknown"), None);
+        assert_eq!(named(b"/project/tool"), None);
+        assert_eq!(named(b"/project.d/tool"), None);
+        assert_eq!(named(b"/project/addon.node"), Some(Loader::Napi));
+        assert_eq!(named(b"/project/a.xml"), Some(Loader::Xml));
+        assert_eq!(named(b"/project/bun.lock"), Some(Loader::Jsonc));
     }
 
     #[test]

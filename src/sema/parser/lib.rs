@@ -271,3 +271,58 @@ pub(crate) fn parse_with_own_atoms(
 ) -> Result<Parsed, Rejected> {
     parser::run(text, options, None, scratch)
 }
+
+/// True if parsing `text` as TypeScript reports "File appears to be binary."
+pub fn appears_to_be_binary(text: &[u8], is_jsx: bool) -> bool {
+    const FILE_APPEARS_TO_BE_BINARY: u32 = 1490;
+    // The scanner reports it only at bytes that aren't UTF-8 and at U+FFFD.
+    if core::str::from_utf8(text).is_ok_and(|text| !text.contains('\u{FFFD}')) {
+        return false;
+    }
+    let options = Options {
+        is_jsx,
+        recovers: true,
+        compiles: true,
+        ..Options::default()
+    };
+    parse_with_own_atoms(text, options, &mut Scratch::default()).is_ok_and(|parsed| {
+        let mut diagnostics = parsed.file.diagnostics.iter();
+        diagnostics.any(|it| it.code == FILE_APPEARS_TO_BE_BINARY)
+    })
+}
+
+#[cfg(test)]
+mod binary_tests {
+    use super::appears_to_be_binary;
+
+    #[test]
+    fn executable_formats_and_noise_are_binary() {
+        let files: [&[u8]; 5] = [
+            b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x03\0\x3e\0\x01\0\0\0\xc0\x9a",
+            b"\xcf\xfa\xed\xfe\x0c\0\0\x01\0\0\0\0\x06\0\0\0",
+            b"MZ\x90\0\x03\0\0\0\x04\0\0\0\xff\xff\0\0\xb8\0",
+            b"a = 1;\n\x9c\xe1\x02",
+            "\u{FFFD}".as_bytes(),
+        ];
+        for file in files {
+            assert!(appears_to_be_binary(file, true), "{file:?}");
+            assert!(appears_to_be_binary(file, false), "{file:?}");
+        }
+    }
+
+    #[test]
+    fn text_is_not_binary_whatever_its_comments_and_strings_hold() {
+        let files: [&[u8]; 6] = [
+            b"",
+            b"const n: number = 1;\n",
+            "const s = \"\u{e9}\u{FFFD}\";\n".as_bytes(),
+            b"// caf\xe9\nconsole.log(1);\n",
+            b"/* \xff\xfe\0 */ console.log(1);\n",
+            b"const s = 'caf\xe9';\n",
+        ];
+        for file in files {
+            assert!(!appears_to_be_binary(file, true), "{file:?}");
+            assert!(!appears_to_be_binary(file, false), "{file:?}");
+        }
+    }
+}

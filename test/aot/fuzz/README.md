@@ -1,6 +1,6 @@
 # The fuzzer
 
-`run.ts` draws small programs from thirty-one sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
+`run.ts` draws small programs from thirty-three sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
 result of the flow analysis without which it goes away. `../fuzzer-fixed-seeds.test.ts` runs a small, fixed part of it in CI.
 
 ```sh
@@ -29,6 +29,8 @@ stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 6
 .. --sources strings-still-in-pieces,changed-while-it-is-walked,left-half-way,numbers-across-their-borders,at-the-border-of-a-representation,patterns-made-at-run-time,lists-read-where-they-are-made --modes default,every-function-hot,cold-and-very-large --fail-predictions 2,2,7,1   # the same on the general road behind every test
 .. --validate --sources numbers-however-they-are-kept:6,lists-read-where-they-are-made:2 --modes default,every-function-hot,nothing-inlined,validate,cold-and-very-large   # one number, kept beside fractions or other things, handed to everything that takes a number: every proof is asked again at run time
 .. --validate --sources objects-read-where-they-are-made:4,left-half-way --modes default,every-function-hot,validate,cold-and-very-large   # small objects that need not exist, seen from outside late or never
+.. --as-a-user --no-attribution --sources patterns-that-go-back-for-millions-of-turns --batch 1 --modes default --run-seconds 30 --compiled-run-seconds 200   # patterns out of run-time text on both sides of the hundred million turns at which plain Bun gives a match up: an executable finds every match that plain Bun finds, and ends where it ends
+.. --as-a-user --sources errors-of-values-nobody-uses --batch 8 --modes default,every-function-hot,cold-and-very-large,erased   # operations that throw where nobody uses their value: the error comes all the same, at its place
 .. --workers 4 --modes default,every-function-hot        # four workers run each program at once: compiled code and its tables are shared by all threads
 .. --bun <a build with AddressSanitizer> --as-a-user --no-attribution --sources changing-buffers --modes default,every-function-hot,erased-and-hot --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"
 .. --bun <a build with AddressSanitizer> --as-a-user --no-attribution --modes every-function-hot,erased-and-hot --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"
@@ -49,6 +51,8 @@ stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 6
 | `strings-still-in-pieces.ts`, `changed-while-it-is-walked.ts`, `left-half-way.ts`, `numbers-across-their-borders.ts`, `at-the-border-of-a-representation.ts`, `patterns-made-at-run-time.ts`, `lists-read-where-they-are-made.ts` | more sources: joined strings that nobody has read yet, handed to everything that needs their characters; arrays, Maps, Sets and objects changed at one step of the walk over them; generators closed, thrown into or dropped at every stop; counters, sums and indexes that cross the ends of int32, uint32 and the safe integers; lists, objects, tables and switches one element on either side of a power of two; regular expressions whose text arrives at run time; lists of numbers read in the function that makes them |
 | `numbers-however-they-are-kept.ts` | one more: a number in a variable that holds other kinds of numbers, or other things, at other times, used right there as an element, an index, a length, a key, a field, an argument, an operand, a case and as text |
 | `objects-read-where-they-are-made.ts` | one more: small objects made out of a function's own variables, changed and read right there, under one name or two, seen from outside late, on one path alone, or never |
+| `patterns-that-go-back-for-millions-of-turns.ts` | one more: patterns made at run time whose first alternative fails only behind millions of turns of its groups and whose last matches at once, at lengths around the place where plain Bun gives up |
+| `errors-of-values-nobody-uses.ts` | one more: operations that throw, as a statement, under void, in a constant nobody reads, as an element, member, argument or default nobody looks at, in loops that run three times or never, in front of a second one that throws |
 | `type-check.ts` | TypeScript's own checker, for the source whose programs it has to accept |
 | `beds.ts`, `engine-probes.ts` | where a program runs: `bun build --compile --aot`, or the engine's test binaries, which are asked first which built-ins they lack |
 | `reduce.ts` | makes a failing program small |

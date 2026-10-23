@@ -64,37 +64,40 @@ async function spawned(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-describe.concurrent("an executable with --compile-exec-argv answers with --aot as it does without", () => {
-  test.each(optionLists)(
-    "%j",
-    async options => {
-      using dir = tempDir("compile-exec-argv", { "main.mjs": program });
-      const folder = String(dir);
-      const kinds: [name: string, flags: string[]][] = [
-        ["without --aot", []],
-        ["--aot", ["--aot"]],
-        ...(canTrim ? ([["--aot --trim", ["--aot", "--trim"]]] as [string, string[]][]) : []),
-      ];
-      const found: Record<string, unknown> = {};
-      for (const [name, flags] of kinds) {
-        const outfile = join(folder, name.replaceAll(" ", ""), "main");
-        const embedded = options ? ["--compile-exec-argv=" + options] : [];
-        const built = await spawned(
-          [bunExe(), "build", "--compile", ...flags, ...embedded, "main.mjs", "--outfile", outfile],
-          folder,
-        );
-        expect({ name, stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-          name,
-          stderr: "",
-          exitCode: 0,
-        });
-        const { stdout, exitCode } = await spawned([outfile, "--own", "argument"], folder);
-        found[name] = { stdout, exitCode };
-      }
-      expect(found["without --aot"]).toMatchObject({ stdout: expect.stringContaining(`argv: ["--own","argument"]`) });
-      for (const [name] of kinds)
-        expect({ name, ...(found[name] as object) }).toEqual({ name, ...(found["without --aot"] as object) });
-    },
-    240_000,
-  );
-});
+// A list is three builds, two of them ahead of time, and the lists of a part are built at once.
+export function execArgvAsWithoutAot(part: number, parts: number) {
+  describe.concurrent("an executable with --compile-exec-argv answers with --aot as it does without", () => {
+    test.each(optionLists.filter((_, index) => index % parts === part - 1))(
+      "%j",
+      async options => {
+        using dir = tempDir("compile-exec-argv", { "main.mjs": program });
+        const folder = String(dir);
+        const kinds: [name: string, flags: string[]][] = [
+          ["without --aot", []],
+          ["--aot", ["--aot"]],
+          ...(canTrim ? ([["--aot --trim", ["--aot", "--trim"]]] as [string, string[]][]) : []),
+        ];
+        const found: Record<string, unknown> = {};
+        for (const [name, flags] of kinds) {
+          const outfile = join(folder, name.replaceAll(" ", ""), "main");
+          const embedded = options ? ["--compile-exec-argv=" + options] : [];
+          const built = await spawned(
+            [bunExe(), "build", "--compile", ...flags, ...embedded, "main.mjs", "--outfile", outfile],
+            folder,
+          );
+          expect({ name, stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+            name,
+            stderr: "",
+            exitCode: 0,
+          });
+          const { stdout, exitCode } = await spawned([outfile, "--own", "argument"], folder);
+          found[name] = { stdout, exitCode };
+        }
+        expect(found["without --aot"]).toMatchObject({ stdout: expect.stringContaining(`argv: ["--own","argument"]`) });
+        for (const [name] of kinds)
+          expect({ name, ...(found[name] as object) }).toEqual({ name, ...(found["without --aot"] as object) });
+      },
+      240_000,
+    );
+  });
+}

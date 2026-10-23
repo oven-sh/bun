@@ -10,7 +10,7 @@
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { isArm64, isCI, isMacOS, isWindows, tempDir } from "harness";
+import { isArm64, isASAN, isCI, isMacOS, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { run as runCommand } from "./harness/run";
 import { engineTests, jsc, scriptSkipReason, testaot, toolEnv } from "./shell/tools";
@@ -101,6 +101,8 @@ const expectsLoopPollsThatFault =
     : [];
 // TODO: on the Intel Macs of CI the four parts of the native tests do not end within the five minutes that the runner gives a file.
 const nativeTestsOutlastTheRunner = isMacOS && !isArm64;
+// The runner gives a file twice the time under a sanitizer.
+const limit = isASAN ? 480_000 : 290_000;
 
 function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
   if (shellTakesNoImage && lines.some(line => line.startsWith("FAIL ") && isKnownOnWindows(line))) {
@@ -131,7 +133,7 @@ function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<t
   async () => {
     expectEveryTestPassed(await run("run", engineTests!));
   },
-  290_000,
+  limit,
 );
 
 // It judges nothing: the log of a run on Windows is the only place where their output can be read.
@@ -148,7 +150,7 @@ test.skipIf(!!whyEngineTestsSkipped || !isWindows).each(unexplainedOnWindows)(
   async () => {
     expectEveryTestPassed(await run("run", join(import.meta.dir, "engine-tests")));
   },
-  290_000,
+  limit,
 );
 
 const parts = 4;
@@ -160,7 +162,7 @@ const cannotRunNativeTests = shellTakesNoImage || nativeTestsOutlastTheRunner;
   async part => {
     expectEveryTestPassed(await run("native", `--part=${part}/${parts}`));
   },
-  290_000,
+  limit,
 );
 
 test.skipIf(!!whyEngineTestsSkipped).each([

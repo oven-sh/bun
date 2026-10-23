@@ -21,7 +21,7 @@ use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bundled, to_native};
-use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compile};
 use bun_threading::Guarded;
 
 use crate::builtins::{BuiltinNames, Platforms};
@@ -37,7 +37,8 @@ use crate::load::externals::is_external;
 use crate::load::is_host_path;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, TypeAttribute, classify_type_attribute, host_loader_kind,
-    loader_by_name, loader_by_path, script_kind_of, script_loader, to_host_loader,
+    loader_by_name, loader_by_path, loader_named_by_path, script_kind_of, script_loader,
+    to_host_loader,
 };
 use crate::load::macros::{self, MacroInput};
 use crate::load::named_loads::find_library_modules_named_in_choices;
@@ -95,6 +96,8 @@ pub(crate) struct LoadHost<'a> {
     evaluated_texts: EvaluatedTexts,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
+    /// Sorted. The entry points whose names say nothing about them and that aren't text.
+    binary_entry_point_paths: Vec<Vec<u8>>,
     extra_extensions: Vec<(Vec<u8>, ScriptKind)>,
     unreadable: Guarded<Vec<Vec<u8>>>,
     /// Sorted.
@@ -118,12 +121,14 @@ impl<'a> LoadHost<'a> {
         let (disk, provider, messages) = (input.disk, input.provider, input.messages);
         let options = input.options;
         let load = &options.load;
+        let entry_point_paths = collect_entry_point_paths(disk, options);
         LoadHost {
             disk,
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
             evaluated_texts: EvaluatedTexts::new(),
             react_compiler: ReactCompiler::new(load.react_compiler, messages),
-            entry_point_paths: collect_entry_point_paths(disk, options),
+            binary_entry_point_paths: collect_binary_paths(disk, &load.loaders, &entry_point_paths),
+            entry_point_paths,
             extra_extensions: collect_extra_extensions(&load.loaders),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
@@ -158,6 +163,18 @@ fn collect_entry_point_paths(disk: &Disk, options: &Options<'_>) -> Vec<Vec<u8>>
     paths.shared_sort_unstable();
     paths.dedup();
     paths
+}
+
+fn collect_binary_paths(
+    disk: &Disk,
+    loaders: &[(Vec<u8>, Loader)],
+    sorted_paths: &[Vec<u8>],
+) -> Vec<Vec<u8>> {
+    let is_binary = |path: &&Vec<u8>| {
+        loader_named_by_path(loaders, path).is_none()
+            && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
+    };
+    sorted_paths.iter().filter(is_binary).cloned().collect()
 }
 
 fn collect_extra_extensions(loaders: &[(Vec<u8>, Loader)]) -> Vec<(Vec<u8>, ScriptKind)> {
@@ -220,10 +237,14 @@ impl LoadHost<'_> {
     }
 
     fn is_entry_point(&self, path: &[u8]) -> bool {
+        self.is_among(&self.entry_point_paths, path)
+    }
+
+    fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
-        self.entry_point_paths
-            .binary_search_by(|entry_point| entry_point.as_slice().cmp(&path))
+        sorted_paths
+            .binary_search_by(|it| it.as_slice().cmp(&path))
             .is_ok()
     }
 
@@ -233,11 +254,13 @@ impl LoadHost<'_> {
 
     fn default_loader_for(&self, path: &[u8], kind: CodeImportKind) -> Loader {
         let loaders = &self.input.options.load.loaders;
-        let kind = match self.is_entry_point(path) {
-            true => CodeImportKind::EntryPoint,
-            false => kind,
-        };
-        loader_by_path(loaders, path, kind)
+        if !self.is_entry_point(path) {
+            return loader_by_path(loaders, path, kind);
+        }
+        match self.is_among(&self.binary_entry_point_paths, path) {
+            true => Loader::File,
+            false => loader_by_path(loaders, path, CodeImportKind::EntryPoint),
+        }
     }
 
     fn plugin_loader(&self, path: &[u8]) -> Option<Loader> {

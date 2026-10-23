@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
-import { canTrim, tempDirForAotBuilds } from "./compile-trim-features";
+import { canTrim, featuresLeftOutOfThisBun, tempDirForAotBuilds } from "./compile-trim-features";
 
 const files = {
   "empty.ts": "",
@@ -26,7 +26,10 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
     const folder = String(dir);
     const template = join(folder, isWindows ? "template.exe" : "template");
     expect(await build(folder, "empty.ts", "template", "--trim-template")).toMatchObject({ exitCode: 0 });
-    expect(sizeOf(join(folder, "template"))).toBeLessThan(statSync(bunExe()).size * 0.7);
+    // A Bun that was linked without some commands has less to lose.
+    expect(sizeOf(join(folder, "template"))).toBeLessThan(
+      statSync(bunExe()).size * (featuresLeftOutOfThisBun.length ? 0.9 : 0.7),
+    );
 
     const found: Record<string, unknown> = {};
     const expected: Record<string, unknown> = {};

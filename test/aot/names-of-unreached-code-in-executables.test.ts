@@ -43,7 +43,8 @@ const functionsOfBranch = ["HelperQ1", "CalleeQ3", "NestedQ14", "ArrowQ15"];
 const textsOfBranch = ["HelperTextQ2", "CalleeTextQ8", "BranchTextQ13", "PatternQ20"];
 const variablesOfBranch = ["ParameterQ4", "LocalQ5", "InBranchQ10"];
 const propertiesReadInBranch = ["ReadByCalleeQ6", "ReadInBranchQ11"];
-const propertiesMadeInBranch = ["WrittenByCalleeQ7", "WrittenInBranchQ12", "FieldQ17", "MethodQ18", "LiteralKeyQ19"];
+const propertiesAddedInBranch = ["WrittenByCalleeQ7", "WrittenInBranchQ12"];
+const propertiesOfObjectsMadeInBranch = ["FieldQ17", "MethodQ18", "LiteralKeyQ19"];
 const of = (kind: string, names: string[]) => names.map(name => kind + name);
 
 const sources = {
@@ -269,7 +270,8 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
             ...textsOfBranch,
             ...variablesOfBranch,
             ...propertiesReadInBranch,
-            ...propertiesMadeInBranch,
+            ...propertiesAddedInBranch,
+            ...propertiesOfObjectsMadeInBranch,
             "ClassQ16",
           ]),
         ),
@@ -282,10 +284,17 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "strings and variables of such a branch, and the properties it reads",
         of("importedConstant", [...textsOfBranch, ...variablesOfBranch, ...propertiesReadInBranch]),
       ],
-      gap("the class and the properties have their places in the tables of objects", [
-        "the class of such a branch, and the properties it makes",
-        of("importedConstant", [...propertiesMadeInBranch, "ClassQ16"]),
-      ]),
+      [
+        "the class of such a branch, and the properties of the objects it makes",
+        of("importedConstant", [...propertiesOfObjectsMadeInBranch, "ClassQ16"]),
+      ],
+      gap(
+        "an object that the program does make has a place for every property that the program as written adds to it",
+        [
+          "the properties that such a branch adds to an object from outside it",
+          of("importedConstant", propertiesAddedInBranch),
+        ],
+      ),
       [
         "a function called where a type rules the branch out",
         ["typeTestCalleeQ53", "typeTestCalleeTextQ54", "typeTestTextQ56"],

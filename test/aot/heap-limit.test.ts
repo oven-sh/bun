@@ -560,6 +560,108 @@ try {
     expect({ stdout, exitCode }).toEqual({ stdout: "done 15999999\n", exitCode: 0 });
   }, 120_000);
 
+  // A range that stays almost full of objects in use: every collection frees only what was made since the last one, so the program would collect
+  // again for every few hundred objects it makes, and hardly move. After a few such collections in a row it gets the error.
+  test("a program that keeps a full range and goes on making objects is told so, and goes on once it lets go", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `${treeBuilder}let keep: (Tree | null)[] = [];
+try {
+  for (;;) keep.push(build(10, 1));
+} catch (error) {
+  console.log("full", (error as Error).name);
+}
+let told = 0;
+let last: unknown;
+let nodes = 0;
+for (let round = 0; round < 40_000 && told < 3; round++) {
+  try {
+    nodes += size(build(4, 1));
+  } catch (error) {
+    told++;
+    last = error;
+  }
+}
+// Making an error takes memory too, so one more may come after the last.
+let least = -1;
+for (let tries = 0; tries < 8 && least < 0; tries++) {
+  try {
+    least = smallest(keep);
+  } catch (error) {
+    last = error;
+  }
+}
+keep = [];
+console.log("told", told, (last as Error).name, (last as Error).message);
+console.log("kept", least);
+console.log("afterward", size(build(16, 1)));
+`,
+    });
+    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "full RangeError\ntold 3 RangeError Out of memory\nkept 1023\nafterward 65535\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 120_000);
+
+  const keepsAFullRangeAndGoesOnInATry = (say: string) => `type Entry = { id: number; next: Entry | null };
+const kept: Entry[] = [];
+function fill() {
+  for (let i = 0; ; i++) kept.push({ id: i, next: null });
+}
+try {
+  fill();
+} catch (error) {
+  ${say}("full " + (error as Error).name);
+}
+const ring: (Entry | null)[] = new Array(1024).fill(null);
+try {
+  for (let i = 0; i < 600_000; i++) ring[i & 1023] = { id: i, next: null };
+} finally {
+  ${say}("finished " + ring[1023]!.id + " " + (kept.length > 100_000));
+}
+`;
+
+  test("where it cannot be told it stops and says why", async () => {
+    using folder = tempDir("aot-heap-limit", { "program.ts": keepsAFullRangeAndGoesOnInATry("console.log") });
+    const program = await build(String(folder));
+    const { stdout, stderr, exitCode } = await run(withoutCoreDump([program]), String(folder), smallHeap);
+    expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use 64 MB");
+    expect(stderr).toMatch(/Bun (has run|ran) out of memory/);
+    expect(stderr).not.toContain("This indicates a bug in Bun");
+    expect(stdout).toBe("full RangeError\n");
+    expect(exitCode).not.toBe(0);
+  }, 120_000);
+
+  test("a Worker that cannot be told ends alone", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `import { Worker } from "node:worker_threads";
+type Entry = { id: number };
+function some(): number {
+  const list: Entry[] = [];
+  for (let i = 0; i < 100_000; i++) list.push({ id: i });
+  return list.length;
+}
+await new Promise<void>(resolve => {
+  const worker = new Worker("./worker.ts");
+  worker.on("message", (said: string) => console.log("the Worker says:", said));
+  worker.on("error", (error: Error) => console.log("the Worker ends with:", error.name, error.message));
+  worker.on("exit", (code: number) => (console.log("exit", code, "and the main thread goes on:", some()), resolve()));
+});
+`,
+      "worker.ts": `import { parentPort } from "node:worker_threads";
+${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
+    });
+    const program = await build(String(folder), "worker.ts");
+    const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+    expect(stderr).not.toContain("FATAL");
+    expect({ stdout, exitCode }).toEqual({
+      stdout:
+        "the Worker says: full RangeError\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100000\n",
+      exitCode: 0,
+    });
+  }, 120_000);
+
   test("two Workers each keep more alive than half a range holds", async () => {
     using folder = tempDir("aot-heap-limit", twoWorkersThatKeepMoreThanHalfARange);
     const program = await build(String(folder), "worker.ts");

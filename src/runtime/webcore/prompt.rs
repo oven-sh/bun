@@ -159,7 +159,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::FALSE)
 }
 
-pub mod prompt {
+pub(crate) mod prompt {
     use super::*;
 
     /// Error set for the read-until-delimiter helpers below.
@@ -173,7 +173,7 @@ pub mod prompt {
 
     /// Small trait exposing `read_byte() -> Result<u8, _>`; the only
     /// concrete impl is the process-global `BufferedStdin`.
-    pub trait ReadByte {
+    pub(crate) trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }
@@ -381,7 +381,6 @@ pub mod prompt {
         }
 
         debug_assert!(!input.is_empty());
-        debug_assert!(input[input.len() - 1] != b'\r');
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.

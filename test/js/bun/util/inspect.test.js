@@ -987,6 +987,107 @@ it("CustomEvent", () => {
   `);
 });
 
+describe("Bun.inspect array with non-indexed properties and sorted", () => {
+  const sorted = value => Bun.inspect(value, { sorted: true, compact: true });
+  const keyed = () => Object.assign([1], { b: 1, a: 2 });
+
+  it("sorts the properties after the elements", () => {
+    const array = Object.assign([3, 2, 1], { total: 1, b: 2, a: 3 });
+    const otherInsertionOrder = Object.assign([3, 2, 1], { a: 3, total: 1, b: 2 });
+
+    expect({
+      sorted: Bun.inspect(array, { sorted: true }),
+      sortedCompact: sorted(array),
+      otherInsertionOrder: sorted(otherInsertionOrder),
+      notSorted: Bun.inspect(array, { sorted: false }),
+      noOption: Bun.inspect(array),
+    }).toEqual({
+      sorted: "[\n  3,\n  2,\n  1, a: 3, b: 2, total: 1\n]",
+      sortedCompact: "[ 3, 2, 1, a: 3, b: 2, total: 1 ]",
+      otherInsertionOrder: "[ 3, 2, 1, a: 3, b: 2, total: 1 ]",
+      notSorted: "[ 3, 2, 1, total: 1, b: 2, a: 3 ]",
+      noOption: "[ 3, 2, 1, total: 1, b: 2, a: 3 ]",
+    });
+  });
+
+  it("uses the order of a sorted object", () => {
+    // Not the order of util.inspect: `a` is before `a0`, and a symbol sorts by its description.
+    const keys = { b: 1, [Symbol("aa")]: 2, a0: 3, a: 4, B: 5, "-1": 6, "01": 7, 4294967295: 8 };
+
+    expect({
+      array: sorted(Object.assign([0], keys)),
+      object: sorted(keys),
+    }).toEqual({
+      array: '[ 0, "-1": 6, "01": 7, "4294967295": 8, B: 5, a: 4, a0: 3, [Symbol(aa)]: 2, b: 1 ]',
+      object: '{ "-1": 6, "01": 7, "4294967295": 8, B: 5, a: 4, a0: 3, [Symbol(aa)]: 2, b: 1 }',
+    });
+  });
+
+  it("sorts an array that another value holds", () => {
+    class Rows extends Array {}
+    class Holder {
+      rows = keyed();
+    }
+
+    expect({
+      element: sorted([keyed()]),
+      property: sorted({ rows: keyed() }),
+      namedProperty: sorted(Object.assign([0], { rows: keyed() })),
+      classField: sorted(new Holder()),
+      mapValue: sorted(new Map([["rows", keyed()]])),
+      setEntry: sorted(new Set([keyed()])),
+      subclass: sorted(Object.assign(Rows.of(1), { b: 1, a: 2 })),
+      proxyTarget: sorted(new Proxy(keyed(), {})),
+      customInspectResult: sorted({ [Bun.inspect.custom]: () => keyed() }),
+      tableCell: Bun.inspect.table([{ rows: keyed() }], { sorted: true }),
+    }).toEqual({
+      element: "[ [ 1, a: 2, b: 1 ] ]",
+      property: "{ rows: [ 1, a: 2, b: 1 ] }",
+      namedProperty: "[ 0, rows: [ 1, a: 2, b: 1 ] ]",
+      classField: "Holder { rows: [ 1, a: 2, b: 1 ] }",
+      mapValue: 'Map(1) { "rows": [ 1, a: 2, b: 1 ] }',
+      setEntry: "Set(1) { [ 1, a: 2, b: 1 ] }",
+      subclass: "[ 1, a: 2, b: 1 ]",
+      proxyTarget: "[ 1, a: 2, b: 1 ]",
+      customInspectResult: "[ 1, a: 2, b: 1 ]",
+      tableCell:
+        "┌───┬───────────────────┐\n" +
+        "│   │ rows              │\n" +
+        "├───┼───────────────────┤\n" +
+        "│ 0 │ [ 1, a: 2, b: 1 ] │\n" +
+        "└───┴───────────────────┘\n",
+    });
+  });
+
+  it("prints the keys that an array prints without sorted", () => {
+    let calls = 0;
+    const array = Object.assign([1], { m: 1, a: 3 });
+    Object.defineProperty(array, "lazy", { get: () => ++calls, enumerable: true });
+
+    // `length` sorts between `a` and `m`.
+    expect(sorted(array)).toBe("[ 1, a: 3, lazy: [Getter], m: 1 ]");
+    expect(Bun.inspect(array)).toBe("[ 1, m: 1, a: 3, lazy: [Getter] ]");
+    expect(calls).toBe(0);
+  });
+
+  it("formats the property values in sorted order", () => {
+    const formatted = [];
+    const value = name => ({ [Bun.inspect.custom]: () => (formatted.push(name), name) });
+    const thrower = {
+      [Bun.inspect.custom]() {
+        throw new Error("boom");
+      },
+    };
+
+    expect(sorted(Object.assign([1], { b: value("b"), c: value("c"), a: value("a") }))).toBe("[ 1, a: a, b: b, c: c ]");
+    expect(formatted).toEqual(["a", "b", "c"]);
+
+    formatted.length = 0;
+    expect(() => sorted(Object.assign([1], { c: value("c"), b: thrower, a: value("a") }))).toThrow(new Error("boom"));
+    expect(formatted).toEqual(["a"]);
+  });
+});
+
 describe.skipIf(!isASAN)("object mutated while being formatted", () => {
   it("does not read freed property tables", async () => {
     const fixture = `

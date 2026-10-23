@@ -2183,6 +2183,15 @@ pub(crate) type ForEachPropertyCallback = extern "C" fn(
     is_private_symbol: bool,
 );
 
+/// Key order of the non-indexed property walk. Must match `PropertyOrder` in `bindings.cpp`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PropertyOrder {
+    Insertion = 0,
+    /// The order of [`JSValue::for_each_property_ordered`].
+    Sorted = 1,
+}
+
 /// `JSValue.StringFormatter` — `Display` adapter that
 /// coerces the value via `toBunString` at format time.
 pub struct StringFormatter<'a> {
@@ -2427,6 +2436,7 @@ impl JSValue {
     pub(crate) fn for_each_property_non_indexed(
         self,
         global: &JSGlobalObject,
+        order: PropertyOrder,
         ctx: *mut c_void,
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
@@ -2435,18 +2445,18 @@ impl JSValue {
             safe fn JSC__JSValue__forEachPropertyNonIndexed(
                 this: JSValue,
                 global: &JSGlobalObject,
+                order: PropertyOrder,
                 ctx: *mut c_void,
                 callback: ForEachPropertyCallback,
             );
         }
         crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
+        JSC__JSValue__forEachPropertyNonIndexed(self, global, order, ctx, callback);
         scope.return_if_exception()
     }
     /// `JSValue.forEachPropertyOrdered` — like
     /// [`for_each_property`](Self::for_each_property) but visits keys in
-    /// stable enumeration order (used by `console.log` with
-    /// `ordered_properties`).
+    /// UTF-16 code unit order, own keys only (`Bun.inspect` with `sorted`, and `bun:test`).
     #[inline(always)]
     pub fn for_each_property_ordered(
         self,

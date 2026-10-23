@@ -402,6 +402,31 @@ ${chain}
     expect([0, 1]).toContain(exit);
   });
 
+  // For a build, the compiler finds that a memo block would have to declare `g` because of the read that nothing
+  // uses, and leaves the component as written. Lint keeps upstream's result, which is the finding for the ref.
+  test("a read that nothing uses doesn't hide another finding", async () => {
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "hoisted.jsx": `import { useRef } from "react";
+const count = list => list.length;
+export function Component({ c }) {
+  const ref = useRef(null);
+  const bad = ref.current;
+  const x = g();
+  function g() {
+    return [c];
+  }
+  const info = { first: x[0] };
+  count(x);
+  const state = (g, c ? "a" : "b", "read");
+  return <div state={state} info={info} bad={bad} />;
+}
+`,
+    });
+    expect(locationsOf(diagnostics["hoisted.jsx"])).toEqual([["react(refs)", 5, 15]]);
+    expect(exit).toBe(1);
+  });
+
   test("reports nothing for a path that contains node_modules", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);

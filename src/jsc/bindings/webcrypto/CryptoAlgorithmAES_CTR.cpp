@@ -50,12 +50,22 @@ static inline bool usagesAreInvalidForCryptoAlgorithmAES_CTR(CryptoKeyUsageBitma
     return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask);
 }
 
-static bool parametersAreValid(const CryptoAlgorithmAesCtrParams& parameters)
+bool CryptoAlgorithmAES_CTR::counterSizeIsValid(size_t counterSize)
 {
     using namespace CryptoAlgorithmAES_CTRInternal;
-    if (parameters.counterVector().size() != CounterSize)
+    return counterSize == CounterSize;
+}
+
+bool CryptoAlgorithmAES_CTR::counterLengthIsValid(size_t counterLength)
+{
+    return counterLength && counterLength <= 128;
+}
+
+static bool parametersAreValid(const CryptoAlgorithmAesCtrParams& parameters)
+{
+    if (!CryptoAlgorithmAES_CTR::counterSizeIsValid(parameters.counterVector().size()))
         return false;
-    if (!parameters.length || parameters.length > 128)
+    if (!CryptoAlgorithmAES_CTR::counterLengthIsValid(parameters.length))
         return false;
     return true;
 }

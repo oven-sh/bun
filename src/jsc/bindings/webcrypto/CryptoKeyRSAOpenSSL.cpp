@@ -173,7 +173,7 @@ size_t CryptoKeyRSA::keySizeInBits() const
 }
 
 // Convert the exponent vector to a 32-bit value, if possible.
-static std::optional<uint32_t> exponentVectorToUInt32(const Vector<uint8_t>& exponent)
+static std::optional<uint32_t> exponentVectorToUInt32(std::span<const uint8_t> exponent)
 {
     if (exponent.size() > 4) {
         if (std::any_of(exponent.begin(), exponent.end() - 4, [](uint8_t element) { return !!element; }))
@@ -189,11 +189,16 @@ static std::optional<uint32_t> exponentVectorToUInt32(const Vector<uint8_t>& exp
     return result;
 }
 
+// OpenSSL doesn't report an error if the exponent is smaller than three or even.
+bool CryptoKeyRSA::publicExponentIsValid(std::span<const uint8_t> publicExponent)
+{
+    auto e = exponentVectorToUInt32(publicExponent);
+    return e && *e >= 3 && (*e & 0x1);
+}
+
 void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, VoidCallback&& failureCallback, ScriptExecutionContext*)
 {
-    // OpenSSL doesn't report an error if the exponent is smaller than three or even.
-    auto e = exponentVectorToUInt32(publicExponent);
-    if (!e || *e < 3 || !(*e & 0x1)) {
+    if (!publicExponentIsValid(publicExponent.span())) {
         failureCallback();
         return;
     }

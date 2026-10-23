@@ -48,6 +48,8 @@ public:
     virtual ~CryptoKeyAES();
 
     static bool isValidAESAlgorithm(CryptoAlgorithmIdentifier);
+    // The step of generate that needs only the length. SubtleCrypto.supports runs it too.
+    static bool lengthIsValid(size_t lengthBits);
 
     static RefPtr<CryptoKeyAES> generate(CryptoAlgorithmIdentifier, size_t lengthBits, bool extractable, CryptoKeyUsageBitmap);
     WEBCORE_EXPORT static RefPtr<CryptoKeyAES> importRaw(CryptoAlgorithmIdentifier, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);

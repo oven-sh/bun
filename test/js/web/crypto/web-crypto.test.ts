@@ -1492,6 +1492,492 @@ describe("crypto.getRandomValues argument types", () => {
   }
 });
 
+// supports answers false when a step of the operation that needs neither a key nor data rejects the
+// algorithm. Each case pairs the answer with the real call.
+// https://wicg.github.io/webcrypto-modern-algos/#dfn-determine-support-from-operation-steps
+describe("SubtleCrypto.supports parameter values", () => {
+  const supports = (...args: [operation: string, algorithm: unknown, lengthOrAdditionalAlgorithm?: unknown]): boolean =>
+    (SubtleCrypto as any).supports(...args);
+  const bytes = (length: number) => new Uint8Array(length);
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      error => `${error.name}: ${error.message}`,
+    );
+  const operationFailed = "OperationError: The operation failed for an operation-specific reason";
+
+  type AlgorithmObject = { name: string; [member: string]: unknown };
+
+  // The property reads of `use(algorithm)`, in order.
+  const readsOf = async (algorithm: AlgorithmObject, use: (algorithm: AlgorithmObject) => unknown) => {
+    const reads: string[] = [];
+    const recorded = new Proxy(algorithm, {
+      get(target, key, receiver) {
+        if (typeof key === "string") reads.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    await Promise.resolve(use(recorded)).catch(() => {});
+    return reads;
+  };
+
+  describe("encrypt, decrypt, wrapKey and unwrapKey", () => {
+    // wrapKey and unwrapKey with an encryption algorithm run its encrypt and decrypt.
+    const answers = (algorithm: unknown) => ({
+      encrypt: supports("encrypt", algorithm),
+      decrypt: supports("decrypt", algorithm),
+      wrapKey: supports("wrapKey", algorithm, "AES-GCM"),
+      unwrapKey: supports("unwrapKey", algorithm, "AES-GCM"),
+    });
+    const every = <T>(answer: T) => ({ encrypt: answer, decrypt: answer, wrapKey: answer, unwrapKey: answer });
+    const cipherKey = (name: string, usages: KeyUsage[] = ["encrypt", "decrypt", "wrapKey", "unwrapKey"]) =>
+      crypto.subtle.generateKey(
+        name === "ChaCha20-Poly1305" ? name : ({ name, length: 256 } as webcrypto.AesKeyGenParams),
+        true,
+        usages,
+      ) as Promise<CryptoKey>;
+
+    const ivOf16 = "OperationError: algorithm.iv must contain exactly 16 bytes";
+    const ivOf12 = "OperationError: algorithm.iv must contain exactly 12 bytes";
+    // The algorithm rejects each of these values before it uses the key or the data.
+    const rejected: [label: string, algorithm: AlgorithmObject, error: string][] = [
+      ["AES-CBC with an empty iv", { name: "AES-CBC", iv: bytes(0) }, ivOf16],
+      ["AES-CBC with an 8-byte iv", { name: "AES-CBC", iv: bytes(8) }, ivOf16],
+      ["AES-CBC with a 17-byte iv", { name: "AES-CBC", iv: bytes(17) }, ivOf16],
+      ["AES-CBC with a 32-byte iv of 16 elements", { name: "AES-CBC", iv: new Uint16Array(16) }, ivOf16],
+      ["AES-CFB-8 with an 8-byte iv", { name: "AES-CFB-8", iv: bytes(8) }, ivOf16],
+      ["AES-CFB-8 with a 17-byte iv", { name: "AES-CFB-8", iv: bytes(17) }, ivOf16],
+      ["AES-CTR with an empty counter", { name: "AES-CTR", counter: bytes(0), length: 64 }, operationFailed],
+      ["AES-CTR with an 8-byte counter", { name: "AES-CTR", counter: bytes(8), length: 64 }, operationFailed],
+      ["AES-CTR with a 17-byte counter", { name: "AES-CTR", counter: bytes(17), length: 64 }, operationFailed],
+      ["AES-CTR with length 0", { name: "AES-CTR", counter: bytes(16), length: 0 }, operationFailed],
+      ["AES-CTR with length 129", { name: "AES-CTR", counter: bytes(16), length: 129 }, operationFailed],
+      ...[0, 33, 100].map((tagLength): [string, AlgorithmObject, string] => [
+        `AES-GCM with tagLength ${tagLength}`,
+        { name: "AES-GCM", iv: bytes(12), tagLength },
+        `OperationError: ${tagLength} is not a valid AES-GCM tag length`,
+      ]),
+      [
+        "AES-GCM with tagLength null",
+        { name: "AES-GCM", iv: bytes(12), tagLength: null },
+        "OperationError: 0 is not a valid AES-GCM tag length",
+      ],
+      ["ChaCha20-Poly1305 with an empty iv", { name: "ChaCha20-Poly1305", iv: bytes(0) }, ivOf12],
+      ["ChaCha20-Poly1305 with an 8-byte iv", { name: "ChaCha20-Poly1305", iv: bytes(8) }, ivOf12],
+      ["ChaCha20-Poly1305 with a 16-byte iv", { name: "ChaCha20-Poly1305", iv: bytes(16) }, ivOf12],
+      ...[0, 64].map((tagLength): [string, AlgorithmObject, string] => [
+        `ChaCha20-Poly1305 with tagLength ${tagLength}`,
+        { name: "ChaCha20-Poly1305", iv: bytes(12), tagLength },
+        `OperationError: ${tagLength} is not a valid ChaCha20-Poly1305 tag length`,
+      ]),
+      [
+        "ChaCha20-Poly1305 with an 8-byte iv and tagLength 64",
+        { name: "ChaCha20-Poly1305", iv: bytes(8), tagLength: 64 },
+        "OperationError: 64 is not a valid ChaCha20-Poly1305 tag length",
+      ],
+    ];
+
+    it.each(rejected)("answers false for %s, which the operations reject", async (_label, algorithm, error) => {
+      const key = await cipherKey(algorithm.name);
+      const wrapped = await cipherKey("AES-GCM");
+      expect({
+        supports: answers(algorithm),
+        operations: {
+          encrypt: await outcome(crypto.subtle.encrypt(algorithm, key, bytes(16))),
+          decrypt: await outcome(crypto.subtle.decrypt(algorithm, key, bytes(32))),
+          wrapKey: await outcome(crypto.subtle.wrapKey("raw", wrapped, key, algorithm)),
+          unwrapKey: await outcome(
+            crypto.subtle.unwrapKey("raw", bytes(48), key, algorithm, "AES-GCM", true, ["encrypt"]),
+          ),
+        },
+      }).toEqual({ supports: every(false), operations: every(error) });
+    });
+
+    const accepted: [label: string, algorithm: AlgorithmObject][] = [
+      ["AES-CBC with a 16-byte iv", { name: "AES-CBC", iv: bytes(16) }],
+      ["AES-CBC with a 16-byte iv of 8 elements", { name: "AES-CBC", iv: new Uint16Array(8) }],
+      ["AES-CFB-8 with a 16-byte iv", { name: "AES-CFB-8", iv: bytes(16) }],
+      ["AES-CTR with length 1", { name: "AES-CTR", counter: bytes(16), length: 1 }],
+      ["AES-CTR with length 128", { name: "AES-CTR", counter: bytes(16), length: 128 }],
+      ["AES-GCM without tagLength", { name: "AES-GCM", iv: bytes(12) }],
+      ["AES-GCM with tagLength undefined", { name: "AES-GCM", iv: bytes(12), tagLength: undefined }],
+      ...[32, 64, 96, 104, 112, 120, 128].map((tagLength): [string, AlgorithmObject] => [
+        `AES-GCM with tagLength ${tagLength}`,
+        { name: "AES-GCM", iv: bytes(12), tagLength },
+      ]),
+      ["AES-GCM with a 1-byte iv", { name: "AES-GCM", iv: bytes(1) }],
+      ["AES-GCM with a 16-byte iv and additionalData", { name: "AES-GCM", iv: bytes(16), additionalData: bytes(8) }],
+      ["ChaCha20-Poly1305 without tagLength", { name: "ChaCha20-Poly1305", iv: bytes(12) }],
+      ["ChaCha20-Poly1305 with tagLength 128", { name: "ChaCha20-Poly1305", iv: bytes(12), tagLength: 128 }],
+    ];
+
+    it.each(accepted)("answers true for %s, which the operations accept", async (_label, algorithm) => {
+      const key = await cipherKey(algorithm.name);
+      const wrapped = await crypto.subtle.importKey("raw", bytes(16), "AES-GCM", true, ["encrypt"]);
+      const encrypted = crypto.subtle.encrypt(algorithm, key, bytes(16));
+      const wrappedKey = crypto.subtle.wrapKey("raw", wrapped, key, algorithm);
+      expect({
+        supports: answers(algorithm),
+        operations: {
+          encrypt: await outcome(encrypted),
+          decrypt: await outcome(encrypted.then(ciphertext => crypto.subtle.decrypt(algorithm, key, ciphertext))),
+          wrapKey: await outcome(wrappedKey),
+          unwrapKey: await outcome(
+            wrappedKey.then(data => crypto.subtle.unwrapKey("raw", data, key, algorithm, "AES-GCM", true, ["encrypt"])),
+          ),
+        },
+      }).toEqual({ supports: every(true), operations: every("resolved") });
+    });
+
+    it("keeps true when decrypt rejects the data", async () => {
+      const shortData: AlgorithmObject[] = [
+        { name: "AES-CBC", iv: bytes(16) },
+        { name: "AES-GCM", iv: bytes(12) },
+        { name: "ChaCha20-Poly1305", iv: bytes(12) },
+      ];
+      const results: Record<string, unknown> = {};
+      for (const algorithm of shortData) {
+        results[algorithm.name] = {
+          supports: supports("decrypt", algorithm),
+          decrypt: await outcome(crypto.subtle.decrypt(algorithm, await cipherKey(algorithm.name), bytes(15))),
+        };
+      }
+      const rejectedData = { supports: true, decrypt: operationFailed };
+      expect(results).toEqual({
+        "AES-CBC": rejectedData,
+        "AES-GCM": rejectedData,
+        "ChaCha20-Poly1305": rejectedData,
+      });
+    });
+
+    it("answers true for RSA-OAEP and AES-KW, which have no value to reject", () => {
+      expect({
+        rsaOaep: answers("RSA-OAEP"),
+        rsaOaepWithLabel: answers({ name: "RSA-OAEP", label: bytes(8) }),
+        aesKw: [supports("wrapKey", "AES-KW", "AES-GCM"), supports("unwrapKey", "AES-KW", "AES-GCM")],
+      }).toEqual({ rsaOaep: every(true), rsaOaepWithLabel: every(true), aesKw: [true, true] });
+    });
+
+    it("reads the algorithm as the operation does", async () => {
+      const key = await cipherKey("AES-GCM");
+      const algorithm = { name: "AES-GCM", iv: bytes(12), additionalData: bytes(8), tagLength: 33 };
+      const reads = ["name", "name", "additionalData", "iv", "tagLength"];
+      expect({
+        supportsEncrypt: await readsOf(algorithm, recorded => supports("encrypt", recorded)),
+        encrypt: await readsOf(algorithm, recorded => crypto.subtle.encrypt(recorded, key, bytes(16))),
+        supportsWrapKey: await readsOf(algorithm, recorded => supports("wrapKey", recorded, "AES-GCM")),
+        wrapKey: await readsOf(algorithm, recorded => crypto.subtle.wrapKey("raw", key, key, recorded)),
+      }).toEqual({
+        supportsEncrypt: reads,
+        encrypt: reads,
+        supportsWrapKey: ["name", ...reads],
+        wrapKey: ["name", ...reads],
+      });
+    });
+
+    // https://w3c.github.io/webcrypto/#SubtleCrypto-method-encrypt checks the key first.
+    it("leaves the key checks of the operations ahead of their parameter checks", async () => {
+      const shortIv = { name: "AES-CBC", iv: bytes(8) };
+      const gcm = await cipherKey("AES-GCM");
+      const cbcForDecrypt = await cipherKey("AES-CBC", ["decrypt"]);
+      expect({
+        encryptWithOtherAlgorithm: await outcome(crypto.subtle.encrypt(shortIv, gcm, bytes(16))),
+        encryptWithoutUsage: await outcome(crypto.subtle.encrypt(shortIv, cbcForDecrypt, bytes(16))),
+        decryptWithOtherAlgorithm: await outcome(crypto.subtle.decrypt(shortIv, gcm, bytes(32))),
+        wrapKeyWithOtherAlgorithm: await outcome(crypto.subtle.wrapKey("raw", gcm, gcm, shortIv)),
+        unwrapKeyWithOtherAlgorithm: await outcome(
+          crypto.subtle.unwrapKey("raw", bytes(48), gcm, shortIv, "AES-GCM", true, ["encrypt"]),
+        ),
+      }).toEqual({
+        encryptWithOtherAlgorithm: "InvalidAccessError: Key algorithm mismatch",
+        encryptWithoutUsage: "InvalidAccessError: Unable to use this key to encrypt",
+        decryptWithOtherAlgorithm: "InvalidAccessError: Key algorithm mismatch",
+        wrapKeyWithOtherAlgorithm: "InvalidAccessError: Key algorithm mismatch",
+        unwrapKeyWithOtherAlgorithm: "InvalidAccessError: Key algorithm mismatch",
+      });
+    });
+  });
+
+  describe("sign and verify", () => {
+    it.each(["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"])(
+      "answers for the context of %s as sign and verify do",
+      async name => {
+        const { publicKey, privateKey } = (await crypto.subtle.generateKey(name, true, [
+          "sign",
+          "verify",
+        ])) as CryptoKeyPair;
+        const signature = await crypto.subtle.sign(name, privateKey, bytes(8));
+        const results: Record<number, unknown> = {};
+        for (const length of [0, 255, 256]) {
+          const algorithm = { name, context: bytes(length) };
+          results[length] = {
+            sign: supports("sign", algorithm),
+            verify: supports("verify", algorithm),
+            signed: await outcome(crypto.subtle.sign(algorithm, privateKey, bytes(8))),
+            verified: await outcome(crypto.subtle.verify(algorithm, publicKey, signature, bytes(8))),
+          };
+        }
+        const yes = { sign: true, verify: true, signed: "resolved", verified: "resolved" };
+        const no = { sign: false, verify: false, signed: operationFailed, verified: operationFailed };
+        expect(results).toEqual({ 0: yes, 255: yes, 256: no });
+      },
+    );
+  });
+
+  describe("generateKey and importKey", () => {
+    it.each(["AES-CBC", "AES-CFB-8", "AES-CTR", "AES-GCM", "AES-KW"])(
+      "answers for the length of an %s key as generateKey does",
+      async name => {
+        const usages: KeyUsage[] = name === "AES-KW" ? ["wrapKey"] : ["encrypt"];
+        const results: Record<number, unknown> = {};
+        for (const length of [0, 100, 127, 128, 192, 256, 257]) {
+          const algorithm = { name, length } as webcrypto.AesKeyGenParams;
+          results[length] = {
+            supports: supports("generateKey", algorithm),
+            generateKey: await outcome(crypto.subtle.generateKey(algorithm, true, usages)),
+          };
+        }
+        const no = { supports: false, generateKey: operationFailed };
+        const yes = { supports: true, generateKey: "resolved" };
+        expect(results).toEqual({ 0: no, 100: no, 127: no, 128: yes, 192: yes, 256: yes, 257: no });
+      },
+    );
+
+    it.each(["RSASSA-PKCS1-v1_5", "RSA-PSS", "RSA-OAEP"])(
+      "answers for the publicExponent of an %s key as generateKey does",
+      async name => {
+        const usages: KeyUsage[] = name === "RSA-OAEP" ? ["encrypt", "decrypt"] : ["sign", "verify"];
+        const exponents = {
+          "65537": [1, 0, 1],
+          "3": [3],
+          "3 in five bytes": [0, 0, 0, 0, 3],
+          "1": [1],
+          "0": [0],
+          "4": [4],
+          "empty": [],
+          "2^32 + 1": [1, 0, 0, 0, 1],
+        };
+        const results: Record<string, unknown> = {};
+        for (const [label, exponent] of Object.entries(exponents)) {
+          const algorithm = { name, modulusLength: 1024, publicExponent: new Uint8Array(exponent), hash: "SHA-256" };
+          results[label] = {
+            supports: supports("generateKey", algorithm),
+            generateKey: await outcome(crypto.subtle.generateKey(algorithm, true, usages)),
+          };
+        }
+        const no = { supports: false, generateKey: operationFailed };
+        const yes = { supports: true, generateKey: "resolved" };
+        expect(results).toEqual({
+          "65537": yes,
+          "3": yes,
+          "3 in five bytes": yes,
+          "1": no,
+          "0": no,
+          "4": no,
+          "empty": no,
+          "2^32 + 1": no,
+        });
+      },
+    );
+
+    it.each(["ECDSA", "ECDH"])("answers for the namedCurve of an %s key as generateKey does", async name => {
+      const usages: KeyUsage[] = name === "ECDSA" ? ["sign", "verify"] : ["deriveBits"];
+      const results: Record<string, unknown> = {};
+      for (const namedCurve of ["P-256", "P-384", "P-521", "P-51", "p-256", "secp256k1", ""]) {
+        const algorithm = { name, namedCurve };
+        results[namedCurve] = {
+          generateKey: supports("generateKey", algorithm),
+          importKey: supports("importKey", algorithm),
+          unwrapKey: supports("unwrapKey", "AES-KW", algorithm),
+          generated: await outcome(crypto.subtle.generateKey(algorithm, true, usages)),
+        };
+      }
+      const notSupported = "NotSupportedError: The algorithm is not supported";
+      const no = { generateKey: false, importKey: false, unwrapKey: false, generated: notSupported };
+      const yes = { generateKey: true, importKey: true, unwrapKey: true, generated: "resolved" };
+      expect(results).toEqual({
+        "P-256": yes,
+        "P-384": yes,
+        "P-521": yes,
+        "P-51": no,
+        "p-256": no,
+        "secp256k1": no,
+        "": no,
+      });
+    });
+
+    it("answers false for importKey and unwrapKey with a namedCurve that they reject", async () => {
+      const { publicKey } = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+        "sign",
+        "verify",
+      ]);
+      const algorithm = { name: "ECDSA", namedCurve: "P-51" };
+      const jwk = { ...(await crypto.subtle.exportKey("jwk", publicKey)), crv: "P-51" };
+      const aes = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+      const aesGcm = { name: "AES-GCM", iv: bytes(12) };
+      const wrapped = await crypto.subtle.wrapKey("spki", publicKey, aes, aesGcm);
+      expect({
+        importKey: supports("importKey", algorithm),
+        unwrapKey: supports("unwrapKey", aesGcm, algorithm),
+        spki: await outcome(
+          crypto.subtle.importKey("spki", await crypto.subtle.exportKey("spki", publicKey), algorithm, true, [
+            "verify",
+          ]),
+        ),
+        raw: await outcome(
+          crypto.subtle.importKey("raw", await crypto.subtle.exportKey("raw", publicKey), algorithm, true, ["verify"]),
+        ),
+        jwk: await outcome(crypto.subtle.importKey("jwk", jwk, algorithm, true, ["verify"])),
+        unwrapped: await outcome(crypto.subtle.unwrapKey("spki", wrapped, aes, aesGcm, algorithm, true, ["verify"])),
+      }).toEqual({
+        importKey: false,
+        unwrapKey: false,
+        spki: "DataError: Invalid keyData",
+        raw: "DataError: Invalid keyData",
+        // The key has no "alg". ECDSA reports a curve that it does not know with this message.
+        jwk: 'DataError: JWK "alg" does not match the requested algorithm',
+        unwrapped: "DataError: Invalid keyData",
+      });
+    });
+
+    it("answers for the length of an HMAC key as generateKey, importKey, unwrapKey and deriveKey do", async () => {
+      const keyData = bytes(32).fill(1);
+      const jwk = { kty: "oct", k: Buffer.from(keyData).toString("base64url") };
+      const hmac = { name: "HMAC", hash: "SHA-256" };
+      const kw = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+      const wrapped = await crypto.subtle.wrapKey(
+        "raw",
+        await crypto.subtle.importKey("raw", keyData, hmac, true, ["sign"]),
+        kw,
+        "AES-KW",
+      );
+      const { privateKey, publicKey } = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-521" }, true, [
+        "deriveKey",
+      ]);
+      const ecdh = { name: "ECDH", public: publicKey };
+      const algorithms = {
+        absent: hmac,
+        undefined: { ...hmac, length: undefined },
+        "256": { ...hmac, length: 256 },
+        "8": { ...hmac, length: 8 },
+        "0": { ...hmac, length: 0 },
+        "7": { ...hmac, length: 7 },
+        "255": { ...hmac, length: 255 },
+        "257": { ...hmac, length: 257 },
+        "unknown hash": { ...hmac, hash: "SHA-0" },
+      };
+      const results: Record<string, unknown> = {};
+      for (const [label, algorithm] of Object.entries(algorithms)) {
+        results[label] = {
+          generateKey: supports("generateKey", algorithm),
+          importKey: supports("importKey", algorithm),
+          unwrapKey: supports("unwrapKey", "AES-KW", algorithm),
+          deriveKey: supports("deriveKey", ecdh, algorithm),
+          generated: await outcome(crypto.subtle.generateKey(algorithm, true, ["sign"])),
+          raw: await outcome(crypto.subtle.importKey("raw", keyData, algorithm, true, ["sign"])),
+          jwk: await outcome(crypto.subtle.importKey("jwk", jwk, algorithm, true, ["sign"])),
+          unwrapped: await outcome(crypto.subtle.unwrapKey("raw", wrapped, kw, "AES-KW", algorithm, true, ["sign"])),
+          derived: await outcome(crypto.subtle.deriveKey(ecdh, privateKey, algorithm, true, ["sign"])),
+        };
+      }
+      const allFour = (answer: boolean) => ({
+        generateKey: answer,
+        importKey: answer,
+        unwrapKey: answer,
+        deriveKey: answer,
+      });
+      const rejected = (generated: string, imported: string, derived = imported) => ({
+        ...allFour(false),
+        generated,
+        raw: imported,
+        jwk: imported,
+        unwrapped: imported,
+        derived,
+      });
+      const yes = {
+        ...allFour(true),
+        generated: "resolved",
+        raw: "resolved",
+        jwk: "resolved",
+        unwrapped: "resolved",
+        derived: "resolved",
+      };
+      // Only the 32 bytes of key data do not fit a length of 8, so the answers stay true.
+      const keyDataDoesNotFit = "DataError: Invalid key length";
+      const notWholeBytes = rejected(operationFailed, "NotSupportedError: Unsupported HmacImportParams.length");
+      const unknownAlgorithm = "NotSupportedError: Unrecognized algorithm name";
+      expect(results).toEqual({
+        absent: yes,
+        undefined: yes,
+        "256": yes,
+        "8": { ...yes, raw: keyDataDoesNotFit, jwk: keyDataDoesNotFit, unwrapped: keyDataDoesNotFit },
+        "0": rejected(
+          operationFailed,
+          "DataError: HmacImportParams.length cannot be 0",
+          "TypeError: Cannot get key length from derivedKeyType",
+        ),
+        "7": notWholeBytes,
+        "255": notWholeBytes,
+        "257": notWholeBytes,
+        "unknown hash": rejected(unknownAlgorithm, unknownAlgorithm),
+      });
+    });
+
+    it("reads the algorithm as the operation does", async () => {
+      const aes = { name: "AES-GCM", length: 100 };
+      const ec = { name: "ECDSA", namedCurve: "P-51" };
+      const hmac = { name: "HMAC", hash: "SHA-256", length: 7 };
+      const aesReads = ["name", "name", "length"];
+      const ecReads = ["name", "name", "namedCurve"];
+      const hmacReads = ["name", "name", "hash", "length"];
+      expect({
+        supportsGenerateAes: await readsOf(aes, recorded => supports("generateKey", recorded)),
+        generateAes: await readsOf(aes, recorded => crypto.subtle.generateKey(recorded, true, ["encrypt"])),
+        supportsGenerateEc: await readsOf(ec, recorded => supports("generateKey", recorded)),
+        generateEc: await readsOf(ec, recorded => crypto.subtle.generateKey(recorded, true, ["sign"])),
+        supportsImportEc: await readsOf(ec, recorded => supports("importKey", recorded)),
+        importEc: await readsOf(ec, recorded => crypto.subtle.importKey("raw", bytes(65), recorded, true, ["verify"])),
+        supportsGenerateHmac: await readsOf(hmac, recorded => supports("generateKey", recorded)),
+        generateHmac: await readsOf(hmac, recorded => crypto.subtle.generateKey(recorded, true, ["sign"])),
+        supportsImportHmac: await readsOf(hmac, recorded => supports("importKey", recorded)),
+        importHmac: await readsOf(hmac, recorded =>
+          crypto.subtle.importKey("raw", bytes(32), recorded, true, ["sign"]),
+        ),
+      }).toEqual({
+        supportsGenerateAes: aesReads,
+        generateAes: aesReads,
+        supportsGenerateEc: ecReads,
+        generateEc: ecReads,
+        supportsImportEc: ecReads,
+        importEc: ecReads,
+        supportsGenerateHmac: hmacReads,
+        generateHmac: hmacReads,
+        supportsImportHmac: hmacReads,
+        importHmac: hmacReads,
+      });
+    });
+  });
+
+  // The deriveBits lines of supports sit beside the ones that this block covers.
+  it("keeps the answers of deriveBits", async () => {
+    const hkdf = { name: "HKDF", hash: "SHA-256", salt: bytes(8), info: bytes(8) };
+    const pbkdf2 = { name: "PBKDF2", hash: "SHA-256", salt: bytes(8), iterations: 1 };
+    const ecdh = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+    const x25519 = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
+    expect({
+      hkdf: [supports("deriveBits", hkdf, 256), supports("deriveBits", hkdf, 7), supports("deriveBits", hkdf)],
+      pbkdf2: [supports("deriveBits", pbkdf2, 256), supports("deriveBits", pbkdf2, 7), supports("deriveBits", pbkdf2)],
+      ecdh: [256, 257].map(length => supports("deriveBits", { name: "ECDH", public: ecdh.publicKey }, length)),
+      x25519: [256, 257].map(length => supports("deriveBits", { name: "X25519", public: x25519.publicKey }, length)),
+    }).toEqual({
+      hkdf: [true, false, false],
+      pbkdf2: [true, false, false],
+      ecdh: [true, false],
+      x25519: [true, false],
+    });
+  });
+});
+
 describe("exception scope discipline", () => {
   // BUN_JSC_validateExceptionChecks=1 aborts on the first unchecked throw scope, so the
   // fixture (every SubtleCrypto op, success and normalize-failure) only produces the full
@@ -1516,10 +2002,14 @@ describe("exception scope discipline", () => {
         "encrypt ok = RESOLVED",
         "encrypt bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "encrypt thrower = REJECTED Error: boom",
+        "encrypt supports = RESOLVED",
+        "encrypt supports rejected value = RESOLVED",
         "decrypt ok = RESOLVED",
         "decrypt bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "decrypt supports rejected value = RESOLVED",
         "sign ok = RESOLVED",
         "sign bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "sign supports rejected context = RESOLVED",
         "verify ok = RESOLVED",
         "verify bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "digest ok = RESOLVED",
@@ -1529,6 +2019,8 @@ describe("exception scope discipline", () => {
         "generateKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "generateKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
         "generateKey thrower = REJECTED Error: boom",
+        "generateKey supports rejected length = RESOLVED",
+        "generateKey supports rejected HMAC length = RESOLVED",
         "deriveKey ok = RESOLVED",
         "deriveKey bogus algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
         "deriveKey bogus derived type = REJECTED NotSupportedError: Unrecognized algorithm name",
@@ -1539,6 +2031,7 @@ describe("exception scope discipline", () => {
         "importKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "importKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
         "importKey thrower = REJECTED Error: boom",
+        "importKey supports rejected curve = RESOLVED",
         "exportKey raw = RESOLVED",
         "exportKey jwk = RESOLVED",
         "wrapKey raw = RESOLVED",
@@ -1546,6 +2039,7 @@ describe("exception scope discipline", () => {
         "wrapKey via encrypt = RESOLVED",
         "wrapKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "wrapKey thrower = REJECTED Error: boom",
+        "wrapKey supports rejected value = RESOLVED",
         "wrapKey jwk with throwing Object.prototype.toJSON = REJECTED Error: poisoned toJSON",
         "unwrapKey raw = RESOLVED",
         "unwrapKey jwk = RESOLVED",

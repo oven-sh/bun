@@ -78,7 +78,7 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::generate(size_t lengthBits, CryptoAlgorithm
     }
     // CommonHMAC only supports key length that is a multiple of 8. Therefore, here we are a little bit different
     // from the spec as of 11 December 2014: https://www.w3.org/TR/WebCryptoAPI/#hmac-operations
-    if (lengthBits % 8)
+    if (!lengthIsValid(lengthBits))
         return nullptr;
 
     return adoptRef(new CryptoKeyHMAC(randomData(lengthBits / 8), hash, extractable, usages));

@@ -37,6 +37,7 @@
 namespace WebCore {
 
 class CryptoAlgorithm;
+class CryptoAlgorithmParameters;
 
 class CryptoAlgorithmRegistry {
     WTF_MAKE_NONCOPYABLE(CryptoAlgorithmRegistry);
@@ -49,6 +50,9 @@ public:
     String name(CryptoAlgorithmIdentifier);
 
     RefPtr<CryptoAlgorithm> create(CryptoAlgorithmIdentifier);
+
+    // Runs the steps of the algorithm's encrypt and decrypt that need neither the key nor the data.
+    static bool acceptsCipherParameters(const CryptoAlgorithmParameters&);
 
 private:
     CryptoAlgorithmRegistry();

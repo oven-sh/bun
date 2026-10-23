@@ -32,6 +32,7 @@
 #include "CryptoAlgorithm.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoAlgorithmX25519Params.h"
+#include "CryptoKeyAES.h"
 #include "JSAesCbcCfbParams.h"
 #include "JSAesCtrParams.h"
 #include "JSAeadParams.h"
@@ -55,6 +56,7 @@
 #include "CryptoAlgorithmMLDSA.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
+#include "CryptoKeyHMAC.h"
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
@@ -725,7 +727,7 @@ static void rejectImportKeyException(Ref<DeferredPromise>&& promise, ExceptionCo
 static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params, Ref<DeferredPromise>&& promise)
 {
     auto* mlDsaParams = dynamicDowncast<CryptoAlgorithmMlDsaParams>(params);
-    if (!mlDsaParams || mlDsaParams->contextVector().size() <= CryptoAlgorithmMLDSA::s_maxContextLength)
+    if (!mlDsaParams || CryptoAlgorithmMLDSA::contextLengthIsValid(mlDsaParams->contextVector().size()))
         return false;
     rejectWithCause(WTF::move(promise), OperationError, "The operation failed for an operation-specific reason"_s, [](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
         return Bun::createError(&globalObject, Bun::ErrorCode::ERR_OUT_OF_RANGE, "context string must be at most 255 bytes"_s);
@@ -2044,10 +2046,25 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             return false;
         }
 
+        // https://wicg.github.io/webcrypto-modern-algos/#dfn-determine-support-from-operation-steps
+        if (operationKind == Operations::Encrypt || operationKind == Operations::Decrypt)
+            return CryptoAlgorithmRegistry::acceptsCipherParameters(*params);
+        if (operationKind == Operations::Sign || operationKind == Operations::Verify) {
+            if (auto* mlDsaParams = dynamicDowncast<CryptoAlgorithmMlDsaParams>(*params))
+                return CryptoAlgorithmMLDSA::contextLengthIsValid(mlDsaParams->contextLength());
+        }
         if (op == "deriveBits"_s)
             return checkDeriveBitsLength(*params, length);
-        if (op == "generateKey"_s && params->identifier == CryptoAlgorithmIdentifier::HMAC)
-            return getKeyLengthFor(algorithm).has_value();
+        if (operationKind == Operations::GenerateKey || operationKind == Operations::ImportKey) {
+            if (auto* aesKeyParams = dynamicDowncast<CryptoAlgorithmAesKeyParams>(*params))
+                return CryptoKeyAES::lengthIsValid(aesKeyParams->length);
+            if (auto* ecKeyParams = dynamicDowncast<CryptoAlgorithmEcKeyParams>(*params))
+                return CryptoKeyEC::namedCurveIsSupported(ecKeyParams->namedCurve);
+            if (auto* hmacKeyParams = dynamicDowncast<CryptoAlgorithmHmacKeyParams>(*params))
+                return !hmacKeyParams->length || CryptoKeyHMAC::lengthIsValid(*hmacKeyParams->length);
+            if (auto* rsaKeyGenParams = dynamicDowncast<CryptoAlgorithmRsaHashedKeyGenParams>(*params))
+                return CryptoKeyRSA::publicExponentIsValid(rsaKeyGenParams->publicExponent->span());
+        }
         return true;
     };
 

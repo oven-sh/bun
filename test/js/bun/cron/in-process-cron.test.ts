@@ -712,10 +712,11 @@ describe("Bun.cron (in-process) — the returned value is awaited as `await` doe
 
   test("then is read and called in the AsyncLocalStorage store that the handler was registered in", async () => {
     const storage = new AsyncLocalStorage<string>();
-    const seen: Record<string, string | undefined> = {};
+    const ticks: Record<string, string | undefined>[] = [];
     using job = storage.run("handler", () =>
       Bun.cron("* * * * *", () => {
-        seen["tick"] = storage.getStore();
+        const seen: Record<string, string | undefined> = { "tick": storage.getStore() };
+        ticks.push(seen);
         return {
           get then() {
             seen["get then"] = storage.getStore();
@@ -729,16 +730,20 @@ describe("Bun.cron (in-process) — the returned value is awaited as `await` doe
     );
 
     // The code that drives the timer has another store, and has it again after the tick.
-    const after = storage.run("timer", () => {
+    const afterWithAStore = storage.run("timer", () => {
       jest.advanceTimersByTime(60_000);
       return storage.getStore();
     });
     await turn();
-    expect({ ...seen, after }).toEqual({
-      "tick": "handler",
-      "get then": "handler",
-      "then()": "handler",
-      after: "timer",
+    // A tick that is driven outside every store leaves none behind.
+    jest.advanceTimersByTime(60_000);
+    const afterWithNoStore = storage.getStore();
+    await turn();
+
+    const inTheHandlersStore = { "tick": "handler", "get then": "handler", "then()": "handler" };
+    expect({ ticks, after: [afterWithAStore, afterWithNoStore] }).toEqual({
+      ticks: [inTheHandlersStore, inTheHandlersStore],
+      after: ["timer", undefined],
     });
   });
 });

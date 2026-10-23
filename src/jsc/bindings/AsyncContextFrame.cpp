@@ -152,6 +152,7 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__enter(JSGlobalObject* globalOb
     if (!wrapper)
         return {};
     JSValue previous = globalObject->m_asyncContextData.get()->getInternalField(0);
+    ASSERT_WITH_MESSAGE(previous, "no async context is undefined, never the empty value");
     setCurrentAsyncContext(globalObject, wrapper->context.get());
     return JSValue::encode(previous);
 }

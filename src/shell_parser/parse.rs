@@ -2635,7 +2635,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 escaped: false,
                             });
                             if !peeked.escaped && peeked.char == u32::from(b'(') {
-                                self.break_word(AddDelimiter::No)?;
                                 self.eat_subshell(SubShellKind::Dollar)?;
                                 fell_through = true;
                                 break 'escaped;
@@ -2672,7 +2671,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::AfterText)?;
                             self.eat_subshell(SubShellKind::Normal)?;
                             fell_through = true;
                         }
@@ -3106,6 +3104,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
+        // The sublexer inherits `word_start` and `j`, so pending text would start its first word.
+        self.break_word(match kind {
+            SubShellKind::Dollar | SubShellKind::Backtick => AddDelimiter::No,
+            SubShellKind::Normal => AddDelimiter::AfterText,
+        })?;
         if self.subshell_depth >= MAX_SUBSHELL_DEPTH {
             self.add_error(b"Subshell nesting depth exceeded");
             return Err(LexerError::SubshellDepthExceeded);

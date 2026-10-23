@@ -1523,6 +1523,8 @@ pub mod parse_worker {
                     }
                 }
 
+                ctx.watch_file_before_read(file_path);
+
                 // Always read into the worker arena: it is pinned for the
                 // entire bundle pass (freed only via `pool.deinit()` inside
                 // `deinit_without_freeing_arena`, after `process_files_to_copy`

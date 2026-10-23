@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, nodeExe, tls } from "harness";
+import { bunEnv, bunExe, isASAN, nodeExe, tempDir, tls } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import http2 from "node:http2";
 import https from "node:https";
@@ -182,7 +183,7 @@ async function spawnCapped(options: Bun.SpawnOptions.SpawnOptions<"ignore", "pip
   return proc;
 }
 
-function spawnFetch(script: string, options: { env?: Record<string, string>; ipc?: () => void } = {}) {
+function spawnFetch(script: string, options: { env?: Record<string, string>; ipc?: () => void; cwd?: string } = {}) {
   return spawnCapped({
     cmd: [bunExe(), "--no-warnings", "-e", script],
     env: {
@@ -191,6 +192,7 @@ function spawnFetch(script: string, options: { env?: Record<string, string>; ipc
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
       ...options.env,
     },
+    cwd: options.cwd,
     ipc: options.ipc,
     stdout: "pipe",
     stderr: "pipe",
@@ -471,6 +473,67 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         const followUp = '200 true {"method":"GET","contentLength":null,"transferEncoding":null}';
         expect(stdout.trim().split("\n")).toEqual([followUp, followUp, followUp]);
         expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  // fetch() sends a Bun.file() body of 32 KiB or more with sendfile(2) on plain http. After
+  // a redirect to an h2 origin the file goes out as DATA frames, and a redirect on that
+  // session sends it once more. Both requests used to have `content-length: 0` and no body.
+  test("a Bun.file() body is sent again on h2 after a redirect from plain http", async () => {
+    const content = randomBytes(300 * 1024 + 123);
+    using dir = tempDir("fetch-h2-file-body-redirect", { "body.bin": content });
+    const hops: { path: string; httpVersion: string; contentLength: string | null; matches: boolean }[] = [];
+    await withH2Server(
+      (req, res) => {
+        const chunks: Buffer[] = [];
+        req.on("data", c => chunks.push(c));
+        req.on("end", () => {
+          hops.push({
+            path: req.url,
+            httpVersion: req.httpVersion,
+            contentLength: (req.headers["content-length"] as string) ?? null,
+            matches: Buffer.concat(chunks).equals(content),
+          });
+          if (req.url === "/first") {
+            res.writeHead(307, { location: "/second" });
+            res.end();
+            return;
+          }
+          res.end("final");
+        });
+      },
+      async url => {
+        await using proc = await spawnFetch(
+          `
+          using entry = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              await req.arrayBuffer();
+              return new Response(null, { status: 307, headers: { Location: ${JSON.stringify(url)} + "/first" } });
+            },
+          });
+          const res = await fetch(entry.url, {
+            method: "POST",
+            body: Bun.file("body.bin"),
+            tls: { rejectUnauthorized: false },
+          });
+          console.log(res.status, res.url, await res.text());
+        `,
+          { cwd: String(dir) },
+        );
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, hops, exitCode }).toEqual({
+          stdout: `200 ${url}/second final\n`,
+          stderr: "",
+          hops: ["/first", "/second"].map(path => ({
+            path,
+            httpVersion: "2.0",
+            contentLength: String(content.byteLength),
+            matches: true,
+          })),
+          exitCode: 0,
+        });
       },
     );
   });

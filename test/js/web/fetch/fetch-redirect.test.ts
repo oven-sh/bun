@@ -466,6 +466,94 @@ describe("fetch() re-sends a Bun.file() body when following a redirect", () => {
     it.concurrent("on a TLS connection", () => run(onSocket => nodeTls.createServer(tls, onSocket), "https"));
   });
 
+  // The upload on an https hop reads the file through its own duplicate of the descriptor.
+  // An abort ends that reader, and a later hop or fetch gets a new one: none stays open.
+  // Subprocess: the count is of every descriptor of the process.
+  it.skipIf(isWindows)(
+    "an abort during the upload on an https hop leaves no descriptor open",
+    async () => {
+      using dir = tempDir("fetch-redirect-file-body", {
+        "body.bin": randomBytes(4 * 1024 * 1024),
+        "fixture.ts": `
+        import { readdirSync } from "node:fs";
+        import nodeTls from "node:tls";
+        const descriptors = () => readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+
+        // Reads the request head, then stops: the upload backs up until the abort.
+        const sockets = new Set();
+        let onUpload;
+        const stalled = nodeTls.createServer(${JSON.stringify(tls)}, socket => {
+          sockets.add(socket);
+          socket.on("error", () => {});
+          socket.on("close", () => sockets.delete(socket));
+          socket.once("data", () => {
+            socket.pause();
+            onUpload();
+          });
+        });
+        await new Promise(resolve => stalled.listen(0, "127.0.0.1", resolve));
+        using entry = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            await req.arrayBuffer();
+            return new Response(null, {
+              status: 307,
+              headers: { Location: "https://127.0.0.1:" + stalled.address().port + "/" },
+            });
+          },
+        });
+
+        async function abortedUpload() {
+          const controller = new AbortController();
+          const { promise: uploading, resolve } = Promise.withResolvers();
+          onUpload = resolve;
+          const outcome = fetch(entry.url, {
+            method: "POST",
+            body: Bun.file("body.bin"),
+            tls: { rejectUnauthorized: false },
+            signal: controller.signal,
+          }).then(res => "resolved " + res.status, e => e.name);
+          await uploading;
+          controller.abort();
+          const name = await outcome;
+          for (const socket of sockets) socket.destroy();
+          return name;
+        }
+
+        // The first upload opens what the process keeps: the HTTP thread, TLS contexts.
+        const outcomes = new Set([await abortedUpload()]);
+        Bun.gc(true);
+        const before = descriptors();
+        for (let i = 0; i < 10; i++) outcomes.add(await abortedUpload());
+        // A reader closes its descriptor off the main thread, and a socket after its close event.
+        let after = descriptors();
+        for (let i = 0; i < 500 && after > before; i++) {
+          Bun.gc(true);
+          await Bun.sleep(10);
+          after = descriptors();
+        }
+        console.log(JSON.stringify({ outcomes: [...outcomes], stillOpen: Math.max(0, after - before) }));
+        stalled.close();
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ outcomes: ["AbortError"], stillOpen: 0 }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    // A subprocess and eleven TLS handshakes: about 2 s on a debug ASAN build here.
+    30_000,
+  );
+
   // Each hop announces the whole file in Content-Length. A file that got shorter after the
   // first hop cannot fill that, so the fetch fails. It must not send a short body that the
   // server waits on, and it must not report success.

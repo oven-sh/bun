@@ -1496,6 +1496,70 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // fetch() sends a Bun.file() body of 32 KiB or more with sendfile(2) on plain http. After
+  // a redirect to an origin with a cached Alt-Svc the file goes out on an h3 stream, and a
+  // redirect on that origin sends it once more. Both requests used to have no body.
+  test("a Bun.file() body is sent again on h3 after a redirect from plain http", async () => {
+    const content = Buffer.alloc(300 * 1024 + 123);
+    for (let i = 0; i < content.length; i++) content[i] = (i * 31 + (i >> 8)) & 0xff;
+    using dir = tempDir("h3-file-body-redirect", {
+      "body.bin": content,
+      "fixture.ts": `
+        import { fetchH3Internals } from "bun:internal-for-testing";
+        const { liveCounts } = fetchH3Internals;
+        const expected = Buffer.from(await Bun.file("body.bin").arrayBuffer());
+        const hops = [];
+        using origin = Bun.serve({
+          port: 0,
+          tls: ${JSON.stringify(tls)},
+          http3: true,
+          async fetch(req) {
+            const { pathname } = new URL(req.url);
+            if (req.method === "GET") return new Response("warm");
+            const body = Buffer.from(await req.arrayBuffer());
+            hops.push([pathname, req.headers.get("content-length"), body.equals(expected)]);
+            if (pathname === "/first") return new Response(null, { status: 307, headers: { Location: "/second" } });
+            return new Response("final");
+          },
+        });
+        const url = "https://127.0.0.1:" + origin.port;
+        const opts = { tls: { rejectUnauthorized: false } };
+        // Over TCP: this reads the Alt-Svc of the origin.
+        await (await fetch(url + "/", opts)).text();
+        console.log("sessions before=%d", liveCounts().sessions);
+        using entry = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            await req.arrayBuffer();
+            return new Response(null, { status: 307, headers: { Location: url + "/first" } });
+          },
+        });
+        const res = await fetch(entry.url, { method: "POST", body: Bun.file("body.bin"), ...opts });
+        console.log("status=%d text=%s sessions after=%d", res.status, await res.text(), liveCounts().sessions);
+        console.log(JSON.stringify(hops));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "sessions before=0\n" +
+        "status=200 text=final sessions after=1\n" +
+        JSON.stringify([
+          ["/first", String(content.length), true],
+          ["/second", String(content.length), true],
+        ]) +
+        "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("off by default: both fetches stay on h1", async () => {
     const { stdout, stderr, exitCode } = await run({});
     expect(stderr).toBe("");

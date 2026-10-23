@@ -5,7 +5,18 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const {
+  kOutHeaders,
+  kNeedDrain,
+  kSocket,
+  kErrored,
+  kWritableFinished,
+  kEndCallbacks,
+  kFlushError,
+  queueEndCallback,
+  onFinish,
+  utcDate,
+} = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -110,12 +121,10 @@ function validatedLowercaseHeaderName(name) {
 }
 
 const kCorked = Symbol("corked");
-const kSocket = Symbol("kSocket");
 const kChunkedBuffer = Symbol("kChunkedBuffer");
 const kChunkedLength = Symbol("kChunkedLength");
 const kUniqueHeaders = Symbol("kUniqueHeaders");
 const kBytesWritten = Symbol("kBytesWritten");
-const kErrored = Symbol("errored");
 const kHighWaterMark = Symbol("kHighWaterMark");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kLenientValidation = Symbol("kLenientValidation");
@@ -185,6 +194,9 @@ function OutgoingMessage(options) {
   this._onPendingData = nop;
 
   this[kErrored] = null;
+  this[kWritableFinished] = false;
+  this[kEndCallbacks] = null;
+  this[kFlushError] = null;
   this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
   this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
   // Declared here so the memoizing _isLenientHeaderValidation never
@@ -248,7 +260,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "closed", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableFinished", {
   __proto__: null,
   get() {
-    return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
+    return this[kWritableFinished];
   },
 });
 
@@ -1012,6 +1024,22 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   return ret;
 }
 
+// If this last write can be delivered immediately as the final chunk, this
+// prepares to do so, and then returns true. If not, it returns false and
+// a separate _send call and tick will be required to finish up.
+function maybePrepareFinalChunk(msg, chunk, encoding) {
+  if (typeof chunk !== "string" && !isUint8Array(chunk)) return false;
+
+  if (msg.destroyed || msg.strictContentLength) return false;
+
+  if (!msg._header) {
+    msg._contentLength = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+    msg._implicitHeader();
+  }
+
+  return !!msg._header && msg._hasBody && !msg.chunkedEncoding;
+}
+
 function connectionCorkNT(conn) {
   conn.uncork();
 }
@@ -1058,11 +1086,6 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
   }
 };
 
-function onFinish(outmsg) {
-  if (outmsg?.socket?._hadError) return;
-  outmsg.emit("finish");
-}
-
 OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
   if (typeof chunk === "function") {
     callback = chunk;
@@ -1072,6 +1095,8 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
     callback = encoding;
     encoding = null;
   }
+
+  let finishCallback = null;
 
   if (chunk) {
     if (this.finished) {
@@ -1083,14 +1108,21 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
       this[kSocket].cork();
     }
 
-    write_(this, chunk, encoding, null, true);
+    if (maybePrepareFinalChunk(this, chunk, encoding)) {
+      // If just one final write is required, with nothing to follow, we
+      // attach finish to the write to avoid a separate send() & tick step
+      // later on - this is purely a performance optimization.
+      if (typeof callback === "function") {
+        queueEndCallback(this, callback);
+        callback = undefined;
+      }
+      finishCallback = onFinish.bind(undefined, this);
+    }
+
+    write_(this, chunk, encoding, finishCallback, true);
   } else if (this.finished) {
     if (typeof callback === "function") {
-      if (!this.writableFinished) {
-        this.on("finish", callback);
-      } else {
-        callback($ERR_STREAM_ALREADY_FINISHED("end"));
-      }
+      queueEndCallback(this, callback);
     }
     return this;
   } else if (!this._header) {
@@ -1102,21 +1134,24 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
     this._implicitHeader();
   }
 
-  if (typeof callback === "function") this.once("finish", callback);
+  if (typeof callback === "function") queueEndCallback(this, callback);
 
   let contentLength;
   if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], contentLength);
   }
 
-  const finish = onFinish.bind(undefined, this);
+  if (finishCallback === null) {
+    // If we didn't early finish, send the last data and schedule 'finish' now:
+    const finish = onFinish.bind(undefined, this);
 
-  if (this._hasBody && this.chunkedEncoding) {
-    this._send("0\r\n" + this._trailer + "\r\n", "latin1", finish);
-  } else if (!this._headerSent || this.writableLength || chunk) {
-    this._send("", "latin1", finish);
-  } else {
-    process.nextTick(finish);
+    if (this._hasBody && this.chunkedEncoding) {
+      this._send("0\r\n" + this._trailer + "\r\n", "latin1", finish);
+    } else if (!this._headerSent || this.writableLength || chunk) {
+      this._send("", "latin1", finish);
+    } else {
+      process.nextTick(finish);
+    }
   }
 
   if (this[kSocket]) {

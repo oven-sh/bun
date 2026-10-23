@@ -186,7 +186,7 @@ describe("res.destroy() while the request is being read", () => {
   });
 });
 
-// The expected values are what Node.js v26.3.0 does (end(), onError() and write_() in lib/_http_outgoing.js).
+// The expected values are what Node.js v26.12.1 does (end(), queueEndCallback(), onError() and write_() in lib/_http_outgoing.js).
 describe("a late end() or write() answers its callback like Node.js", () => {
   type Callback = (err?: NodeJS.ErrnoException | null) => void;
   type Observed = { callbacks: string[]; errorEvents: (string | undefined)[]; returned: unknown };
@@ -206,7 +206,7 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       const errorEvents: (string | undefined)[] = [];
       res.on("error", err => errorEvents.push((err as NodeJS.ErrnoException).code));
       let sync = true;
-      const returned = lateCalls[call](res, err => callbacks.push(`${sync ? "sync" : "async"} ${err?.code}`));
+      const returned = lateCalls[call](res, err => callbacks.push(`${sync ? "sync" : "async"} ${err && err.code}`));
       sync = false;
       // A deferred callback is queued with process.nextTick(), so it has run by the next immediate.
       setImmediate(resolve, { callbacks, errorEvents, returned: returned === res ? "res" : returned });
@@ -248,6 +248,8 @@ describe("a late end() or write() answers its callback like Node.js", () => {
   }
 
   const alreadyFinished = { callbacks: ["sync ERR_STREAM_ALREADY_FINISHED"], errorEvents: [], returned: "res" };
+  // Queued behind the first end(): it gets null once the response finishes.
+  const finishes = { callbacks: ["async null"], errorEvents: [], returned: "res" };
   const dropped = { callbacks: [], errorEvents: [], returned: "res" };
   const writeAfterEnd = { callbacks: ["async ERR_STREAM_WRITE_AFTER_END"], errorEvents: [], returned: false };
   const destroyed = { callbacks: ["async ERR_STREAM_DESTROYED"], errorEvents: [], returned: false };
@@ -280,15 +282,15 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       },
     },
     // Not destroyed yet (no 'close'), so a write after end also reaches 'error'.
-    "finished, the handler destroyed the socket in the same tick": {
+    "ended, the handler destroyed the socket in the same tick": {
       reach: overConnection(false, (req, res, run) => {
         res.end("ok");
         req.socket.destroy();
         run();
       }),
       expected: {
-        "end(cb)": alreadyFinished,
-        'end("", cb)': alreadyFinished,
+        "end(cb)": finishes,
+        'end("", cb)': finishes,
         "end(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"], returned: "res" },
         "write(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
         'write("", cb)': { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
@@ -308,6 +310,7 @@ describe("a late end() or write() answers its callback like Node.js", () => {
         'write("", cb)': writeAfterEnd,
       },
     },
+    // The end() callbacks run before 'finish', so 'close' is not queued yet and 'error' comes first.
     "finished, inside the end() callback": {
       reach: overConnection(false, (req, res, run) => {
         res.end("ok", run);
@@ -315,9 +318,9 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       expected: {
         "end(cb)": alreadyFinished,
         'end("", cb)': alreadyFinished,
-        "end(chunk, cb)": { ...writeAfterEnd, returned: "res" },
-        "write(chunk, cb)": writeAfterEnd,
-        'write("", cb)': writeAfterEnd,
+        "end(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"], returned: "res" },
+        "write(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
+        'write("", cb)': { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
       },
     },
     "unfinished, the client closed the connection": {
@@ -328,6 +331,21 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       expected: {
         "end(cb)": dropped,
         'end("", cb)': dropped,
+        "end(chunk, cb)": dropped,
+        "write(chunk, cb)": destroyed,
+        'write("", cb)': destroyed,
+      },
+    },
+    // With the head and the whole body out, end() has nothing to write: the response finishes although the socket is gone.
+    "unfinished, the client closed the connection after the whole Content-Length body": {
+      reach: overConnection(true, (req, res, run) => {
+        whenConnectionClosed(req, res, run);
+        res.setHeader("Content-Length", 2);
+        res.write("ok");
+      }),
+      expected: {
+        "end(cb)": finishes,
+        'end("", cb)': finishes,
         "end(chunk, cb)": dropped,
         "write(chunk, cb)": destroyed,
         'write("", cb)': destroyed,
@@ -504,6 +522,27 @@ describe("res.destroy() defers 'close'", () => {
     expect(received).toEndWith("\r\n\r\nhello");
   });
 
+  // The error reaches the response before its last write has called back, so the flush counts as failed.
+  test.concurrent("after end(), with an error: the end() callback gets it and there is no 'finish'", async () => {
+    const error = new Error("destroyed by the handler");
+    const { events } = await serveAndRecord((req, res, events) => {
+      req.socket.on("error", () => {});
+      res.end("hello", (err?: Error | null) => {
+        events.push(`end callback (the error: ${err === error}, writableFinished: ${res.writableFinished})`);
+      });
+      destroyRecording(res, events, error);
+    });
+    expect(events).toEqual([
+      "destroy()",
+      "destroy() returned (closed: false)",
+      "listener returned",
+      "end callback (the error: true, writableFinished: false)",
+      "req.aborted",
+      "res.close (closed: true)",
+      "req.close",
+    ]);
+  });
+
   // Once the response has finished it no longer has a socket, so (like Node)
   // destroy() leaves the kept-alive connection alone and only defers 'close'.
   test.concurrent("inside a 'finish' listener", async () => {
@@ -524,25 +563,24 @@ describe("res.destroy() defers 'close'", () => {
     ]);
   });
 
+  // The end() callbacks run before 'finish', while the response still has its socket: destroy() closes the connection.
   test.concurrent("inside the end() callback", async () => {
-    const { events } = await serveAndRecord(
-      (req, res, events) => {
-        res.end("hello", () => {
-          events.push("end callback");
-          destroyRecording(res, events);
-        });
-      },
-      { connectionClosedByServer: false },
-    );
+    const { events, received } = await serveAndRecord((req, res, events) => {
+      res.end("hello", () => {
+        events.push("end callback");
+        destroyRecording(res, events);
+      });
+    });
     expect(events).toEqual([
       "listener returned",
-      "res.finish",
       "end callback",
       "destroy()",
       "destroy() returned (closed: false)",
+      "res.finish",
       "res.close (closed: true)",
       "req.close",
     ]);
+    expect(received).toEndWith("\r\n\r\nhello");
   });
 
   const destroyedBeforeFinishing = [
@@ -663,6 +701,46 @@ describe("res.destroy() defers 'close'", () => {
       server.close();
     }
   });
+
+  test.concurrent(
+    "on an ended response still queued behind a pipelined response: the end() callback gets the error",
+    async () => {
+      const error = new Error("destroyed by the handler");
+      const events: string[] = [];
+      const answered = Promise.withResolvers<void>();
+      const responses: ServerResponse[] = [];
+      const server = createServer((req, res) => {
+        responses.push(res);
+        if (req.url === "/first") return;
+        recordResponse(res, events, () => responses[0].end("first"));
+        res.end("second", (err?: Error | null) => {
+          events.push(`end callback (the error: ${err === error}, writableFinished: ${res.writableFinished})`);
+          answered.resolve();
+        });
+        destroyRecording(res, events, error);
+      });
+      let client: ReturnType<typeof connect> | undefined;
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        client = connect(port, "127.0.0.1");
+        client.on("error", () => {});
+        client.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+        await answered.promise;
+        expect(events).toEqual([
+          "destroy()",
+          "destroy() returned (closed: false)",
+          "res.close (closed: true)",
+          "end callback (the error: true, writableFinished: false)",
+        ]);
+      } finally {
+        for (const res of responses) res.destroy();
+        client?.destroy();
+        server.close();
+      }
+    },
+  );
 
   test("on a standalone response that was never given a socket", async () => {
     const events: string[] = [];

@@ -15,6 +15,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
+import { PerformanceObserver } from "node:perf_hooks";
 import { Duplex, duplexPair, finished, Readable } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
@@ -430,8 +431,8 @@ describe("backpressure", () => {
     });
   });
 
-  // Node runs the write() callbacks a slow reader held up, then emits a
-  // response's 'finish' (then the end() callback, then 'close') once every byte
+  // Node runs the write() callbacks a slow reader held up, then the end()
+  // callback, then emits a response's 'finish' (then 'close') once every byte
   // of it has been handed to the kernel, not when end() merely accepted them:
   // bytes a slow reader leaves in the server's userspace buffer are still the
   // response's (https://github.com/oven-sh/bun/issues/43155). Until then
@@ -461,7 +462,7 @@ describe("backpressure", () => {
     // nothing waits then, so each test checks the "not finished yet" state
     // only when writableLength showed a backlog, and checks the delivered
     // bytes and the event order either way.
-    function writeBody(res: http.ServerResponse, endCallback?: () => void) {
+    function writeBody(res: http.ServerResponse, endCallback?: (err?: Error | null) => void) {
       res.setHeader("Content-Length", BODY);
       res.write(Buffer.alloc(FIRST, "a"));
       res.end(Buffer.alloc(BODY - FIRST, "a"), endCallback);
@@ -474,7 +475,7 @@ describe("backpressure", () => {
     function writeBodyInChunks(
       res: http.ServerResponse,
       endWithChunk: boolean,
-      endCallback: () => void,
+      endCallback: (err?: Error | null) => void,
       lastWriteCallback?: () => void,
     ) {
       res.setHeader("Content-Length", BODY);
@@ -484,6 +485,10 @@ describe("backpressure", () => {
       else res.end(endCallback);
       return res.writableLength > 0;
     }
+
+    // The end() callback gets null once the response has finished, or the error that kept its bytes from leaving.
+    const recordEnd = (events: string[]) => (err?: Error | null) =>
+      void events.push(`end callback: ${err instanceof Error ? "error" : err}`);
 
     // "/ping" is answered at once: see ping().
     function createServer(tls: boolean, handler: http.RequestListener) {
@@ -596,7 +601,9 @@ describe("backpressure", () => {
           // must not cut the body short.
           server.close();
         });
-        backlog = writeBody(res, () => events.push("end callback"));
+        backlog = writeBody(res, recordEnd(events));
+        // Queued behind the first one: the response has ended but not finished.
+        res.end((err?: Error | null) => void events.push(`second end callback: ${err}`));
         stateAfterEnd = { writableEnded: res.writableEnded, writableFinished: res.writableFinished };
         handled.resolve();
       });
@@ -616,7 +623,7 @@ describe("backpressure", () => {
         const { bytes, ended } = await client.done;
         expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
         expect(ended).toBe(true);
-        expect(events).toEqual(["finish", "end callback", "close"]);
+        expect(events).toEqual(["end callback: null", "second end callback: null", "finish", "close"]);
         expect(stateAtFinish).toEqual({ writableFinished: true, writableLength: 0 });
       } finally {
         // A second close() is harmless (Node reports ERR_SERVER_NOT_RUNNING to the callback).
@@ -661,38 +668,32 @@ describe("backpressure", () => {
       if (backlog) expect(events).toEqual([]);
       await Promise.all([client.read(1), closed.promise]);
       expect(client.received).toBe(client.headLength + BODY);
-      expect(events).toEqual(["write callback", "finish", "end callback", "close"]);
+      expect(events).toEqual(["write callback", "end callback", "finish", "close"]);
     });
 
-    // Node's failed socket write still runs its callback and the response still
-    // emits 'finish', so the order is the same when the bytes never leave.
-    it("a client that goes away without reading still completes the response, in the same order", async () => {
+    // Node's failed socket write still runs its callback, and the end() callback
+    // gets its error: the bytes never left, so the response never finishes.
+    it("a client that goes away without reading fails the callbacks, and the response closes unfinished", async () => {
       const events: string[] = [];
       const state: Record<string, unknown> = {};
+      let backlog = false;
       const handled = Promise.withResolvers<void>();
       const closed = Promise.withResolvers<void>();
       await using server = createServer(false, (req, res) => {
-        res.on("finish", () => {
-          events.push("finish");
-          state.writableFinishedAtFinish = res.writableFinished;
-          // 'finish' comes before the response is torn down, as after a drain.
-          state.tornDownAtFinish = res.destroyed || res.closed;
-        });
+        res.on("finish", () => events.push("finish"));
         res.on("close", () => {
           events.push("close");
           state.writableFinishedAtClose = res.writableFinished;
-          // The response did finish, so stream.finished() must not report a premature close.
           finished(res, err => {
             state.streamFinished = err?.code ?? "ok";
-            closed.resolve();
+            // The outcome is kept for an end() that comes after it.
+            res.end((err?: NodeJS.ErrnoException | null) => {
+              state.lateEndCallback = err?.code === "ERR_STREAM_ALREADY_FINISHED" ? err.code : err instanceof Error;
+              closed.resolve();
+            });
           });
         });
-        writeBodyInChunks(
-          res,
-          true,
-          () => events.push("end callback"),
-          () => events.push("write callback"),
-        );
+        backlog = writeBodyInChunks(res, true, recordEnd(events), () => events.push("write callback"));
         handled.resolve();
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
@@ -700,24 +701,62 @@ describe("backpressure", () => {
       await Promise.race([handled.promise, client.done]);
       client.destroy();
       await closed.promise;
-      expect(events).toEqual(["write callback", "finish", "end callback", "close"]);
-      expect(state).toEqual({
-        writableFinishedAtFinish: true,
-        tornDownAtFinish: false,
-        writableFinishedAtClose: true,
-        streamFinished: "ok",
-      });
+      if (backlog) {
+        expect(events).toEqual(["write callback", "end callback: error", "close"]);
+        expect(state).toEqual({
+          writableFinishedAtClose: false,
+          streamFinished: "ERR_STREAM_PREMATURE_CLOSE",
+          lateEndCallback: true,
+        });
+      } else {
+        expect(events).toEqual(["write callback", "end callback: null", "finish", "close"]);
+        expect(state).toEqual({
+          writableFinishedAtClose: true,
+          streamFinished: "ok",
+          lateEndCallback: "ERR_STREAM_ALREADY_FINISHED",
+        });
+      }
+    });
+
+    // Node measures a response up to its end(), in ServerResponse#_finish(), so one that never finishes is reported too.
+    it("a client that goes away without reading still leaves an 'http' performance entry", async () => {
+      const entry = Promise.withResolvers<string>();
+      const observer = new PerformanceObserver(list => entry.resolve(list.getEntries()[0].name));
+      observer.observe({ entryTypes: ["http"] });
+      try {
+        let backlog = false;
+        let finished = false;
+        const handled = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        await using server = createServer(false, (req, res) => {
+          res.on("finish", () => (finished = true));
+          res.on("close", () => closed.resolve());
+          backlog = writeBody(res);
+          handled.resolve();
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        using client = pausedClient(
+          (server.address() as AddressInfo).port,
+          "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        await Promise.race([handled.promise, client.done]);
+        client.destroy();
+        await closed.promise;
+        expect({ entry: await entry.promise, finished }).toEqual({ entry: "HttpRequest", finished: !backlog });
+      } finally {
+        observer.disconnect();
+      }
     });
 
     // Reads are paused while a request waits behind the backed-up response, so
     // the failed write is the only sign of the client's death. The response
-    // still completes, and its request, which is still open, is not aborted:
-    // it left the connection's queue of requests when the response finished.
+    // never finishes, so its request is still in the connection's queue of
+    // requests and is aborted with it.
     it.each([
       ["http", false],
       ["https", true],
     ] as const)(
-      "a client that goes away with a request queued behind the unfinished response still completes it: %s",
+      "a client that goes away with a request queued behind the unfinished response aborts its request: %s",
       async (_name, tls) => {
         const events: string[] = [];
         let backlog = false;
@@ -754,7 +793,7 @@ describe("backpressure", () => {
         if (backlog) expect(events).toEqual([]);
         client.destroy();
         await closed.promise;
-        expect(events).toEqual(["finish, request destroyed: false", "close"]);
+        expect(events).toEqual(backlog ? ["request aborted", "close"] : ["finish, request destroyed: false", "close"]);
       },
     );
 
@@ -1069,7 +1108,7 @@ describe("backpressure", () => {
             // must not cut the body short.
             server.close();
           });
-          writeBody(res, () => events.push("end callback"));
+          writeBody(res, recordEnd(events));
           handled.resolve();
         });
         using client = pausedClient(server.port, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", {
@@ -1090,13 +1129,13 @@ describe("backpressure", () => {
         const { bytes, ended } = await client.done;
         expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
         expect(ended).toBe(true);
-        expect(events).toEqual(["finish", "end callback", "close"]);
+        expect(events).toEqual(["end callback: null", "finish", "close"]);
         expect(stateAtFinish).toEqual({ writableFinished: true, writableLength: 0 });
       });
 
-      // Node's failed socket write still runs its callback and the response still
-      // emits 'finish', so the order is the same when the bytes never leave.
-      it("a client that goes away without reading still completes the response, in the same order", async () => {
+      // Node's failed socket write still runs its callback, and the end() callback
+      // gets its error: the bytes never left, so the response never finishes.
+      it("a client that goes away without reading fails the callbacks, and the response closes unfinished", async () => {
         const events: string[] = [];
         const state: Record<string, unknown> = {};
         let socket!: net.Socket;
@@ -1104,43 +1143,38 @@ describe("backpressure", () => {
         const closed = Promise.withResolvers<void>();
         await using server = await listen((req, res) => {
           socket = req.socket;
-          res.on("finish", () => {
-            events.push("finish");
-            state.writableFinishedAtFinish = res.writableFinished;
-            // 'finish' comes before the response is torn down, as after a drain.
-            state.tornDownAtFinish = res.destroyed || res.closed;
-          });
+          res.on("finish", () => events.push("finish"));
           res.on("close", () => {
             events.push("close");
             state.writableFinishedAtClose = res.writableFinished;
-            // The response did finish, so stream.finished() must not report a premature close.
             finished(res, err => {
               state.streamFinished = err?.code ?? "ok";
               closed.resolve();
             });
           });
-          writeBody(res, () => events.push("end callback"));
+          writeBodyInChunks(res, true, recordEnd(events), () => events.push("write callback"));
           handled.resolve();
         });
         using client = pausedClient(server.port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", { tls });
         await Promise.race([handled.promise, client.done]);
         await ping(server.port, tls);
         // The client has not read anything yet.
-        if (socket.writableLength > 0) expect(events).toEqual([]);
+        const backlog = socket.writableLength > 0;
+        if (backlog) expect(events).toEqual([]);
         client.destroy();
         await closed.promise;
-        expect(events).toEqual(["finish", "end callback", "close"]);
-        expect(state).toEqual({
-          writableFinishedAtFinish: true,
-          tornDownAtFinish: false,
-          writableFinishedAtClose: true,
-          streamFinished: "ok",
-        });
+        if (backlog) {
+          expect(events).toEqual(["write callback", "end callback: error", "close"]);
+          expect(state).toEqual({ writableFinishedAtClose: false, streamFinished: "ERR_STREAM_PREMATURE_CLOSE" });
+        } else {
+          expect(events).toEqual(["write callback", "end callback: null", "finish", "close"]);
+          expect(state).toEqual({ writableFinishedAtClose: true, streamFinished: "ok" });
+        }
       });
 
       // The server side drops the connection (a timeout handler does this). The
-      // response completes in the same order, and not inside the destroy() call.
-      it("a socket destroyed while the response drains completes it once destroy() has returned", async () => {
+      // end() callback fails, and not inside the destroy() call.
+      it("a socket destroyed while the response drains fails it once destroy() has returned", async () => {
         const events: string[] = [];
         let socket!: net.Socket;
         const handled = Promise.withResolvers<void>();
@@ -1152,7 +1186,7 @@ describe("backpressure", () => {
             events.push("close");
             closed.resolve();
           });
-          writeBody(res, () => events.push("end callback"));
+          writeBody(res, recordEnd(events));
           handled.resolve();
         });
         using client = pausedClient(server.port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", { tls });
@@ -1164,9 +1198,12 @@ describe("backpressure", () => {
         socket.destroy();
         events.push("destroy() returned");
         await closed.promise;
-        const completed = ["finish", "end callback", "close"];
         const destroyed = ["destroy()", "destroy() returned"];
-        expect(events).toEqual(backlog ? [...destroyed, ...completed] : [...completed, ...destroyed]);
+        expect(events).toEqual(
+          backlog
+            ? [...destroyed, "end callback: error", "close"]
+            : ["end callback: null", "finish", "close", ...destroyed],
+        );
       });
 
       // The server answers the client's FIN by ending its own side, and an ended
@@ -1323,7 +1360,7 @@ describe("backpressure", () => {
           events.push("close");
           closed.resolve();
         });
-        res.end(body, () => events.push("end callback"));
+        res.end(body, recordEnd(events));
         handled.resolve();
       });
       const [clientSide, serverSide] = duplexPair();
@@ -1349,17 +1386,18 @@ describe("backpressure", () => {
         await closed.promise;
         const bytes = Buffer.concat(chunks);
         expect(bytes.subarray(bytes.indexOf("\r\n\r\n") + 4).equals(body)).toBe(true);
-        expect(events).toEqual(["finish", "end callback", "close"]);
+        expect(events).toEqual(["end callback: null", "finish", "close"]);
       } finally {
         for (const side of [clientSide, serverSide, pingClientSide, pingServerSide]) side.destroy();
       }
     });
 
-    // 'finish' runs from a write callback of the socket, or from its 'close'.
-    // A listener that throws there is an uncaught exception like any other:
-    // the socket still finishes (the client gets the FIN), and a dying
-    // connection still aborts the response queued behind the one that threw.
-    it("a 'finish' listener that throws is reported, and the connection is still torn down", async () => {
+    // 'finish' runs from a write callback of the socket, and the end() callback
+    // of a response that cannot finish from its 'close'. One that throws there
+    // is an uncaught exception like any other: the socket still finishes (the
+    // client gets the FIN), and a dying connection still aborts the response
+    // queued behind the one that threw.
+    it("a 'finish' listener or end() callback that throws is reported, and the connection is still torn down", async () => {
       const size = BODY / 4;
       const child = spawn(
         process.execPath,
@@ -1391,7 +1429,11 @@ describe("backpressure", () => {
               events.push("finish " + name);
               throw new Error("from 'finish'");
             });
-            res.end(Buffer.alloc(${size}, "a"));
+            res.end(Buffer.alloc(${size}, "a"), err => {
+              if (!err) return;
+              events.push("end callback " + name);
+              throw new Error("from the end() callback");
+            });
           });
           server.listen(0, "127.0.0.1", () => console.log(server.address().port));`,
         ],
@@ -1429,7 +1471,7 @@ describe("backpressure", () => {
         const events: string[] = JSON.parse(stdout.slice(stdout.indexOf("\n") + 1));
         expect({ sent: events.slice(0, 3), first: events.slice(3, 5), closed: events.slice(5).sort() }).toEqual({
           sent: ["finish sent", "uncaughtException: from 'finish'", "close sent"],
-          first: ["finish first", "uncaughtException: from 'finish'"],
+          first: ["end callback first", "uncaughtException: from the end() callback"],
           closed: ["close first", "close second"],
         });
       } finally {

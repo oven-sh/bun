@@ -65,7 +65,7 @@ const http1ServerPipeline: {
   lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
-  finishDrainedResponse?: (res: unknown) => void;
+  finishDrainedResponse?: (res: unknown, err?: unknown) => void;
   kMustCloseConnection?: symbol;
 } = {};
 
@@ -330,6 +330,54 @@ const STATUS_CODES = {
   511: "Network Authentication Required",
 };
 
+const kSocket = Symbol("kSocket");
+const kErrored = Symbol("errored");
+const kWritableFinished = Symbol("kWritableFinished");
+const kEndCallbacks = Symbol("kEndCallbacks");
+const kFlushError = Symbol("kFlushError");
+
+// Deliver end() callbacks, mirroring Writable: null on successful finish,
+// otherwise the error that prevented all data from being flushed.
+function flushEndCallbacks(msg, err) {
+  const callbacks = msg[kEndCallbacks];
+  if (callbacks === null) return;
+  msg[kEndCallbacks] = null;
+  for (let i = 0; i < callbacks.length; i++) callbacks[i](err);
+}
+
+function getEndCallbackError(msg) {
+  return msg[kErrored] ?? msg[kSocket]?.errored ?? $ERR_STREAM_DESTROYED("end");
+}
+
+function queueEndCallback(msg, callback) {
+  if (msg[kWritableFinished]) {
+    callback($ERR_STREAM_ALREADY_FINISHED("end"));
+    return;
+  }
+  if (msg[kFlushError] !== null) {
+    process.nextTick(callback, msg[kFlushError]);
+    return;
+  }
+  msg[kEndCallbacks] ??= [];
+  msg[kEndCallbacks].push(callback);
+}
+
+function onFinish(outmsg, err?) {
+  if (err || outmsg[kErrored] || outmsg[kSocket]?.errored || outmsg[kSocket]?._hadError) {
+    outmsg[kFlushError] = err ?? getEndCallbackError(outmsg);
+    flushEndCallbacks(outmsg, outmsg[kFlushError]);
+    return;
+  }
+
+  outmsg[kWritableFinished] = true;
+  try {
+    flushEndCallbacks(outmsg, null);
+  } finally {
+    // Not in Node.js: after a callback that throws, the connection still has to move on to its next message.
+    outmsg.emit("finish");
+  }
+}
+
 function hasServerResponseFinished(self, chunk, callback, fromEnd) {
   const finished = self.finished;
 
@@ -356,11 +404,7 @@ function hasServerResponseFinished(self, chunk, callback, fromEnd) {
     }
   } else if (finished) {
     if ($isCallable(callback)) {
-      if (!self.writableFinished) {
-        self.on("finish", callback);
-      } else {
-        callback($ERR_STREAM_ALREADY_FINISHED("end"));
-      }
+      queueEndCallback(self, callback);
     }
 
     return true;
@@ -551,6 +595,7 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
+  getEndCallbackError,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -559,6 +604,9 @@ export {
   kAbortController,
   kCloseCallback,
   kClosedWithUnsentData,
+  kEndCallbacks,
+  kErrored,
+  kFlushError,
   kHandle,
   kHandoffResponse,
   kHasQueuedReads,
@@ -573,12 +621,16 @@ export {
   kRealListen,
   kRememberPeer,
   kRequest,
+  kSocket,
   kWaitForProxyTunnel,
+  kWritableFinished,
   noBodySymbol,
   onDataIncomingMessage,
+  onFinish,
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
+  queueEndCallback,
   redactInvalidProxyUrl,
   serverSymbol,
   setMaxHTTPHeaderSize,

@@ -290,8 +290,7 @@ for (const path of ["the listener of the server", "emit('connection')"]) {
       events: ["prefinish"],
       finished: true,
       writableEnded: true,
-      // Since v26.7.0 node's says whether 'finish' was emitted. Bun's still says that nothing is left to write.
-      writableFinished: typeof Bun !== "undefined",
+      writableFinished: false,
     });
   });
 }

@@ -7922,3 +7922,66 @@ it("a listener can cancel Readable.toWeb(req) and end the response in the same t
   expect({ stdout, stderr }).toEqual({ stdout: "keep-alive timeout 4000\n200 ok\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// Node.js v26.12.1 skips 'finish' after such a callback, which leaves the connection stuck on that response.
+it.concurrent.each(["in the handler", "after the handler"])(
+  "an end() callback that throws is an uncaught exception, and the connection serves its next request (end() %s)",
+  async when => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const net = require("node:net");
+        const events = [];
+        process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
+        const server = http.createServer((req, res) => {
+          res.on("finish", () => events.push("finish " + req.url));
+          res.on("close", () => events.push("close " + req.url));
+          const end = () =>
+            res.end("ok", () => {
+              events.push("end callback " + req.url);
+              if (req.url === "/first") throw new Error("from the end() callback");
+            });
+          if (${JSON.stringify(when)} === "in the handler") end();
+          else setImmediate(end);
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          let responses = 0;
+          client.on("data", chunk => {
+            responses += chunk.toString("latin1").split("HTTP/1.1 200 OK").length - 1;
+            if (responses === 1) client.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+          });
+          client.on("close", () => {
+            console.log(JSON.stringify({ responses, events }));
+            server.close();
+          });
+          client.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout || "null"), stderr }).toEqual({
+      result: {
+        responses: 2,
+        events: [
+          "end callback /first",
+          "finish /first",
+          "uncaughtException: from the end() callback",
+          "close /first",
+          "end callback /second",
+          "finish /second",
+          "close /second",
+        ],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

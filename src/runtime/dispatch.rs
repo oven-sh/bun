@@ -84,6 +84,7 @@ use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
@@ -133,6 +134,7 @@ use crate::socket::windows_named_pipe::WindowsNamedPipe;
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use bun_sql_jsc::postgres::PostgresSQLConnection;
+use bun_sql_jsc::shared::connection_timers::TimedConnection as _;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
@@ -188,14 +190,12 @@ pub(crate) fn run_task(
             task.ptr.cast::<$ty>()
         };
     }
-    /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
-    /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
+    /// `run_from_js_thread` takes `*mut T` (full
+    /// allocation provenance) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
         ($T:ty) => {{
-            // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
-            unsafe {
-                node_zlib_binding::CompressionStream::<$T>::run_from_js_thread(cast_ptr!($T))
-            };
+            // SAFETY: §Dispatch — tag identifies pointee; live payload.
+            unsafe { node_zlib_binding::run_from_js_thread(cast_ptr!($T)) };
         }};
     }
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
@@ -273,6 +273,10 @@ pub(crate) fn run_task(
         task_tag::GetAddrInfoLibuvComplete => {
             // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
             unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
+        }
+        #[cfg(windows)]
+        task_tag::UvDnsPollFree => {
+            crate::dns_jsc::UvDnsPoll::destroy(cast_ptr!(crate::dns_jsc::UvDnsPoll));
         }
         task_tag::ValkeyDeferredClose => {
             // SAFETY: boxed at the enqueue site; the arm consumes it.
@@ -485,6 +489,9 @@ pub(crate) fn run_task(
         task_tag::S3HttpDownloadStreamingTask => {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
         }
+        task_tag::S3UploadWriterCollected => {
+            S3UploadWriterCollected::run(cast_ptr!(S3UploadWriterCollected))?;
+        }
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {
@@ -495,6 +502,26 @@ pub(crate) fn run_task(
         }
         task_tag::NapiFinalizerTask => {
             NapiFinalizerTask::run_on_js_thread(cast_ptr!(NapiFinalizerTask))?;
+        }
+        task_tag::UvLoopDispatch => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvLoop;
+                // SAFETY: `schedule_dispatch` posted this VM's live loop.
+                unsafe { UvLoop::dispatch(cast_ptr!(UvLoop)) };
+            }
+            #[cfg(not(unix))]
+            unreachable!("posix-only");
+        }
+        task_tag::UvHandleClose => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvHandle;
+                // SAFETY: `uv_close` posted this handle.
+                unsafe { UvHandle::run_close(cast_ptr!(UvHandle)) }?;
+            }
+            #[cfg(not(unix))]
+            unreachable!("posix-only");
         }
 
         // ── JSC scheduler / module loader ────────────────────────────────
@@ -548,7 +575,8 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
+                    // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
+                    $(task_tag::$tag => unsafe { fs_async::$ty::run_from_js_thread(cast_ptr!(fs_async::$ty)) }?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};
@@ -722,7 +750,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 86,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -973,7 +1001,6 @@ unsafe fn __bun_io_pollable_on_io_error(
         }
         bun_io::PollableTag::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");
-            let _ = err;
         }
     }
 }
@@ -1246,9 +1273,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             Ok(())
         }
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
-            // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
-            // field of a live DevServer.
-            DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
+            DevServer::emit_memory_visualizer_message_timer(t);
             Ok(())
         }
         EventLoopTimerTag::BunTest => {
@@ -1290,6 +1315,22 @@ pub(crate) unsafe fn __bun_fire_timer(
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
             Ok(())
+        }
+        EventLoopTimerTag::UvTimer => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvTimerNode;
+                let c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer);
+                // SAFETY: per fn contract, `c` is a started `uv_timer_t`'s node.
+                unsafe { UvTimerNode::on_fire(c) }
+            }
+            #[cfg(not(unix))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("UvTimer timer on Windows, where addons get libuv's");
+                }
+                Ok(())
+            }
         }
     };
     fired
@@ -1454,6 +1495,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
         task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
         task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
+        task_tag::S3UploadWriterCollected => release!(S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => release!(ServerAllConnectionsClosedTask),
         task_tag::ShellAsync => release!(crate::shell::dispatch_tasks::ShellAsyncTask),
@@ -1475,6 +1517,18 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release!(StreamPending),
         task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
+        task_tag::UvLoopDispatch => {
+            #[cfg(unix)]
+            release!(crate::napi::uv_posix::UvLoop);
+            #[cfg(not(unix))]
+            unreachable!("posix-only tag");
+        }
+        task_tag::UvHandleClose => {
+            #[cfg(unix)]
+            release!(crate::napi::uv_posix::UvHandle);
+            #[cfg(not(unix))]
+            unreachable!("posix-only tag");
+        }
         task_tag::ValkeyDeferredClose => {
             release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
         }
@@ -1482,6 +1536,12 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::GetAddrInfoLibuvComplete => {
             #[cfg(windows)]
             release!(crate::dns_jsc::LibuvCompleteHolder);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::UvDnsPollFree => {
+            #[cfg(windows)]
+            release!(crate::dns_jsc::UvDnsPoll);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

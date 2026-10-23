@@ -8,6 +8,7 @@
 //! `Bun__InspectorBunFrontendDevServerAgent__setEnabled`, `slot.sequence` is
 //! `next_inspector_connection_id`.
 
+use super::*;
 use bun_core::String as BunString;
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -51,7 +52,6 @@ impl BunFrontendDevServerAgent {
     /// C++ inspector backend (`frontend_dev_server_agent_set_enabled`) and
     /// stays live while the agent is enabled. Returns `None` when disabled.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
         let handle = self.0.agent_ptr();
         if handle.is_null() {
@@ -220,5 +220,22 @@ mod ffi {
             kind: u8,
             data: &BunString,
         );
+    }
+}
+
+impl DevServer {
+    /// The dev server's inspector agent, or `None` while the
+    /// `BunFrontendDevServer` domain is disabled. The agent's state is
+    /// `Cell`-based, so a shared borrow suffices. JS-thread only.
+    pub(crate) fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
+        if let Some(debugger) = self.vm().debugger.as_ref() {
+            bun_core::hint::cold();
+            let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
+            if agent.is_enabled() {
+                bun_core::hint::cold();
+                return Some(agent);
+            }
+        }
+        None
     }
 }

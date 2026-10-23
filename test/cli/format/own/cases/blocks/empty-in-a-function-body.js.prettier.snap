@@ -1,0 +1,93 @@
+------------------
+{ printWidth: 80 }
+------------------
+function f(a) {
+  var b;
+  if (a) b = 1;
+
+  {
+  }
+
+  b[2];
+}
+function g() {
+  a;
+  {
+  }
+  b;
+}
+{
+}
+function h() {
+  if (a) b = 1;
+  {
+  }
+}
+function i() {
+  if (a) b = 1;
+  {
+  }
+}
+function j() {
+  while (a) b;
+  {
+  }
+  for (;;) c;
+  {
+  }
+  if (a) {
+  } else b;
+  {
+  }
+  l: x;
+  {
+  }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function f(a) {
+  var b;
+  if (a) b = 1;
+
+  {
+  }
+
+  b[2];
+}
+function g() {
+  a;
+  {
+  }
+  b;
+}
+{
+}
+function h() {
+  if (a) b = 1;
+  {
+  }
+}
+function i() {
+  if (a) b = 1;
+  {
+  }
+}
+function j() {
+  while (a) b;
+  {
+  }
+  for (;;) c;
+  {
+  }
+  if (a) {
+  } else b;
+  {
+  }
+  l: x;
+  {
+  }
+}
+
+===================== End =====================

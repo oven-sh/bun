@@ -38,21 +38,6 @@ template<typename T> struct Converter<IDLOptional<T>> : DefaultConverter<IDLOpti
     static constexpr bool takesContext = true;
 
     template<Bun::IDLConversionContext Ctx>
-    static std::optional<ReturnType> tryConvert(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        JSC::JSValue value,
-        Ctx& ctx)
-    {
-        if (value.isUndefined())
-            return T::nullValue();
-        auto result = Bun::tryConvertIDL<T>(lexicalGlobalObject, value, ctx);
-        if (result.has_value()) {
-            return std::move(*result);
-        }
-        return std::nullopt;
-    }
-
-    template<Bun::IDLConversionContext Ctx>
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx)
     {
         if (value.isUndefined())

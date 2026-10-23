@@ -268,6 +268,10 @@ export abstract class Type {
   get borrowedByBody(): boolean {
     return false;
   }
+  /** What the thunk passes to the body for the argument it holds as `name`. */
+  rustArgument(name: string): string {
+    return this.borrowedByBody ? `&${name}` : name;
+  }
   /** `rustFromExtern` is a `bindgen::Result`. Only for an argument. */
   get rustFromExternThrows(): boolean {
     return false;
@@ -1352,11 +1356,11 @@ export class OptionalType extends Type {
       assert(!(inner instanceof UnionType), "a union takes the rest as its last alternative: ignored: b.any");
       assert(
         inner.valueKinds !== "any" || refusesNonObjects(inner),
-        ".otherAsNull goes by the kind of a value: the conversion of this type decides",
+        ".otherAsNull goes by the kind of a value, and this type does not: write it without .loose or nonObjectAsEmpty",
       );
       assert(
         !inner.narrowsItsKinds,
-        `.otherAsNull goes by the kind of a value, and this type throws for some of a kind: ${inner.narrowsItsKinds}`,
+        `.otherAsNull goes by the kind of a value, and this type throws for a value of a kind it takes: ${inner.narrowsItsKinds}`,
       );
     }
     // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it.
@@ -1466,6 +1470,10 @@ export class OptionalType extends Type {
   }
   rustType(scope: RustScope): string {
     return `Option<${this.inner.rustType(scope)}>`;
+  }
+  /** The body borrows a dictionary, `Option<&T>`, and takes over a string. */
+  rustArgument(name: string): string {
+    return this.inner instanceof DictionaryType ? `${name}.as_ref()` : name;
   }
   rustFromExtern(expr: string, scope: RustScope): string {
     if (this.inner.nullRepresentation === "optional") {
@@ -1593,6 +1601,9 @@ export class DefaultType extends Type {
   }
   get refusalOutsideArgument(): string | null {
     return this.inner.refusalOutsideArgument;
+  }
+  rustArgument(name: string): string {
+    return this.inner.rustArgument(name);
   }
   get conversionThrows(): boolean {
     return this.inner.conversionThrows;
@@ -1809,7 +1820,7 @@ export class EnumerationType extends NamedType {
     return ["string"];
   }
   get narrowsItsKinds(): string {
-    return "b.string.otherAsNull takes every string";
+    return "b.string.allowStringObject.otherAsNull takes every string";
   }
   get idlType(): string {
     return `WebCore::IDLEnumeration<${this.cpp}>`;

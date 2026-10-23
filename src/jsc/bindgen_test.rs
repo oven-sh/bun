@@ -962,10 +962,7 @@ pub(crate) fn present_arguments(
         ("text", text.is_some()),
         ("callback", callback.is_some()),
         ("object", object.is_some()),
-        (
-            "numbers",
-            numbers.is_some_and(|numbers| !numbers.is_empty()),
-        ),
+        ("numbers", numbers.map(drop).is_some()),
         ("counter", counter.is_some()),
         ("options", members.is_some()),
         ("options.size", size.is_some()),

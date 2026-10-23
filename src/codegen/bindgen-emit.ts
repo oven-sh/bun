@@ -1392,12 +1392,7 @@ const rustExternParameters = (signature: Signature, scope: RustScope) =>
   signature.args.map(
     arg => `${rustArgumentName(arg)}: ${isPassedByPointer(arg.type) ? "*mut " : ""}${arg.type.rustExternType(scope)}`,
   );
-const rustArguments = (signature: Signature) =>
-  signature.args.map(arg => {
-    const name = rustArgumentName(arg);
-    if (arg.type instanceof OptionalType && arg.type.inner instanceof DictionaryType) return `${name}.as_ref()`;
-    return (arg.type instanceof DefaultType ? arg.type.inner : arg.type).borrowedByBody ? `&${name}` : name;
-  });
+const rustArguments = (signature: Signature) => signature.args.map(arg => arg.type.rustArgument(rustArgumentName(arg)));
 /** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
 function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope): string {
   // What can return early comes last: by then Rust owns whatever the other arguments hand over.

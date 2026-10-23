@@ -400,6 +400,8 @@ let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+// A client session's method: it gets each request that is destroyed before it has a stream id.
+const kPendingRequestDestroyed = Symbol("pendingRequestDestroyed");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -1891,6 +1893,13 @@ type Settings = {
 };
 
 type HeadersObject = { [name: string | symbol]: any };
+type QueuedRequest = {
+  req: ClientHttp2Stream;
+  headers: HeadersObject;
+  wireHeaders: HeadersObject | any[];
+  sensitiveNames: Record<string, boolean>;
+  options: any;
+};
 interface ClientRequestOptions {
   endStream?: boolean;
   exclusive?: boolean;
@@ -2687,6 +2696,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+    } else if (session && this.#id === undefined) {
+      session[kPendingRequestDestroyed]?.(this);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -5045,13 +5056,11 @@ class ClientHttp2Session extends Http2Session {
   // submitted and whose stream has not closed yet, plus the queue of requests waiting for a slot
   // (node returns a pending stream with no id and submits it once a slot frees).
   #activeRequestCount: number = 0;
-  #pendingRequests: Array<{
-    req: ClientHttp2Stream;
-    headers: HeadersObject;
-    wireHeaders: HeadersObject | any[];
-    sensitiveNames: Record<string, boolean>;
-    options: any;
-  }> | null = null;
+  #pendingRequests: QueuedRequest[] | null = null;
+  // node's kPendingRequestCalls: the requests made while the socket connects. One 'connect' listener submits them.
+  #requestsBeforeConnect: QueuedRequest[] | null = null;
+  // node's session.connecting. It starts false when createConnection() returns a connected socket.
+  #socketConnecting: boolean = true;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -5123,13 +5132,13 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
-      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#closedWithNoStream());
     }),
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
-      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#closedWithNoStream());
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;
@@ -5171,16 +5180,11 @@ class ClientHttp2Session extends Http2Session {
         } else {
           stream.destroy();
         }
-        if (self.#connections === 0 && self.#closed) {
+        if (self.#closedWithNoStream()) {
           // Deferred like close()'s own destroy: runs inside a native dispatch batch and
           // not-yet-dispatched frames must still reach JS. An outstanding settings() ACK or
           // ping gets bounded grace (scheduleSettingsAckGraceNT); its arrival completes destroy.
-          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
-            scheduleSettingsAckGraceNT(self);
-          } else {
-            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-            setImmediate(destroyIfNotDestroyedNT, self);
-          }
+          self.#destroyAfterAckGrace();
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed
@@ -5265,13 +5269,7 @@ class ClientHttp2Session extends Http2Session {
         clearTimeout(self[kSettingsAckGraceTimer]);
         self[kSettingsAckGraceTimer] = undefined;
       }
-      if (
-        self.#closed &&
-        self.#connections === 0 &&
-        self.#pendingSettingsAckCount === 0 &&
-        pingsDrained &&
-        !self.destroyed
-      ) {
+      if (self.#closedWithNoStream() && self.#pendingSettingsAckCount === 0 && pingsDrained && !self.destroyed) {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
@@ -5310,8 +5308,7 @@ class ClientHttp2Session extends Http2Session {
                 self[kSettingsAckGraceTimer] = undefined;
               }
               if (
-                self.#closed &&
-                self.#connections === 0 &&
+                self.#closedWithNoStream() &&
                 (self.#pendingRequests === null || self.#pendingRequests.length === 0) &&
                 !self.destroyed
               ) {
@@ -5365,13 +5362,7 @@ class ClientHttp2Session extends Http2Session {
       self.#parser?.forEachStream(rejectStreamAboveGoawayLastId.bind(null, lastStreamId));
       // Requests still queued behind the concurrency limit never got a stream id; they can never
       // be submitted on this session, so reject them the same way.
-      const pendingRequests = self.#pendingRequests;
-      self.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
-      }
+      self.#rejectQueuedRequests();
       // A GOAWAY carrying an error code is a session error: the session and every open stream
       // error with ERR_HTTP2_SESSION_ERROR; like Node, our own goaway goes out with
       // NGHTTP2_NO_ERROR since this side had no error. A graceful GOAWAY (NO_ERROR) begins a
@@ -5447,6 +5438,7 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
     this.#connected = true;
+    this.#socketConnecting = false;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
       // client must check alpnProtocol
@@ -5470,19 +5462,65 @@ class ClientHttp2Session extends Http2Session {
       // close() was called while the socket was still connecting: requests made in the meantime
       // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
       // connect completes and then lets the session finish closing.
-      const pendingRequests = this.#pendingRequests;
-      this.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
-      }
+      this.#rejectQueuedRequests();
       this.#parser?.forEachStream(streamRejectedByGoawaySession);
       this.destroy();
       return;
     }
-    // Requests made while the socket was still connecting were queued; submit them now.
+    // A session that was given a connected socket queued the requests made before this call.
     this.#flushPendingRequests();
+  }
+
+  // Empties both queues. The requests made while the socket connected are the older ones.
+  #takeQueuedRequests() {
+    const beforeConnect = this.#requestsBeforeConnect;
+    const pending = this.#pendingRequests;
+    this.#requestsBeforeConnect = null;
+    this.#pendingRequests = null;
+    if (beforeConnect === null) return pending;
+    if (pending === null) return beforeConnect;
+    return beforeConnect.concat(pending);
+  }
+
+  #rejectQueuedRequests() {
+    const requests = this.#takeQueuedRequests();
+    if (requests !== null) {
+      for (let i = 0; i < requests.length; i++) {
+        streamRejectedByGoawaySession(requests[i].req);
+      }
+    }
+  }
+
+  // node's kMaybeDestroy test: closed, no open stream, no request that waits for the connect.
+  #closedWithNoStream() {
+    const waiting = this.#requestsBeforeConnect;
+    return this.#closed && this.#connections === 0 && (waiting === null || waiting.length === 0);
+  }
+
+  // A destroyed request leaves the list of the requests that wait for the connect, like node's pendingStreams.
+  [kPendingRequestDestroyed](req: Http2Stream) {
+    const waiting = this.#requestsBeforeConnect;
+    if (waiting === null) return;
+    for (let i = 0; i < waiting.length; i++) {
+      if (waiting[i].req === req) {
+        waiting.splice(i, 1);
+        // This request can be the last thing that a closed session waited for.
+        if (this.#closedWithNoStream() && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
+          this.#destroyAfterAckGrace();
+        }
+        return;
+      }
+    }
+  }
+
+  // Ends a closed session that has nothing left to do. An ACK that is due gets its grace first.
+  #destroyAfterAckGrace() {
+    if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+      scheduleSettingsAckGraceNT(this);
+    } else {
+      captureHttp2PerfFrameSnapshot(this, this.#parser);
+      setImmediate(destroyIfNotDestroyedNT, this);
+    }
   }
 
   #onClose() {
@@ -5775,6 +5813,7 @@ class ClientHttp2Session extends Http2Session {
         socket.once(connectEvent, onConnect.bind(this));
       } else {
         connectOnNextTick = true;
+        this.#socketConnecting = false;
       }
     } else {
       // Like node, https only: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
@@ -5853,15 +5892,10 @@ class ClientHttp2Session extends Http2Session {
     // bounded: an ACK is mandatory (RFC 9113 6.5.3) and arrives one round-trip later; the
     // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
     // the session down. destroy() remains immediate.
-    if (this.#connections === 0 && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
+    if (this.#closedWithNoStream() && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
       // An unACKed ping gets the same bounded grace as an unACKed SETTINGS: node always
       // delivers the ping callback its RTT on a healthy session, never a cancel error.
-      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
-        scheduleSettingsAckGraceNT(this);
-      } else {
-        captureHttp2PerfFrameSnapshot(this, this.#parser);
-        setImmediate(destroyIfNotDestroyedNT, this);
-      }
+      this.#destroyAfterAckGrace();
     }
   }
 
@@ -5917,8 +5951,7 @@ class ClientHttp2Session extends Http2Session {
         // Requests still queued (waiting for connect or for a concurrency slot) never reached the
         // wire; node cancels them with ERR_HTTP2_STREAM_CANCEL (carrying the session error, if any,
         // as its cause).
-        const pendingRequests = this.#pendingRequests;
-        this.#pendingRequests = null;
+        const pendingRequests = this.#takeQueuedRequests();
         if (pendingRequests !== null && pendingRequests.length > 0) {
           const cancelError = createPendingStreamCancelError(error);
           for (let i = 0; i < pendingRequests.length; i++) {
@@ -6004,7 +6037,8 @@ class ClientHttp2Session extends Http2Session {
         if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
         if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
       }
-      if (this.destroyed) {
+      // destroy() can run an 'aborted' listener before `destroyed` is true. Nothing ends a request that is queued then.
+      if (this.destroyed || this.#destroying) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         process.nextTick(destroyWithInvalidSessionNT, req);
         return req;
@@ -6301,23 +6335,34 @@ class ClientHttp2Session extends Http2Session {
         if (onClientStreamCreatedChannel.hasSubscribers) {
           onClientStreamCreatedChannel.publish({ stream: req, headers });
         }
-        if (this.#pendingRequests === null) {
-          this.#pendingRequests = [];
-        }
         // Preserve both forms: the on-wire (array) form keeps duplicate-header interleaving the
         // object form cannot represent; the object form is what diagnostics channels publish.
-        this.#pendingRequests.push({
+        const queued: QueuedRequest = {
           req,
           headers,
           wireHeaders: rawHeadersList !== null ? rawHeadersList : headers,
           sensitiveNames,
           options,
-        });
+        };
         // node corks every Http2Stream until its native handle is assigned; same here so
         // synchronous writes after a queued request() batch through _writev once the slot frees.
         req.cork();
         process.nextTick(uncorkNT, req);
+        // Ahead of the queue, as in node: when this throws, nothing is queued.
         setupRequestEndAndSignal(req, options, signal);
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1914-L1922
+        if (!this.#socketConnecting) {
+          if (this.#pendingRequests === null) {
+            this.#pendingRequests = [];
+          }
+          this.#pendingRequests.push(queued);
+        } else if (this.#requestsBeforeConnect !== null) {
+          this.#requestsBeforeConnect.push(queued);
+        } else {
+          this.#requestsBeforeConnect = [queued];
+          // The list is set first: once() runs 'newListener' handlers, which may call request() or destroy().
+          this.once("connect", this.#submitRequestsBeforeConnect.bind(this));
+        }
         return req;
       }
 
@@ -6351,10 +6396,27 @@ class ClientHttp2Session extends Http2Session {
     } catch (e: any) {
       if (connectionsCounted) {
         this.#connections--;
-        process.nextTick(emitErrorNT, this, e, this.#connections === 0 && this.#closed);
+        process.nextTick(emitErrorNT, this, e, this.#closedWithNoStream());
       }
       throw e;
     }
+  }
+
+  // node's requestOnConnect, for each request made while the socket connected.
+  #submitRequestsBeforeConnect() {
+    const requests = this.#requestsBeforeConnect;
+    this.#requestsBeforeConnect = null;
+    if (requests === null) return;
+    const pending = this.#pendingRequests;
+    if (this.#closed) {
+      // A 'connect' listener that ran before this one called close().
+      for (let i = 0; i < requests.length; i++) streamRejectedByGoawaySession(requests[i].req);
+      if (this.#closedWithNoStream() && (pending === null || pending.length === 0)) this.#destroyAfterAckGrace();
+      return;
+    }
+    if (pending === null || pending.length === 0) this.#pendingRequests = requests;
+    else for (let i = 0; i < requests.length; i++) pending.push(requests[i]);
+    this.#flushPendingRequests();
   }
 
   // Counts a submitted request against the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit until its

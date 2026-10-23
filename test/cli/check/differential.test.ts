@@ -3141,3 +3141,108 @@ test.concurrent.skipIf(!tsc || isDebug || isASAN)("matches tsc on expressions ne
   expect(theirs.filter(line => line.includes("error TS2322"))).toHaveLength(3);
   expect(ours).toEqual(theirs);
 });
+
+// A string ends where TypeScript's scanner ends it: after the closing quote, before a line break or the end of the file
+// if it isn't closed, and before the `*/` of a JSDoc comment. A backslash before a line break continues it.
+// Each use: the file's extension, the text before the literal, its content, the rest of a closed literal's line, and
+// the lines after it. An import type isn't among them: the declaration emitter closes its argument.
+const stringUses: [
+  name: string,
+  extension: string,
+  before: string,
+  content: string,
+  rest: string,
+  ...after: string[],
+][] = [
+  ["export-star", "ts", "export * from ", "./m", ";"],
+  ["export-named", "ts", "export { a } from ", "./m", ";"],
+  ["import", "ts", "import ", "./m", ";", "export {};"],
+  ["import-named", "ts", "import { a } from ", "./m", ";", "export const c: typeof a = 1;"],
+  ["import-equals", "cts", "export import x = require(", "./m", ");"],
+  ["jsdoc-import", "js", "/** @import { A } from ", "./m", " */", "/** @type {A} */", "export const v = 1;"],
+  ["export-name", "ts", "const a = 1; export { a as ", "b", " };"],
+  ["import-name", "ts", "import { ", "a", ' as y } from "./m";', "export const z: typeof y = 1;"],
+  ["import-call", "ts", "export const p = import(", "./m", ");"],
+  ["require-call", "js", "const r = require(", "./m", ");", "export const v = 1;"],
+];
+// Each ending: the line break of the file, what follows the content, and whether the literal is closed.
+const stringEndings: [name: string, lineBreak: string, end: (quote: string) => string, closed: boolean][] = [
+  ["closed", "\n", quote => quote, true],
+  ["closed-crlf", "\r\n", quote => quote, true],
+  ["lf", "\n", () => "", false],
+  ["crlf", "\r\n", () => "", false],
+  ["cr", "\r", () => "", false],
+  ["end-of-file", "", () => "", false],
+  ["continued-lf", "\n", quote => "\\\n" + quote, true],
+  ["continued-crlf", "\r\n", quote => "\\\r\n" + quote, true],
+  ["continued-cr", "\r", quote => "\\\r" + quote, true],
+  ["continued-lf-open", "\n", () => "\\\nx", false],
+  ["continued-crlf-open", "\r\n", () => "\\\r\nx", false],
+  ["escaped-quote", "\n", quote => "\\" + quote, false],
+  ["comment-end", "\n", () => " */", false],
+  ["comment-end-tight", "\n", () => "*/", false],
+];
+const stringOptions = { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", noLib: true };
+const stringConfig = (more: object, rest: object = {}) =>
+  JSON.stringify({ compilerOptions: { ...stringOptions, types: [], allowJs: true, checkJs: true, ...more }, ...rest });
+// Instead of the library files, which a debug build takes seconds to load.
+const stringGlobals =
+  "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String Promise<T>"
+    .split(" ")
+    .map(name => `interface ${name} {}\n`)
+    .join("") + "declare var Promise: { new <T>(): Promise<T> };\n";
+
+// A syntax error ends a program before anything is checked, and an error in a JSDoc comment doesn't. So the files with
+// a syntax error are one program, and the others are another. `referenced`: another project parses the declaration
+// file that is emitted for each file.
+differential.each([...product(["plain", "referenced"], [true, false])])(
+  "matches tsc on where a module specifier or a string name ends: %s, with a syntax error %p",
+  async (layout, stops) => {
+    const sources: Record<string, string> = {};
+    let cells = 0;
+    for (const [use, quote, ending] of product(stringUses, [`"`, `'`], stringEndings)) {
+      const [name, extension, before, content, rest, ...after] = use;
+      const [endingName, lineBreak, end, closed] = ending;
+      const inComment = before.startsWith("/**");
+      // Only a literal in a comment can end at a `*/`. One that isn't closed is a syntax error outside of a comment.
+      if ((endingName.startsWith("comment-end") && !inComment) || (!closed && !inComment) !== stops) continue;
+      if (cells++ % everyThird !== 0) continue;
+      const first = before + quote + content + end(quote) + (closed ? rest : "");
+      const text = lineBreak ? [first, ...after].join(lineBreak) + lineBreak : first;
+      sources[`${name}.${quote === `"` ? "double" : "single"}.${endingName}.${extension}`] = text;
+    }
+    const m = `export const a = 1;\nexport type A = number;\n`;
+    const planted = `export const planted: number = "x";\n`;
+    const emits = { composite: true, emitDeclarationOnly: true };
+    const inLib = Object.entries(sources).map(([name, text]) => [`lib/${name}`, text]);
+    const imports = Object.keys(sources).map(name => `import "../lib/${name.replace(/\.ts$/, "")}";\n`);
+    const plain = {
+      "tsconfig.json": stringConfig({ noEmit: true, explainFiles: true }),
+      "globals.d.ts": stringGlobals,
+      "m.ts": m,
+      "planted.ts": planted,
+      ...sources,
+    };
+    const referenced = {
+      "tsconfig.json": `{ "files": [], "references": [{ "path": "./lib" }, { "path": "./app" }] }`,
+      "lib/tsconfig.json": stringConfig(emits),
+      "lib/globals.d.ts": stringGlobals,
+      "lib/m.ts": m,
+      ...Object.fromEntries(inLib),
+      "app/tsconfig.json": stringConfig(emits, { references: [{ path: "../lib" }] }),
+      "app/globals.d.ts": stringGlobals,
+      "app/main.ts": imports.join("") + planted,
+    };
+    using dir = tempDir("bun-check-differential", layout === "plain" ? plain : referenced);
+    const root = String(dir);
+    const build = layout === "plain" ? [] : ["-b"];
+    const [ours, onOneThread] = await Promise.all([
+      linesOf([bunExe(), "check", ...build], root, root),
+      linesOf([bunExe(), "check", ...build, "--threads=1"], root, root),
+    ]);
+    // tsc runs last, because `tsc -b` writes files.
+    const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], root, root);
+    expect(theirs.join("\n")).toContain(stops ? "error TS1002" : layout === "plain" ? "Imported via" : "error TS");
+    expect({ ours, onOneThread }).toEqual({ ours: theirs, onOneThread: theirs });
+  },
+);

@@ -3135,11 +3135,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `getLiteralTextOfNode` of the module specifier literal in the statement `s`: its source text.
     fn module_specifier_text(&self, s: StmtId, spec: Atom) -> Vec<u8> {
         let hir = self.c.hir(self.file());
-        let (from, to) = (hir[s].start, hir[s].loc.end);
-        // The parser records the specifier of a statement after those in its decorators and attributes.
-        let mut uses = hir.specifier_uses.iter();
-        let specifier_use = uses.rfind(|it| it.pos < to && it.pos >= from && it.spec == spec);
-        if let Some(start) = specifier_use.map(|it| it.pos)
+        if let Some(start) = hir.specifier_of_stmt(s, spec).map(|it| it.pos)
             && matches!(hir.text.get(start as usize), Some(b'"' | b'\''))
         {
             let end = self.c.end_of_string_at(self.file(), start);

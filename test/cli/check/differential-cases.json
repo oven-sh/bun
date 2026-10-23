@@ -18822,5 +18822,16 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true, \"traceResolution\": true, \"allowJs\": true } }\n",
       "words.ts": "import(\"./m\nconst a = 1;\n// import import require\nexport const b = a;\n"
     }
+  },
+  "ts2308-for-an-export-whose-decorator-or-attribute-has-a-module-specifier-too": {
+    "files": {
+      "attribute.ts": "export * from \"./m\" with { a: (null! as import('./m').T) };\nexport * from \"./n\";\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ninterface ImportAttributes {}\n",
+      "m.ts": "export const a = 1;\nexport type T = number;\n",
+      "n.ts": "export const a = 2;\n",
+      "other.ts": "@(null! as typeof import('./n')) export * from \"./m\";\nexport * from \"./n\";\n",
+      "star.ts": "@(null! as import('./m').T) export * from \"./m\";\nexport * from \"./n\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true } }\n"
+    }
   }
 }

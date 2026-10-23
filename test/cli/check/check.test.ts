@@ -22729,6 +22729,10 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
           app/main.ts(6,14): error TS2322: Type 'string' is not assignable to type 'number'."
         `);
         expect(exitCode).toBe(1);
+        // Without `-b`, `app` still reads what `lib` emits. This is the line of `tsc -p app` after `tsc -b lib`.
+        expect((await check(dir, ["-p", "app"])).stdout).toBe(
+          `app/main.ts(6,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
+        );
       });
 
       // `export * from "./m;`: the `;` that the declaration gets is on the line of the literal. In `decorator.ts` the
@@ -22824,6 +22828,24 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         expect(exitCode).toBe(1);
       });
 
+      // An export in a function of a JSDoc type. tsc underlines `"eq` and `"./m `, 3 and 5 columns.
+      test("before the `*/` of a JSDoc comment, for an export in a JSDoc type", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": config({ noEmit: true }),
+          "globals.d.ts": globals,
+          "m.ts": `export const a = 1;\n`,
+          "eq.d.ts": `declare module "eq" {\n  const value: { a: number };\n  export = value;\n}\n`,
+          "equals.js": `/** @type {{ get x() { module "foo" { export * from "eq*/\nvar x;\n`,
+          "namespace.js": `/** @type {{ get x() { namespace N { export * from "./m */\nvar y;\n`,
+        });
+        const { stdout, exitCode } = await check(dir, [], { GITHUB_ACTIONS: "true" });
+        expect(stdout.split("\n").filter(line => /title=TS(1194|2498)::/.test(line))).toEqual([
+          `::error file=equals.js,line=1,col=53,endLine=1,endColumn=56,title=TS2498::Module '"eq"' uses 'export =' and cannot be used with 'export *'.`,
+          `::error file=namespace.js,line=1,col=52,endLine=1,endColumn=57,title=TS1194::Export declarations are not permitted in a namespace.`,
+        ]);
+        expect(exitCode).toBe(1);
+      });
+
       // The second call is no part of the first, whose specifier ends with its line.
       test("before the line break, for `--traceResolution` of an `import()`", async () => {
         using dir = tempDir("bun-check", {
@@ -22858,6 +22880,51 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         `);
         expect(exitCode).toBe(1);
       });
+
+      // `bun lint --type-check` reports type errors after a syntax error, as an editor does. These are the lines of
+      // tsc's language server. TS2308 has the specifier of the statement in `decorator.ts`, and in `own.ts` the one
+      // that the line break ends. In `inside.js` the `*/` ends it.
+      test("before the line break and the `*/`, for the type errors that `bun lint` reports after a syntax error", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": config({ noEmit: true }),
+          ".oxlintrc.json": `{ "categories": { "correctness": "off" } }`,
+          "globals.d.ts": globals,
+          "m.ts": `export const a = 1;\n`,
+          "n.ts": `export const a = 2;\n`,
+          "decorator.ts": `@(function () { import x = require("./m\n) }) export * from "./m";\nexport * from "./n";\n`,
+          "own.ts": `export * from "./m\nexport * from "./n";\n`,
+          "inside.js": `namespace N {\n  /** @import { A } from "./missing */\n  /** @type {A} */\n  export const v = 1;\n}\nexport {};\n`,
+        });
+        const { stdout, exitCode } = await run(String(dir), ["lint", "--type-aware", "--type-check", "-f", "github"]);
+        const typeErrors = stdout.split("\n").filter(line => /typescript\(TS(1147|2307|2308)\)/.test(line));
+        expect(typeErrors).toEqual([
+          `::error file=decorator.ts,line=3,endLine=3,col=1,endColumn=21,title=typescript(TS2308)::decorator.ts:3:1: Module "./m" has already exported a member named 'a'. Consider explicitly re-exporting to resolve the ambiguity.`,
+          `::error file=inside.js,line=2,endLine=2,col=26,endColumn=37,title=typescript(TS1147)::inside.js:2:26: Import declarations in a namespace cannot reference a module.`,
+          `::error file=inside.js,line=2,endLine=2,col=26,endColumn=37,title=typescript(TS2307)::inside.js:2:26: Cannot find module './missing ' or its corresponding type declarations.`,
+          `::error file=own.ts,line=2,endLine=2,col=1,endColumn=21,title=typescript(TS2308)::own.ts:2:1: Module "./m has already exported a member named 'a'. Consider explicitly re-exporting to resolve the ambiguity.`,
+        ]);
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    // A decorator of an export is an error, and the import type in this one has a module specifier too. TS2308 quotes
+    // the one that the statement has.
+    test("TS2308 quotes the module specifier of the statement, not the one in its decorator", async () => {
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, lib: undefined, noLib: true },
+        }),
+        "globals.d.ts": globals,
+        "m.ts": `export const a = 1;\nexport type T = number;\n`,
+        "n.ts": `export const a = 2;\n`,
+        "star.ts": `@(null! as import('./m').T) export * from "./m";\nexport * from "./n";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "star.ts(1,1): error TS1206: Decorators are not valid here.
+        star.ts(2,1): error TS2308: Module "./m" has already exported a member named 'a'. Consider explicitly re-exporting to resolve the ambiguity."
+      `);
+      expect(exitCode).toBe(1);
     });
   });
 

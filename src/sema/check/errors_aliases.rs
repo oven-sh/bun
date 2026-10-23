@@ -144,21 +144,11 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── error ranges ─────────────────────────────
 
-    /// The position of the module specifier `spec` of the statement at `pos`.
-    fn aliases_specifier_pos(&self, file: FileId, pos: u32, spec: Atom) -> Option<u32> {
-        self.hir(file)
-            .specifier_uses
-            .iter()
-            .filter(|u| u.spec == spec && u.pos >= pos && !u.kind.is_call())
-            .map(|u| u.pos)
-            .min()
-    }
-
-    /// `GetTextOfNode` of the same specifier, including its quotes.
-    fn aliases_specifier_text(&self, file: FileId, pos: u32, spec: Atom) -> Vec<u8> {
-        let text = &self.hir(file).text;
-        match self.aliases_specifier_pos(file, pos, spec) {
-            Some(at) if matches!(text.get(at as usize), Some(b'"' | b'\'')) => {
+    /// `GetTextOfNode` of the module specifier `spec` of the statement `s`, including its quotes.
+    fn aliases_specifier_text(&self, file: FileId, s: StmtId, spec: Atom) -> Vec<u8> {
+        let hir = self.hir(file);
+        match hir.specifier_of_stmt(s, spec).map(|it| it.pos) {
+            Some(at) if matches!(hir.text.get(at as usize), Some(b'"' | b'\'')) => {
                 self.source_text(file, at, self.end_of_string_at(file, at))
             }
             _ => cat!(b"\"", self.atoms().bytes(spec), b"\""),
@@ -394,7 +384,7 @@ impl Checker<'_, '_> {
             }
             let (of, first) = collision.first;
             if let StmtKind::ExportStar { spec, .. } = self.hir(of)[first].kind {
-                let specifier = self.aliases_specifier_text(of, self.hir(of)[first].start, spec);
+                let specifier = self.aliases_specifier_text(of, first, spec);
                 let arguments = vec![specifier, self.atom_text(collision.name)];
                 reported.push((collision.duplicate.1, arguments));
             }

@@ -2602,6 +2602,12 @@ impl<S: Storage> FileIn<S> {
     pub fn stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
         stmt_modifiers_in(&self.modifiers_of_stmts, s)
     }
+    /// The module specifier `spec` of the statement `s`. The parser records it after the specifiers inside `s`.
+    pub fn specifier_of_stmt(&self, s: StmtId, spec: Atom) -> Option<&SpecifierUse> {
+        let (from, to) = (self[s].start, self[s].loc.end);
+        let mut uses = self.specifier_uses.iter();
+        uses.rfind(|it| it.pos < to && it.pos >= from && it.spec == spec)
+    }
     /// `node.Modifiers()` of the member `p` of an object literal.
     pub fn prop_modifiers(&self, p: PropId) -> Span<ModifierId> {
         let found = self

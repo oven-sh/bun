@@ -9,6 +9,10 @@
 //!    reverse import edges to find every test entry point that can reach it.
 //!
 //! Only those test entry points are returned.
+//!
+//! The graph names each file by its real path, as git does. A test file found
+//! through a symbolic link has another path, so the scan reports the graph
+//! node of each test file by position.
 
 use bun_bundler::mal_prelude::*;
 
@@ -131,8 +135,13 @@ pub(crate) fn filter<'a>(
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
+    // git names a file by its real path, so the scan must too, also when the
+    // run keeps the paths of links.
+    let mut args = ctx.args.clone();
+    args.preserve_symlinks = None;
+
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, args, Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -165,11 +174,17 @@ pub(crate) fn filter<'a>(
     // scope exit; the arena bulk-free skips Drop.
     let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
+    // The bundler source index of each test_files slot. The scan fills it by
+    // position: a test file can have another path in the graph, and one that
+    // does not resolve has no source.
+    let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
+
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
         Some(core::ptr::NonNull::from(&mut event_loop)),
         &entry_points,
+        &mut slot_to_source,
     ) {
         Ok(b) => b,
         Err(err) => {
@@ -240,15 +255,6 @@ pub(crate) fn filter<'a>(
             }
             importers[dep.get() as usize].push(importer);
         }
-    }
-
-    // Map the original test_files slot -> bundler source index. An entry
-    // point that failed to resolve is skipped by enqueueEntryPoints, so
-    // match by absolute path via path_to_index rather than by position.
-    let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
-    debug_assert_eq!(test_files.len(), slot_to_source.len());
-    for (tf, out) in test_files.iter().zip(slot_to_source.iter_mut()) {
-        *out = path_to_index.get(tf.as_bytes()).copied();
     }
 
     // BFS backward from every changed file that participates in the graph.

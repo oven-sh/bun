@@ -7483,7 +7483,9 @@ impl<'s> Files<'s> {
             self.memo.whole.insert(part, Some(self.canonical(part)));
         }
         for &whole in self.merged_parts.keys() {
-            self.memo.whole.insert(whole, Some(whole));
+            if !self.merged_symbols.contains_key(&whole) {
+                self.memo.whole.insert(whole, Some(whole));
+            }
         }
         let at_merge = ArenaVec::new_in(self.arena);
         for (module, links) in std::mem::replace(self.module_links_at_merge.get_mut(), at_merge) {
@@ -7847,13 +7849,16 @@ impl<'s> Files<'s> {
     }
 
     /// `cloneSymbol`. The clone is a symbol of the same file as `symbol`, so `decls`, `parent` and
-    /// `exports` have the same meaning as for `symbol`. It takes over the table entries of
-    /// `symbol`: from now on `canonical` redirects past `symbol`.
+    /// `exports` have the same meaning as for `symbol`. From now on `canonical` redirects past
+    /// `symbol`. A clone that's cloned keeps its contents: its module's table still has it, so a later
+    /// augmentation of that module is merged into it, and another alias for it clones it again.
     fn clone_symbol(&mut self, symbol: Sym) -> Sym {
-        let parts = self.merged_parts.remove(&symbol);
-        let exports = self.merged_exports.remove(&symbol);
-        let members = self.merged_members.remove(&symbol);
         let arena = self.arena;
+        let parts = self.merged_parts.get(&symbol);
+        let parts = parts.map(|parts| vec_from_iter_in(parts.iter().copied(), arena));
+        let copy = |table: &SymbolMap<'s>| SymbolMap::from_iter_in(table.iter().copied(), arena);
+        let exports = self.merged_exports.get(&symbol).map(copy);
+        let members = self.merged_members.get(&symbol).map(copy);
         let cloned = self.symbol(symbol);
         let is_clone = cloned.flags.contains(SymFlags::TRANSIENT);
         let clone = Symbol {

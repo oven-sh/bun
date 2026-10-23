@@ -17115,6 +17115,139 @@ declare module "./reexport" {
       expect(exitCode).toBe(1);
     });
 
+    test("an augmentation of a module after one through a re-export, and a second re-export, keep the earlier declarations", async () => {
+      // In each: the declaration, what "./expect" is augmented with twice, what the two modules that re-export it are
+      // augmented with, and the uses. `@` is A or B.
+      const kinds: Record<string, [declaration: string, direct: string, through: string, use: string]> = {
+        interface: [
+          `export interface X { own: 1 }`,
+          `interface X { direct@: 1 }`,
+          `interface X { through@: 1 }`,
+          `declare const a: A, b: B, c: C;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+export const ab: A = b, ba: B = a, ac: A = c, ca: C = a, bc: B = c, cb: C = b;
+`,
+        ],
+        class: [
+          `export class X { own = 1; static s = 1 }`,
+          `interface X { direct@: 1 }`,
+          `interface X { through@: 1 }`,
+          `declare const a: A, b: B, c: C;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+export const ab: A = b, ba: B = a, ac: A = c, ca: C = a, bc: B = c, cb: C = b;
+A.s; B.s; C.s; new A().throughA; new B().throughA; new C().throughA;
+`,
+        ],
+        namespace: [
+          `export namespace X { export const own = 1; }`,
+          `namespace X { const direct@: 1; }`,
+          `namespace X { const through@: 1; }`,
+          `A.own; A.directA; A.directB; A.throughA; A.throughB;
+B.own; B.directA; B.directB; B.throughA; B.throughB;
+C.own; C.directA; C.directB; C.throughA; C.throughB;
+`,
+        ],
+        enum: [
+          `export enum X { own }`,
+          `enum X { direct@ = 10 }`,
+          `enum X { through@ = 20 }`,
+          `A.own; A.directA; A.directB; A.throughA; A.throughB;
+B.own; B.directA; B.directB; B.throughA; B.throughB;
+C.own; C.directA; C.directB; C.throughA; C.throughB;
+`,
+        ],
+        classns: [
+          `export class X { own = 1 }`,
+          `namespace X { const direct@: 1; }`,
+          `namespace X { const through@: 1; }`,
+          `A.directA; A.directB; A.throughA; A.throughB;
+B.directA; B.directB; B.throughA; B.throughB;
+C.directA; C.directB; C.throughA; C.throughB;
+`,
+        ],
+        nested: [
+          `export namespace X { export interface Y { own: 1 } }`,
+          `namespace X { interface Y { direct@: 1 } }`,
+          `namespace X { interface Y { through@: 1 } }`,
+          `declare const a: A.Y, b: B.Y, c: C.Y;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+`,
+        ],
+        generic: [
+          `export interface X<T = any> { own: T }`,
+          `interface X<T> { direct@: T }`,
+          `interface X<T> { through@: T }`,
+          `declare const a: A<1>, b: B<1>, c: C<1>;
+a.own; a.directA; a.directB; a.throughA; a.throughB;
+b.own; b.directA; b.directB; b.throughA; b.throughB;
+c.own; c.directA; c.directB; c.throughA; c.throughB;
+export const ab: A<1> = b, ba: B<1> = a, bc: B<1> = c, cb: C<1> = b;
+`,
+        ],
+      };
+      const files: Record<string, string> = {};
+      for (const [kind, [declaration, direct, through, use]] of Object.entries(kinds)) {
+        files[`${kind}/expect.ts`] = declaration;
+        for (const copy of ["A", "B"]) {
+          files[`${kind}/chunk${copy}.ts`] =
+            `export {};\ndeclare module "./expect" {\n  ${direct.replaceAll("@", copy)}\n}\n`;
+          files[`${kind}/vitest${copy}.ts`] = `import "./chunk${copy}";\nexport { X } from "./expect";\n`;
+          files[`${kind}/browser${copy}.ts`] =
+            `import "./vitest${copy}";\ndeclare module "./vitest${copy}" {\n  ${through.replaceAll("@", copy)}\n}\n`;
+        }
+        files[`${kind}/use.ts`] =
+          `import "./browserA";\nimport "./browserB";\nimport { X as A } from "./vitestA";\n` +
+          `import { X as B } from "./vitestB";\nimport { X as C } from "./expect";\n${use}`;
+      }
+      using dir = project(files);
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "class/use.ts(7,21): error TS2551: Property 'directB' does not exist on type 'X'. Did you mean 'directA'?
+        class/use.ts(7,44): error TS2551: Property 'throughB' does not exist on type 'X'. Did you mean 'throughA'?
+        class/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        class/use.ts(9,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        class/use.ts(10,14): error TS2741: Property 'throughA' is missing in type 'import("<dir>/class/vitestB").X' but required in type 'import("<dir>/class/vitestA").X'.
+        class/use.ts(10,25): error TS2739: Type 'import("<dir>/class/vitestA").X' is missing the following properties from type 'import("<dir>/class/vitestB").X': directB, throughB
+        class/use.ts(10,36): error TS2741: Property 'throughA' is missing in type 'import("<dir>/class/vitestB").X' but required in type 'import("<dir>/class/vitestA").X'.
+        class/use.ts(10,47): error TS2739: Type 'import("<dir>/class/vitestA").X' is missing the following properties from type 'import("<dir>/class/vitestB").X': directB, throughB
+        class/use.ts(11,42): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        class/use.ts(11,60): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        classns/use.ts(6,14): error TS2551: Property 'directB' does not exist on type 'typeof X'. Did you mean 'directA'?
+        classns/use.ts(6,37): error TS2551: Property 'throughB' does not exist on type 'typeof X'. Did you mean 'throughA'?
+        classns/use.ts(7,25): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        classns/use.ts(8,25): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        enum/use.ts(6,21): error TS2551: Property 'directB' does not exist on type 'typeof X'. Did you mean 'directA'?
+        enum/use.ts(6,44): error TS2551: Property 'throughB' does not exist on type 'typeof X'. Did you mean 'throughA'?
+        enum/use.ts(7,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        enum/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        generic/use.ts(7,21): error TS2551: Property 'directB' does not exist on type 'X<1>'. Did you mean 'directA'?
+        generic/use.ts(7,44): error TS2551: Property 'throughB' does not exist on type 'X<1>'. Did you mean 'throughA'?
+        generic/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'X<1>'. Did you mean 'throughB'?
+        generic/use.ts(9,32): error TS2551: Property 'throughA' does not exist on type 'X<1>'. Did you mean 'throughB'?
+        generic/use.ts(10,14): error TS2741: Property 'throughA' is missing in type 'import("<dir>/generic/vitestB").X<1>' but required in type 'import("<dir>/generic/vitestA").X<1>'.
+        generic/use.ts(10,28): error TS2739: Type 'import("<dir>/generic/vitestA").X<1>' is missing the following properties from type 'import("<dir>/generic/vitestB").X<1>': directB, throughB
+        interface/use.ts(7,21): error TS2551: Property 'directB' does not exist on type 'X'. Did you mean 'directA'?
+        interface/use.ts(7,44): error TS2551: Property 'throughB' does not exist on type 'X'. Did you mean 'throughA'?
+        interface/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        interface/use.ts(9,32): error TS2551: Property 'throughA' does not exist on type 'X'. Did you mean 'throughB'?
+        interface/use.ts(10,14): error TS2741: Property 'throughA' is missing in type 'import("<dir>/interface/vitestB").X' but required in type 'import("<dir>/interface/vitestA").X'.
+        interface/use.ts(10,25): error TS2739: Type 'import("<dir>/interface/vitestA").X' is missing the following properties from type 'import("<dir>/interface/vitestB").X': directB, throughB
+        interface/use.ts(10,36): error TS2741: Property 'throughA' is missing in type 'import("<dir>/interface/vitestB").X' but required in type 'import("<dir>/interface/vitestA").X'.
+        interface/use.ts(10,47): error TS2739: Type 'import("<dir>/interface/vitestA").X' is missing the following properties from type 'import("<dir>/interface/vitestB").X': directB, throughB
+        namespace/use.ts(6,21): error TS2551: Property 'directB' does not exist on type 'typeof X'. Did you mean 'directA'?
+        namespace/use.ts(6,44): error TS2551: Property 'throughB' does not exist on type 'typeof X'. Did you mean 'throughA'?
+        namespace/use.ts(7,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?
+        namespace/use.ts(8,32): error TS2551: Property 'throughA' does not exist on type 'typeof X'. Did you mean 'throughB'?"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

@@ -24,6 +24,7 @@ using namespace JSC;
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
     macro(Buffer) \
+    macro(FastBuffer) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
@@ -48,6 +49,7 @@ using namespace JSC;
     macro(birthtimeMs) \
     macro(blob) \
     macro(body) \
+    macro(buffer) \
     macro(bunNativePtr) \
     macro(bytes) \
     macro(cancel) \
@@ -143,6 +145,7 @@ using namespace JSC;
     macro(peekPromiseSettledValue) \
     macro(peekPromiseStatus) \
     macro(pokePromiseAsHandled) \
+    macro(poolSize) \
     macro(port) \
     macro(prev) \
     macro(preventAbort) \

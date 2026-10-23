@@ -79,7 +79,6 @@ interface ParsedBuiltin {
 interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
-  constructAbility: string;
   overriddenName: string;
   source: string;
   params: string[];
@@ -187,11 +186,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       } catch (error) {
         throw new SyntaxError("Could not parse directive value " + directive[2] + " (must be JSON parsable)");
       }
-      if (name === "constructor") {
-        directives.ConstructAbility = "CanConstruct";
-      } else {
-        directives[name] = value;
-      }
+      directives[name] = value;
       contents = contents.slice(directive[0].length);
     } else if (match[1] === "export function" || match[1] === "export async function") {
       // consume async token and function name
@@ -345,7 +340,6 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       // Async functions automatically get Private visibility because the parser
       // upgrades them when they use await (see Parser.cpp parseFunctionBody)
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),
-      constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
 
       // Not known yet.
       sourceOffset: 0,
@@ -612,7 +606,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       const name = `${lowerBasename}${cap(fn.name)}Code`;
       bundledHeader += `// ${fn.name}
     #define WEBCORE_BUILTIN_${basename.toUpperCase()}_${fn.name.toUpperCase()} 1
-    static constexpr JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
+    static constexpr JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::CannotConstruct;
     static constexpr JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"};
     static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
     static constexpr JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};

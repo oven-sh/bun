@@ -49,8 +49,6 @@ declare var $overriddenName: string;
 declare var $linkTimeConstant: never;
 /** Assign to this directly above a function declaration (like a decorator) to set visibility */
 declare var $visibility: "Public" | "Private" | "PrivateRecursive";
-/** Assign to this directly above a function declaration (like a decorator) to make it a constructor. */
-declare var $constructor;
 /** Place this directly above a function declaration (like a decorator) to always inline the function */
 declare var $alwaysInline;
 
@@ -426,12 +424,9 @@ interface Map {
 declare var $Array: ArrayConstructor;
 declare var $Buffer: {
   byteLength: typeof Buffer.byteLength;
-  new (array: Array): Buffer;
-  new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
-  new (view: ArrayBufferView, byteOffset?: number, length?: number): Buffer;
-  new (buffer: Buffer): Buffer;
-  new (size: number): Buffer;
-  new (string: string, encoding?: BufferEncoding): Buffer;
+  [Symbol.hasInstance](value: unknown): value is Buffer;
+  /** Node's `FastBuffer`: the Uint8Array constructor with `Buffer.prototype`. The Buffer constructor is `Buffer.from()`. */
+  $FastBuffer: new (bufferOrLength?: ArrayBufferLike | number, byteOffset?: number, length?: number) => Buffer;
 };
 
 declare interface Error {

@@ -47,6 +47,8 @@ pristineArray.parts = [{ part: "Instance", class: "Array", pristine: ["Storage",
 
 const sizeOf = Reflect.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const timeOf = Date.prototype.getTime;
+const byteAt = Uint8Array.prototype.at;
+const lengthOfView = Reflect.getOwnPropertyDescriptor(Reflect.getPrototypeOf(Uint8Array.prototype)!, "length")!.get!;
 
 function requireObject(value: unknown): void {
   if ((typeof value !== "object" || value === null) && typeof value !== "function") throw new TypeError();
@@ -197,6 +199,27 @@ const refusesNegativeIndex = overload({
   capability: "none",
   throws: true,
   readsStateBeforeConversions: true,
+  ...returning(primitive("Number")),
+});
+const convertsAnything = overload({
+  parameters: [parameter(first, { protocols: ["ToPrimitive"] })],
+  throws: true,
+  ...returning(primitive("String")),
+});
+const walksEverything = overload({
+  parameters: [
+    parameter(first, {
+      uses: ["Inspects", "ReadsContents", "AppliesTransitively"],
+      protocols: ["OwnKeys", "OwnValues", "ToPrimitive", "ToJSON"],
+    }),
+  ],
+  throws: true,
+  ...returning(primitive("String", "Undefined")),
+});
+const sumsBytesOfAnything = overload({
+  parameters: [parameter(first, { uses: ["Inspects", "ReadsContents"] })],
+  capability: "none",
+  reads: [...objectHeaps, "TypedArrayStorage", "TypedArrayElements"],
   ...returning(primitive("Number")),
 });
 const convertsBoth = overload({
@@ -497,6 +520,28 @@ const cases: Case[] = [
     declared: takesObject,
     wrong: withParameters(takesObject, parameter(first, { accepted: anyObject })),
     column: "parameters[0].accepted",
+  },
+  {
+    title: "the heap of a class, where native code reads whatever object it is given",
+    double: (value: unknown) =>
+      types.isUint8Array(value) && Reflect.apply(lengthOfView, value, []) > 0 ? Reflect.apply(byteAt, value, [0]) : 0,
+    declared: sumsBytesOfAnything,
+    wrong: { ...sumsBytesOfAnything, reads: objectHeaps },
+    column: "reads",
+  },
+  {
+    title: "nothing, where a protocol of the operand reads the memory",
+    double: (value: unknown) => `${value}`,
+    declared: convertsAnything,
+    wrong: convertsAnything,
+    column: "",
+  },
+  {
+    title: "nothing, where the protocols run on all that the operand reaches",
+    double: (value: unknown) => JSON.stringify(value),
+    declared: walksEverything,
+    wrong: walksEverything,
+    column: "",
   },
   {
     title: "state that is read before a conversion",

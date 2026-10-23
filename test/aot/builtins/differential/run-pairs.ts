@@ -6,6 +6,7 @@ import { changeState, contentOrigin, createCallback, findCandidate, type Candida
 import { Log } from "./log";
 import type { Invocation, Realm } from "./members";
 import { perform, runSet } from "./observe";
+import { readsOfOperandCode } from "./operand-code";
 import { admitsValue, baseSetOf, isCallThatExists, withArgument, withReceiver, type Call } from "./operands";
 import { candidateOf, valueOf, type Completion, type OperandSet, type Run } from "./runs";
 import {
@@ -368,6 +369,8 @@ function complete(invocation: Invocation, receiver: unknown, args: unknown[]): C
 // Its own values, and what the getters of its class answer for it: an object of the host keeps what it holds in native memory, and the formatter prints it from there.
 function valuesHeldBy(value: object): unknown[] {
   const held = Reflect.ownKeys(value).map(key => Reflect.getOwnPropertyDescriptor(value, key)!.value);
+  if (types.isMap(value)) held.push(...value.keys(), ...value.values());
+  if (types.isSet(value)) held.push(...value);
   for (
     let holder = Object.getPrototypeOf(value);
     holder !== null && Object.getPrototypeOf(holder) !== null;
@@ -404,6 +407,51 @@ function freeze(completion: Completion): Completion {
   }
 }
 
+type StoreOutcome = "NoVerdict" | "Explained" | { message: string };
+
+// The call, a store to memory of the operand, and the call again, on operands that are made anew.
+async function callAroundStore(
+  realm: Realm,
+  call: Call,
+  invocation: Invocation,
+  overload: DumpedOverload,
+  set: OperandSet,
+  operand: OperandName,
+  index: number,
+): Promise<StoreOutcome> {
+  const run = await runIfCallExists(realm, call, invocation, set);
+  if (!isAcceptedReceiver(realm, call, overload, run) || run.log.events.length > 0) return "NoVerdict";
+  const parameter = parameterOf(overload, operand);
+  const value = valueOf(run, operand);
+  if (!parameter || !admitsValue(realm, parameter.accepted, value, true)) return "NoVerdict";
+  const first = freeze(complete(invocation, run.receiver, run.args));
+  const second = freeze(complete(invocation, run.receiver, run.args));
+  if (!hasSameOutcome(first, second)) return "NoVerdict";
+  // A result that is the operand, holds it or is held by it changes with it, whatever the call read.
+  const plain = complete(invocation, run.receiver, run.args);
+  if (plain.kind === "Returned" && isObject(value) && reaches(plain.value, value, 3)) return "NoVerdict";
+  if (plain.kind === "Returned" && isObject(plain.value) && reaches(value, plain.value, 1)) return "NoVerdict";
+  const change = changesOf(value)[index];
+  if (!change) return "NoVerdict";
+  const { heaps, apply } = change;
+  try {
+    apply(value);
+  } catch {
+    return "NoVerdict";
+  }
+  const third = freeze(complete(invocation, run.receiver, run.args));
+  if (hasSameOutcome(second, third) || heaps.some(heap => overload.reads.includes(heap))) return "Explained";
+  const ofOperandCode = readsOfOperandCode(realm, parameter, value);
+  if (ofOperandCode === "Everything" || heaps.some(heap => ofOperandCode.includes(heap))) return "Explained";
+  const message =
+    `the call ${describeOutcome(second)}, and after a store to ${heaps.join(" or ")} of ${describeOperand(operand)} ` +
+    `it ${describeOutcome(third)}`;
+  return { message };
+}
+
+// A clock answers otherwise on its own, and now and then just behind the store.
+const timesToShow = 3;
+
 // A call that reads nothing that a store in between writes may be merged with an earlier call or moved across the store.
 async function checkReads(
   realm: Realm,
@@ -415,36 +463,18 @@ async function checkReads(
   if (overload.capability === "js" && !overload.runsOnlyOperandCode) return [];
   const operands: OperandName[] = [...(overload.receiver ? ["this" as const] : []), ...base.arguments.keys()];
   for (const operand of operands) {
+    // A read of the name from any other value is not a use of the entry.
+    if (operand === "this" && call.entry.kind === "DataProperty") continue;
     for (const candidate of comparableInstances) {
-      const set = operand === "this" ? withReceiver(base, candidate) : withArgument(base, operand, candidate);
+      const set = withOperand(base, operand, candidate);
       const count = changesOf(candidate.create(new Log(), operand, { receiver: undefined })).length;
       for (let index = 0; index < count; index++) {
-        const run = await runIfCallExists(realm, call, invocation, set);
-        if (!isAcceptedReceiver(realm, call, overload, run) || run.log.events.length > 0) break;
-        const parameter = parameterOf(overload, operand);
-        const passed = operand === "this" ? run.receiver : run.args[operand];
-        if (!parameter || !admitsValue(realm, parameter.accepted, passed, true)) break;
-        const first = freeze(complete(invocation, run.receiver, run.args));
-        const second = freeze(complete(invocation, run.receiver, run.args));
-        if (!hasSameOutcome(first, second)) break;
-        const value = operand === "this" ? run.receiver : run.args[operand];
-        // A result that is or holds the operand changes with it, whatever the call read.
-        const plain = complete(invocation, run.receiver, run.args);
-        if (plain.kind === "Returned" && isObject(value) && reaches(plain.value, value, 3)) break;
-        const change = changesOf(value)[index];
-        if (!change) break;
-        const { heaps, apply } = change;
-        try {
-          apply(value);
-        } catch {
-          break;
+        let outcome = await callAroundStore(realm, call, invocation, overload, set, operand, index);
+        for (let time = 1; time < timesToShow && typeof outcome === "object"; time++) {
+          outcome = await callAroundStore(realm, call, invocation, overload, set, operand, index);
         }
-        const third = freeze(complete(invocation, run.receiver, run.args));
-        if (hasSameOutcome(second, third) || heaps.some(heap => overload.reads.includes(heap))) continue;
-        const message =
-          `the call ${describeOutcome(second)}, and after a store to ${heaps.join(" or ")} of ${describeOperand(operand)} ` +
-          `it ${describeOutcome(third)}`;
-        return [{ column: "reads", message, set: set.name }];
+        if (outcome === "NoVerdict") break;
+        if (typeof outcome === "object") return [{ column: "reads", message: outcome.message, set: set.name }];
       }
     }
   }

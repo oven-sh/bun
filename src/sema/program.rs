@@ -6425,6 +6425,9 @@ impl<'s> Files<'s> {
                 None => options.for_parsing(),
             };
             Self::bind_reached(session.arena(), host, for_parsing, &atoms, module);
+            keep_list(session, &mut module.hir.diagnostics);
+            keep_list(session, &mut module.hir.jsdoc_member_comments);
+            keep_list(session, &mut module.hir.jsdoc_param_errors);
             module.bound.symbols.transfer_to(arena);
             summary.symbols = module.bound.symbols.len();
         });

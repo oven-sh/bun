@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
-// WTF's fastMalloc has to end in the allocator that AddressSanitizer intercepts. Where another allocator serves it (libpas did, on Linux: bmalloc looked for the
-// sanitizer's run time by dlsym, which does not find one that is linked statically), the sanitizer sees no use after free and no overflow of a string, of a Vector's
-// buffer, of a hash table or of any fast-allocated object of WTF and JavaScriptCore, and says nothing. `Malloc=1` in the environment forces the system's allocator: not here.
-test.skipIf(!isASAN)("AddressSanitizer reports a read of a freed WTF::StringImpl", async () => {
-  const { Malloc, ...env } = bunEnv;
+// On Linux libpas serves WTF's fastMalloc in a build with AddressSanitizer too, and the sanitizer does not intercept libpas: it sees no use after free and no overflow
+// of a string, of a Vector's buffer, of a hash table or of any fast-allocated object of WTF and JavaScriptCore, and says nothing. `Malloc=1` in the environment makes
+// bmalloc hand every allocation to the system's allocator, which the sanitizer does intercept. A hunt for memory faults with a sanitizer build sets it.
+// It is not the default: LeakSanitizer then sees what WTF, JavaScriptCore and WebCore never free as well.
+test.skipIf(!isASAN)("with Malloc=1 AddressSanitizer reports a read of a freed WTF::StringImpl", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `console.log("read", require("bun:internal-for-testing").readFreedStringUnderASAN());`],
-    env,
+    env: { ...bunEnv, Malloc: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });

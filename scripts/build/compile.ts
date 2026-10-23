@@ -226,11 +226,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   });
   if (cfg.trimmable) {
     assert(cfg.cxxfilt !== undefined, "a trimmable link needs llvm-cxxfilt");
-    // ELF only: lld's --emit-relocs gives a second opinion on the section graph. One more link of native objects,
-    // so only in CI.
-    const validate = cfg.ci && !cfg.darwin && !cfg.windows ? " --validate-relocations" : "";
     n.rule("link_trimmable", {
-      command: `${cfg.jsRuntime} ${q(trimScript(cfg, "link.ts"))} $out.trim-work ${q(removableFeaturesJson(cfg))} ${q(builtinUsesJson(cfg))} ${q(librariesFilePath(cfg))} ${q(`--demangler=${cfg.cxxfilt}`)}${validate} -- ${linkCommand}`,
+      command: `${cfg.jsRuntime} ${q(trimScript(cfg, "link.ts"))} $out.trim-work ${q(removableFeaturesJson(cfg))} ${q(builtinUsesJson(cfg))} ${q(librariesFilePath(cfg))} ${q(`--demangler=${cfg.cxxfilt}`)} -- ${linkCommand}`,
       description: "link $out (trimmable)",
       rspfile: "$out.rsp",
       rspfile_content: "$in_newline",

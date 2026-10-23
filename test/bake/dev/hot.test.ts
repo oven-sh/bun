@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, renameSync, truncateSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -597,6 +597,36 @@ devTest("hmr rebuilds a file that is truncated", {
       truncateSync(dev.join("dep.ts"), dev.read("dep.ts").indexOf(`console.log("cut");`));
     }
     await c.expectMessage("kept");
+  },
+});
+devTest("hmr does not rebuild a file for a change of its metadata", {
+  // ReadDirectoryChangesW does not tell `utimes` from a write.
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./dep";
+      import "./other";
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `console.log("dep");`,
+    "other.ts": `console.log("one");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep", "one");
+
+    {
+      await using _wait = await dev.batchChanges();
+      // kqueue reports these two. Their events come before the event of the write.
+      chmodSync(dev.join("dep.ts"), 0o600);
+      utimesSync(dev.join("dep.ts"), new Date(2020, 0, 1), new Date(2020, 0, 1));
+      await dev.write("other.ts", `console.log("two");`);
+    }
+    // A build for the events of `dep.ts` runs `dep.ts` again, and it prints "dep".
+    await c.expectMessage("two");
   },
 });
 devTest("hot update frames are not delivered to application websocket topics", {

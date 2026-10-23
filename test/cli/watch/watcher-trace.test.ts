@@ -283,12 +283,14 @@ test("a truncation is a write event, and a change of metadata alone is not", asy
   });
   const reader = proc.stdout.getReader();
   let stdout = "";
+  /** Resolves to true when the process has printed `wanted`, or to its output when it ends first. */
   const printed = async (wanted: string) => {
     while (!stdout.includes(wanted)) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) return stdout;
       stdout += Buffer.from(value).toString();
     }
+    return true;
   };
   /** The events that the trace has for `imported.js`: its own, and those of its folder that name it (inotify). */
   const events = (): string[] =>
@@ -298,20 +300,24 @@ test("a truncation is a write event, and a change of metadata alone is not", asy
       .flatMap(line => Object.entries<{ events: string[]; changed?: string[] }>(JSON.parse(line).files))
       .filter(([path, file]) => path.endsWith("imported.js") || file.changed?.includes("imported.js"))
       .flatMap(([, file]) => file.events);
-  await printed("run\ntail\nend\n");
+  expect(await printed("run\ntail\nend\n")).toBe(true);
 
   // ReadDirectoryChangesW does not tell these from a write.
   if (!isWindows) {
     chmodSync(imported, 0o600);
     utimesSync(imported, new Date(2020, 0, 1), new Date(2020, 0, 1));
-    // kqueue reports them, and the watcher has handled them once the trace has them. inotify is
+    // kqueue reports them. Once the trace has them, the truncation is a separate event. inotify is
     // not asked for them.
-    if (isMacOS || isFreeBSD) while (!events().includes("metadata")) await Bun.sleep(1);
+    if (isMacOS || isFreeBSD) {
+      const deadline = Date.now() + 3000;
+      while (!events().includes("metadata") && Date.now() < deadline) await Bun.sleep(1);
+      expect(events()).toContain("metadata");
+    }
   }
 
   // The rest of the file is the same, so the reload is for the truncation.
   truncateSync(imported, `console.log("run");`.length);
-  await printed("run\nend\n");
+  expect(await printed("run\nend\n")).toBe(true);
 
   expect(stdout).toBe("run\ntail\nend\nrun\nend\n");
   expect(events()).toContain("write");

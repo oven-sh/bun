@@ -1,5 +1,6 @@
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::InternalLoopData;
 use crate::Timespec;
@@ -543,6 +544,34 @@ mod c {
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
+
+/// The loop a signal handler wakes: its poll retries on `EINTR`, so a signal alone does not end it.
+pub struct LoopWaker(AtomicPtr<Loop>);
+
+impl LoopWaker {
+    pub const fn unset() -> Self {
+        Self(AtomicPtr::new(core::ptr::null_mut()))
+    }
+
+    /// `loop_` must live for the rest of the process, as the main thread's loop does.
+    pub unsafe fn set(&self, loop_: *mut Loop) {
+        self.0.store(loop_, Ordering::Release);
+    }
+
+    pub fn clear(&self) {
+        self.0.store(core::ptr::null_mut(), Ordering::Release);
+    }
+
+    /// Async-signal-safe. Does nothing while no loop is set.
+    pub fn wake(&self) {
+        let loop_ = self.0.load(Ordering::Acquire);
+        if !loop_.is_null() {
+            // SAFETY: `set`'s contract keeps the loop valid, and the raw extern is the
+            // thread-safe entry point (no `&mut Loop` is formed off the loop's thread).
+            unsafe { c::us_wakeup_loop(loop_) };
+        }
+    }
+}
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

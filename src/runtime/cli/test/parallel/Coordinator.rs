@@ -182,8 +182,20 @@ impl<'a> Coordinator<'a> {
     /// kill-on-close Job Object on Windows. macOS has neither; the process
     /// group kill here plus stdin EOF in the worker loop is the best effort.
     /// Exits with 128 + `signal`, the status a shell reports for a signal death.
+    /// The handler stays installed until then: a parent that forwards signals sends one Ctrl-C twice.
     fn abort_all(&mut self, signal: i32) {
-        abort_handler::uninstall();
+        // Before any write: a write can block, and what the tests spawned must have its SIGTERM by then.
+        for w in self.workers[..self.spawned_count as usize].iter_mut() {
+            if let Some(p) = &w.process {
+                #[cfg(unix)]
+                terminate_process_group(p.pid);
+                #[cfg(not(unix))]
+                {
+                    // SIGKILL → TerminateProcess; libuv-win takes only SIGQUIT/SIGTERM/SIGKILL/SIGINT.
+                    let _ = p.kill(9);
+                }
+            }
+        }
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
         let running: Vec<(u32, i64)> = workers
@@ -215,18 +227,6 @@ impl<'a> Coordinator<'a> {
                 }
             }
             Output::flush();
-        }
-        for w in self.workers[..self.spawned_count as usize].iter_mut() {
-            if let Some(p) = &w.process {
-                #[cfg(unix)]
-                terminate_process_group(p.pid);
-                #[cfg(not(unix))]
-                {
-                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
-                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
-                    let _ = p.kill(9);
-                }
-            }
         }
         self.aborted = Some(u32::from(bun_sys::SignalCode(signal as u8).to_exit_code()));
     }
@@ -1035,7 +1035,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
     }
 }
 
-/// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a
+/// Coordinator-side SIGINT/SIGTERM handling. The handler wakes the loop after it sets a
 /// flag; `Coordinator::drive` checks it and tears down workers itself so we
 /// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
 /// Windows Job Object are the safety net for when the coordinator can't run
@@ -1045,6 +1045,15 @@ pub(crate) mod abort_handler {
 
     /// The signal that asked for the abort, or 0. Windows console events count as SIGINT.
     pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
+
+    /// The loop `Coordinator::drive` ticks. Set by `install`, cleared by `uninstall`.
+    static LOOP: bun_uws::LoopWaker = bun_uws::LoopWaker::unset();
+
+    /// Runs in signal context on POSIX, and on the console control thread on Windows.
+    fn request_abort(signal: i32) {
+        ABORT_SIGNAL.store(signal, Ordering::Release);
+        LOOP.wake();
+    }
 
     // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
@@ -1058,7 +1067,7 @@ pub(crate) mod abort_handler {
 
     #[cfg(unix)]
     extern "C" fn posix_handler(sig: i32, _: *const libc::siginfo_t, _: *const c_void) {
-        ABORT_SIGNAL.store(sig, Ordering::Release);
+        request_abort(sig);
     }
 
     #[cfg(windows)]
@@ -1068,7 +1077,7 @@ pub(crate) mod abort_handler {
         use bun_sys::windows;
         match ctrl {
             windows::CTRL_C_EVENT | windows::CTRL_BREAK_EVENT | windows::CTRL_CLOSE_EVENT => {
-                ABORT_SIGNAL.store(libc::SIGINT, Ordering::Release);
+                request_abort(libc::SIGINT);
                 windows::TRUE
             }
             _ => windows::FALSE,
@@ -1086,7 +1095,10 @@ pub(crate) mod abort_handler {
         }
     }
 
-    pub(crate) fn install() -> Guard {
+    /// `loop_` is the loop `Coordinator::drive` ticks: the main thread's.
+    pub(crate) fn install(loop_: *mut bun_uws::Loop) -> Guard {
+        // SAFETY: the main thread's loop lives for the rest of the process.
+        unsafe { LOOP.set(loop_) };
         #[cfg(unix)]
         {
             // SAFETY: signal handler installation; PREV_* are written before
@@ -1121,7 +1133,8 @@ pub(crate) mod abort_handler {
         Guard(())
     }
 
-    pub(crate) fn uninstall() {
+    /// Called by `Guard` alone: the abort path exits with the handler still installed.
+    fn uninstall() {
         #[cfg(unix)]
         {
             // SAFETY: PREV_* were initialized by install().
@@ -1146,5 +1159,6 @@ pub(crate) mod abort_handler {
                 bun_sys::windows::FALSE,
             );
         }
+        LOOP.clear();
     }
 }

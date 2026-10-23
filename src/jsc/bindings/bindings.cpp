@@ -1600,15 +1600,18 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            const PropertyName errors(vm.propertyNames->errors);
-            auto leftErrors = left->get(globalObject, errors);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto rightErrors = right->get(globalObject, errors);
-            RETURN_IF_EXCEPTION(scope, {});
-            bool errorsEqual = mode.deepEquals(globalObject, leftErrors, rightErrors, gcBuffer, stack, scope, true);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!errorsEqual) {
-                return false;
+            if (!mode.enableAsymmetricMatchers) {
+                // Node compares the non-enumerable `errors` of an AggregateError. Jest's toEqual does not.
+                const PropertyName errors(vm.propertyNames->errors);
+                auto leftErrors = left->get(globalObject, errors);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto rightErrors = right->get(globalObject, errors);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool errorsEqual = mode.deepEquals(globalObject, leftErrors, rightErrors, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!errorsEqual) {
+                    return false;
+                }
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.

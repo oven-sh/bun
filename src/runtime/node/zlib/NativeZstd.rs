@@ -5,40 +5,31 @@ mod _impl {
     use core::ffi::{c_int, c_uint, c_void};
     use core::ptr;
 
-    use bun_jsc::{
-        self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
-        WorkPoolTask,
-    };
+    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::{self as jsc, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
+    use bun_ptr::RefPtr;
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
     use bun_zlib::NodeMode;
 
-    // `jsc.Codegen.JSNativeZstd` cached-property accessors (`mod js`) are emitted
-    // by `__impl_compression_stream!` below — wraps the
-    // `NativeZstdPrototype__${prop}{Get,Set}CachedValue` C++ symbols emitted by
-    // `src/codegen/generate-classes.ts` for `values: [...]` in `zlib.classes.ts`.
-
-    /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
+    /// Placeholder WorkPoolTask callback — overwritten by CompressionStreamImpl::write
     /// before the task is ever scheduled.
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn unset_task_callback(_: *mut WorkPoolTask) {
-        unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
+        unreachable!("WorkPoolTask scheduled before write set its callback");
     }
 
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-    // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-    // `host_fn_this` shim still passes `&mut NativeZstd` — `&mut T` auto-reborrows
-    // to `&T` so the impls below compile against either.
-    #[bun_jsc::JsClass]
+    // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
     #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeZstd {
         // Intrusive single-thread refcount.
         pub(crate) ref_count: Cell<u32>,
-        // LIFETIMES.tsv: JSC_BORROW. The global outlives this m_ctx payload;
+        // The global outlives this payload;
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
@@ -64,53 +55,20 @@ mod _impl {
         pub(crate) estimated_external_size: usize,
     }
 
-    // `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;` — provided by
-    // `#[bun_jsc::JsClass]` derive (wires to_js / from_js / from_js_direct).
-    //
-    // `CompressionStream::<NativeZstd>` (via the `CompressionStreamImpl` trait below)
-    // supplies write / run_from_js_thread / write_sync / reset / close / set_on_error / get_on_error /
-    // finalize as the generic mixin.
+    // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeZstd {
-        // C-ABI shim is emitted by `#[bun_jsc::JsClass]` (calls `<Self>::constructor`);
-        // no `#[host_fn]` here — that macro's free-fn arm would emit a bare `constructor(...)` call.
-        pub(crate) fn constructor(
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<Box<Self>> {
-            let arguments = frame.arguments_as_array::<1>();
-
-            let mode = arguments[0];
-            if !mode.is_number() {
-                return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
-            }
-            let mode_double = mode.as_number();
-            if mode_double % 1.0 != 0.0 {
-                return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
-            }
-            let mode_int: i64 = mode_double as i64;
-            if mode_int < 10 || mode_int > 11 {
-                return Err(global.throw_range_error(
-                    mode_int,
-                    jsc::RangeErrorOptions {
-                        field_name: b"mode",
-                        min: 10,
-                        max: 11,
-                        msg: b"",
-                    },
-                ));
-            }
-
-            let mode = NodeMode::from_int(mode_int as u8);
+        pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
+            let mode = NodeMode::from_int(mode);
             let stream = Context {
                 mode,
                 ..Default::default()
             };
-            Ok(Box::new(Self {
+            RefPtr::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
                 // wrapper is owned by that global's heap).
-                global_this: bun_ptr::BackRef::new(global),
+                global_this: bun_ptr::BackRef::new(cx.global()),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
@@ -121,13 +79,14 @@ mod _impl {
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
-                // CompressionStream::write before scheduling; placeholder here.
+                // CompressionStreamImpl::write before scheduling; placeholder here.
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
                     callback: unset_task_callback,
                 }),
                 estimated_external_size: Self::external_size_for(mode),
-            }))
+            })
+            .into_raw()
         }
 
         /// Per-mode external-allocation footprint, fixed at construction.
@@ -142,31 +101,29 @@ mod _impl {
         /// Called from any thread (concurrent GC marking). Reads only the
         /// immutable `estimated_external_size` field, never `self.stream`.
         pub(crate) fn estimated_size(&self) -> usize {
-            core::mem::size_of::<Self>() + self.estimated_external_size
+            self.estimated_external_size
         }
 
-        #[bun_jsc::host_fn(method)]
-        pub(crate) fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-            let arguments = frame.arguments_as_array::<5>();
-            let this_value = frame.this();
-            if frame.arguments_count() != 4 && frame.arguments_count() != 5 {
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::MISSING_ARGS,
-                        format_args!(
-                            "init(initParamsArray, pledgedSrcSize, writeState, processCallback[, dictionary])"
-                        ),
-                    )
-                    .throw());
-            }
+        pub(crate) fn init(
+            &self,
+            this_value: JsWrapper<'_, Self>,
+            cx: &mut JsScope<'_>,
+            init_params_array: JsLocal<'_>,
+            pledged_src_size: JsLocal<'_>,
+            write_state: JsLocal<'_>,
+            process_callback: JsLocal<'_>,
+            dictionary: JsLocal<'_>,
+        ) -> JsResult<bool> {
+            let global = cx.global();
+            let this_value = this_value.to_js();
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
+            self.throw_unless_idle(global)?;
 
-            let init_params_array_value = arguments[0];
-            let pledged_src_size_value = arguments[1];
-            let write_state_value = arguments[2];
-            let process_callback_value = arguments[3];
+            let init_params_array_value = init_params_array.to_js();
+            let pledged_src_size_value = pledged_src_size.to_js();
+            let write_state_value = write_state.to_js();
+            let process_callback_value = process_callback.to_js();
 
             let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
@@ -197,7 +154,6 @@ mod _impl {
 
             let write_js_callback =
                 validators::validate_function(global, "processCallback", process_callback_value)?;
-            // js.writeCallbackSetCached — codegen'd cached-property setter on the C++ wrapper.
             js::write_callback_set_cached(
                 this_value,
                 global,
@@ -217,10 +173,10 @@ mod _impl {
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
             let dictionary_buf;
-            let dictionary = if arguments[4].is_undefined() {
+            let dictionary = if dictionary.is_undefined() {
                 None
             } else {
-                let dictionary_value = arguments[4];
+                let dictionary_value = dictionary.to_js();
                 dictionary_buf = match dictionary_value.as_array_buffer(global) {
                     Some(buf) => buf,
                     None => {
@@ -238,8 +194,8 @@ mod _impl {
                 .stream
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
-                CompressionStream::<Self>::emit_error(self, global, this_value, err);
-                return Ok(JSValue::FALSE);
+                self.emit_error(global, this_value, err);
+                return Ok(false);
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
@@ -279,17 +235,11 @@ mod _impl {
                 }
             }
 
-            Ok(JSValue::TRUE)
+            Ok(true)
         }
 
-        #[bun_jsc::host_fn(method)]
-        pub(crate) fn params(
-            &self,
-            _global: &JSGlobalObject,
-            _frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+        pub(crate) fn params(&self) {
             // intentionally left empty
-            Ok(JSValue::UNDEFINED)
         }
     }
 
@@ -661,11 +611,5 @@ mod _impl {
         }
     }
 
-    // ─── CompressionStream mixin wiring ───────────────────────────────────────
-    // Stamps `impl CompressionContext for Context`, `impl Taskable`/
-    // `CompressionStreamImpl for NativeZstd`, and `pub mod js { … }` so
-    // `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
-    // emit_error/…) can reach this struct's fields.
-    crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd");
-    crate::__compression_stream_mixin_reexports!(NativeZstd);
+    crate::__impl_compression_stream!(NativeZstd, Context, js_NativeZstd);
 } // mod _impl

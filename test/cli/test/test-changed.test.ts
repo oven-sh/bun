@@ -394,6 +394,25 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a node:vm timeout can interrupt a hot loop", async () => {
+    using dir = tempDir("test-changed-vm-timeout", {
+      "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),
+      "hot.test.ts": `import { test, expect } from "bun:test";
+import vm from "node:vm";
+test("hot", () => {
+  const code = "let i = 0; function f(x) { return x + 1 } while (true) { i = f(i) }";
+  expect(() => vm.runInNewContext(code, {}, { timeout: 100 })).toThrow("timed out");
+});
+`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "hot.test.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   // `shim.cjs` is only `module.exports = require("./lib.cjs")`. `late.test.ts` reaches it through a chain of
   // files, long after the import in `direct.test.ts` put it in the graph, and depends on it as well.
   test("a file that only re-exports with require() selects every test that imports it", async () => {

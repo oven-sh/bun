@@ -2839,6 +2839,7 @@ impl Source {
     /// Byte offset of 1-based (`line`, `col`) in `source_contents`, resuming the
     /// scan from (`start_line`, `start_col`). Columns count UTF-16 code units,
     /// the convention of JSC stack traces and source-map mappings.
+    /// Ill-formed bytes count as `LineOffsetTable` counts them.
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
         start_line: u64,
@@ -2846,20 +2847,17 @@ impl Source {
         line: u64,
         col: u64,
     ) -> Option<usize> {
-        use bun_core::strings::{CodepointIterator, Cursor};
-        let iter_ = CodepointIterator::init(source_contents);
-        let mut iter = Cursor::default();
-
         let mut line_count: u64 = start_line;
         let mut column_number: u64 = start_col;
 
-        let _ = iter_.next(&mut iter);
-        loop {
-            let c = iter.c;
-            if !iter_.next(&mut iter) {
+        let mut at: usize = 0;
+        while at < source_contents.len() {
+            let step = bun_core::strings::wtf8_step(&source_contents[at..]);
+            let mut next = at + step.len;
+            if next >= source_contents.len() {
                 break;
             }
-            match c {
+            match step.code_point {
                 0x0A => {
                     // '\n'
                     column_number = 1;
@@ -2869,25 +2867,26 @@ impl Source {
                     // '\r'
                     column_number = 1;
                     line_count += 1;
-                    if iter.c == ('\n' as i32) {
-                        let _ = iter_.next(&mut iter);
+                    if source_contents[next] == b'\n' && next + 1 < source_contents.len() {
+                        next += 1;
                     }
                 }
                 0x2028 | 0x2029 => {
                     line_count += 1;
                     column_number = 1;
                 }
-                _ => {
+                c => {
                     column_number += if c > 0xFFFF { 2 } else { 1 };
                 }
             }
 
             if line_count == line && column_number == col {
-                return Some(iter.i as usize);
+                return Some(next);
             }
             if line_count > line {
                 return None;
             }
+            at = next;
         }
         None
     }

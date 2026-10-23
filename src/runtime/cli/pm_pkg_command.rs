@@ -231,7 +231,7 @@ impl PmPkgCommand {
             values => {
                 let mut object = E::Object::default();
                 for (key, value) in found.keys().iter().zip(values) {
-                    // `put` borrows the label. print_json writes ill-formed UTF-8 as `\x00`.
+                    // `put` borrows the label. print_json writes a byte that can start no UTF-8 sequence as it is.
                     let label: &[u8] = match bstr::ByteSlice::to_str_lossy(&key[..]) {
                         std::borrow::Cow::Borrowed(valid) => valid.as_bytes(),
                         std::borrow::Cow::Owned(replaced) => {
@@ -729,6 +729,7 @@ impl PmPkgCommand {
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,
+                ill_formed_bytes: js_printer::IllFormedBytes::Keep,
                 ..Default::default()
             },
         ) {

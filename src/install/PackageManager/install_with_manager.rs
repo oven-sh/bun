@@ -1137,18 +1137,23 @@ pub fn install_with_manager(
 }
 
 // ─── runAndWaitFn closure family ──────────────────────────────────────────
-// A const-generic struct + three thin wrapper fns.
+// A const-generic struct + thin wrapper fns.
 
 /// `RunTasksCallbacks` impl for the void-callback `runTasks` call inside
 /// `runAndWaitFn::isDone` (no hooks, `progress_bar = true`). Only these
 /// flags differ from the default.
-struct InstallWaitCallbacks;
-impl RunTasksCallbacks for InstallWaitCallbacks {
+struct InstallWaitCallbacks<const CACHE_ONLY: bool>;
+impl<const CACHE_ONLY: bool> RunTasksCallbacks for InstallWaitCallbacks<CACHE_ONLY> {
     type Ctx = ();
     const PROGRESS_BAR: bool = true;
+    const CACHE_ONLY: bool = CACHE_ONLY;
 }
 
-struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
+struct RunAndWaitClosure<
+    const CHECK_PEERS: bool,
+    const ONLY_PRE_PATCH: bool,
+    const CACHE_ONLY: bool = false,
+> {
     // The caller also holds the same
     // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
     // borrow in `run_and_wait`. Keep a raw pointer; `run_and_wait` derives this pointer
@@ -1162,8 +1167,8 @@ struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     stops_for_peers: bool,
 }
 
-impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
-    RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
+impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool, const CACHE_ONLY: bool>
+    RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH, CACHE_ONLY>
 {
     fn is_done(closure: &mut Self) -> bool {
         // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`.
@@ -1188,7 +1193,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
             // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
             let log_level = this.options.log_level;
             if let Err(err) =
-                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
+                run_tasks::<InstallWaitCallbacks<CACHE_ONLY>>(this, &mut (), CHECK_PEERS, log_level)
             {
                 closure.err = Some(err);
                 return true;
@@ -1231,7 +1236,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // an invalidated provenance. Now `mgr` is the root: both the `sleep_until`
         // receiver and the closure share it, and `this` is never touched again.
         let mgr: *mut PackageManager = this;
-        let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
+        let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH, CACHE_ONLY> {
             manager: mgr,
             err: None,
             stops_for_peers,
@@ -1254,8 +1259,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, true>::run_and_wait(this, false)
 }
-pub(crate) fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, false>::run_and_wait(this, false)
+pub(crate) fn wait_for_pinned_packages(this: &mut PackageManager) -> crate::Result<()> {
+    RunAndWaitClosure::<false, false, true>::run_and_wait(this, false)
 }
 fn wait_until_ready_for_peers(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, false>::run_and_wait(this, true)

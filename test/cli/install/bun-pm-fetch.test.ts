@@ -397,11 +397,24 @@ it.each([[[]], [["--help"]]])("should appear in bun pm help (%j)", async extraAr
 const kinds = ["npm", "github", "url", "file", "git"] as const;
 type Kind = (typeof kinds)[number];
 
-const packed = (name: string, dependencies?: Record<string, string>) =>
+const packed = (name: string, dependencies?: unknown, version = "1.0.0") =>
   new Bun.Archive(
-    { "package/package.json": JSON.stringify({ name, version: "1.0.0", dependencies }) },
+    { "package/package.json": JSON.stringify({ name, version, dependencies }) },
     { compress: "gzip" },
   ).bytes();
+
+/** Runs `bun <args>` in `cwd`. */
+async function bunIn(cwd: string, extraEnv: Record<string, string>, ...args: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...env, ...extraEnv },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: normalizeBunSnapshot(stdout.replace(/^Cache: .*$/m, "Cache: <cache>")), stderr, exitCode };
+}
 
 /** A project with one dependency of `kind`, and a server that is its registry, its GitHub API and its tarball host. */
 async function projectWith(kind: Kind, bunfigTail = "") {
@@ -457,17 +470,8 @@ async function projectWith(kind: Kind, bunfigTail = "") {
     /** The paths requested since the last call, sorted: downloads run side by side. */
     requested: () => requests.splice(0).sort(),
     /** Runs `bun <args>` in the project, with the cache directory `cache`. */
-    async bun(cache: string, ...args: string[]) {
-      await using proc = spawn({
-        cmd: [bunExe(), ...args],
-        cwd: project,
-        env: { ...env, GITHUB_API_URL: origin, BUN_INSTALL_CACHE_DIR: join(root, cache) },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: normalizeBunSnapshot(stdout.replace(/^Cache: .*$/m, "Cache: <cache>")), stderr, exitCode };
-    },
+    bun: (cache: string, ...args: string[]) =>
+      bunIn(project, { GITHUB_API_URL: origin, BUN_INSTALL_CACHE_DIR: join(root, cache) }, ...args),
     files: async () => (await readdir(project)).sort(),
     [Symbol.asyncDispose]: async () => {
       await server.stop(true);
@@ -591,6 +595,127 @@ it("a tarball that cannot be downloaded fails the command", async () => {
   expect(stdout).toBe("bun pm fetch <version> (<revision>)");
   expect(exitCode).toBe(1);
 });
+
+// The download takes what bun.lock pins and resolves nothing, whatever the package.json of what it extracts says.
+it.concurrent.each(["github", "url", "file", "git"] as const)(
+  "fetches nothing else when the package.json of a %s dependency has a name and a dependency that bun.lock does not",
+  async kind => {
+    await using fixture = await projectWith(kind);
+    const { bun, requested, project, name } = fixture;
+    expect(await bun("other-cache", "install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+    const lockfile = (await Bun.file(join(project, "bun.lock")).text())
+      .replace(`["${name}@`, `["other@`)
+      .replace(`{ "dependencies": { "dep": "^1.0.0" } }`, "{}")
+      .replace(/^ *"dep": .*\n/m, "");
+    expect(lockfile).toContain(`"${name}": ["other@`);
+    expect(lockfile).not.toContain(`"dep"`);
+    await writeFile(join(project, "bun.lock"), lockfile);
+    requested();
+
+    expect(await bun("cache", "pm", "fetch")).toEqual({
+      stdout: summary("Fetched 1 package into cache"),
+      stderr: "Fetching packages\n",
+      exitCode: 0,
+    });
+    expect(requested()).toEqual(
+      { github: ["/repos/owner/repo/tarball/abc1234"], url: ["/files/url-dep-1.0.0.tgz"], file: [], git: [] }[kind],
+    );
+    expect(await Bun.file(join(project, "bun.lock")).text()).toBe(lockfile);
+  },
+);
+
+// The tarball `t` that bun.lock pins is another package now, `t2`. In the last two cases it needs `u` and `w`, and the
+// resolve before the download takes z@2.0.0 for `a`, and `u` with it, then drops both: `b` takes z@1.0.5 and `a` moves
+// to it.
+const added = { a: "1.0.0", b: "1.0.0" };
+const resolved = ["/a", "/a-1.0.0.tgz", "/b", "/b-1.0.0.tgz", "/z", "/z-1.0.5.tgz", "/z-2.0.0.tgz"];
+it.concurrent.each([
+  ["that are not a map", "invalid", {}, ["/t.tgz"]],
+  ["that bun.lock does not have", "tarball", {}, ["/t.tgz"]],
+  ["one of them a tarball that the resolve dropped", "tarball", added, [...resolved, "/t.tgz", "/u.tgz"].sort()],
+  ["one of them a folder that the resolve dropped", "folder", added, [...resolved, "/t.tgz"].sort()],
+])(
+  "--no-verify does not resolve the dependencies of a pinned tarball that is another package now, %s",
+  async (_, u, added, expected) => {
+    const needsU = (origin: string) => ({ u: u === "folder" ? "1.0.0" : `${origin}/u.tgz` });
+    let t = await packed("t");
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { pathname, origin } = new URL(req.url);
+        requests.push(pathname);
+        // The dependencies of each version.
+        const registry: Record<string, Record<string, object>> = {
+          a: { "1.0.0": { z: "*" } },
+          b: { "1.0.0": { z: "~1.0.0" } },
+          w: { "1.0.0": {} },
+          z: { "1.0.0": {}, "1.0.5": {}, "2.0.0": needsU(origin) },
+        };
+        if (pathname === "/t.tgz") return new Response(t);
+        if (pathname === "/u.tgz") return new Response(await packed("u"));
+        const [, name, version] = /^\/(\w+)-([\d.]+)\.tgz$/.exec(pathname) ?? [];
+        if (registry[name]?.[version]) return new Response(await packed(name, registry[name][version], version));
+        const versions = registry[pathname.slice(1)];
+        if (!versions) return new Response(null, { status: 404 });
+        return Response.json({
+          name: pathname.slice(1),
+          "dist-tags": { latest: Object.keys(versions).at(-1) },
+          versions: Object.fromEntries(
+            Object.entries(versions).map(([version, dependencies]) => [
+              version,
+              {
+                name: pathname.slice(1),
+                version,
+                dist: { tarball: `${origin}${pathname}-${version}.tgz` },
+                dependencies,
+              },
+            ]),
+          ),
+        });
+      },
+    });
+    const origin = server.url.origin;
+    const project = (dependencies: object) =>
+      JSON.stringify({
+        name: "project",
+        dependencies: { ...dependencies, t: `${origin}/t.tgz` },
+        overrides: u === "folder" ? { u: "file:./vendor/u" } : undefined,
+      });
+    using dir = tempDir("pm-fetch-replaced-tarball", {
+      "bunfig.toml": `[install]\nregistry = "${origin}/"\n`,
+      "package.json": project({}),
+      "vendor/u/package.json": JSON.stringify({ name: "u", version: "1.0.0" }),
+    });
+    const bun = (cache: string, ...args: string[]) =>
+      bunIn(String(dir), { BUN_INSTALL_CACHE_DIR: join(String(dir), cache) }, ...args);
+    expect(await bun("other-cache", "install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+    const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
+
+    t = await packed("t2", u === "invalid" ? "not a map" : { ...needsU(origin), w: "1.0.0" });
+    await writeFile(join(String(dir), "package.json"), project(added));
+    requests.length = 0;
+
+    const { stdout, stderr, exitCode } = await bun("cache", "pm", "fetch", "--no-verify");
+    const tarballs = expected.filter(path => path.endsWith(".tgz")).length;
+    expect(stderr).toEndWith("Fetching packages\n");
+    expect({ stdout, exitCode }).toEqual({
+      stdout: summary(`Fetched ${tarballs} package${tarballs === 1 ? "" : "s"} into cache`),
+      exitCode: 0,
+    });
+    expect(requests.sort()).toEqual(expected);
+    expect(await Bun.file(join(String(dir), "bun.lock")).text()).toBe(lockfile);
+
+    // What that resolve ended with: neither z@2.0.0 nor `u`, which were requested above.
+    expect(await bun("cache", "install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+    const { packages } = Bun.JSONC.parse(await Bun.file(join(String(dir), "bun.lock")).text()) as {
+      packages: Record<string, [string]>;
+    };
+    expect(Object.values(packages).map(([id]) => id)).toEqual(
+      "a" in added ? ["a@1.0.0", "b@1.0.0", `t@${origin}/t.tgz`, "z@1.0.5"] : [`t@${origin}/t.tgz`],
+    );
+  },
+);
 
 // Nothing is linked or run, so the scan is left to the install. --verbose says so.
 it("does not run the security scanner", async () => {

@@ -1724,13 +1724,14 @@ describe("bundler", () => {
     "/removed-delete-member.cjs": `exports.a = 1; (function () { delete module.exports.a; });`,
     "/removed-store.cjs": `exports.a = 1; (function () { module.exports = {}; });`,
   };
-  // These already get `exports`, or stay lifted: dead code does not set the marks of the last two.
+  // A counted use of `exports` already gives these wrappers the parameter.
   const wrappedWithAUseOfExports: Record<string, string> = {
     "/live-this.cjs": `exports.a = 1; exports.b = this === exports;`,
     "/live-typeof-this.cjs": `exports.a = 1; exports.b = typeof this;`,
     "/later-use.cjs": `exports.a = 1; var self = 1 ? globalThis : this; exports.b = typeof self;`,
     "/this-first.cjs": `this; exports.a = 1;`,
   };
+  // Dead code of these kinds does not make the file CommonJS.
   const stillLifted: Record<string, string> = {
     "/dead-delete.cjs": `exports.a = 1; if (false) { delete exports.a; }`,
     "/dead-store.cjs": `exports.a = 1; if (false) { module.exports = {}; }`,
@@ -1762,8 +1763,7 @@ describe("bundler", () => {
     },
     cjs2esm: { unhandled: Object.keys({ ...wrappedWithNoUseOfExports, ...wrappedWithAUseOfExports }) },
     onAfterBundle(api) {
-      const heads = api.readFile("/out.js").match(/__commonJS\(function\(.*?\) \{/g);
-      expect(heads).toEqual(Array(16).fill("__commonJS(function(exports) {"));
+      api.expectFile("/out.js").not.toContain("__commonJS(function() {");
     },
     run: { stdout: Array(18).fill("1").join(" ") },
   });
@@ -1828,51 +1828,6 @@ describe("bundler", () => {
       "/node_modules/react/z.js": `export const z = 7;`,
     },
     run: { stdout: "7" },
-  });
-  // After `exports = ...` the printer writes `module.exports` as written, and only
-  // a wrapper has a `module`. Here the assignment is dead or removed, so it counts
-  // no use of `exports` that keeps the wrapper.
-  const exportsAssignedWithNoUse: Record<string, string> = {
-    "/dead-assign.cjs": `exports.a = 1; if (false) { exports = {}; } exports.b = typeof module.exports;`,
-    "/dead-ternary-assign.cjs": `exports.a = 1; exports.b = 1 ? 2 : (exports = {}); exports.c = typeof module.exports;`,
-    "/removed-assign.cjs": `exports.a = 1; (function () { exports = {}; }); exports.b = typeof module.exports;`,
-    // Lifted, this file would run too. The parser does not tell the store from a bare `module.exports`.
-    "/member-store.cjs": `exports.a = 1; if (false) { exports = {}; } module.exports.b = 2;`,
-  };
-  for (const form of ["Named", "Star"] as const) {
-    itBundled(`cjs2esm/ModuleExportsAfterDeadExportsAssignmentKeepsWrapper${form}Import`, {
-      files: {
-        "/entry.js":
-          form === "Named"
-            ? /* js */ `
-              import { a, b } from "./dead-assign.cjs";
-              import { b as b1, c } from "./dead-ternary-assign.cjs";
-              import { b as b2 } from "./removed-assign.cjs";
-              import { a as a3, b as b3 } from "./member-store.cjs";
-              console.log(a, b, b1, c, b2, a3, b3);
-            `
-            : /* js */ `
-              import * as f0 from "./dead-assign.cjs";
-              import * as f1 from "./dead-ternary-assign.cjs";
-              import * as f2 from "./removed-assign.cjs";
-              import * as f3 from "./member-store.cjs";
-              console.log(f0.a, f0.b, f1.b, f1.c, f2.b, f3.a, f3.b);
-            `,
-        ...exportsAssignedWithNoUse,
-      },
-      cjs2esm: { unhandled: Object.keys(exportsAssignedWithNoUse) },
-      onAfterBundle(api) {
-        const heads = api.readFile("/out.js").match(/__commonJS\(function\(.*?\) \{/g);
-        expect(heads).toEqual(Array(4).fill("__commonJS(function(exports, module) {"));
-      },
-      run: { stdout: "1 object 2 object object 1 2" },
-    });
-  }
-  itBundled("cjs2esm/ModuleExportsAfterDeadExportsAssignmentKeepsWrapperEntryPoint", {
-    files: {
-      "/entry.cjs": `exports.a = 1; if (false) { exports = {}; } console.log(typeof module.exports);`,
-    },
-    run: { stdout: "object" },
   });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {

@@ -3745,8 +3745,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                         || c == u32::from(b'`')
                         || c == u32::from(b'"')
                         || c == u32::from(b'\\')
-                        || c == u32::from(b'\n')
-                        || c == u32::from(b'#') =>
+                        || c == u32::from(b'\n') =>
                     {
                         char = peeked;
                     }

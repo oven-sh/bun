@@ -1534,6 +1534,27 @@ ${temp_dir}`
     TestBuilder.command`echo "${'"'}"`.stdout('"\n').runAsTest("double_quote_in_dquotes");
     TestBuilder.command`echo "${"\\"}"`.stdout("\\\n").runAsTest("backslash_in_dquotes");
 
+    // Inside double quotes a backslash escapes only $ ` " \ and newline (POSIX 2.2.3).
+    // Before any other character the backslash stays, as in bash and dash.
+    TestBuilder.command`echo "a\#b"`.stdout("a\\#b\n").runAsTest("backslash_hash_in_dquotes");
+    TestBuilder.command`echo "\# Title"`.stdout("\\# Title\n").runAsTest("leading_backslash_hash_in_dquotes");
+    // A template literal passes `\u00E9` for `é` (#8745). `{ raw }` passes the `é`, so the non-ASCII lexer runs.
+    TestBuilder.command`echo ${{ raw: '"é\\#b"' }}`.stdout("é\\#b\n").runAsTest("backslash_hash_in_dquotes_non_ascii");
+    TestBuilder.command`echo "$(echo "a\#b")"`.stdout("a\\#b\n").runAsTest("backslash_hash_in_dquotes_in_cmdsubst");
+    TestBuilder.command`echo a\#b`.stdout("a#b\n").runAsTest("backslash_hash_unquoted");
+    TestBuilder.command`echo 'a\#b'`.stdout("a\\#b\n").runAsTest("backslash_hash_in_squotes");
+
+    test("backslash_before_each_printable_ascii_in_dquotes", async () => {
+      const chars = Array.from({ length: 0x7f - 0x20 }, (_, i) => String.fromCharCode(0x20 + i));
+      const script = chars.map(c => `echo "a\\${c}b"`).join("\n");
+      const { stdout, stderr, exitCode } = await $`${{ raw: script }}`.quiet();
+      expect({ stdout: stdout.toString().split("\n"), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: [...chars.map(c => ('$`"\\'.includes(c) ? `a${c}b` : `a\\${c}b`)), ""],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     // Testing characters that need to be escaped within single quotes
     TestBuilder.command`echo '${"$"}'`.stdout("$\n").runAsTest("dollar_in_squotes");
     TestBuilder.command`echo '${'"'}'`.stdout('"\n').runAsTest("double_quote_in_squotes");

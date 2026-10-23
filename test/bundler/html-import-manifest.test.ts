@@ -1251,7 +1251,7 @@ console.log("✓ Both import types work correctly");
       "client.js": `console.log("page");`,
       "build.js": `
         const build = async (entry, depth) => {
-          const DEEP = "[".repeat(depth) + "1" + "]".repeat(depth);
+          const DEEP = Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
           const result = await Bun.build({ entrypoints: [entry], target: "bun", define: { DEEP }, throw: false });
           return result.logs.map(log => [log.message, ...log.notes.map(note => note.message)]);
         };

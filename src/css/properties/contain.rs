@@ -63,11 +63,11 @@ impl ContainerType {
         Ok(this)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if *self == Self::NORMAL {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if self == Self::NORMAL {
             return dest.write_str("normal");
         }
-        if let Some(size) = &self.size {
+        if let Some(size) = self.size {
             size.to_css(dest)?;
             if self.scroll_state {
                 dest.write_char(b' ')?;

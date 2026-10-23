@@ -1057,7 +1057,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           addon.resolve_from_async_work().then(() => ran.push("async work promise"));
           addon.call_back_from_threadsafe_function(() => ran.push("threadsafe function callback"));
         }
-        export const settleThePromiseTheHostWasGiven = () => addon.settle_that_promise_from_async_work();
+        export const settleThePromiseTheHostWasGiven = () =>
+          addon.settle_that_promise_from_async_work(() => ran.push("callback after the host's promise"));
         export function startIntervalFromCompletion(state) {
           addon.call_back_from_async_work(() => {
             setInterval(() => state.ticks++, 1);
@@ -1088,7 +1089,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         graphs.disposed.graph.run(() => graphs.disposed.app.settleThePromiseTheHostWasGiven());
         graphs.disposed.graph.dispose();
         // The addon records every completion, the disposed graph's included.
-        await until(() => addon.completion_statuses().length === 10);
+        await until(() => addon.completion_statuses().length === 11);
         await until(() => graphs.live.app.ran.length === 3 && hostRan.length === 4);
         const statuses = addon.completion_statuses().sort();
 
@@ -1127,11 +1128,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(JSON.parse(stdout.trim())).toEqual({
       // 23 is napi_cannot_run_js: what the addon is also told in a VM that is stopping. Settling a
       // promise of the disposed graph is accepted (0) and settles nothing; settling the host's
-      // from the disposed graph's completion settles it.
+      // from the disposed graph's completion settles it, and that completion still may not call
+      // the disposed graph's script afterwards.
       statuses: [
         "async_work_callback:0",
         "async_work_callback:0",
         "async_work_callback:23",
+        "async_work_callback_after_deferred_of_another:23",
         "async_work_deferred:0",
         "async_work_deferred:0",
         "async_work_deferred:0",
@@ -1149,6 +1152,220 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "threadsafe function callback",
       ],
       ticksAfterDispose: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("an exception a completion for a Bun.ModuleGraph raises through Node-API is reported to that graph", async () => {
+    // What the completion calls, and the error that is reported (`null`: nothing is).
+    const raised: Record<string, string | null> = {
+      "napi_throw": "Error: raised",
+      "napi_throw_error": "Error: raised",
+      "napi_throw_type_error": "TypeError: raised",
+      "napi_throw_range_error": "RangeError: raised",
+      "node_api_throw_syntax_error": "SyntaxError: raised",
+      // Raised by the runtime, for arguments it refuses.
+      "napi_instanceof": "TypeError: Constructor must be a function",
+      "napi_create_dataview":
+        "RangeError: byte_offset + byte_length should be less than or equal to the size in bytes of the array passed in",
+      "node_api_create_buffer_from_arraybuffer": "RangeError: The byte offset + length is out of range",
+      // Thrown by script the completion runs.
+      "napi_run_script": "Error: raised",
+      "napi_call_function": "Error: raised",
+      // Taken back and thrown again, as node-addon-api does.
+      "napi_run_script, napi_get_and_clear_last_exception, napi_throw": "Error: raised",
+      "napi_call_function, napi_get_and_clear_last_exception, napi_throw": "Error: raised",
+      // The first stays: a second throw is refused, and napi_call_function throws it without calling.
+      "napi_throw_error, napi_throw_type_error": "Error: raised",
+      "napi_throw_range_error, napi_call_function": "RangeError: raised",
+      "napi_throw_error, napi_get_and_clear_last_exception": null,
+      // A promise of the other side's is not settled while the exception is pending, and its maker is not told.
+      "napi_throw_error, napi_resolve_deferred": "Error: raised",
+      "napi_throw_error, napi_reject_deferred": "Error: raised",
+    };
+    using dir = tempDir("napi-module-graph-raise", {
+      "tenant.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(addonPath);
+        export const call = (name, ...args) => addon[name](...args);
+        // A graph this graph's script makes and gives no onError: its errors are this graph's.
+        export async function makeGraph(tenant) {
+          const graph = new Bun.ModuleGraph({ globals: { addonPath } });
+          const app = await graph.import(tenant);
+          return (name, ...args) => graph.run(() => app.call(name, ...args));
+        }
+      `,
+      "fixture.mjs": `
+        import { createRequire } from "node:module";
+        const addonPath = process.argv[2];
+        const addon = createRequire(import.meta.url)(addonPath);
+        const tenant = import.meta.dir + "/tenant.mjs";
+        const told = [];
+        process.on("uncaughtException", error => told.push("host: " + error));
+        const graph = new Bun.ModuleGraph({
+          globals: { addonPath },
+          onError: (error, kind) => told.push("graph (" + kind + "): " + error),
+        });
+        const app = await graph.import(tenant);
+        const call = {
+          host: (name, ...args) => addon[name](...args),
+          graph: (name, ...args) => graph.run(() => app.call(name, ...args)),
+          "graph's graph": await graph.run(() => app.makeGraph(tenant)),
+        };
+        // Everyone told by the time the completions that start() sets off have run.
+        async function toldAfter(start, completions = 1) {
+          const ran = addon.completion_statuses().length + completions;
+          start();
+          while (addon.completion_statuses().length < ran) await new Promise(resolve => setImmediate(resolve));
+          return told.splice(0);
+        }
+        const results = {};
+        for (const how of JSON.parse(process.argv[3])) {
+          for (const [owner, other] of [["graph", "host"], ["host", "graph"]]) {
+            for (const [completion, name] of [["complete", "raise_from_async_work"], ["call_js", "raise_from_threadsafe_function"]]) {
+              results[how + " in the " + owner + "'s " + completion] = await toldAfter(() => {
+                if (how.includes("_deferred")) call[other]("promise_the_next_async_work_settles");
+                call[owner](name, how);
+              });
+            }
+          }
+        }
+        // Work is its creator's, whoever queues it.
+        results["complete of work the graph created and the host queued"] = await toldAfter(() => {
+          call.graph("raise_from_async_work", "napi_throw_error", false);
+          call.host("queue_that_async_work");
+        });
+        results["complete of work the host created and the graph queued"] = await toldAfter(() => {
+          call.host("raise_from_async_work", "napi_throw_error", false);
+          call.graph("queue_that_async_work");
+        });
+        results["complete for a graph the graph made"] = await toldAfter(() => call["graph's graph"]("raise_from_async_work", "napi_throw_error"));
+        results["call_js for a graph the graph made"] = await toldAfter(() => call["graph's graph"]("raise_from_threadsafe_function", "napi_throw_error"));
+        // Once a graph is disposed, what its completions raise is nobody's.
+        const disposed = new Bun.ModuleGraph({
+          globals: { addonPath },
+          onError(error) {
+            told.push("graph that onError disposes: " + error);
+            disposed.dispose();
+          },
+        });
+        const disposedApp = await disposed.import(tenant);
+        results["three completions for a graph that onError disposes"] = await toldAfter(() => {
+          disposed.run(() => {
+            disposedApp.call("raise_from_async_work", "napi_throw_error");
+            disposedApp.call("raise_from_async_work", "napi_throw_error");
+            disposedApp.call("raise_from_threadsafe_function", "napi_throw_error");
+          });
+        }, 3);
+        console.log(JSON.stringify(results));
+        process.exit(0);
+      `,
+    });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "fixture.mjs",
+        join(__dirname, "napi-app/build/Debug/napitests.node"),
+        JSON.stringify(Object.keys(raised)),
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected: Record<string, string[]> = {
+      "complete of work the graph created and the host queued": ["graph (uncaughtException): Error: raised"],
+      "complete of work the host created and the graph queued": ["host: Error: raised"],
+      "complete for a graph the graph made": ["graph (uncaughtException): Error: raised"],
+      "call_js for a graph the graph made": ["graph (uncaughtException): Error: raised"],
+      "three completions for a graph that onError disposes": ["graph that onError disposes: Error: raised"],
+    };
+    for (const [how, error] of Object.entries(raised)) {
+      for (const completion of ["complete", "call_js"]) {
+        expected[`${how} in the graph's ${completion}`] = error ? [`graph (uncaughtException): ${error}`] : [];
+        expected[`${how} in the host's ${completion}`] = error ? [`host: ${error}`] : [];
+      }
+    }
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  it("what a Node-API completion throws is not reported to a Bun.ModuleGraph whose script is waiting when it runs", async () => {
+    using dir = tempDir("napi-module-graph-raise-nested", {
+      "entry.js": `export default 1;`,
+      "tenant.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(addonPath);
+        export const call = (name, ...args) => addon[name](...args);
+      `,
+      "fixture.mjs": `
+        import { createRequire } from "node:module";
+        const addonPath = process.argv[2];
+        const addon = createRequire(import.meta.url)(addonPath);
+        const until = async condition => {
+          while (!condition()) await new Promise(resolve => setImmediate(resolve));
+        };
+        const told = [];
+        const tell = who => error => told.push(who + ": " + error);
+        process.on("uncaughtException", tell("host"));
+        const graphs = {};
+        for (const name of ["first", "second"]) {
+          const graph = new Bun.ModuleGraph({ globals: { addonPath }, onError: tell(name + " graph") });
+          graphs[name] = { graph, app: await graph.import(import.meta.dir + "/tenant.mjs") };
+        }
+        const call = {
+          host: (name, ...args) => addon[name](...args),
+          "first graph": (name, ...args) => graphs.first.graph.run(() => graphs.first.app.call(name, ...args)),
+        };
+        let calls = 0;
+        const completions = {
+          complete: owner => call[owner]("raise_from_async_work", "napi_throw_error"),
+          call_js: owner => call[owner]("raise_from_threadsafe_function", "napi_throw_error"),
+          // The runtime calls the function itself.
+          "call with no call_js": owner =>
+            call[owner]("call_from_threadsafe_function", () => {
+              calls++;
+              throw new Error("raised");
+            }),
+        };
+        const results = {};
+        for (const owner in call) {
+          for (const completion in completions) {
+            const before = addon.completion_statuses().length + calls;
+            const ran = () => addon.completion_statuses().length + calls > before;
+            completions[completion](owner);
+            // The second graph's script waits until the completion has run: Bun.build() runs the
+            // event loop until a plugin's setup() has settled.
+            graphs.second.graph.run(() => {
+              const plugin = { name: "wait", setup: () => until(ran) };
+              Bun.build({ entrypoints: [import.meta.dir + "/entry.js"], plugins: [plugin] }).catch(() => {});
+            });
+            await until(ran);
+            results[owner + "'s " + completion] = told.splice(0);
+          }
+        }
+        console.log(JSON.stringify(results));
+        process.exit(0);
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      "host's complete": ["host: Error: raised"],
+      "host's call_js": ["host: Error: raised"],
+      "host's call with no call_js": ["host: Error: raised"],
+      "first graph's complete": ["first graph: Error: raised"],
+      "first graph's call_js": ["first graph: Error: raised"],
+      "first graph's call with no call_js": ["first graph: Error: raised"],
     });
     expect(exitCode).toBe(0);
   });

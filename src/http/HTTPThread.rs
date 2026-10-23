@@ -202,18 +202,9 @@ pub(crate) fn request_body_send_buffer_capacity(estimated_size: usize) -> usize 
     }
 }
 
+/// The producer of a stream body changed its buffer: bytes, the end, or a `Content-Length` mismatch.
 pub struct WriteMessage {
     pub(crate) async_http_id: u32,
-    pub(crate) kind: WriteMessageType,
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum WriteMessageType {
-    Data = 0,
-    End = 1,
-    /// The stream body broke its declared Content-Length; a no-op once that body was dropped.
-    LengthMismatch = 2,
 }
 
 pub struct ShutdownMessage {
@@ -626,8 +617,6 @@ impl HttpThread {
                 core::mem::take(&mut self.queued_writes)
             };
             for write in &queued_writes {
-                let message = write.kind;
-
                 if let Some(socket_ptr) = abort_tracker().get(&write.async_http_id) {
                     match *socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
@@ -636,13 +625,12 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                client.on_request_stream_message::<true>(message, socket);
+                                client.on_request_stream_message::<true>(socket);
                             }
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
-                                    message,
                                 );
                             }
                         }
@@ -652,19 +640,18 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                client.on_request_stream_message::<false>(message, socket);
+                                client.on_request_stream_message::<false>(socket);
                             }
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
-                                    message,
                                 );
                             }
                         }
                     }
                 } else {
-                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, message);
+                    h3::ClientContext::stream_body_by_http_id(write.async_http_id);
                 }
             }
             let len = queued_writes.len();
@@ -959,12 +946,11 @@ impl HttpThread {
         self.wakeup();
     }
 
-    pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
+    pub fn schedule_request_write(&mut self, http: &AsyncHttp) {
         {
             let _guard = self.queued_writes_lock.lock_guard();
             self.queued_writes.push(WriteMessage {
                 async_http_id: http.async_http_id,
-                kind,
             });
         }
         self.wakeup();

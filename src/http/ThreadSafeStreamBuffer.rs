@@ -11,6 +11,10 @@ pub struct ThreadSafeStreamBuffer {
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
     /// Called by the http thread when the buffer drains; guarded by `mutex`, like `buffer`.
     callback: Option<Callback>,
+    /// The producer wrote its last byte; guarded by `mutex`.
+    ended: bool,
+    /// The producer's byte count missed the declared `Content-Length`; guarded by `mutex`.
+    length_mismatch: bool,
 }
 
 pub struct Callback {
@@ -42,6 +46,8 @@ impl Default for ThreadSafeStreamBuffer {
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,
+            ended: false,
+            length_mismatch: false,
         }
     }
 }
@@ -74,12 +80,13 @@ impl ThreadSafeStreamBuffer {
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
     }
 
-    pub(crate) fn acquire(&mut self) -> &mut StreamBuffer {
+    /// Returns the buffer and whether the producer ended the body.
+    pub(crate) fn acquire(&mut self) -> (&mut StreamBuffer, bool) {
         self.mutex.lock();
         // The mutex stays locked until `release()`. Prefer `lock()` (RAII
         // guard) for simple critical sections; this split form remains for
         // callers that interleave release with disjoint `self` access.
-        &mut self.buffer
+        (&mut self.buffer, self.ended)
     }
 
     pub(crate) fn release(&mut self) {
@@ -105,6 +112,27 @@ impl ThreadSafeStreamBuffer {
     pub fn clear_drain_callback(&mut self) {
         let _guard = self.mutex.lock_guard();
         self.callback = None;
+    }
+
+    /// Main thread: the body is complete once `trailer` (a chunked terminator, or nothing) is sent.
+    pub fn end(&mut self, trailer: &[u8]) {
+        let _guard = self.mutex.lock_guard();
+        if !trailer.is_empty() {
+            let _ = self.buffer.write(trailer); // OOM/capacity: fire-and-forget
+        }
+        self.ended = true;
+    }
+
+    /// Main thread: the bytes written do not add up to the declared `Content-Length`.
+    pub fn fail_length_mismatch(&mut self) {
+        let _guard = self.mutex.lock_guard();
+        self.length_mismatch = true;
+    }
+
+    /// Http thread.
+    pub(crate) fn has_length_mismatch(&mut self) -> bool {
+        let _guard = self.mutex.lock_guard();
+        self.length_mismatch
     }
 
     /// This is exclusively called from the http thread.

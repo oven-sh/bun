@@ -3210,16 +3210,17 @@ impl<'a> HTTPClient<'a> {
     /// From the producer of this request's stream body; a no-op once that body was dropped.
     pub(crate) fn on_request_stream_message<const IS_SSL: bool>(
         &mut self,
-        message: http_thread::WriteMessageType,
         socket: HttpSocket<IS_SSL>,
     ) {
         let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
             return;
         };
-        if message == http_thread::WriteMessageType::LengthMismatch {
+        if stream
+            .buffer_mut()
+            .is_some_and(|buffer| buffer.has_length_mismatch())
+        {
             return self.close_and_fail::<IS_SSL>(crate::Error::RequestBodyLengthMismatch, socket);
         }
-        stream.ended = message == http_thread::WriteMessageType::End;
         self.flush_stream::<IS_SSL>(socket);
     }
 
@@ -3315,17 +3316,17 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         // reshaped for borrowck — copy out the Copy bits we need
-        // (`upgrade_state`, the stream-buffer NonNull, `ended`) so the
+        // (`upgrade_state`, the stream-buffer NonNull) so the
         // `&mut self.state.original_request_body` borrow is dropped before any
         // call that takes `&mut self`. The stream is re-borrowed only at the
         // `detach()` sites via `request_stream_detach`.
         let upgrade_state = self.flags.upgrade_state;
-        let (stream_buffer_ptr, ended) = {
+        let stream_buffer_ptr = {
             let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
                 return;
             };
             let Some(buf) = stream.buffer else { return };
-            (buf, stream.ended)
+            buf
         };
         // ThreadSafeStreamBuffer is owned by the JS-side request body stream
         // and outlives this call (intrusive-refcounted; independent heap
@@ -3336,7 +3337,7 @@ impl<'a> HTTPClient<'a> {
             // cannot drain yet, upgrade is waiting for upgrade
             return;
         }
-        let buffer = stream_buffer.acquire();
+        let (buffer, ended) = stream_buffer.acquire();
         let was_empty = buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach

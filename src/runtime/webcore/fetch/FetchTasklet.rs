@@ -147,7 +147,7 @@ pub struct FetchTasklet {
     /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
     pub(crate) declared_request_body_len: Option<u64>,
     pub(crate) request_body_len_written: u64,
-    /// The count missed and `WriteMessageType::LengthMismatch` was sent.
+    /// The count missed and the stream buffer was told (`fail_length_mismatch`).
     pub(crate) request_body_mismatched: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
@@ -2198,7 +2198,6 @@ impl FetchTasklet {
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
                     buffer: core::ptr::NonNull::new(buffer),
-                    ended: false,
                     framing,
                 });
         }
@@ -2294,9 +2293,12 @@ impl FetchTasklet {
     fn report_content_length_mismatch(&mut self, written: u64) {
         self.request_body_len_written = written;
         self.request_body_mismatched = true;
+        let Some(buffer) = self.stream_buffer_mut() else {
+            return;
+        };
+        buffer.fail_length_mismatch();
         if let Some(http_) = self.http.as_mut() {
-            http::http_thread()
-                .schedule_request_write(http_, http::http_thread::WriteMessageType::LengthMismatch);
+            http::http_thread().schedule_request_write(http_);
         }
     }
 
@@ -2373,10 +2375,7 @@ impl FetchTasklet {
 
         if needs_schedule {
             // wakeup the http thread to write the data
-            http::http_thread().schedule_request_write(
-                self.http.as_mut().unwrap(),
-                http::http_thread::WriteMessageType::Data,
-            );
+            http::http_thread().schedule_request_write(self.http.as_mut().unwrap());
         }
 
         // pause the stream if we hit the high water mark
@@ -2418,22 +2417,20 @@ impl FetchTasklet {
                 FetchTasklet::deref(this_ptr);
                 return;
             }
-            if !self.skip_chunked_framing() {
-                // Using chunked transfer encoding, send the terminating chunk
-                let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
-                    // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                    FetchTasklet::deref(this_ptr);
-                    return;
-                };
-                // Mutex guards `buffer` against the HTTP thread; released when
-                // the lock guard drops.
-                let _ = thread_safe_stream_buffer
-                    .lock()
-                    .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: fire-and-forget
-            }
+            let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
+                // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+                FetchTasklet::deref(this_ptr);
+                return;
+            };
+            // Chunked transfer encoding ends with the terminating chunk.
+            let trailer: &[u8] = if self.skip_chunked_framing() {
+                b""
+            } else {
+                http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY
+            };
+            thread_safe_stream_buffer.end(trailer);
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread()
-                    .schedule_request_write(http_, http::http_thread::WriteMessageType::End);
+                http::http_thread().schedule_request_write(http_);
             }
         }
         // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.

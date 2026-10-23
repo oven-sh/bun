@@ -162,11 +162,10 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
             unreachable!()
         };
-        let ended = body.ended;
         let Some(sb) = body.buffer_mut() else {
             return;
         };
-        let buffer = sb.acquire();
+        let (buffer, ended) = sb.acquire();
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
         while written < data_len {

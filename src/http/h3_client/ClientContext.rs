@@ -16,7 +16,6 @@ use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
 use crate::h3_client as H3;
-use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
 
@@ -233,7 +232,7 @@ impl ClientContext {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
+    pub(crate) fn stream_body_by_http_id(async_http_id: u32) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -241,7 +240,7 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
+            if session_mut(s).stream_body_by_http_id(async_http_id) {
                 return;
             }
         }

@@ -16,7 +16,6 @@ use super::{dispatch, encode};
 use crate::h2_frame_parser as wire;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
-use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
@@ -320,12 +319,8 @@ impl ClientSession {
 
     /// HTTP-thread wake-up from `scheduleRequestWrite`; see
     /// [`Self::stream_request_body`].
-    pub(crate) fn stream_body_by_http_id(
-        this: SessionPtr,
-        async_http_id: u32,
-        message: WriteMessageType,
-    ) {
-        Self::enter(this, |s| s.stream_request_body(async_http_id, message));
+    pub(crate) fn stream_body_by_http_id(this: SessionPtr, async_http_id: u32) {
+        Self::enter(this, |s| s.stream_request_body(async_http_id));
     }
 
     /// HTTP-thread wake-up from `resumeReceive`; see [`Self::resume_receive`].
@@ -774,22 +769,23 @@ impl ClientSession {
         }
     }
 
-    /// New request body bytes (or end-of-body) are available in the request's
-    /// ThreadSafeStreamBuffer.
-    fn stream_request_body(&mut self, async_http_id: u32, message: WriteMessageType) {
+    /// New request body bytes, the end of the body, or a `Content-Length`
+    /// mismatch are in the request's ThreadSafeStreamBuffer.
+    fn stream_request_body(&mut self, async_http_id: u32) {
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
         };
-        {
+        let length_mismatch = {
             let Some(client) = stream_mut(stream).client_mut() else {
                 return;
             };
             let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body else {
                 return;
             };
-            st.ended = message == WriteMessageType::End;
-        }
-        if message == WriteMessageType::LengthMismatch {
+            st.buffer_mut()
+                .is_some_and(|buffer| buffer.has_length_mismatch())
+        };
+        if length_mismatch {
             self.detach_with_failure(stream, Error::RequestBodyLengthMismatch);
             self.rearm_timeout();
             self.maybe_release();

@@ -325,11 +325,10 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             }
         }
         HTTPRequestBody::Stream(body) => {
-            let ended = body.ended;
             let Some(sb) = body.buffer_mut() else {
                 return;
             };
-            let buffer = sb.acquire();
+            let (buffer, ended) = sb.acquire();
             let data_ptr = buffer.list.as_ptr();
             let data_len = buffer.size();
             let cursor = buffer.cursor;

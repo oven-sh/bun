@@ -26,7 +26,6 @@ pub struct Stream {
     // thread, so we keep the intrusive form (raw pointer + manual ref/deref)
     // instead of `Arc<T>`.
     pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
-    pub ended: bool,
     pub framing: StreamFraming,
 }
 

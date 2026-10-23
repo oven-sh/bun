@@ -3648,7 +3648,7 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
       expect(await run(script, { input })).toEqual(ran({ text: rewritten }, "beforeExit"));
     });
 
-    // The jobs of the last chunk's handlers run before the end handlers, however the end arrives.
+    // The jobs of the last chunk's handlers run before the end handlers, in both of the ways above.
     it.concurrent("the order is element, its microtask, end", async () => {
       const script = `
         const order = [];
@@ -3839,7 +3839,9 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
   });
 
   // A job of the last chunk may cancel the output and drop the rewriter. The end that the
-  // reader owes the sink then has no sink to go to.
+  // reader owes the sink then has no sink to go to: it must look again, not use the sink it
+  // took before the chunk. (Without the checkpoint the job runs inside the chunk's write,
+  // where the rewriter holds itself, so this passes there too.)
   it.concurrent("a job of the last chunk cancels the output and collects the rewriter", async () => {
     const script = `
       let out = new HTMLRewriter()

@@ -193,9 +193,6 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 /// sRGB, same bug #30197 was filed for).
 fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let Some(p) = icc_profile else { return };
-    if p.is_empty() {
-        return;
-    }
     let mut iccp = Iccp {
         profile_name: [0u8; 80],
         profile_len: p.len(),

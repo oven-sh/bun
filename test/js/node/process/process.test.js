@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isMusl, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -413,8 +413,7 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", a
 
 // https://github.com/oven-sh/bun/issues/32409
 // Linux-only: the process cwd can grow past PATH_MAX via repeated relative
-// chdir, after which getcwd fails with ERANGE and the logical path no longer
-// fits either. chdir must not throw, and once the cached cwd can no longer
+// chdir, after which getcwd fails and the logical path no longer fits either. chdir must not throw, and once the cached cwd can no longer
 // follow the process it must stop being used as a base: a later relative
 // chdir must not derive a wrong but existing directory from it.
 it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH_MAX", async () => {
@@ -423,7 +422,7 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH
       const fs = require("node:fs");
       const seg = Buffer.alloc(200, "d").toString();
       // 40 * ~201 bytes is well past PATH_MAX (4096): getcwd() starts failing
-      // with ERANGE partway down, but each short relative chdir still succeeds.
+      // partway down, but each short relative chdir still succeeds.
       // process.chdir() returns the cached cwd.
       let cached;
       for (let i = 0; i < 40; i++) {
@@ -455,7 +454,9 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(JSON.parse(stdout)).toEqual({ cwdError: "ERANGE", cacheFrozen: true });
+  // glibc's getcwd reports a cwd past PATH_MAX as ERANGE; musl passes the
+  // kernel's ENAMETOOLONG through unchanged.
+  expect(JSON.parse(stdout)).toEqual({ cwdError: isMusl ? "ENAMETOOLONG" : "ERANGE", cacheFrozen: true });
   expect(exitCode).toBe(0);
 });
 

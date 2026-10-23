@@ -549,14 +549,19 @@ test("an import() in flight when mock.module() adds an export gets the mock and 
     "lib.ts": `globalThis.__libEvaluations = (globalThis.__libEvaluations ?? 0) + 1;\nexport const a = "real a";`,
   });
   const path = join(String(dir), "lib.ts");
-  await import(path);
+  delete (globalThis as any).__libEvaluations;
+  try {
+    await import(path);
 
-  const inFlight = import(path);
-  mock.module(path, () => ({ a: "mock a", b: "mock b" }));
-  const fromInFlight = await inFlight;
-  expect({ a: fromInFlight.a, b: fromInFlight.b }).toEqual({ a: "mock a", b: "mock b" });
-  expect(await import(path)).toBe(fromInFlight);
-  expect((globalThis as any).__libEvaluations).toBe(1);
+    const inFlight = import(path);
+    mock.module(path, () => ({ a: "mock a", b: "mock b" }));
+    const fromInFlight = await inFlight;
+    expect({ a: fromInFlight.a, b: fromInFlight.b }).toEqual({ a: "mock a", b: "mock b" });
+    expect(await import(path)).toBe(fromInFlight);
+    expect((globalThis as any).__libEvaluations).toBe(1);
+  } finally {
+    delete (globalThis as any).__libEvaluations;
+  }
 });
 
 test("a factory with __esModule keeps patching the loaded module in place", async () => {

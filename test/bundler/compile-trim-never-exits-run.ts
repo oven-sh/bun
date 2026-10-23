@@ -24,6 +24,7 @@ const startsOrEndsAProcess =
 const changesTheProcess = /^(chdir|umask|setuid|setgid|seteuid|setegid|setgroups|initgroups|on|once|addListener|prependListener|prependOnceListener|off|removeListener|removeAllListeners|emit|emitWarning)$/;
 const waitsForInput = /^(alert|confirm|prompt|stdin|openStdin|sleepSync)$/;
 const isSafeToCall = (name: string) => !startsOrEndsAProcess.test(name) && !changesTheProcess.test(name) && !waitsForInput.test(name);
+const takesANumberForAnAddress = /^Bun\.FFI\.(CString|closeCallback|toArrayBuffer|toBuffer)$/;
 
 const instanceOf: Record<string, string> = {
   String: `"a"`,
@@ -51,7 +52,7 @@ for (const { path } of builtinEntries.filter(isNamedFromGlobalObject)) {
   members.set(holder === "globalThis" ? name : `${holder}.${name}`, { holder, name });
 }
 const paths = [...members.keys()];
-const callable = [...members].filter(([, { name }]) => isSafeToCall(name)).map(([path]) => path);
+const callable = [...members].filter(([path, { name }]) => isSafeToCall(name) && !takesANumberForAnAddress.test(path)).map(([path]) => path);
 const modules = [...new Set(builtinEntries.filter(isModule).map(({ path }) => path))];
 if (paths.length < 200 || modules.filter(name => isBuiltin(name)).length < 20) throw new Error("src/trim/features declares too few built-ins for this test to mean anything");
 

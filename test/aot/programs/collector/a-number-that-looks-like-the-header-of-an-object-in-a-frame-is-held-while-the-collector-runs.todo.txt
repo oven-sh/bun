@@ -1,0 +1,1 @@
+The pinned engine does not have the fix yet: in a build with assertions the collector stops at a word of the stack that looks like the header of a compiled object (heap/ConservativeRoots.cpp, genericAddSpanOfCompiledProcess()).

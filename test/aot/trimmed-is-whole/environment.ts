@@ -176,6 +176,9 @@ export class Bench {
       .replace(/\bpid[ =:]+\d+/gi, "pid <pid>")
       // Each executable has an id of its own, which a crash report names.
       .replace(/^Build ID: [0-9a-f]{32}$/gm, "Build ID: <id>")
+      // So does what the registers held at a fault, and the code there.
+      .replace(/^Registers: .*$/gm, "Registers: <registers>")
+      .replace(/^Code at rip: .*$/gm, "Code at rip: <code>")
       .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
       .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
       .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>");

@@ -6,7 +6,8 @@
 //   operators + - * / % << >> >>> & | ^ ~ - with variables and with constants, Math.imul clz32 abs min max sign floor ceil round trunc sqrt fround, comparisons of every width and sign, && || ! ?:
 //   meetings  what 32 bits gave is read as 64 (`((a << 1) >>> 0) + w`), what 64 bits gave as 32 (`(w | 0) < b`), as a double, as an index, as a shift count, as a divisor
 //   memory    typed arrays of each element width and an array, read and written at an index that an operator gave
-//   shapes    one expression; two that meet behind an if, of one width or of two; a loop that feeds itself; a switch; a test fused with its branch or kept as a value; a value kept across a call; two that may be absent and change places in a loop
+//   shapes    one expression; two that meet behind an if, of one width or of two; a loop that feeds itself; a switch; a test fused with its branch or kept as a value; a value kept across a call; two that may be absent and change places in a loop;
+//             a call on one path only; the same expression, the same test or the same read twice, with a branch, a call or a write between
 //   calls     half of the functions are called through one variable, half by name from a loop of their own
 //
 // One line a function: all its answers in one number. Always TypeScript: the mode `erased` gives the untyped form.
@@ -146,7 +147,7 @@ export function generate(random: Random): string {
     const joined = pick(["+", "-", "*", ">", "===", "%"]);
 
     let body: string;
-    switch (below(16)) {
+    switch (below(22)) {
       case 0: case 1: body = `return ${any(depth + 1)};`; break; // prettier-ignore
       case 2: case 3: {
         const [first, second] = [width(), below(3) ? undefined : width()];
@@ -197,6 +198,35 @@ export function generate(random: Random): string {
         body = `let t: ${type} = ${make(depth)};\n  if (${C(depth - 1)}) t = ${make(depth)};\n  ${below(2) ? "tick();\n  " : ""}`;
         absent[kind].push("t");
         body += `return ${pick(["t", make(1), any(), `fold(t) + ${I(1)}`])};`;
+        break;
+      }
+      case 14: {
+        // A call on one path only: the other needs no frame.
+        const [kept, early] = [any(), any(depth - 1)];
+        body = pick([`if (${C(depth - 1)}) return ${early};\n  const t = ${kept};\n  tick();\n  return t + ${any(depth - 1)};`, `const t = ${kept};\n  if (${C(depth - 1)}) {\n    tick();\n    return t + ${early};\n  }\n  return t;`, `if (${C(0)}) return ${leaf("I")};\n  if (${C(0)}) return ${leaf("D")};\n  tick();\n  return ${kept};`]);
+        break;
+      }
+      case 15: case 16: {
+        // The same expression twice: in one block, on both sides of a branch, on both sides of a call.
+        const twice = pick([any(), D(depth), `Math.sqrt(Math.abs(${D(depth - 1)}))`, `Math.floor(${D(depth - 1)})`, `${pick(["i8", "u8", "i16", "u16", "i32", "u32", "f32", "f64", "list"])}[${index(depth - 1)}]`, `Math.imul(${I(depth - 1)}, ${I(0)})`, `((${I(depth - 1)} / ${I(0)}) | 0)`]);
+        body = pick([`return ${twice} + ${twice};`, `const t = ${twice};\n  if (${C(depth - 1)}) return t - ${twice};\n  return t + ${twice} * 3;`, `const t = ${twice};\n  tick();\n  return t * 3 + ${twice};`, `let t = 0;\n  for (let k = 0; k < 3; k++) t += ${twice};\n  return t;`]);
+        break;
+      }
+      case 17: case 18: {
+        // A read, a write that may hit the same element on one path, the read again.
+        const [memory, stored] = pick([["scratch32", I(depth)], ["scratch8", any()], ["scratch16", any()], ["scratch64", any()], ["scratchList", any()]]);
+        const at = () => pick([`${I(0)} & 7`, `${U(0)} & 7`, `${below(8)}`, `${below(8)}`, `${U(0)} >>> 29`]);
+        const [read, write] = [at(), at()];
+        body = `const t = ${memory}[${read}];\n  ${pick([`if (${C(depth - 1)}) ${memory}[${write}] = ${stored};`, `${memory}[${write}] = ${stored};`, `if (${C(depth - 1)}) tick();\n  else ${memory}[${write}] = ${stored};`])}\n  return t * 3 + ${memory}[${read}];`;
+        break;
+      }
+      case 19: case 20: {
+        // The same test again, where the first answer decides the second.
+        const test = C(depth - 1);
+        const first = width();
+        body = `let t = ${of[first](depth - 1)};\n  if (${test}) t = ${of[first](depth)};\n  ${below(2) ? "tick();\n  " : ""}`;
+        more[first].push("t");
+        body += pick([`if (${test}) return ${any()};\n  return ${any()};`, `if (!(${test})) return ${any()};\n  return ${any()};`, `return (${test} ? ${any(depth - 1)} : ${any(depth - 1)}) + (${test} ? 1 : 2);`, `if (${test} && ${C(0)}) return ${any(depth - 1)};\n  if (${test} || ${C(0)}) return ${any(depth - 1)};\n  return t;`]);
         break;
       }
       default: {

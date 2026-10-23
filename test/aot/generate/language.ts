@@ -51,6 +51,8 @@ for (const [way, change] of Object.entries(ways)) {
 `,
     ),
     ...untypedTwins("language", "js", ["strict-equality-any-values"]),
+    "operators-inside-loops.json": `{ "skipInShell": "one function of many thousand blocks: where the back end is validated after each phase, simplifyCFG of B3 and of Air look at every block once for every block, and the build takes over five minutes", "skipInVariant": { "validate-back-end": "one function of many thousand blocks: where the back end is validated after each phase, simplifyCFG of B3 and of Air look at every block once for every block, and the build takes over five minutes" } }
+`,
     "operators-inside-loops.ts": text(
       `// Binary operators, \`===\`, truthiness, string conversion and comparisons with string literals in code inside loops.
 declare const console: { log(...values: unknown[]): void };
@@ -202,6 +204,8 @@ console.log("sameUnion", ${n}, sameUnion(W[${n}], X[0]), sameUnion(W[${n}], X[1]
       ],
       ``,
     ),
+    "operators-outside-loops.json": `{ "skipInShell": "one function of many thousand blocks: where the back end is validated after each phase, simplifyCFG of B3 and of Air look at every block once for every block, and the build takes over five minutes", "skipInVariant": { "validate-back-end": "one function of many thousand blocks: where the back end is validated after each phase, simplifyCFG of B3 and of Air look at every block once for every block, and the build takes over five minutes" } }
+`,
     "operators-outside-loops.ts": text(
       `// Binary operators, \`===\`, truthiness, string conversion and comparisons with string literals in code outside loops.
 declare const console: { log(...values: unknown[]): void };

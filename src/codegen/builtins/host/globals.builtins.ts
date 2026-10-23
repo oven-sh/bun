@@ -1511,7 +1511,6 @@ export default b.declarations(
   b.namespace("Bun.FFI", {
     ...Object.fromEntries(
       [
-        "CString",
         "callback",
         "cfunction",
         "closeCallback",
@@ -1523,6 +1522,8 @@ export default b.declarations(
         "viewSource",
       ].map(name => [name, b.otherwiseBy(b.generic)]),
     ),
+    // `new CString(..)` answers with a string, which no row of a function says.
+    CString: b.property(b.any),
     read: b.property(b.any),
   }),
   b.namespace("Bun.dns", {

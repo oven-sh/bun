@@ -92,6 +92,7 @@ console.log(holder.make(text)());
 console.log((() => {}).constructor`return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter`());
 //// proxy-get
 //@ not-seen
+//@ todo the compiler sees no use of Function where a proxy of a function hands out its constructor, so --trim removes it, and the refusal has other words
 const proxy = new Proxy(() => {}, {});
 console.log(proxy.constructor(text)());
 //// proxy-handler-hands-out

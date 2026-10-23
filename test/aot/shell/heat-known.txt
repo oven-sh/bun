@@ -17,3 +17,5 @@ runtime-caches/site-cache-access-kinds    cold    counts fills and refills of si
 runtime-caches/site-cache-access-kinds    neither    counts fills and refills of site caches, which only the hottest functions have
 runtime-caches/flattened-dictionary    cold    counts the site caches that flattening a dictionary clears, which only the hottest functions have
 runtime-caches/flattened-dictionary    neither    counts the site caches that flattening a dictionary clears, which only the hottest functions have
+writes-to-host-objects/the-global-object-as-this-this-is-used-in-front-of-the-test    both    keeps `console` beside an object of its own; the shell's console is a plain object, which compiled code takes for the program's object
+writes-to-host-objects/the-global-object-a-bound-definition-replaces-a-global    both    keeps `console` beside an object of its own; the shell's console is a plain object, which compiled code takes for the program's object

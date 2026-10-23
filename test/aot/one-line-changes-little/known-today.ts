@@ -70,6 +70,12 @@ export const knownInLibrary: Readonly<Record<string, string>> = {
     "promise-then": "bytes of code 233648 -> 299872",
     "promise-then-write": "bytes of code 233648 -> 299600",
   }),
+  ...(process.platform === "darwin" &&
+    process.arch === "x64" && {
+      "async-function": "bytes of code 233648 -> 299584",
+      "promise-then": "bytes of code 233648 -> 299616",
+      "promise-then-write": "bytes of code 233648 -> 299344",
+    }),
 };
 
 /** accesses free | tested | by name, calls direct | guarded | unknown, bytes of code of the program; alone: 66 | 15 | 9, 35 | 0 | 0, 8,715 */

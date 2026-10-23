@@ -74,7 +74,7 @@ const groups: Readonly<Record<string, readonly string[]>> = {
 const look = '`${typeof x} ${t(() => x.length)} ${t(() => x.name)} ${t(() => x.size)} ${t(() => x.message)} ${t(() => x.getTime)} ${t(() => typeof (x + 1))} ${t(() => x[0])}`';
 
 const whySkipped = "a generated file of over a megabyte: a validating build of it takes over eight minutes and six gigabytes";
-const options = JSON.stringify({ skipInVariant: { validate: whySkipped, "validate-collecting": whySkipped, validated: whySkipped } }, null, 2) + "\n";
+const options = JSON.stringify({ skipInShell: whySkipped, skipInVariant: { validate: whySkipped, "validate-back-end": whySkipped, "validate-collecting": whySkipped, validated: whySkipped } }, null, 2) + "\n";
 
 for (const [group, predicates] of Object.entries(groups)) {
   const lines = [`// ${group.replaceAll("-", " ")}: each asked of each kind of value, where the compiler knows the value's type and where it does not, there with a look at the value behind the test. Written by ../generate-type-predicates.ts.`, prelude];

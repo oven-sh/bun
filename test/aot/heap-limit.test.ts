@@ -793,12 +793,13 @@ console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
         String(folder),
       );
       expect(built.exitCode).toBe(0);
-      const { stdout, exitCode } = await run([join(String(folder), "program")], String(folder), {
+      const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
         BUN_JSC_structureHeapSizeInKB: "65536",
       });
       const message = "Out of memory: This executable can use 64 MB for the shapes of JavaScript objects (Structures).";
-      expect({ stdout, exitCode }).toEqual({
+      expect({ stdout, stderr, exitCode }).toEqual({
         stdout: `0 true ${message} true\n1 true ${message} true\nafterward a,b\n`,
+        stderr: "",
         exitCode: 0,
       });
     },

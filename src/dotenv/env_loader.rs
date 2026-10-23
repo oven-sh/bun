@@ -888,12 +888,8 @@ impl Loader {
 }
 
 /// `O_NONBLOCK`: a blocking `open` of a FIFO named `.env` waits for a writer.
-#[cfg(unix)]
 const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 =
     bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
-/// No `O_NONBLOCK`: an overlapped Windows handle cannot be read synchronously.
-#[cfg(not(unix))]
-const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
 /// Decides what happens to an env file that is not a regular file.
 #[derive(Clone, Copy, PartialEq, Eq)]

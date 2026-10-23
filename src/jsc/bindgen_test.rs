@@ -726,6 +726,73 @@ impl TestBoundThis {
     }
 }
 
+pub(crate) struct TestProtoCaller {
+    calls: Cell<u32>,
+}
+
+impl TestProtoCaller {
+    pub(crate) fn constructor() -> Self {
+        Self {
+            calls: Cell::new(0),
+        }
+    }
+
+    pub(crate) fn describe_call<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        callee: JsLocal<'a>,
+        arguments: &'a [JsLocal<'a>],
+        function: impl Fn(&mut JsScope<'a>) -> JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
+        self.calls.set(self.calls.get() + 1);
+        let returned = function(cx)?;
+        JSValue::create_array_from_slice(
+            cx.global(),
+            &[
+                this_value.to_js(),
+                callee.to_js(),
+                JSValue::from(arguments.len() as u32),
+                returned,
+            ],
+        )
+    }
+
+    pub(crate) fn get_calls(&self) -> u32 {
+        self.calls.get()
+    }
+
+    pub(crate) fn first(&self, _: &mut JsScope<'_>, first: JsLocal<'_>) -> JsResult<JSValue> {
+        Ok(first.to_js())
+    }
+
+    pub(crate) fn fail(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Err(cx.global().throw(format_args!("fail() failed")))
+    }
+
+    pub(crate) fn second(_first: i32, second: i32) -> i32 {
+        second
+    }
+}
+
+pub(crate) struct TestCallable {
+    value: i32,
+}
+
+impl TestCallable {
+    pub(crate) fn constructor(value: i32) -> Self {
+        Self { value }
+    }
+
+    pub(crate) fn call_instance(&self, other: i32) -> i32 {
+        self.value.wrapping_add(other)
+    }
+
+    pub(crate) fn get_value(&self) -> i32 {
+        self.value
+    }
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct TestNonFinal {
     ref_count: Cell<u32>,

@@ -521,7 +521,8 @@ devTest("each graph resolves packages for the platform that runs it", {
 });
 
 // The server entry point and the server components runtime of a framework run
-// in Bun. The "browser" map is read whatever the first resolver of the file is.
+// in Bun. A "browser" map tells the server resolver from the client resolver
+// whichever of them reads the package.json first (#14253).
 devTest("a framework's server modules resolve for bun", {
   framework: {
     fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "framework-server" }],

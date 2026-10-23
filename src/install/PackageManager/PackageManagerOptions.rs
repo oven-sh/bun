@@ -805,6 +805,11 @@ impl Options {
                 self.dry_run = true;
             }
 
+            if let Some(block_exotic_subdeps) = config.block_exotic_subdeps {
+                self.enable
+                    .set(Enable::BLOCK_EXOTIC_SUBDEPS, block_exotic_subdeps);
+            }
+
             if let Some(security_scanner) = config.security_scanner.as_deref() {
                 self.security_scanner = Some(leak_static(security_scanner));
                 self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
@@ -1353,7 +1358,12 @@ bitflags::bitflags! {
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
         /// `bun add` was given a group, so an entry that's in another group moves into it.
         const MOVE_TO_GROUP          = 1 << 10;
-        // _: u5 padding
+
+        /// Reject transitive deps specified with a non-registry source (git,
+        /// github, tarball, folder, symlink, workspace). Root-level deps are
+        /// exempt. See `block_exotic_subdeps.rs`.
+        const BLOCK_EXOTIC_SUBDEPS   = 1 << 11;
+        // _: u4 padding
     }
 }
 
@@ -1449,5 +1459,9 @@ impl Enable {
     #[inline]
     pub(crate) fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
+    }
+    #[inline]
+    pub fn block_exotic_subdeps(self) -> bool {
+        self.contains(Enable::BLOCK_EXOTIC_SUBDEPS)
     }
 }

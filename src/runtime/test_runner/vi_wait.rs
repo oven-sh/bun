@@ -137,7 +137,7 @@ impl ViWait {
         let interval_ms = interval_ms(global, interval)?;
         let timeout_ms = delay_ms(global, timeout, 1000)?;
         let cx = global.js_thread_of_caller(frame);
-        Self::begin(cx, kind, callback, interval_ms, timeout_ms, None)
+        Self::begin(&cx, kind, callback, interval_ms, timeout_ms, None)
     }
 
     pub(crate) fn poll_matcher(
@@ -148,7 +148,7 @@ impl ViWait {
         test: Option<RunningEntry>,
     ) -> JsResult<JSValue> {
         Self::begin(
-            global.js_thread_of_caller_no_frame(),
+            &global.js_thread_of_caller_no_frame(),
             Kind::Poll,
             attempt,
             interval_ms,
@@ -159,7 +159,7 @@ impl ViWait {
 
     #[optimize(size)]
     fn begin(
-        cx: JsThread<'_>,
+        cx: &JsThread<'_>,
         kind: Kind,
         callback: JSValue,
         interval_ms: u32,

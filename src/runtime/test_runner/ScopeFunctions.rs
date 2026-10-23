@@ -277,7 +277,7 @@ fn template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSValue], 
         .next()
         .unwrap_or_default();
     let headings: Vec<&[u8]> = bun_core::strings::split(first_line, b"|").map(<[u8]>::trim_ascii).collect();
-    if values.is_empty() || values.len() % headings.len() != 0 {
+    if values.is_empty() || !values.len().is_multiple_of(headings.len()) {
         return Err(global.throw(format_args!(
             "Expected a value for each of the {} headings \"{}\" in every row of the table, received {} values",
             headings.len(),

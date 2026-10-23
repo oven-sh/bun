@@ -141,6 +141,14 @@ pub(crate) fn parse_manifest_bin(
     Ok(())
 }
 
+/// The lockfiles of other package managers, in the order in which a migration tries them.
+pub(crate) const OTHER_LOCKFILES: [(&str, &ZStr); 4] = [
+    ("npm-shrinkwrap.json", zstr!("npm-shrinkwrap.json")),
+    ("package-lock.json", zstr!("package-lock.json")),
+    ("yarn.lock", zstr!("yarn.lock")),
+    ("pnpm-lock.yaml", zstr!("pnpm-lock.yaml")),
+];
+
 pub fn detect_and_load_other_lockfile<'a>(
     this: &'a mut Lockfile,
     dir: Fd,
@@ -153,12 +161,7 @@ pub fn detect_and_load_other_lockfile<'a>(
 
     // npm itself prefers npm-shrinkwrap.json over package-lock.json. The two have the same format.
     let mut found = Vec::new();
-    for (name, name_z) in [
-        ("npm-shrinkwrap.json", zstr!("npm-shrinkwrap.json")),
-        ("package-lock.json", zstr!("package-lock.json")),
-        ("yarn.lock", zstr!("yarn.lock")),
-        ("pnpm-lock.yaml", zstr!("pnpm-lock.yaml")),
-    ] {
+    for (name, name_z) in OTHER_LOCKFILES {
         let Ok(file) = File::openat(dir, name_z, O::RDONLY, 0) else {
             continue;
         };

@@ -2759,14 +2759,11 @@ impl Package<u64> {
                                         value_loc_of(source, packages_query.loc)
                                     };
                                 if !packages_expr.is_array() {
-                                    let _ = log.add_error_fmt(
+                                    return Err(workspace_map::add_workspaces_packages_type_error(
+                                        log,
                                         source,
                                         packages_loc,
-                                        format_args!(
-                                            "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
-                                        ),
-                                    );
-                                    return Err(crate::Error::InvalidPackageJSON);
+                                    ));
                                 }
                                 let packages_arr = workspace_map::NamesArray::from_expr(
                                     &packages_expr,
@@ -2861,21 +2858,19 @@ impl Package<u64> {
                     }
 
                     if group.behavior.is_workspace() {
-                        let _ = bun_ast::add_error_pretty!(
+                        return Err(workspace_map::add_workspaces_type_error(
                             log,
                             source,
                             dependencies_q.loc,
-                            "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
-                        );
-                    } else {
-                        let _ = bun_ast::add_error_pretty!(
-                            log,
-                            source,
-                            dependencies_q.loc,
-                            "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                            bstr::BStr::new(group.prop)
-                        );
+                        ));
                     }
+                    let _ = bun_ast::add_error_pretty!(
+                        log,
+                        source,
+                        dependencies_q.loc,
+                        "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                        bstr::BStr::new(group.prop)
+                    );
                     return Err(crate::Error::InvalidPackageJSON);
                 }
             }

@@ -2,7 +2,7 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { access, appendFile, copyFile, mkdir, readlink, rm, symlink, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -4526,5 +4526,37 @@ describe("-g and a package.json above the global directory", () => {
     expect(stdout.trim()).toBe(join(String(home), ".bun", "bin"));
     expect(await readdirSorted(globalDirOf(String(home)))).toEqual(entries);
     expect(exitCode).toBe(0);
+  });
+
+  // `$PWD` can lead to the global directory through a symlink. A command in a workspace looks
+  // above that path for its root, but `-g` doesn't.
+  it.skipIf(isWindows)("`bun pm ls -g` does not read a project above a link to the global directory", async () => {
+    using home = tempDir("bun-pm-ls-global-linked", {
+      ".bun/install/global/package.json": JSON.stringify({ name: "global", dependencies: {} }),
+      "project/package.json": strayRoot({ workspaces: ["global"] }),
+    });
+    const typed = join(String(home), "project", "global");
+    await symlink(globalDirOf(String(home)), typed);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "ls", "-g"],
+      cwd: typed,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        PWD: typed,
+        HOME: String(home),
+        BUN_INSTALL: join(String(home), ".bun"),
+        BUN_INSTALL_GLOBAL_DIR: globalDirOf(String(home)),
+        BUN_INSTALL_BIN: join(String(home), ".bun", "bin"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `${globalDirOf(String(home))} node_modules (0 installed)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

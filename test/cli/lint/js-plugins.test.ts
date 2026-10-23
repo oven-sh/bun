@@ -1763,6 +1763,120 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // Until an engine has been measured, it's assumed to need 2 GB, and two of those don't fit the budgets below. So a
+  // second engine only starts once the first one has been measured: by how much memory grew per byte that it linted.
+  describe("starts more engines once the first one has been measured", () => {
+    // Each engine evaluates the module once and writes one marker. From its ninth file on, an engine stays busy until
+    // a second engine has a file too, which otherwise depends on thread scheduling. If none has one within half of the
+    // test's timeout, the file is reported as "alone".
+    const rule = `{ create: context => ({ Program(node) {
+      if (files++ === 0) writeFileSync(new URL(crypto.randomUUID(), engines), "");
+      let isAlone = false;
+      if (files >= 9) {
+        end ??= Date.now() + ${timeout / 2};
+        while ((isAlone = readdirSync(engines).length < 3) && Date.now() < end) Bun.sleepSync(2);
+      }
+      context.report({ node, message: isAlone ? "alone" : "seen" });
+    } }) }`;
+    const head = `
+      import { readdirSync, writeFileSync } from "node:fs";
+      const engines = new URL("./engines/", import.meta.url);
+      let files = 0;
+      let end;`;
+    const first = `${head}
+      export default { meta: { name: "first" }, rules: { seen: ${rule} } };`;
+    const second = `export default { meta: { name: "second" }, rules: { never: { create: () => ({}) } } };`;
+    const flatConfig = `
+      import first from "./first.mjs";
+      export default [{ files: ["src/*"], plugins: { first }, rules: { "first/seen": "error" } }];`;
+    const rules = { "first/seen": "error" };
+    type Order = { files: Record<string, string>; flags?: string[]; count?: number; threads?: string };
+    const orders: [string, Order][] = [
+      // The controls. The first engine answers no call before the files are known, or one.
+      ["with a flat config", { files: { "eslint.config.mjs": flatConfig, "first.mjs": first } }],
+      [
+        "with one plugin of an oxlint config",
+        { files: { ".oxlintrc.json": oxlintrc({ jsPlugins: ["./first.mjs"], rules }), "first.mjs": first } },
+      ],
+      // The first engine answers two calls while the configs are read, which is before the files are known.
+      [
+        "with two plugins of an oxlint config",
+        {
+          files: {
+            ".oxlintrc.json": oxlintrc({ jsPlugins: ["./first.mjs", "./second.mjs"], rules }),
+            "first.mjs": first,
+            "second.mjs": second,
+          },
+        },
+      ],
+      [
+        "with two plugins of a bunfig.toml",
+        {
+          files: {
+            "bunfig.toml": `[lint]\nplugins = ["./first.mjs", "./second.mjs"]\n[lint.rules]\n"first/seen" = "error"\n`,
+            "first.mjs": first,
+            "second.mjs": second,
+          },
+        },
+      ],
+      [
+        "with two --plugin names that are only looked up",
+        {
+          files: { "eslint.config.mjs": flatConfig, "first.mjs": first },
+          flags: ["--plugin", "react", "--plugin", "import"],
+        },
+      ],
+      // With this version of Prettier installed, the built-in `prettier/prettier` hands every file back to the package's
+      // rule. A file only counts as still to lint from then on, so that number rises while the first engine works.
+      [
+        "with files that a built-in rule hands back to the package's rule",
+        {
+          files: {
+            "eslint.config.mjs": `
+              import prettier from "./plugin.mjs";
+              export default [{ files: ["src/*"], plugins: { prettier }, rules: { "prettier/prettier": "error" } }];`,
+            "plugin.mjs": `${head}
+              const meta = { schema: [{ type: "object" }, { type: "object" }] };
+              const plugin = { name: "eslint-plugin-prettier", version: "5.5.6" };
+              export default { meta: plugin, rules: { prettier: { meta, ...${rule} } } };`,
+            "node_modules/prettier/package.json": JSON.stringify({ name: "prettier", version: "3.3.3" }),
+            "node_modules/eslint-plugin-prettier/package.json": JSON.stringify({
+              name: "eslint-plugin-prettier",
+              version: "5.5.6",
+            }),
+          },
+          count: 12,
+          threads: "2",
+        },
+      ],
+    ];
+    test.each(orders)(
+      "%s",
+      async (_, { files, flags = [], count = 24, threads = "8" }) => {
+        const text = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
+        const sources = Object.fromEntries(Array.from({ length: count }, (_, i) => [`src/${i}.js`, text]));
+        const { raw, stderr, exitCode } = await lint(
+          { "engines/.keep": "", ...files, ...sources },
+          ["-f", "unix", "--timing", "--threads", threads, ...flags, "src"],
+          [],
+          // Half of this is budgeted for the engines.
+          { BUN_LINT_MEMORY: String(7 * 2 ** 30) },
+        );
+        const reported = (message: string) => raw.split(`:1:1: ${message} [Error/`).length - 1;
+        expect({ seen: reported("seen"), alone: reported("alone"), exitCode }).toEqual({
+          seen: count,
+          alone: 0,
+          exitCode: 1,
+        });
+        const engines = Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]);
+        expect(engines).toBeGreaterThan(1);
+        // 24 files of 250 KB add up to 6 MB, which is enough for three engines. 12 of them are enough for two.
+        expect(engines).toBeLessThanOrEqual(count === 24 ? 3 : 2);
+      },
+      timeout,
+    );
+  });
+
   test(
     'runs a rule written for ESLint 8, and a plugin that\'s an ES module with a "module.exports" export',
     async () => {

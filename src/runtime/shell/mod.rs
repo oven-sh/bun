@@ -18,6 +18,12 @@
 #[path = "shell_body.rs"]
 pub(crate) mod shell_body;
 
+/// Searches `PATH` for a command name. The exec state and the `which` builtin share this search.
+#[cfg(windows)]
+pub(crate) use bun_install::windows_shim::which as which_command;
+#[cfg(not(windows))]
+pub(crate) use bun_which::which as which_command;
+
 // ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]
 pub(crate) mod env_map;

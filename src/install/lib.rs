@@ -253,6 +253,8 @@ pub mod windows_shim {
     #[cfg(windows)]
     pub use crate::_bun_shim_impl as bun_shim_impl;
     #[cfg(windows)]
+    pub use bin_linking_shim::which;
+    #[cfg(windows)]
     pub(crate) use bin_linking_shim::{BinLinkingShim, Shebang, embedded_executable_data};
 }
 

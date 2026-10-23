@@ -96,11 +96,12 @@ pub fn which_for_spawn<'a>(
                 bin,
                 spells_executable_extension,
                 extensions,
+                &any_file,
             ) {
                 posix_to_platform_in_place(found);
                 return Some(utf16_result_into(buf, found));
             }
-            if let Some(found) = which_win(&mut *convert_buf, path, cwd, bin) {
+            if let Some(found) = which_win(&mut *convert_buf, path, cwd, bin, &any_file) {
                 return Some(utf16_result_into(buf, found));
             }
             if spells_executable_extension {
@@ -113,6 +114,7 @@ pub fn which_for_spawn<'a>(
                 bin,
                 false,
                 &WIN_COM_EXTENSION_W,
+                &any_file,
             )?;
             posix_to_platform_in_place(found);
             return Some(utf16_result_into(buf, found));
@@ -151,7 +153,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     #[cfg(windows)]
     {
         let mut convert_buf = w_path_buffer_pool::get();
-        let result = which_win(&mut *convert_buf, path, cwd, bin)?;
+        let result = which_win(&mut *convert_buf, path, cwd, bin, &any_file)?;
         return Some(utf16_result_into(buf, result));
     }
 
@@ -212,6 +214,30 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
         None
     }
+}
+
+/// Like `which()`, but if `accept` refuses a file, the search skips the directory that file is in.
+#[cfg(windows)]
+pub fn which_with<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+    accept: impl Fn(&WStr) -> bool,
+) -> Option<&'a ZStr> {
+    if bin.len() >= MAX_PATH_BYTES {
+        return None;
+    }
+    let mut convert_buf = w_path_buffer_pool::get();
+    let result = which_win(&mut *convert_buf, path, cwd, bin, &accept)?;
+    Some(utf16_result_into(buf, result))
+}
+
+/// `which()` and `which_for_spawn()` accept every file.
+#[cfg(windows)]
+#[inline(always)]
+fn any_file(_: &WStr) -> bool {
+    true
 }
 
 #[cfg(windows)]
@@ -295,11 +321,16 @@ fn search_bin<'a>(
     path_size: usize,
     try_as_spelled: bool,
     extensions: &[&[u16]],
+    accept: &impl Fn(&WStr) -> bool,
 ) -> Option<&'a mut [u16]> {
     {
         if try_as_spelled {
             // SAFETY: caller wrote NUL at buf[path_size]
-            if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
+            let file = WStr::from_buf(&buf[..], path_size);
+            if bun_sys::exists_os_path(file, true) {
+                if !accept(file) {
+                    return None;
+                }
                 return Some(&mut buf[..path_size]);
             }
         }
@@ -311,7 +342,11 @@ fn search_bin<'a>(
                 buf[path_size + 1..end].copy_from_slice(ext);
                 buf[end] = 0;
                 // SAFETY: buf[end] == 0 written above
-                if bun_sys::exists_os_path(WStr::from_buf(&buf[..], end), true) {
+                let file = WStr::from_buf(&buf[..], end);
+                if bun_sys::exists_os_path(file, true) {
+                    if !accept(file) {
+                        return None;
+                    }
                     return Some(&mut buf[..end]);
                 }
             }
@@ -329,6 +364,7 @@ fn search_bin_in_path<'a>(
     bin: &[u8],
     try_as_spelled: bool,
     extensions: &[&[u16]],
+    accept: &impl Fn(&WStr) -> bool,
 ) -> Option<&'a mut [u16]> {
     if path.is_empty() {
         return None;
@@ -365,7 +401,7 @@ fn search_bin_in_path<'a>(
     let path_size = segment_utf16_len + 1 + bin_utf16.len();
     buf[path_size] = 0;
 
-    search_bin(buf, path_size, try_as_spelled, extensions)
+    search_bin(buf, path_size, try_as_spelled, extensions, accept)
 }
 
 /// This is the windows version of `which`.
@@ -377,6 +413,7 @@ pub(crate) fn which_win<'a>(
     path: &[u8],
     cwd: &[u8],
     bin: &[u8],
+    accept: &impl Fn(&WStr) -> bool,
 ) -> Option<&'a [u16]> {
     if bin.is_empty() {
         return None;
@@ -405,7 +442,7 @@ pub(crate) fn which_win<'a>(
         // Capture len before re-borrowing buf (borrowck).
         let bin_utf16_len = bin_utf16.len();
         buf[bin_utf16_len] = 0;
-        return search_bin(buf, bin_utf16_len, try_as_spelled, extensions).map(|w| &*w);
+        return search_bin(buf, bin_utf16_len, try_as_spelled, extensions, accept).map(|w| &*w);
     }
 
     // check if bin is in cwd
@@ -422,6 +459,7 @@ pub(crate) fn which_win<'a>(
             strings::without_prefix_comptime(bin, b"./"),
             try_as_spelled,
             extensions,
+            accept,
         ) {
             posix_to_platform_in_place(bin_path);
             return Some(&*bin_path);
@@ -432,7 +470,8 @@ pub(crate) fn which_win<'a>(
 
     // `.com` gets its own pass once every directory failed `.exe`/`.cmd`/`.bat`.
     if spells_executable_extension {
-        return search_bin_in_path_list(buf, &mut *path_buf, path, bin, true, &[]).map(|w| &*w);
+        return search_bin_in_path_list(buf, &mut *path_buf, path, bin, true, &[], accept)
+            .map(|w| &*w);
     }
     // NLL/Polonius limitation — raw-ptr reborrow so the None branch can fall
     // through without `buf` appearing borrowed.
@@ -445,11 +484,20 @@ pub(crate) fn which_win<'a>(
         bin,
         false,
         &WIN_EXTENSIONS_W,
+        accept,
     ) {
         return Some(&*bin_path);
     }
-    search_bin_in_path_list(buf, &mut *path_buf, path, bin, false, &WIN_COM_EXTENSION_W)
-        .map(|w| &*w)
+    search_bin_in_path_list(
+        buf,
+        &mut *path_buf,
+        path,
+        bin,
+        false,
+        &WIN_COM_EXTENSION_W,
+        accept,
+    )
+    .map(|w| &*w)
 }
 
 /// `search_bin_in_path` over every `;`-separated directory of `path`.
@@ -461,6 +509,7 @@ fn search_bin_in_path_list<'a>(
     bin: &[u8],
     try_as_spelled: bool,
     extensions: &[&[u16]],
+    accept: &impl Fn(&WStr) -> bool,
 ) -> Option<&'a mut [u16]> {
     for segment_part in strings::tokenize(path, b";") {
         // NLL/Polonius limitation — re-borrowing `buf` across loop iterations
@@ -475,6 +524,7 @@ fn search_bin_in_path_list<'a>(
             bin,
             try_as_spelled,
             extensions,
+            accept,
         ) {
             return Some(bin_path);
         }

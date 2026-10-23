@@ -3358,18 +3358,15 @@ impl<'p, 's> Checker<'p, 's> {
             .intersects(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_REVERSE_MAPPED)
     }
 
-    /// `mentions` for each of `params`, in a single traversal of `ty`.
+    /// `mentions` for each of `params`, in a single exact traversal of `ty`.
     pub(super) fn params_mentioned_in(&self, ty: TypeId, params: &[TypeId]) -> SmallVec<[bool; 4]> {
         let mut mentioned: SmallVec<[bool; 4]> = smallvec![false; params.len()];
-        let may_be_any = self.any_type_in(ty, false, |t| {
+        self.any_type_in(ty, true, |t| {
             if let Some(i) = params.iter().position(|&p| p == t) {
                 mentioned[i] = true;
             }
             false
         });
-        if may_be_any {
-            mentioned.fill(true);
-        }
         mentioned
     }
 

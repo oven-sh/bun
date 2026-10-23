@@ -931,14 +931,13 @@ impl FontHandler {
                 // TODO: reset other properties
             }
             Property::Unparsed(val) => {
-                if is_font_property(&val.property_id) {
-                    self.flush(dest, context);
-                    self.flushed_properties
-                        .insert(FontProperty::try_from_property_id(val.property_id.tag()).unwrap());
-                    dest.push(property.deep_clone(arena));
-                } else {
+                let Some(flushed) = FontProperty::try_from_property_id(val.property_id.tag())
+                else {
                     return false;
-                }
+                };
+                self.flush(dest, context);
+                self.flushed_properties.insert(flushed);
+                dest.push(property.deep_clone(arena));
             }
             _ => return false,
         }
@@ -1127,20 +1126,4 @@ fn compatible_font_family(
     }
 
     family
-}
-
-#[inline]
-fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
-    use crate::properties::PropertyId;
-    matches!(
-        property_id,
-        PropertyId::FontFamily
-            | PropertyId::FontSize
-            | PropertyId::FontStyle
-            | PropertyId::FontWeight
-            | PropertyId::FontStretch
-            | PropertyId::FontVariantCaps
-            | PropertyId::LineHeight
-            | PropertyId::Font
-    )
 }

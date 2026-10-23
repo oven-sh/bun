@@ -980,28 +980,18 @@ impl TransformHandler {
             Property::Rotate(val) => individual_property!(rotate, val),
             Property::Scale(val) => individual_property!(scale, val),
             Property::Unparsed(unparsed) => {
-                if matches!(
-                    unparsed.property_id.tag(),
-                    PropertyIdTag::Transform
-                        | PropertyIdTag::Translate
-                        | PropertyIdTag::Rotate
-                        | PropertyIdTag::Scale
-                ) {
-                    self.flush(dest, context);
-                    let prop = if unparsed.property_id.tag() == PropertyIdTag::Transform {
-                        Property::Unparsed(unparsed.get_prefixed(
-                            bump,
-                            &context.targets,
-                            prefixes::Feature::Transform,
-                        ))
-                    } else {
-                        // The matched payload is `Unparsed`, so reconstruct directly.
-                        Property::Unparsed(unparsed.deep_clone(bump))
-                    };
-                    dest.push(prop);
+                self.flush(dest, context);
+                let prop = if unparsed.property_id.tag() == PropertyIdTag::Transform {
+                    Property::Unparsed(unparsed.get_prefixed(
+                        bump,
+                        &context.targets,
+                        prefixes::Feature::Transform,
+                    ))
                 } else {
-                    return false;
-                }
+                    // The matched payload is `Unparsed`, so reconstruct directly.
+                    Property::Unparsed(unparsed.deep_clone(bump))
+                };
+                dest.push(prop);
             }
             _ => return false,
         }

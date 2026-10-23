@@ -3,7 +3,7 @@ use crate as css;
 use crate::compat;
 use crate::css_values::length::LengthPercentage;
 use crate::prefixes::Feature;
-use crate::properties::{Property, PropertyId};
+use crate::properties::Property;
 use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
 use crate::{Parser, PrintErr, Printer, Result as CssResult, Token};
 use bun_alloc::ArenaVecExt as _;
@@ -1295,15 +1295,10 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::Unparsed(val) => {
-                if is_align_property(&val.property_id) {
-                    self.flush(dest, context);
-                    // `Property` has no blanket `Clone` yet; reconstruct from
-                    // the matched payload (same as flex.rs).
-                    let bump = dest.bump();
-                    dest.push(Property::Unparsed(val.deep_clone(bump)));
-                } else {
-                    return false;
-                }
+                self.flush(dest, context);
+                // `Property` has no blanket `Clone` yet; reconstruct from the matched payload.
+                let bump = dest.bump();
+                dest.push(Property::Unparsed(val.deep_clone(bump)));
             }
             _ => return false,
         }
@@ -1448,28 +1443,4 @@ impl AlignHandler {
         prefix.remove(VendorPrefix::MS);
         prefix
     }
-}
-
-fn is_align_property(property_id: &PropertyId) -> bool {
-    matches!(
-        property_id,
-        PropertyId::AlignContent(_)
-            | PropertyId::FlexLinePack(_)
-            | PropertyId::JustifyContent(_)
-            | PropertyId::BoxPack(_)
-            | PropertyId::FlexPack(_)
-            | PropertyId::PlaceContent
-            | PropertyId::AlignSelf(_)
-            | PropertyId::FlexItemAlign(_)
-            | PropertyId::JustifySelf
-            | PropertyId::PlaceSelf
-            | PropertyId::AlignItems(_)
-            | PropertyId::BoxAlign(_)
-            | PropertyId::FlexAlign(_)
-            | PropertyId::JustifyItems
-            | PropertyId::PlaceItems
-            | PropertyId::RowGap
-            | PropertyId::ColumnGap
-            | PropertyId::Gap
-    )
 }

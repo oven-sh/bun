@@ -325,16 +325,12 @@ mod transition_handler_body {
                     );
                 }
                 Property::Unparsed(x) => {
-                    if is_transition_property(&x.property_id) {
-                        self.flush(dest, context);
-                        dest.push(Property::Unparsed(x.get_prefixed(
-                            arena,
-                            &context.targets,
-                            Feature::Transition,
-                        )));
-                    } else {
-                        return false;
-                    }
+                    self.flush(dest, context);
+                    dest.push(Property::Unparsed(x.get_prefixed(
+                        arena,
+                        &context.targets,
+                        Feature::Transition,
+                    )));
                 }
                 _ => return false,
             }
@@ -834,16 +830,5 @@ mod transition_handler_body {
 
             _ => LogicalPropertyId::None,
         }
-    }
-
-    fn is_transition_property(property_id: &PropertyId) -> bool {
-        matches!(
-            property_id,
-            PropertyId::TransitionProperty(..)
-                | PropertyId::TransitionDuration(..)
-                | PropertyId::TransitionDelay(..)
-                | PropertyId::TransitionTimingFunction(..)
-                | PropertyId::Transition(..)
-        )
     }
 } // mod transition_handler_body

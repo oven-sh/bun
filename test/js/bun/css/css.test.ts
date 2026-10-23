@@ -54,6 +54,256 @@ describe("css tests", () => {
     '.foo{content:"+";}',
   );
 
+  describe("each declaration goes to the handler of its property", () => {
+    // A handler prints what it holds after `zoom`, which has no handler. The order shows who got a declaration.
+    const declarations = (rule: string) =>
+      minify_test_with_options(rule, "").slice(".a{".length, -"}".length).split(";");
+
+    const handlers: Record<string, Record<string, string>> = {
+      Background: {
+        "background-color": "red",
+        "background-image": "linear-gradient(red,#00f)",
+        "background-position-x": "1px",
+        "background-position-y": "1px",
+        "background-position": "1px 2px",
+        "background-size": "1px 2px",
+        "background-repeat": "no-repeat",
+        "background-attachment": "fixed",
+        "background-clip": "padding-box",
+        "background-origin": "content-box",
+        background: "red",
+      },
+      BoxShadow: {
+        "box-shadow": "1px 1px red",
+      },
+      Size: {
+        width: "1px",
+        height: "1px",
+        "min-width": "1px",
+        "min-height": "1px",
+        "max-width": "1px",
+        "max-height": "1px",
+        "block-size": "1px",
+        "inline-size": "1px",
+        "min-block-size": "1px",
+        "min-inline-size": "1px",
+        "max-block-size": "1px",
+        "max-inline-size": "1px",
+      },
+      Inset: {
+        top: "1px",
+        bottom: "1px",
+        left: "1px",
+        right: "1px",
+        "inset-block-start": "1px",
+        "inset-block-end": "1px",
+        "inset-inline-start": "1px",
+        "inset-inline-end": "1px",
+        "inset-block": "1px",
+        "inset-inline": "1px",
+        inset: "1px",
+      },
+      Border: {
+        "border-top-color": "red",
+        "border-bottom-color": "red",
+        "border-left-color": "red",
+        "border-right-color": "red",
+        "border-block-start-color": "red",
+        "border-block-end-color": "red",
+        "border-inline-start-color": "red",
+        "border-inline-end-color": "red",
+        "border-top-style": "solid",
+        "border-bottom-style": "solid",
+        "border-left-style": "solid",
+        "border-right-style": "solid",
+        "border-block-start-style": "solid",
+        "border-block-end-style": "solid",
+        "border-inline-start-style": "solid",
+        "border-inline-end-style": "solid",
+        "border-top-width": "1px",
+        "border-bottom-width": "1px",
+        "border-left-width": "1px",
+        "border-right-width": "1px",
+        "border-block-start-width": "1px",
+        "border-block-end-width": "1px",
+        "border-inline-start-width": "1px",
+        "border-inline-end-width": "1px",
+        "border-color": "red",
+        "border-style": "solid",
+        "border-width": "1px",
+        "border-block-color": "red",
+        "border-block-style": "solid",
+        "border-block-width": "1px",
+        "border-inline-color": "red",
+        "border-inline-style": "solid",
+        "border-inline-width": "1px",
+        border: "1px solid red",
+        "border-top": "1px solid red",
+        "border-bottom": "1px solid red",
+        "border-left": "1px solid red",
+        "border-right": "1px solid red",
+        "border-block": "1px solid red",
+        "border-block-start": "1px solid red",
+        "border-block-end": "1px solid red",
+        "border-inline": "1px solid red",
+        "border-inline-start": "1px solid red",
+        "border-inline-end": "1px solid red",
+      },
+      BorderRadius: {
+        "border-top-left-radius": "1px",
+        "border-top-right-radius": "1px",
+        "border-bottom-left-radius": "1px",
+        "border-bottom-right-radius": "1px",
+        "border-start-start-radius": "1px",
+        "border-start-end-radius": "1px",
+        "border-end-start-radius": "1px",
+        "border-end-end-radius": "1px",
+        "border-radius": "1px",
+      },
+      BorderImage: {
+        "border-image-source": "linear-gradient(red,#00f)",
+        "border-image-outset": "2",
+        "border-image-repeat": "round",
+        "border-image-width": "2",
+        "border-image-slice": "2",
+        "border-image": "linear-gradient(red,#00f) 2",
+      },
+      Flex: {
+        "flex-direction": "column",
+        "flex-wrap": "wrap",
+        "flex-flow": "column wrap",
+        "flex-grow": "2",
+        "flex-shrink": "2",
+        "flex-basis": "1px",
+        flex: "2",
+        order: "2",
+        "box-orient": "vertical",
+        "box-direction": "reverse",
+        "box-ordinal-group": "2",
+        "box-flex": "2",
+        "box-lines": "multiple",
+        "flex-order": "2",
+        "flex-positive": "2",
+        "flex-negative": "2",
+        "flex-preferred-size": "1px",
+      },
+      Align: {
+        "align-content": "space-between",
+        "justify-content": "center",
+        "place-content": "space-between stretch",
+        "align-self": "stretch",
+        "justify-self": "center",
+        "place-self": "stretch baseline",
+        "align-items": "stretch",
+        "justify-items": "center",
+        "place-items": "stretch baseline",
+        "row-gap": "1px",
+        "column-gap": "1px",
+        gap: "1px 2px",
+        "box-align": "center",
+        "box-pack": "center",
+        "flex-pack": "center",
+        "flex-align": "center",
+        "flex-item-align": "center",
+        "flex-line-pack": "center",
+      },
+      Margin: {
+        "margin-top": "1px",
+        "margin-bottom": "1px",
+        "margin-left": "1px",
+        "margin-right": "1px",
+        "margin-block-start": "1px",
+        "margin-block-end": "1px",
+        "margin-inline-start": "1px",
+        "margin-inline-end": "1px",
+        "margin-block": "1px",
+        "margin-inline": "1px",
+        margin: "1px",
+      },
+      Padding: {
+        "padding-top": "1px",
+        "padding-bottom": "1px",
+        "padding-left": "1px",
+        "padding-right": "1px",
+        "padding-block-start": "1px",
+        "padding-block-end": "1px",
+        "padding-inline-start": "1px",
+        "padding-inline-end": "1px",
+        "padding-block": "1px",
+        "padding-inline": "1px",
+        padding: "1px",
+      },
+      ScrollMargin: {
+        "scroll-margin-top": "1px",
+        "scroll-margin-bottom": "1px",
+        "scroll-margin-left": "1px",
+        "scroll-margin-right": "1px",
+        "scroll-margin-block-start": "1px",
+        "scroll-margin-block-end": "1px",
+        "scroll-margin-inline-start": "1px",
+        "scroll-margin-inline-end": "1px",
+        "scroll-margin-block": "1px",
+        "scroll-margin-inline": "1px",
+        "scroll-margin": "1px",
+      },
+      Font: {
+        "font-weight": "700",
+        "font-size": "1px",
+        "font-stretch": "75%",
+        "font-family": "serif",
+        "font-style": "italic",
+        "font-variant-caps": "small-caps",
+        "line-height": "2",
+        font: "1px serif",
+      },
+      Transition: {
+        "transition-property": "opacity",
+        "transition-duration": "1s",
+        "transition-delay": "1s",
+        "transition-timing-function": "linear",
+        transition: "opacity 1s",
+      },
+      Transform: {
+        transform: "rotate(1deg)",
+        translate: "1px",
+        rotate: "1deg",
+        scale: "2",
+      },
+    };
+
+    describe.each(Object.entries(handlers))("%s", (handler, properties) => {
+      const names = Object.keys(properties);
+
+      test.each(names.map(name => `${name}:${properties[name]}`))("%s", typed => {
+        expect(declarations(`.a{${typed};zoom:1}`)).toEqual(["zoom:1", typed]);
+      });
+
+      // `SizeHandler` prints a value that did not parse before the declarations it holds.
+      if (handler === "Size") return;
+      const unparsedCases = names.map((name, i) => {
+        const other = names[i === 0 ? 1 : 0] ?? name;
+        return [`${other}:${properties[other]}`, `${name}:var(--x)`];
+      });
+      test.each(unparsedCases)("%s; %s", (held, unparsed) => {
+        const handled = declarations(`.a{${held};${unparsed};zoom:1}`).filter(declaration => declaration !== "zoom:1");
+        expect(handled).toEqual([held, unparsed]);
+      });
+    });
+
+    // These handlers print a declaration where it is written. The fallback shows that they got it.
+    prefix_test(".a { color: lab(40% 56.6 39) }", ".a { color: #b32323; color: lab(40% 56.6 39); }", {
+      chrome: 80 << 16,
+    });
+    prefix_test(
+      ".a { text-shadow: 1px 1px lab(40% 56.6 39) }",
+      ".a { text-shadow: 1px 1px #b32323; text-shadow: 1px 1px lab(40% 56.6 39); }",
+      { chrome: 80 << 16 },
+    );
+    prefix_test(".a { color-scheme: dark }", ".a { --buncss-light: ; --buncss-dark: initial; color-scheme: dark; }", {
+      chrome: 80 << 16,
+    });
+  });
+
   describe("custom property cases", () => {
     cssTest(
       `div {

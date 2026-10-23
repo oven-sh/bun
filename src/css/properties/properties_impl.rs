@@ -4,33 +4,7 @@ use css::PrintErr;
 use css::Printer;
 use css::VendorPrefix;
 use css::css_properties::CustomPropertyName;
-use css::css_properties::{Property, PropertyId, PropertyIdTag};
-
-impl Property {
-    /// Returns the *raw* enum discriminant of this `Property` as a
-    /// [`PropertyIdTag`].
-    ///
-    /// Unlike [`Property::property_id`], this does **not** look through
-    /// `Property::Unparsed` to the wrapped `UnparsedProperty::property_id` —
-    /// an `Unparsed` declaration always returns `PropertyIdTag::Unparsed`, and
-    /// a `Custom` declaration always returns `PropertyIdTag::Custom`.
-    ///
-    /// This is a raw discriminant lookup.
-    /// Handlers that switch on the discriminant to project a parsed
-    /// payload — e.g. `SizeHandler` in `margin_padding.rs` — must use this so
-    /// an unparsed `margin-top: var(--x)` does not route into the parsed
-    /// `MarginTop` arm and panic in `extract_top`.
-    #[inline]
-    pub(crate) fn variant_tag(&self) -> PropertyIdTag {
-        match self {
-            Property::Unparsed(_) => PropertyIdTag::Unparsed,
-            Property::Custom(_) => PropertyIdTag::Custom,
-            // Every other `Property` variant maps 1:1 onto its `PropertyId`
-            // variant, so `property_id().tag()` is the discriminant.
-            _ => self.property_id().tag(),
-        }
-    }
-}
+use css::css_properties::{Property, PropertyId};
 
 /// Ordered single-bit prefix flags. The crate-root `VendorPrefix::FIELDS` is
 /// a `&'static [VendorPrefix]` with the same values in the same declaration

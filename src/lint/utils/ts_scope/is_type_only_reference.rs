@@ -4,15 +4,6 @@
 use super::{reference_contains_type_predicate, reference_contains_type_query};
 use crate::semantic::{Declaration, DeclarationKind, DeclarationKinds, Reference, Symbol};
 
-/// scope-manager's `definition.isTypeDefinition`: a class, an enum, an enum member, a namespace, an
-/// import, an interface, a type alias, a type parameter.
-pub fn is_type_definition(declaration: Declaration) -> bool {
-    !matches!(
-        declaration,
-        Declaration::Var(_) | Declaration::Param(_) | Declaration::Fn(_) | Declaration::Other
-    )
-}
-
 /// scope-manager's `definition.type === DefinitionType.Variable`: bound by `var`, `let`, `const`
 /// or `using`, and not by `catch`.
 #[inline]

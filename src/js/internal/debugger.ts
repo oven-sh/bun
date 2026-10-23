@@ -779,7 +779,13 @@ const defaultPort = 6499;
 
 function parseUrl(input: string): URL {
   if (input.startsWith("ws://") || input.startsWith("ws+unix://")) {
-    return new URL(input);
+    const url = new URL(input);
+    // A trailing slash is the explicit opt-out of the UUID token. `ws://host:port`
+    // without any path parses to "/" too, so only the spelled-out form keeps it.
+    if (url.protocol === "ws:" && url.pathname === "/" && !/^ws:\/\/[^/?#]*\//.test(input)) {
+      url.pathname = `/${randomId()}`;
+    }
+    return url;
   }
   const url = new URL(`ws://${defaultHostname}:${defaultPort}/${randomId()}`);
   for (const part of input.split(/(\[[a-z0-9:]+\])|:/).filter(Boolean)) {

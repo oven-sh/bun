@@ -1110,6 +1110,7 @@ test("a wrapper around the default Error.prepareStackTrace leaves the frames as 
     eval: () => eval('new Error("eval")'),
     "function code": () => new Function('return new Error("fn")')(),
     async: () => later(),
+    "anonymous constructor": () => new (class { constructor() { this.error = new Error("anon"); } })().error,
   };
   // One call site for every way of formatting, so the positions can be compared. The stack is read while
   // the formatter is installed: it is formatted on the first read.
@@ -1148,6 +1149,7 @@ test("a wrapper around the default Error.prepareStackTrace leaves the frames as 
   expect(plain.host[0]).toBe("at parse (unknown)");
   expect(plain.constructor[0]).toStartWith("at new Box (");
   expect(plain.eval[1]).toBe("at eval (unknown)");
+  expect(plain["anonymous constructor"][0]).toStartWith("at new <anonymous> (");
   expect(position.host.slice(0, 2)).toEqual([expect.any(Number), expect.any(Number)]);
   expect(site.builtin[0]).toEqual([true, "[unknown]"]);
   expect(site.host[0]).toEqual([true, "[native code]"]);
@@ -1170,6 +1172,56 @@ test("a frame made with new is at the new keyword", () => {
   Error.prepareStackTrace = (error, callSites) => callSites[0].getLineNumber() + ":" + callSites[0].getColumnNumber();
   const callSite = (0, eval)(text).stack;
   expect({ plain, wrapped, callSite }).toEqual({ plain: [3, 14], wrapped: [3, 14], callSite: "3:14" });
+});
+
+// The error printer parses a stack that was read back out of its text. A frame it parses must print as
+// the text did, so a nameless constructor frame is `new <anonymous>` there too.
+test.concurrent("the error printer prints a nameless constructor frame as new <anonymous>", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const error = new (class { constructor() { this.error = new Error("anon"); } })().error;
+      void error.stack;
+      throw error;`,
+    ],
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("at new <anonymous> (");
+  expect(stderr).not.toContain("at new  (");
+  expect(exitCode).toBe(1);
+});
+
+// A node:vm frame belongs to the vm's source, even when its filename is that of a transpiled module of
+// Bun's realm: it is not mapped through that module's source map, on either path.
+test.concurrent("a node:vm frame named after a transpiled file keeps its own position", async () => {
+  using dir = tempDir("vm-frame-keeps-position", {
+    "probe.ts": [
+      `import vm from "node:vm";`,
+      `const typed: number = 1;`,
+      `const code: string = "\\n\\nfunction deep() { return new Error('x'); }\\ndeep()";`,
+      `const frame = () => vm.runInNewContext(code, {}, { filename: import.meta.path }).stack.split("\\n")[1];`,
+      `const plain = frame();`,
+      `const original = Error.prepareStackTrace;`,
+      `Error.prepareStackTrace = (error, callSites) => original(error, callSites);`,
+      `const wrapped = frame();`,
+      `console.log(JSON.stringify({ plain, wrapped, typed }));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "probe.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const at = `    at deep (${join(String(dir), "probe.ts")}:3:26)`;
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({ stdout: { plain: at, wrapped: at, typed: 1 }, stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 // As V8: a caller of the default formatter gets the throw, and the error.stack a prepareStackTrace

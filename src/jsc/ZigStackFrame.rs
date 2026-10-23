@@ -305,7 +305,11 @@ impl fmt::Display for NameFormatter<'_> {
                 }
             }
             ZigStackFrameCode::CONSTRUCTOR => {
-                write!(f, "new {}", name)?;
+                if !name.is_empty() {
+                    write!(f, "new {}", name)?;
+                } else {
+                    f.write_str("new <anonymous>")?;
+                }
             }
             _ => {
                 if !name.is_empty() {

@@ -545,6 +545,7 @@ public:
     }
 
     ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
+    const ZigStackFrame& operator[](size_t index) const { return m_frames[index]; }
 
     void remap(void* bunVM)
     {

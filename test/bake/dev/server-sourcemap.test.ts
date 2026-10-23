@@ -43,7 +43,8 @@ export async function getStaticPaths() {
     // Strip ANSI codes for cleaner checking
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
-    // The column is where the map of the server chunk puts the frame, which is the start of the line.
+    // The map of the server chunk is a generated line off (the frame is on line 7), and has no mapping at the
+    // column of the `new` keyword, so the column is the line's first mapping. Only the line is checked.
     const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("[...slug].tsx:6:");
     // const hasCorrectCallLine = cleanLines.includes("MyPage") && cleanLines.includes("2") && cleanLines.includes("3");
     const hasCorrectFileName = cleanLines.includes("pages/[...slug].tsx");

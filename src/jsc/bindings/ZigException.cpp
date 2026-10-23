@@ -549,6 +549,13 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
 
                         current.remapped = true;
                         current.is_async = frame.isAsync;
+                        // The location tokens that Bun::appendStackFrame writes for a frame with no file.
+                        if (frame.sourceURL == "native"_s)
+                            current.kind = ZigStackFrameKindBuiltin;
+                        else if (frame.sourceURL == "unknown"_s)
+                            current.kind = ZigStackFrameKindHost;
+                        else if (frame.sourceURL == "[wasm code]"_s)
+                            current.kind = ZigStackFrameKindWasm;
 
                         if (frame.isConstructor) {
                             current.code_type = ZigStackFrameCodeConstructor;

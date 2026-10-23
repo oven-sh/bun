@@ -1,4 +1,4 @@
-// A compiled program describes an argument that a native function rejects without running script, so a Proxy is `[Object]` where plain Bun reads `constructor.name` through it: it has an .expected.txt.
+// A compiled program describes an argument that a native function rejects without running script. A Proxy whose handler has no `get` hands the read of `constructor` on to its target, so it is described as plain Bun describes it.
 const proxy = new Proxy({}, {});
 try {
   process.nextTick(proxy);

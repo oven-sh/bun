@@ -161,6 +161,29 @@ test(
   timeout,
 );
 
+function findDescriptionOfEngine(file: Buffer): number {
+  for (let at = file.indexOf("BUNAOTRT"); at >= 0; at = file.indexOf("BUNAOTRT", at + 1)) {
+    if (file.readUInt32LE(at + 8) === 32 + 4 * file.readUInt32LE(at + 12)) return at;
+  }
+  throw new Error("this Bun has no description of its run time");
+}
+
+test(
+  "the image takes the form that the run time's description names",
+  async () => {
+    if (!hasIdentity) return;
+    using dir = tempDir("aot-carrier-other-form", files);
+    const folder = String(dir);
+    const other = readFileSync(bunExe());
+    other[findDescriptionOfEngine(other) + 26] ^= 1;
+    built(await buildOnCarrier(folder, "other-form", other));
+    const { stdout, stderr, exitCode } = await spawned([executablePath(folder, "out")], folder, bunEnv);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    expect(stderr).toStartWith("error: can't run this executable's compiled code");
+  },
+  timeout,
+);
+
 test.each(Object.keys(identityRemovals))(
   "a Bun without an identity is rejected when the program is built: %s",
   async name => {

@@ -241,6 +241,7 @@ fn with_host_in<R>(
     let options = Options {
         aot: &aot,
         executable_identity: ExecutableIdentity([0; 16]),
+        image_form: None,
         entry_points: entry_points.to_vec(),
         code: CodeOptions::bun_run(&from_native(root)),
         typescript_libs: Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS),

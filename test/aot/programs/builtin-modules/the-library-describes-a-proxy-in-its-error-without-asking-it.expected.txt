@@ -1,4 +1,4 @@
-ERR_INVALID_ARG_TYPE The "options" argument must be of type object. Received [Object]
+ERR_INVALID_ARG_TYPE The "options" argument must be of type object. Received an instance of Array
 ERR_INVALID_ARG_TYPE The "options" argument must be of type object. Received an instance of Array
 ERR_INVALID_ARG_TYPE The "options" argument must be of type object. Received function 
 ERR_INVALID_ARG_TYPE The "options" argument must be of type object. Received type number (1)

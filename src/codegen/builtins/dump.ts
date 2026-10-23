@@ -220,6 +220,7 @@ export interface DumpedOverload {
   runsOnlyOperandCode: boolean;
   readsStateBeforeConversions: boolean;
   isSpecialCase: boolean;
+  resultIsDeclaredOnly?: true;
   reads: Heap[];
   writes: Heap[];
   transfers: DumpedTransfer[];

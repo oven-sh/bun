@@ -192,9 +192,9 @@ fn string_to_number_follows_ecmascript() {
 #[test]
 fn string_to_number_declines_inexact_radix_literals() {
     let cases = [
-        ("0x", "f", 13, 2f64.powi(52) - 1.0),
-        ("0o", "7", 17, 2f64.powi(51) - 1.0),
-        ("0b", "1", 53, 2f64.powi(53) - 1.0),
+        ("0x", "f", 13, ((1u64 << 52) - 1) as f64),
+        ("0o", "7", 17, ((1u64 << 51) - 1) as f64),
+        ("0b", "1", 53, ((1u64 << 53) - 1) as f64),
     ];
     for (prefix, digit, max_digits, expected) in cases {
         let exact = format!("{prefix}{}", digit.repeat(max_digits));

@@ -48,11 +48,11 @@ on {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type fu
 once {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received an instance of Object
 prependListener {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received an instance of Object
 off {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received an instance of Object
-nextTick {}: TypeError ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
-on {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received [Object]
-once {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received [Object]
-prependListener {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received [Object]
-off {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received [Object]
+nextTick {}: TypeError ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received an instance of Object
+on {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received an instance of Object
+once {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received an instance of Object
+prependListener {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received an instance of Object
+off {}: TypeError ERR_INVALID_ARG_TYPE The "listener" argument must be of type function. Received an instance of Object
 0
 arrow emitted
 function emitted

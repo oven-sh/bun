@@ -62,6 +62,6 @@ pub use statistics::*;
 #[cfg(test)]
 pub use checks::*;
 
-pub const SCHEMA_HASH: u64 = 0xe334c3c8b2198360;
+pub const SCHEMA_HASH: u64 = 0xc2bce9f01c59b6d6;
 pub const MAGIC: u32 = 0x52495442;
 pub const MAX_TRACKED_INTEGER: i64 = 4611686018427387903;

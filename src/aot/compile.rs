@@ -284,6 +284,7 @@ pub fn compile(
     let request = EngineRequest {
         options: options.aot,
         identity: options.executable_identity,
+        image_form: options.image_form,
         thread_count: options.thread_count(),
     };
     let mut engine_options = match EngineOptions::new(&request) {

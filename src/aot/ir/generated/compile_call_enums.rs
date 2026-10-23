@@ -536,6 +536,19 @@ impl ReferenceWidth {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
+pub enum ImageForm { #[default] Absolute = 0, PositionIndependent = 1 }
+impl ImageForm {
+    pub const COUNT: usize = 2;
+    pub const ALL: [ImageForm; 2] = [ImageForm::Absolute, ImageForm::PositionIndependent];
+    pub const NAMES: [&'static str; 2] = ["Absolute", "PositionIndependent"];
+    pub const fn name(self) -> &'static str { Self::NAMES[self as usize] }
+    pub fn from_name(name: &str) -> Option<ImageForm> { Self::ALL.into_iter().find(|member| member.name() == name) }
+    pub const fn to_wire(self) -> u32 { self as u32 }
+    pub const fn from_wire(word: u32) -> Option<ImageForm> { if (word as usize) < Self::COUNT { Some(Self::ALL[word as usize]) } else { None } }
+}
+
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub enum MismatchPolicy { #[default] Throw = 0, Report = 1 }
 impl MismatchPolicy {
     pub const COUNT: usize = 2;

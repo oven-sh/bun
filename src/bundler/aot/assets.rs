@@ -346,6 +346,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn default_name_has_hash_without_directory() {
         let name = name_with_options(|options| options.root_dir = Box::from(&b"/p"[..]));
         assert!(name.starts_with(b"./a-"));
@@ -354,6 +355,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn asset_naming_replaces_template() {
         let name = name_with_options(|options| {
             options.root_dir = Box::from(&b"/p"[..]);
@@ -363,6 +365,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn asset_path_ignores_contents_unless_template_has_hash() {
         let ignores_contents = |naming: &'static [u8]| {
             let configure =
@@ -376,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn set_contents_matches_embedding_with_contents() {
         let configure = |options: &mut BundleOptions<'_>| {
             options.root_dir = Box::from(&b"/p"[..]);
@@ -427,6 +431,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn equal_input_gives_equal_name() {
         let first = name_with_options(|options| options.root_dir = Box::from(&b"/p"[..]));
         let second = name_with_options(|options| options.root_dir = Box::from(&b"/p"[..]));
@@ -486,6 +491,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn page_source_maps_follow_files() {
         with_test_context(
             |_| {},
@@ -520,6 +526,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn different_bytes_under_one_name_collide() {
         let embedded = EmbeddedFiles::default();
         let mut log = Log::init();
@@ -536,6 +543,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn every_collision_is_reported() {
         let embedded = EmbeddedFiles::default();
         let mut log = Log::init();
@@ -598,6 +606,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn embedded_file_is_retained_as_asset() {
         let (paths, files) = embed_under_loaders(&[Loader::File]);
         assert_eq!(files.len(), 1);
@@ -615,6 +624,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn long_path_fails() {
         with_test_context(
             |options| options.root_dir = Box::from(&b"/project"[..]),
@@ -643,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn runtime_require_loader_wins_among_equal_copies() {
         for loaders in [
             [Loader::File, Loader::SqliteEmbedded],
@@ -656,6 +667,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn embedding_order_does_not_choose_loader() {
         for loaders in [[Loader::File, Loader::Wasm], [Loader::Wasm, Loader::File]] {
             let (_, files) = embed_under_loaders(&loaders);
@@ -699,6 +711,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn push_order_does_not_change_list() {
         let mut sources = [
             SourceFile {

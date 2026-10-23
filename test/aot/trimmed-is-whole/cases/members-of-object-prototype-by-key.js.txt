@@ -31,3 +31,16 @@ for (const name of process.argv[2].split(",")) {
     console.log(name, "threw", error instanceof TypeError);
   }
 }
+//// a-table-whose-result-is-read-by-a-key-again
+//@ args home,constructor,__proto__,toString,hasOwnProperty,valueOf,__lookupGetter__,nothing assign,create,defineProperties,defineProperty,entries,freeze,fromEntries,getOwnPropertyDescriptor,getOwnPropertyDescriptors,getOwnPropertyNames,getOwnPropertySymbols,getPrototypeOf,groupBy,hasOwn,is,isExtensible,isFrozen,isSealed,keys,preventExtensions,seal,setPrototypeOf,values,constructor,prototype,name,length,call,apply,bind,toString,toLocaleString,valueOf,hasOwnProperty,isPrototypeOf,propertyIsEnumerable,__defineGetter__,__defineSetter__,__lookupGetter__,__lookupSetter__,__proto__,arguments,caller,nothing
+const routes = { home: () => "home", about: () => "about" };
+for (const first of process.argv[2].split(",")) {
+  for (const second of process.argv[3].split(",")) {
+    try {
+      const found = routes[first][second];
+      console.log(first, second, typeof found, typeof found === "function" && second !== "constructor" ? typeof found({ a: 1 }, "a") : String(found).length);
+    } catch (error) {
+      console.log(first, second, "threw", error instanceof TypeError);
+    }
+  }
+}

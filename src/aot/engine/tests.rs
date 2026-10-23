@@ -36,6 +36,7 @@ fn fill(record: &mut CompileOptions, options: &AotOptions, thread_count: NonZero
     let request = EngineRequest {
         options,
         identity: IDENTITY,
+        image_form: None,
         thread_count,
     };
     fill_record(record, &request);
@@ -196,6 +197,27 @@ fn engine_defaults_are_preserved() {
         record.layout_seed = defaults.layout_seed;
     });
     assert_eq!(record, expected);
+}
+
+#[test]
+fn image_form_of_the_target_replaces_the_default() {
+    let options = AotOptions::default();
+    let mut request = EngineRequest {
+        options: &options,
+        identity: IDENTITY,
+        image_form: None,
+        thread_count: THREAD_COUNT,
+    };
+    let mut record: CompileOptions = zeroed();
+    record.target.image_form = ImageForm::PositionIndependent;
+    fill_record(&mut record, &request);
+    assert_eq!(record.target.image_form, ImageForm::PositionIndependent);
+    request.image_form = Some(TargetImageForm::Absolute);
+    fill_record(&mut record, &request);
+    assert_eq!(record.target.image_form, ImageForm::Absolute);
+    request.image_form = Some(TargetImageForm::PositionIndependent);
+    fill_record(&mut record, &request);
+    assert_eq!(record.target.image_form, ImageForm::PositionIndependent);
 }
 
 #[test]

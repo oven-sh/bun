@@ -138,6 +138,7 @@ export function methodReturning(declaredText: string): b.FunctionField {
   return {
     args: { operands: b.any.rest },
     returns: createStrictType(new AnyType().returning(...words).resultType),
+    resultIsDeclaredOnly: true,
     capability: "js",
     throws: true,
     uses: { this: b.handedOver, operands: b.handedOver },
@@ -298,16 +299,37 @@ function computeBodyUses(type: Type, capability: Capability, isRead: boolean): r
   return type.borrowsHeap ? [b.readsContents()] : [];
 }
 
-function computeReceiverUses(signature: Signature): readonly UseSpec[] {
+function mayHoldInstanceOf(spec: TypeSpec, className: string): boolean {
+  switch (spec.type) {
+    case "Never":
+    case "Primitive":
+    case "Integers":
+    case "StringLiterals":
+      return false;
+    case "Union":
+      return spec.members.some(member => mayHoldInstanceOf(member, className));
+    case "Instance":
+      return spec.class === className;
+    default:
+      return true;
+  }
+}
+
+// A member that is passed its wrapper may answer it: `returns: b.self` is any object of the class, the receiver too.
+function computeReceiverUses(signature: Signature, className: string | null): readonly UseSpec[] {
   const changesReceiver = signature instanceof Method && signature.receiver === "mut";
-  if (signature instanceof Method && saysResult(signature.returns) && !changesReceiver) return b.handedOver;
+  if (signature instanceof Method && saysResult(signature.returns) && !changesReceiver) {
+    const mayAnswerReceiver =
+      signature.passThis && className !== null && mayHoldInstanceOf(signature.returns.resultType, className);
+    return mayAnswerReceiver ? [...b.handedOver, b.returned] : b.handedOver;
+  }
   if (signature.capability === "js") return [b.everything];
   if (signature instanceof Method && signature.passThis) return usesWithoutJavaScript;
   return [b.readsContents(), b.writesContents()];
 }
 
-function createReceiver(signature: Signature, type: ParameterType | null): Receiver | null {
-  return type === null ? null : { type, uses: computeReceiverUses(signature) };
+function createReceiver(signature: Signature, type: ParameterType | null, className: string | null): Receiver | null {
+  return type === null ? null : { type, uses: computeReceiverUses(signature, className) };
 }
 
 function isImmediate(spec: TypeSpec): boolean {
@@ -378,6 +400,7 @@ function createField(
       }),
     ),
     returns: createStrictType(result),
+    resultIsDeclaredOnly: checkedWordsOf(signature.returns) !== null || undefined,
     capability: capabilityOf(
       signature,
       result,
@@ -396,7 +419,7 @@ export function signatureOfBindgen(
   mode: CallMode,
   receiver: ParameterType | null,
 ): SignatureDeclaration {
-  const field = createField(signature, createReceiver(signature, receiver), signature.returns.resultType);
+  const field = createField(signature, createReceiver(signature, receiver, null), signature.returns.resultType);
   const [declared] = b
     .fn(unplacedPath, field)
     .flatMap(declaration => (declaration.declares === "Member" ? declaration.signatures : []));
@@ -505,6 +528,7 @@ function collectFunction(
   path: BuiltinPath,
   receiver: ParameterType | null,
   thunkOf: (signature: Signature) => string | null,
+  className: string | null = null,
 ): Declaration[] {
   const resultOf = (signature: Signature): TypeSpec => {
     const result = resultTypeOf(signature, fn);
@@ -514,7 +538,7 @@ function collectFunction(
   };
   const overloads = fn.signatures.map(signature =>
     createFields(
-      createField(signature, createReceiver(signature, receiver), resultOf(signature)),
+      createField(signature, createReceiver(signature, receiver, className), resultOf(signature)),
       signature,
       thunkOf(signature),
     ),
@@ -719,6 +743,7 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
     ...symbolColumns,
     this: isStatic ? b.any : undefined,
     getter: createStrictType(result),
+    resultIsDeclaredOnly: (getter !== null && checkedWordsOf(getter.type) !== null) || undefined,
     setter: isAssignable ? setterTakingAnything(isRead, isStatic) : undefined,
     capability: touchesNoCell ? "none" : runsNoJavaScript ? "heap" : "js",
     throws: getter === null || getter.capability === "js" || getter.throws,
@@ -750,8 +775,10 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
   if (isStatic) return collectFunction(member, path, null, signature => methodSymbolName(type, signature as Method));
   if (!hasInstanceReceiver(type)) return collectFunction(member, path, null, () => null);
   // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
-  if (methods[0].invalidThis === "undefined") return collectFunction(member, path, b.any.parameter, () => null);
-  return collectFunction(member, path, type.parameterType, signature => methodSymbolName(type, signature as Method));
+  if (methods[0].invalidThis === "undefined")
+    return collectFunction(member, path, b.any.parameter, () => null, type.name);
+  const thunkOf = (signature: Signature) => methodSymbolName(type, signature as Method);
+  return collectFunction(member, path, type.parameterType, thunkOf, type.name);
 }
 
 const pathOfMember = (classPath: BuiltinPath, side: "static" | "proto", name: string): BuiltinPath =>

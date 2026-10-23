@@ -230,7 +230,7 @@ A few packages change built-ins, mostly to support old browsers or to offer a sh
 | `private` 0.1                   | Replaces `Object.getOwnPropertyNames`                                                | On import                   | `recast` 0.17 and `regenerator-transform` 0.14 do without  |
 | `sass` 1                        | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype` | On import                   | Compile your stylesheets before you build the executable   |
 | `zone.js`, Angular through it   | Replaces `Promise.prototype.then` and `Object.prototype.toString`                    | On import                   | Angular without zones (`provideZonelessChangeDetection()`) |
-| `next` 16                       | Replaces `Date.prototype.constructor`, for the clock checks of `cacheComponents`     | At the start; it is logged  | Everything else: Next.js catches the error and goes on     |
+| `next` 16                       | Replaces `Date.prototype.constructor`, for the clock checks of `cacheComponents`     | At the start; it is logged  | Everything else: Next.js catches the error and continues   |
 | `es5-shim`                      | Replaces `Array.prototype.forEach`, `map`, `filter`, `every` and `some`              | On import                   | Remove the import: Bun implements what it fills in         |
 | `es6-shim`                      | Replaces `RegExp.prototype.toString` and `Set.prototype.add`, `has` and `delete`     | On import                   | Remove the import: Bun implements what it fills in         |
 | `harmony-reflect`               | Replaces `Object.prototype.hasOwnProperty`, `valueOf`, `toString` and four more      | On import                   | Remove the import: `Reflect` and `Proxy` are built in      |
@@ -505,8 +505,10 @@ bun compile --compile-in-place ./server.js $(find .next/server -name '*.js') --o
 For Angular the files are `$(find dist/site/server -name '*.mjs' -not -name server.mjs)`. Nuxt, SvelteKit, Astro and React Router need no additional entry points. Pass what the server reads from disk with `--asset`:
 
 ```bash terminal icon="terminal"
+bun compile ./.output/server/index.mjs --asset .output/public --outfile server # Nuxt
 bun compile ./dist/server/entry.mjs --asset dist/client --outfile server # Astro
 bun compile ./build/index.js --asset build/client --asset build/prerendered --outfile server # SvelteKit
+bun compile ./server.ts --asset build/client --outfile server # React Router, with a server of your own
 ```
 
 Without the entry points, the first request fails with the error above.
@@ -803,7 +805,7 @@ Some messages come without the quoted part. A call often says `undefined is not 
 
 One more message differs, although `bun run` quotes nothing in it. An update through a computed key, `o[k] += 1`, `o[k]++`, `--o[k]` or `o[k] &&= 1`, throws `undefined is not an object` when `o` is `undefined` and `null is not an object` when it's `null`. `bun run` says `Cannot access property of undefined or null` for both.
 
-When a function of Bun or Node rejects an argument, the end of the message describes what it got, as in `Received an instance of Foo` or `Received { a: 1 }`. An executable writes that description without running your code. It doesn't call a custom inspect function, a getter or a proxy trap. A `Map`, a `Date`, a `Buffer` or any other object that isn't a plain object or an array is shown by its class, as in `Received [Map]`. A `Proxy` is `[Object]`.
+When a function of Bun or Node rejects an argument, the end of the message describes what it got, as in `Received an instance of Foo` or `Received { a: 1 }`. An executable writes that description without running your code. It doesn't call a custom inspect function, a getter or a proxy trap. A `Map`, a `Date`, a `Buffer` or any other object that isn't a plain object or an array is shown by its class, as in `Received [Map]`. A `Proxy` whose handler has a `get` trap is `[Object]`. One without is described by its target.
 
 The class of the error is the same, so test `error instanceof TypeError` or `error.name`, not `error.message`. A service that groups errors by message, such as Sentry, sees new groups.
 

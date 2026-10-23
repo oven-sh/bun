@@ -1,4 +1,4 @@
-// process.nextTick() and EventEmitter's on(), once(), prependListener(), off() with what is no function: the error, its code and its words; and with what is one: the order of the ticks and their arguments. One text differs from plain Bun: an ordinary object is described without a look at its constructor, "Received [Object]" for "Received an instance of Object".
+// process.nextTick() and EventEmitter's on(), once(), prependListener(), off() with what is no function: the error, its code and its words; and with what is one: the order of the ticks and their arguments. The Proxy without traps among the values is described by its target, as plain Bun describes it.
 import { EventEmitter } from "node:events";
 
 function attempt(what: string, act: () => unknown): void {

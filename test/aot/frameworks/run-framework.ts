@@ -191,7 +191,7 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
       const expected = await serve(directory, [bunExe(), framework.entryPoint], requests);
       expect(expected.join("\n")).not.toContain("Unable to connect");
 
-      const executable = join(String(dir), "server");
+      const executable = join(String(dir), "executable");
       expect(
         await run(directory, [
           bunExe(),

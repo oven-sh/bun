@@ -405,6 +405,7 @@ function flagsOf({ signature, source }: OverloadContext): OverloadFlag[] {
     ReadsStateBeforeConversions: signature.readsStateBeforeConversions ?? false,
     IsSpecialCase: signature.isSpecialCase ?? false,
     OnlyPropagatesErrors: signature.onlyPropagatesErrors ?? false,
+    ResultIsDeclaredOnly: signature.resultIsDeclaredOnly ?? false,
   };
   return overloadFlags.filter(flag => isSet[flag]);
 }

@@ -46,7 +46,10 @@ for (const [file, text] of testFiles) {
     splitCalls.set(shared, [...(splitCalls.get(shared) ?? []), { file, part, parts }]);
   };
   // The formatter lays a long call out with one argument a line.
-  const onOneLine = text.replace(/\(\n\s+/g, "(").replace(/,\n\s+/g, ", ").replace(/,\n\)/g, ")");
+  const onOneLine = text
+    .replace(/\(\n\s+/g, "(")
+    .replace(/,\n\s+/g, ", ")
+    .replace(/,\n\)/g, ")");
   for (const [, callee, before, part, parts] of onOneLine.matchAll(
     /^(?:await |if \(.*\) )?(\w+)\((.*?)(\d+), (\d+)(?:, (?:"[^"]*"|\[[^\]]*\]|\d+))*\);$/gm,
   ))

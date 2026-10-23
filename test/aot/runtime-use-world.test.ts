@@ -382,9 +382,18 @@ describe.concurrent("an object of the program's own, read by a computed key", ()
       external +
         `function run(table: Record<string, () => string>) {\n  const found = table[key];\n  return found ? found() : "none";\n}\nexternal(run);`,
     ],
-    ["the result is read by a key again", `${table}console.log((table as any)[key][key]);`],
   ])("any member may be used where %s", async (_, text) => {
     expect(await judged(text)).toEqual({ usesEveryMember: true, exitCode: 0 });
+  });
+
+  test("a second read by a key may use the members of what the first read gives, and no others", async () => {
+    const reached = ["Object keys", "Object prototype", "global Function", "property bind", "property hasOwnProperty"];
+    const use = await runtimeUse({ "main.ts": declared + key + `${table}console.log((table as any)[key][key]);` });
+    expect({
+      reached: reached.filter(line => use.lines.includes(line)),
+      usesEveryMember: usesEveryMember(use),
+      exitCode: use.exitCode,
+    }).toEqual({ reached, usesEveryMember: false, exitCode: 0 });
   });
 });
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
-use bun_aot::engine::ExecutableIdentity;
+use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
 use bun_aot::options::{Externals, LoadOptions, Options, PathOptions, RemovableOptions};
 use bun_ast::{Loc, Log};
 use bun_core::strings;
@@ -29,6 +29,7 @@ pub(crate) struct OptionsInput<'r, 'i, 'a> {
     pub assets: &'i [Box<[u8]>],
     pub aot: &'r AotOptions,
     pub executable_identity: ExecutableIdentity,
+    pub image_form: Option<TargetImageForm>,
     pub module_prefix: &'i [u8],
     pub typescript_libs: Libs<'r>,
     pub file_map: Option<&'i FileMap>,
@@ -54,6 +55,7 @@ pub(crate) fn options_from_bundler<'r>(
     Some(Options {
         aot: input.aot,
         executable_identity: input.executable_identity,
+        image_form: input.image_form,
         entry_points,
         code: code_options(input),
         typescript_libs: input.typescript_libs,

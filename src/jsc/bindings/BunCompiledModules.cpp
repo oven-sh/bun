@@ -188,7 +188,9 @@ static void createModuleObject(JSGlobalObject* realm, JSString* path, AOT::Modul
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSCommonJSModule* module = JSCommonJSModule::create(globalObject, path, jsUndefined(), true, JSValue());
+    // putDirectCustomAccessor() is for a name that the object does not have yet.
+    JSValue exportsAsData = traits.contains(AOT::ModuleObjectTrait::HasExportsVariable) ? JSValue() : jsUndefined();
+    JSCommonJSModule* module = JSCommonJSModule::create(globalObject, path, exportsAsData, true, JSValue());
     RETURN_IF_EXCEPTION(scope, void());
     module->compiledModule = compiled.index();
     if (traits.contains(AOT::ModuleObjectTrait::IsMain))

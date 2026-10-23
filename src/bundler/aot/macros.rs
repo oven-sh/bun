@@ -369,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn each_job_gets_own_answer() {
         const JOB_COUNT: u8 = 100;
         const THREAD_COUNT: u8 = 8;

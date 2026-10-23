@@ -51,6 +51,8 @@ describe.concurrent("keeps nothing of the language that it does not use", () => 
     ],
     ["parsed JSON, printed", `console.log(JSON.parse(process.argv[2]!));`],
     ["an error, printed", `console.error(new Error("x"));`],
+    ["the headers of a request, printed", `console.log(new Request("http://localhost").headers);`],
+    ["a request and a response, printed", `console.log(new Request("http://localhost"), new Response("a"));`],
     ["the text of a file", `console.log(await Bun.file("a.txt").text());`],
     ["the bytes of a file", `console.log((await Bun.file("a.txt").bytes()).length);`],
     ["whether a file exists", `console.log(await Bun.file("a.txt").exists());`],

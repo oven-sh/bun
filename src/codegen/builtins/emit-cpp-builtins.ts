@@ -498,5 +498,5 @@ export function emitCppBuiltins(model: TableModel): string {
     ...tableArrays,
     emitTableData(arrays, lockedMemberSpan, realmStructureSpan),
   ]);
-  return wrapFile(["AOTBuiltinTable.h", "AOTBuiltinTableArrays.h", "JSGlobalObject.h"], body);
+  return wrapFile(["AOTBuiltinTable.h", "AOTBuiltinTableArrays.h", "JSCInlines.h"], body);
 }

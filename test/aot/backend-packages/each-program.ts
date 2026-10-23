@@ -16,12 +16,13 @@ function testEachProgram(
   withoutExceptionValidation: string[] = [],
   /** Why the executable prints something else than plain Bun, on purpose. It still has to run to its end. */
   differs: Record<string, string> = {},
+  form: "in place" | "one file" = "in place",
 ) {
   const programs = readdirSync(join(import.meta.dir, folder))
     .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.startsWith("fake_") && !file.startsWith("lib_"))
     .map(file => file.slice(0, -".ts".length))
     .sort()
-    .filter((_, index) => index % parts === part);
+    .filter((program, index) => (form === "in place" ? index % parts === part : program in given));
 
   const dir = tempDir(`aot-backend-${folder}`, {});
   const project = join(String(dir), "project");
@@ -38,9 +39,10 @@ function testEachProgram(
       .filter(line => !line.startsWith("TIME "))
       .join("\n")
       .replaceAll(project, "<project>")
+      .replace(/\/\$bunfs\/root|B:[\\/]~BUN[\\/]root/g, "<project>")
       .replace(/took [0-9.]+m?s/g, "took N ms");
 
-  describe(folder, () => {
+  describe(form === "in place" ? folder : `${folder}, as one file`, () => {
     beforeAll(async () => {
       cpSync(join(import.meta.dir, folder), project, { recursive: true });
       const packages = join(project, "node_modules");
@@ -67,7 +69,7 @@ function testEachProgram(
           const plain = await run([bunExe(), "run", `./${program}.ts`], env);
           expect(plain.stdout).toContain("\nDONE");
           const executable = join(String(dir), program);
-          const built = await run([bunExe(), "build", "--compile", "--aot", "--compile-in-place", `./${program}.ts`, ...(given[program] ?? []), "--outfile", executable]);
+          const built = await run([bunExe(), "build", "--compile", "--aot", ...(form === "in place" ? ["--compile-in-place"] : []), `./${program}.ts`, ...(given[program] ?? []), "--outfile", executable]);
           expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
           const compiled = await run([executable], env);
           if (program in differs) return void expect({ isDone: compiled.stdout.includes("\nDONE"), exitCode: compiled.exitCode, stderr: compiled.exitCode ? compiled.stderr : "" }).toEqual({ isDone: true, exitCode: 0, stderr: "" });
@@ -91,7 +93,7 @@ function testEachProgram(
   });
 }
 
-export const testPrograms = (part: number, parts: number) =>
+export const testPrograms = (part: number, parts: number, form: "in place" | "one file" = "in place") =>
   testEachProgram(
     "programs",
     part,
@@ -120,6 +122,7 @@ export const testPrograms = (part: number, parts: number) =>
       ddtrace: "it traces Express by a hook on the loader, which does not see a `require()` of a constant path in an executable",
       otel: "it traces node:http and Express by a hook on the loader, which does not see a `require()` of a constant path in an executable",
     },
+    form,
   );
 
 export const testMorePrograms = () => testEachProgram("more-programs", 0, 1, {}, {}, [["node_modules/prisma/build/index.js", "generate", "--schema", "prisma/schema.prisma"]]);

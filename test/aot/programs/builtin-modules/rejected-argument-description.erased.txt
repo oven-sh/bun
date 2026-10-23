@@ -6,7 +6,7 @@ ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8
 ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object] | ran nothing
 ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received {} | ran nothing
 ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received {} | ran nothing
-ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object] | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received an instance of Array | ran nothing
 ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object] | ran nothing
 ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object: null prototype] | ran nothing
 ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received {} | ran nothing

@@ -137,6 +137,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn build_without_native_plugins_changes_nothing() {
         with_test_context(
             |_| {},

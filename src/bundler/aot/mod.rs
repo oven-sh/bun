@@ -14,7 +14,7 @@ mod services;
 
 use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};
 use crate::{EventLoop, OutputFile, Transpiler};
-use bun_aot::engine::{EngineResult, ExecutableIdentity};
+use bun_aot::engine::{EngineResult, ExecutableIdentity, TargetImageForm};
 use bun_aot::link::ProgramNames;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
@@ -40,6 +40,7 @@ pub struct AotBuildRequest<'r, 'a> {
     pub assets: &'r [Box<[u8]>],
     pub options: &'r AotOptions,
     pub executable_identity: ExecutableIdentity,
+    pub image_form: Option<TargetImageForm>,
     pub module_prefix: &'r [u8],
     pub log: &'r mut Log,
     pub arena: &'a bun_alloc::Arena,
@@ -83,6 +84,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         assets,
         options: aot,
         executable_identity,
+        image_form,
         module_prefix,
         log,
         arena,
@@ -99,6 +101,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         assets,
         aot,
         executable_identity,
+        image_form,
         module_prefix,
         typescript_libs,
         file_map,

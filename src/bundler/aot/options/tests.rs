@@ -69,6 +69,7 @@ fn convert<R>(
         assets: &[],
         aot: &aot,
         executable_identity: ExecutableIdentity([0; 16]),
+        image_form: None,
         module_prefix: b"/$bunfs/root/",
         typescript_libs: Libs::Directory(b"/project"),
         file_map: case.file_map,
@@ -93,6 +94,7 @@ fn convert_code(configure: impl FnOnce(&mut BundleOptions<'_>)) -> CodeOptions {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn options_about_what_can_be_removed_are_passed_on() {
     let convert_removable = |configure: fn(&mut BundleOptions<'_>)| {
         convert(Case::default(), configure, |result, _| {
@@ -146,6 +148,7 @@ fn set_root_and_compile_name(options: &mut BundleOptions<'_>) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn default_options_convert() {
     convert(
         Case::default(),
@@ -170,6 +173,7 @@ fn default_options_convert() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unsupported_values_report_argument() {
     let cases: [(Configure, &str); 23] = [
         (
@@ -228,6 +232,7 @@ fn unsupported_values_report_argument() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn other_commands_report_once() {
     let messages = report_errors(|options| {
         options.ignore_module_resolution_errors = true;
@@ -239,6 +244,7 @@ fn other_commands_report_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn development_server_reports_once() {
     let messages = report_errors(|options| {
         options.output_format = Format::InternalBakeDev;
@@ -248,6 +254,7 @@ fn development_server_reports_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn each_unsupported_field_reports() {
     let messages = report_errors(|options| {
         options.metafile = true;
@@ -257,6 +264,7 @@ fn each_unsupported_field_reports() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn empty_inject_is_accepted() {
     assert!(report_errors(|options| options.inject = Some(Box::default())).is_empty());
 }
@@ -298,6 +306,7 @@ fn banner_statements_are_code() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn server_code_flags_change_nothing() {
     let describe = |load: &LoadOptions, paths: &PathOptions| format!("{load:?} {paths:?}");
     let summarize = |configure: Configure| {
@@ -319,6 +328,7 @@ fn server_code_flags_change_nothing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn custom_conditions_append_once() {
     let code = convert_code(|options| {
         options.custom_conditions = vec![Box::from(&b"custom"[..]), Box::from(&b"bun"[..])];
@@ -335,6 +345,7 @@ fn custom_conditions_append_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn disabled_addons_remove_condition() {
     let code = convert_code(|options| {
         options.transform_options = Arc::new(api::TransformOptions {
@@ -346,6 +357,7 @@ fn disabled_addons_remove_condition() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn written_main_fields_replace_defaults() {
     let code = convert_code(|options| {
         options.main_fields = Box::new([Box::from(&b"custom"[..])]);
@@ -360,12 +372,14 @@ fn written_main_fields_replace_defaults() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn symbolic_link_option_is_copied() {
     assert!(!convert_code(|_| {}).preserves_symlinks);
     assert!(convert_code(|options| options.preserve_symlinks = true).preserves_symlinks);
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn written_configuration_path_is_absolute() {
     assert_eq!(convert_code(|_| {}).tsconfig_override, None);
     let code = convert_code(|options| {
@@ -376,12 +390,14 @@ fn written_configuration_path_is_absolute() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn computed_candidate_limit_stays_default() {
     let default_limit = CodeOptions::bun_run(b"/project").max_computed_candidates;
     assert_eq!(convert_code(|_| {}).max_computed_candidates, default_limit);
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn node_path_splits_and_resolves() {
     let case = Case {
         node_path: Some(b"/a::relative"),
@@ -392,6 +408,7 @@ fn node_path_splits_and_resolves() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn jsx_pragma_converts() {
     let code = convert_code(|options| {
         options.jsx.runtime = jsx::Runtime::Classic;
@@ -407,6 +424,7 @@ fn jsx_pragma_converts() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn node_env_decides_jsx_development() {
     let cases = [
         (ForceNodeEnv::Production, true, false),
@@ -424,6 +442,7 @@ fn node_env_decides_jsx_development() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn macros_and_react_compiler_follow_options() {
     let load = convert_load(|options| {
         options.no_macros = true;
@@ -438,6 +457,7 @@ fn macros_and_react_compiler_follow_options() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn external_packages_option_marks_every_package() {
     assert!(!convert_load(|_| {}).externals.are_all_packages);
     let load = convert_load(|options| options.packages = PackagesOption::External);
@@ -445,6 +465,7 @@ fn external_packages_option_marks_every_package() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn build_without_external_option_has_no_externals() {
     assert!(convert_load(|_| {}).externals.is_empty());
     let load = convert_load(|options| {
@@ -457,6 +478,7 @@ fn build_without_external_option_has_no_externals() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn externals_ignore_insertion_order() {
     fn insert(options: &mut BundleOptions<'_>, names: [&[u8]; 2]) {
         for name in names {
@@ -493,6 +515,7 @@ fn convert_in_memory_files(files: &[(&[u8], &[u8])]) -> Vec<(Vec<u8>, Vec<u8>)> 
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn in_memory_files_are_absolute_and_sorted() {
     let files = convert_in_memory_files(&[(b"b.ts", b"b"), (b"/x/a.ts", b"a")]);
     let expected = vec![
@@ -503,6 +526,7 @@ fn in_memory_files_are_absolute_and_sorted() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn duplicate_in_memory_paths_keep_last_sorted_key() {
     let files = convert_in_memory_files(&[(b"a.ts", b"relative"), (b"/project/a.ts", b"absolute")]);
     assert_eq!(
@@ -512,6 +536,7 @@ fn duplicate_in_memory_paths_keep_last_sorted_key() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn in_memory_paths_are_normalized() {
     let files = convert_in_memory_files(&[(b"/x/y/../a.png", b"a"), (b"./b/./c.png", b"c")]);
     let expected = vec![
@@ -522,6 +547,7 @@ fn in_memory_paths_are_normalized() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn long_in_memory_key_converts() {
     let key = [b'a'; 5000];
     let files = convert_in_memory_files(&[(&key, b"")]);
@@ -529,6 +555,7 @@ fn long_in_memory_key_converts() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn long_entry_point_is_an_error() {
     let entry = [b'a'; 5000];
     let case = Case {
@@ -549,6 +576,7 @@ fn long_entry_point_is_an_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn long_root_directory_is_an_error() {
     let messages = report_errors(|options| options.root_dir = Box::from(&[b'a'; 5000][..]));
     assert_eq!(messages.len(), 1);
@@ -556,6 +584,7 @@ fn long_root_directory_is_an_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn written_root_directory_is_absolute() {
     let paths = convert_paths(&[b"src/main.ts"], |options| {
         options.root_dir = Box::from(&b"lib"[..]);
@@ -564,6 +593,7 @@ fn written_root_directory_is_absolute() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn single_entry_point_directory_is_root() {
     let cases: [(&[u8], &[u8]); 4] = [
         (b"main.ts", b"/project"),
@@ -580,6 +610,7 @@ fn single_entry_point_directory_is_root() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn common_entry_point_directory_is_root() {
     let cases: [(&[&[u8]], &[u8]); 6] = [
         (&[b"src/a.ts", b"lib/b.ts"], b"/project"),
@@ -598,6 +629,7 @@ fn common_entry_point_directory_is_root() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn entry_point_count_does_not_change_root() {
     let files: Vec<String> = (0..9).map(|index| format!("src/e{index}.ts")).collect();
     let entry_points: Vec<&[u8]> = files.iter().map(|file| file.as_bytes()).collect();
@@ -607,6 +639,7 @@ fn entry_point_count_does_not_change_root() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn early_difference_among_nine_entry_points_decides_root() {
     let mut files: Vec<String> = (0..9)
         .map(|index| format!("src/deep/e{index}.ts"))
@@ -620,6 +653,7 @@ fn early_difference_among_nine_entry_points_decides_root() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn entry_point_far_from_root_is_an_error() {
     let root_directory = b"/a".repeat(MAX_PATH_BYTES / 2 - 2);
     let messages = report_errors(|options| options.root_dir = Box::from(&root_directory[..]));
@@ -627,6 +661,7 @@ fn entry_point_far_from_root_is_an_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn builtin_modules_follow_option() {
     let case = Case {
         omits_builtin_modules: true,
@@ -638,6 +673,7 @@ fn builtin_modules_follow_option() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_runner_follows_option() {
     let case = Case {
         runs_tests: true,
@@ -649,6 +685,7 @@ fn test_runner_follows_option() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn entry_names_follow_root_and_not_compile_name() {
     let case = Case {
         entry_points: &[b"src/main.ts", b"src/workers/w.ts"],
@@ -679,6 +716,7 @@ fn embedded_names(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn embedded_names_are_those_of_bundle() {
     let entry_points = [
         "/project/src/main.ts",
@@ -699,6 +737,7 @@ fn embedded_names_are_those_of_bundle() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn equal_embedded_names_are_an_error() {
     let (names, messages) = embedded_names(
         &[
@@ -716,6 +755,7 @@ fn equal_embedded_names_are_an_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn equal_entry_names_are_an_error() {
     let case = Case {
         entry_points: &[b"a.ts", b"a.js"],
@@ -734,6 +774,7 @@ fn equal_entry_names_are_an_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn hash_in_entry_naming_is_unsupported() {
     let messages = report_errors(|options| {
         options.entry_naming = Box::from(&b"[name]-[hash].[ext]"[..]);
@@ -743,6 +784,7 @@ fn hash_in_entry_naming_is_unsupported() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn target_in_entry_naming_is_bun() {
     let names = convert(
         Case::default(),
@@ -822,6 +864,7 @@ const PROJECT_FILES: [&str; 9] = [
 ];
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn patterns_expand_in_position() {
     let project = TemporaryProject::new("positions", &PROJECT_FILES);
     let (entries, messages) = project.expand(&[b"main.cjs", b"plugins/*", b"lib/**/*.{cjs,mjs}"]);
@@ -836,6 +879,7 @@ fn patterns_expand_in_position() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn owned_entry_points_expand() {
     let project = TemporaryProject::new("owned", &PROJECT_FILES);
     let entry_points: [Box<[u8]>; 2] = [Box::from(&b"main.cjs"[..]), Box::from(&b"plugins/*"[..])];
@@ -850,6 +894,7 @@ fn owned_entry_points_expand() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn written_file_matching_pattern_is_listed_once() {
     let project = TemporaryProject::new("duplicates", &PROJECT_FILES);
     let (entries, _) = project.expand(&[b"plugins/a.cjs", b"plugins/*"]);
@@ -860,6 +905,7 @@ fn written_file_matching_pattern_is_listed_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pattern_naming_dot_directory_finds_files() {
     let project = TemporaryProject::new("dot", &PROJECT_FILES);
     let (entries, _) = project.expand(&[b".hidden/**/*.cjs"]);
@@ -867,6 +913,7 @@ fn pattern_naming_dot_directory_finds_files() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn existing_file_with_pattern_syntax_is_taken_as_written() {
     let project = TemporaryProject::new("literal", &["a[1].ts", "a1.ts"]);
     let (entries, _) = project.expand(&[b"a[1].ts"]);
@@ -874,6 +921,7 @@ fn existing_file_with_pattern_syntax_is_taken_as_written() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn in_memory_file_with_pattern_syntax_is_taken_as_written() {
     let mut file_map = FileMap::default();
     file_map.map.put(b"[id].ts", Box::default()).expect("oom");
@@ -891,6 +939,7 @@ fn in_memory_file_with_pattern_syntax_is_taken_as_written() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pattern_without_match_is_an_error() {
     let project = TemporaryProject::new("missing", &PROJECT_FILES);
     let (entries, messages) = project.expand(&[b"nothing/**/*.cjs", b"main.cjs"]);
@@ -902,6 +951,7 @@ fn pattern_without_match_is_an_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pattern_and_written_files_get_equal_names() {
     let project = TemporaryProject::new("names", &["apps/a/main.ts", "apps/b/main.ts"]);
     let from_pattern = project.convert_paths(&[b"apps/*/main.ts"]);
@@ -916,6 +966,7 @@ fn pattern_and_written_files_get_equal_names() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pattern_with_one_match_has_match_directory_as_root() {
     let project = TemporaryProject::new("one-match", &["apps/a/main.ts", "apps/b/other.ts"]);
     let paths = project.convert_paths(&[b"apps/*/main.ts"]);
@@ -924,6 +975,7 @@ fn pattern_with_one_match_has_match_directory_as_root() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 #[allow(clippy::disallowed_methods)]
 fn derived_root_directory_follows_symbolic_links() {
     let project = TemporaryProject::new("links", &["real/main.ts"]);

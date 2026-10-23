@@ -107,6 +107,11 @@ impl RuntimeDescription {
     pub fn record(&self, kind: [u8; 8]) -> Option<&[u8]> {
         let mut rest = &self.section[..];
         while rest.len() >= DESCRIPTION_RECORD_HEAD {
+            // AddressSanitizer leaves a red zone behind each record, zeros in the file.
+            if rest[..8] == [0; 8] {
+                rest = &rest[8..];
+                continue;
+            }
             let size = crate::builtins::u32_at(rest, 8) as usize;
             if size < DESCRIPTION_RECORD_HEAD || size > rest.len() {
                 return None;

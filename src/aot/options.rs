@@ -1,6 +1,6 @@
 use core::num::NonZeroUsize;
 
-use crate::engine::ExecutableIdentity;
+use crate::engine::{ExecutableIdentity, TargetImageForm};
 use bun_ast::Loader;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_options_types::aot_options::AotOptions;
@@ -10,6 +10,7 @@ use bun_sema_driver::Libs;
 pub struct Options<'a> {
     pub aot: &'a AotOptions,
     pub executable_identity: ExecutableIdentity,
+    pub image_form: Option<TargetImageForm>,
     pub entry_points: Vec<Vec<u8>>,
     // Its paths are in the checker's format. Every other path in these options is native.
     pub code: CodeOptions,
@@ -172,6 +173,7 @@ mod tests {
         Options {
             aot,
             executable_identity: ExecutableIdentity([0; 16]),
+            image_form: None,
             entry_points: vec![b"main.ts".to_vec()],
             code: CodeOptions::bun_run(b"/project"),
             typescript_libs: Libs::Directory(b"/project"),

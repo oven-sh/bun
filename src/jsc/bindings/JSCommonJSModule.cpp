@@ -1045,11 +1045,13 @@ JSCommonJSModule* JSCommonJSModule::create(
         globalObject->CommonJSModuleObjectStructure(),
         requireMapKey, requireMapKey, dirname, SourceCode());
 
-    out->putDirect(
-        vm,
-        WebCore::clientData(vm)->builtinNames().exportsPublicName(),
-        exportsObject,
-        0);
+    if (exportsObject) {
+        out->putDirect(
+            vm,
+            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+            exportsObject,
+            0);
+    }
     out->hasEvaluated = hasEvaluated;
     if (parent && parent.isCell()) {
         if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {

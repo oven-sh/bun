@@ -3,7 +3,7 @@
 use crate::generated_bindgen::node_path::ParsedPath;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
-use crate::jsc::{JSGlobalObject, JSString, JSValue, SysErrorJsc as _};
+use crate::jsc::{JSString, SysErrorJsc as _};
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
@@ -772,7 +772,7 @@ by_form_of_operands!(relative, relative_other, relative_latin1, relative_utf8, <
 
 #[cfg(unix)]
 unsafe extern "C" {
-    safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
+    safe fn Process__getCachedCwd(global: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue;
 }
 
 /// `None` unless the paths that count are 8-bit strings and [`SHORT`] together.

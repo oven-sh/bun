@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { renameSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./supported";
 
 async function run(cwd: string, cmd: string[], env = bunEnv) {
   await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -111,6 +111,35 @@ console.log(path.basename(__dirname), fs.readFileSync(__filename, "utf8").split(
     stderr: "",
     exitCode: 0,
   });
+  expect(compiled).toEqual(plain);
+}, 120_000);
+
+test("only an asset at the top has to differ from the name of the executable", async () => {
+  using dir = tempDir("aot-asset-named-like-the-executable", {
+    "app/main.cjs": `console.log(require("node:fs").readFileSync(require("node:path").join(__dirname, "outer", "built.exe", "note.txt"), "utf8"));\n`,
+    "app/outer/built.exe/note.txt": "a note",
+    "app/built.exe/note.txt": "another",
+  });
+  const refused = await run(join(String(dir), "app"), [
+    bunExe(),
+    "build",
+    "--compile",
+    "--aot",
+    "./main.cjs",
+    "--asset",
+    "./built.exe",
+    "--outfile",
+    "../built.exe",
+  ]);
+  expect({
+    stderr: refused.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: refused.exitCode,
+  }).toEqual({
+    stderr: [`error: asset "./built.exe" would embed at the same path as the entry point; use a different outfile`],
+    exitCode: 1,
+  });
+  const { plain, compiled } = await bothWays(String(dir), "./main.cjs", "--asset", "./outer/built.exe");
+  expect(plain).toEqual({ stdout: "a note\n", stderr: "", exitCode: 0 });
   expect(compiled).toEqual(plain);
 }, 120_000);
 

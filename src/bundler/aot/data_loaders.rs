@@ -284,6 +284,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn structured_formats_export_keys() {
         for (loader, contents) in [
             (Loader::Json, &b"{\"a\":1}"[..]),
@@ -315,6 +316,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn scalar_keys_are_property_keys() {
         for (loader, contents, names) in [
             (
@@ -347,6 +349,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn structured_data_replaces_ill_formed_bytes() {
         for (loader, contents) in [
             (Loader::Json, &b"{\"a\":\"caf\xE9\"}"[..]),
@@ -366,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn css_is_empty_object_without_embedded_file() {
         load(Loader::Css, b".c { color: red }", |outcome| {
             let module = DataModule::Value {
@@ -378,6 +382,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn html_is_a_page() {
         load(
             Loader::Html,
@@ -391,6 +396,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn empty_and_blank_files_are_empty_objects() {
         for contents in [&b""[..], &b" \n\t"[..]] {
             for loader in [
@@ -413,6 +419,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn text_replaces_ill_formed_sequences() {
         assert_string_module(Loader::Text, b"plain", b"plain");
         assert_string_module(Loader::Text, b"a\xFFb", "a\u{FFFD}b".as_bytes());
@@ -421,12 +428,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn markdown_is_rendered_html() {
         let html = bun_md::root::render_to_html(b"# a").unwrap();
         assert_string_module(Loader::Md, b"# a", &html);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn unimplemented_loaders_are_empty_strings() {
         for loader in [Loader::Dataurl, Loader::Base64, Loader::Bunsh] {
             assert_string_module(loader, b"contents", b"");
@@ -434,6 +443,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn embedded_files_are_paths_under_prefix() {
         for loader in [Loader::File, Loader::Wasm] {
             load(loader, b"contents", |outcome| {
@@ -451,6 +461,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn napi_loads_embedded_file() {
         load(Loader::Napi, b"addon", |outcome| {
             let path = outcome.embedded_path_of(b"addon", Loader::Napi);
@@ -462,6 +473,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn embedded_sqlite_opens_embedded_file() {
         load(Loader::SqliteEmbedded, b"database", |outcome| {
             let path = outcome.embedded_path_of(b"database", Loader::SqliteEmbedded);
@@ -474,6 +486,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn sqlite_opens_original_path() {
         load(Loader::Sqlite, b"database", |outcome| {
             let module = DataModule::Database {
@@ -485,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn broken_documents_fail_with_error() {
         assert_fails_with_error(Loader::Json, b"{");
         assert_fails_with_error(Loader::Toml, b"a = ");
@@ -492,6 +506,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn toml_date_is_unsupported() {
         load(Loader::Toml, b"d = 1979-05-27\n", |outcome| {
             assert!(outcome.has_message_prefix(b"TS100050"));
@@ -500,6 +515,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn yaml_alias_cycle_is_syntax_error() {
         assert_fails_with_error(Loader::Yaml, b"a: &x\n  b: *x\n");
     }

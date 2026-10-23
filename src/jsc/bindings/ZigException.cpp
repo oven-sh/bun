@@ -172,7 +172,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
-    if (location.byte_position < 0 || static_cast<unsigned>(location.byte_position) >= sourceString.length())
+    if (location.byte_position < 0 || static_cast<unsigned>(location.byte_position) > sourceString.length())
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit() && !sourceString.isEmpty()) {

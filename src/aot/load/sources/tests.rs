@@ -172,6 +172,7 @@ fn create_options<'a>(
     Options {
         aot,
         executable_identity: ExecutableIdentity([0; 16]),
+        image_form: None,
         entry_points: to_byte_strings(entry_points),
         code: CodeOptions::bun_run(b"/project"),
         typescript_libs: Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS),

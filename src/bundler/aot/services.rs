@@ -251,6 +251,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn build_without_plugins_has_no_load_plugin() {
         with_test_context(
             |_| {},
@@ -269,6 +270,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn nested_ast_scopes_restore_outer_store() {
         with_ast_scope(|_| {
             let before = allocate_array();

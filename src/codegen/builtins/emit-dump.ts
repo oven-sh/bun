@@ -305,6 +305,7 @@ export function dumpOverload(overload: ModelOverload): DumpedOverload {
     runsOnlyOperandCode: flags.includes("RunsOnlyOperandCode"),
     readsStateBeforeConversions: flags.includes("ReadsStateBeforeConversions"),
     isSpecialCase: flags.includes("IsSpecialCase"),
+    ...(flags.includes("ResultIsDeclaredOnly") ? { resultIsDeclaredOnly: true as const } : {}),
     reads: [...effects.reads],
     writes: [...effects.writes],
     transfers: flow.transfers.map(dumpTransfer),

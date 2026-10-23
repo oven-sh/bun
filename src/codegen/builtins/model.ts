@@ -68,6 +68,7 @@ export const overloadFlags = [
   "ReadsStateBeforeConversions",
   "IsSpecialCase",
   "OnlyPropagatesErrors",
+  "ResultIsDeclaredOnly",
 ] as const;
 export type OverloadFlag = (typeof overloadFlags)[number];
 

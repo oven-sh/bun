@@ -824,6 +824,7 @@ const signatureColumnKeys = [
   "runsOnlyOperandCode",
   "readsStateBeforeConversions",
   "isSpecialCase",
+  "resultIsDeclaredOnly",
   "range",
   "substringOf",
   "typedResultForm",

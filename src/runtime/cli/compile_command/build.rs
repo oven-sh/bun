@@ -1,8 +1,8 @@
 use std::time::Instant;
 
 use bun_aot::engine::{
-    EngineModuleId, ExecutableIdentity, describe_difference_of_runtime, has_compiler,
-    image_alignment, used_features,
+    EngineModuleId, ExecutableIdentity, TargetImageForm, describe_difference_of_runtime,
+    has_compiler, image_alignment, used_features,
 };
 use bun_ast::Loader;
 use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
@@ -42,7 +42,7 @@ pub(crate) fn compile_to_executable(
     request: &mut CompileRequest<'_, '_>,
 ) -> Result<CompileOutcome, CompileFailure> {
     let bundler = request.bundler.take().expect("one call per request");
-    let identity = check_request(request)?;
+    let target = check_request(request)?;
     bun_jsc::initialize(bun_jsc::InitializeOptions {
         is_compiler: true,
         ..Default::default()
@@ -54,7 +54,7 @@ pub(crate) fn compile_to_executable(
     } else {
         target_base_public_path(request.executable.target.os, b"root/")
     };
-    let mut build = match build_program(request, bundler, identity, module_prefix) {
+    let mut build = match build_program(request, bundler, target, module_prefix) {
         Ok(build) => build,
         Err(failure) => {
             reports::write_failed_build_report(options, &failure, request.log);
@@ -206,7 +206,13 @@ pub(super) fn corrupted_program() -> CompileFailure {
     CompileFailure::Graph(bun_standalone_graph::Error::CorruptedCompiledProgram)
 }
 
-fn check_request(request: &CompileRequest<'_, '_>) -> Result<ExecutableIdentity, CompileFailure> {
+#[derive(Copy, Clone)]
+struct Target {
+    identity: ExecutableIdentity,
+    image_form: Option<TargetImageForm>,
+}
+
+fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFailure> {
     if !has_compiler() {
         return Err(CompileFailure::NoCompiler);
     }
@@ -219,7 +225,10 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<ExecutableIdentity,
         }
     }
     find_process_identity()
-        .map(ExecutableIdentity)
+        .map(|identity| Target {
+            identity: ExecutableIdentity(identity),
+            image_form: None,
+        })
         .map_err(CompileFailure::NoIdentity)
 }
 
@@ -240,7 +249,18 @@ unsafe extern "C" {
     static bun_internal_modules_header: BuiltinModulesHeader;
 }
 
-fn check_template(path: &[u8]) -> Result<ExecutableIdentity, CompileFailure> {
+const OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION: usize = 26;
+
+fn image_form_of(template: &Template) -> Option<TargetImageForm> {
+    let engine = template.description.record(RuntimeDescription::ENGINE)?;
+    match engine.get(OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION)? {
+        0 => Some(TargetImageForm::Absolute),
+        1 => Some(TargetImageForm::PositionIndependent),
+        _ => None,
+    }
+}
+
+fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
     let read = with_executable_image(&ZBox::from_bytes(path), |file| {
         Some(Template {
             identity: find_file_identity(file).ok()?,
@@ -262,7 +282,10 @@ fn check_template(path: &[u8]) -> Result<ExecutableIdentity, CompileFailure> {
             path: path.to_vec(),
             difference,
         }),
-        None => Ok(ExecutableIdentity(template.identity)),
+        None => Ok(Target {
+            identity: ExecutableIdentity(template.identity),
+            image_form: image_form_of(&template),
+        }),
     }
 }
 
@@ -297,7 +320,7 @@ fn find_difference(template: &Template) -> Option<Vec<u8>> {
 fn build_program(
     request: &mut CompileRequest<'_, '_>,
     bundler: BundlerInputs<'_>,
-    identity: ExecutableIdentity,
+    target: Target,
     module_prefix: &[u8],
 ) -> Result<AotBuild, Box<AotBuildFailure>> {
     let built = bun_bundler::aot::build(AotBuildRequest {
@@ -305,7 +328,8 @@ fn build_program(
         entry_points: request.entry_points,
         assets: request.executable.assets,
         options: request.options,
-        executable_identity: identity,
+        executable_identity: target.identity,
+        image_form: target.image_form,
         module_prefix,
         log: &mut *request.log,
         arena: bundler.arena,
@@ -390,7 +414,7 @@ fn add_assets_under_root(
     let working_directory = bun_sys::getcwd_alloc()
         .map_err(|error| format!("failed to read the working directory: {error}"))?;
     let mut modules_without_text = modules_without_text(output_files);
-    let mut taken: std::collections::HashMap<Box<[u8]>, Option<usize>> = output_files
+    let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
         .enumerate()
         .filter(|(_, file)| !has_no_text(file) && file.output_kind.is_file_in_standalone_mode())
@@ -403,11 +427,20 @@ fn add_assets_under_root(
         .collect();
     for asset in assets {
         let mut files = Vec::new();
-        collect_compile_assets(core::slice::from_ref(asset), entry_name, &mut files)?;
+        collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)?;
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = bun_paths::basename(asset_path);
         let under_root = path_under_root(root_directory, working_directory.as_bytes(), asset_path);
+        let embedded_path = under_root.as_deref().unwrap_or(asset_name);
+        let first_name_length = bun_core::strings::index_of_char_usize(embedded_path, b'/')
+            .unwrap_or(embedded_path.len());
+        if &embedded_path[..first_name_length] == bun_paths::basename(entry_name) {
+            return Err(format!(
+                "asset {} would embed at the same path as the entry point; use a different outfile",
+                bun_fmt::quote(asset),
+            ));
+        }
         for mut file in files {
             if let Some(under_root) = &under_root {
                 let path_in_asset = file

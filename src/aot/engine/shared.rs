@@ -1,6 +1,12 @@
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct ExecutableIdentity(pub [u8; 16]);
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TargetImageForm {
+    Absolute,
+    PositionIndependent,
+}
+
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct EngineModuleId(pub u32);

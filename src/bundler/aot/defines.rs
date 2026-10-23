@@ -323,6 +323,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn user_defines_become_values() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
@@ -366,6 +367,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn purity_and_drop_entries_have_no_define() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
@@ -394,6 +396,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn defines_are_sorted_by_path() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
@@ -411,6 +414,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn unusable_value_is_reported_and_left_out() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
@@ -441,6 +445,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn features_are_sorted() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
@@ -462,6 +467,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn only_disabled_trimming_preserves_unused_imports() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
@@ -476,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn insertion_order_does_not_change_result() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);

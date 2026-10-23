@@ -58,6 +58,7 @@ impl StandaloneBuild {
         Options {
             aot: &self.aot,
             executable_identity: ExecutableIdentity([0; 16]),
+            image_form: None,
             entry_points: self.entry_points.clone(),
             code: self.code_options(&working_directory),
             typescript_libs: Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS),

@@ -677,6 +677,7 @@ impl TestProject {
         Options {
             aot: &self.aot,
             executable_identity: ExecutableIdentity([0; 16]),
+            image_form: None,
             entry_points: self.entry_points.clone(),
             code: CodeOptions::bun_run(&from_native(&self.directory)),
             typescript_libs: libs,

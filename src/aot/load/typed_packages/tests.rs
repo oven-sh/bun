@@ -121,6 +121,7 @@ fn load_project<R>(
     let options = Options {
         aot: &aot,
         executable_identity: ExecutableIdentity([0; 16]),
+        image_form: None,
         entry_points: entry_points.clone(),
         code: CodeOptions::bun_run(&from_native(root)),
         typescript_libs: Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS),

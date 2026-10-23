@@ -596,13 +596,20 @@ function mergeMembers(
   );
   // The result that the definition declares is proven or checked where the value leaves native code, whatever the operands were.
   const resultsByConstruction = new Map<CallMode, TypeSpec>();
+  // Where nothing proves the result that the definition declares, nothing proves what a signature written by hand says of the same native code.
+  const modesDeclaredOnly = new Set<CallMode>();
   for (const { declaration, source } of members) {
     if (source.proof !== "ByConstruction") continue;
-    for (const { mode, result, isUndeclared } of declaration.signatures) {
+    for (const { mode, result, isUndeclared, resultIsDeclaredOnly } of declaration.signatures) {
       if (!isUndeclared && result.type !== "Anything") resultsByConstruction.set(mode, result);
+      if (resultIsDeclaredOnly) modesDeclaredOnly.add(mode);
     }
   }
-  const withDeclaredResult = (signature: SignatureDeclaration): SignatureDeclaration => {
+  const withDeclaredResult = (written: SignatureDeclaration): SignatureDeclaration => {
+    const signature =
+      modesDeclaredOnly.has(written.mode) && !written.isUndeclared
+        ? { ...written, resultIsDeclaredOnly: true }
+        : written;
     const result = resultsByConstruction.get(signature.mode);
     const saysNothing = signature.result.type === "Anything" && signature.result.freshness === undefined;
     return result === undefined || !saysNothing || signature.isUndeclared ? signature : { ...signature, result };

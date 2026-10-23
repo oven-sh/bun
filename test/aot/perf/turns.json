@@ -214,6 +214,7 @@
   "function/names-put-on-a-closure-just-made": 1000000,
   "generator/a-generator-function-made-for-each-call": 400000,
   "class/instanceof-a-class-of-another-commonjs-module": 400000,
+  "class/lazy-fields-of-an-escaped-instance": 200000,
   "keyed/names-filled-by-key-in-a-literal-that-lists-them": 400000,
   "guess/bound-is-the-length-of-what-is-no-array-wrong": 1000000,
   "guess/callee-is-another-function-right": 1000000,

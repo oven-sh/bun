@@ -25,8 +25,8 @@ pub use self::records::{Position, Witness, builtin_of, feature_of, position_of, 
 pub use self::registry::{is_optional_pass, operation_names};
 use self::sections::check_sections;
 pub use self::shared::{
-    EngineModuleId, ExecutableIdentity, RejectedOptionWord, describe_difference_of_runtime,
-    has_compiler, image_alignment, relocate_image,
+    EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
+    describe_difference_of_runtime, has_compiler, image_alignment, relocate_image,
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
@@ -38,7 +38,7 @@ pub use crate::ir::generated::{
     TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord,
 };
 use crate::ir::generated::{
-    AdmittedCode, CompileAction, CompileOptions, ExcludedCode, LimitId, MismatchPolicy,
+    AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
     OutputOptions, ReferenceWidth, ReportSet, ResultSection,
 };
 use crate::statistics::LimitValues;
@@ -47,6 +47,7 @@ use crate::statistics::LimitValues;
 pub struct EngineRequest<'a> {
     pub options: &'a AotOptions,
     pub identity: ExecutableIdentity,
+    pub image_form: Option<TargetImageForm>,
     pub thread_count: NonZeroUsize,
 }
 
@@ -129,6 +130,13 @@ fn reports_of(options: &AotOptions) -> ReportSet {
 fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     let options = request.options;
     record.executable_identity = request.identity.0;
+    match request.image_form {
+        Some(TargetImageForm::Absolute) => record.target.image_form = ImageForm::Absolute,
+        Some(TargetImageForm::PositionIndependent) => {
+            record.target.image_form = ImageForm::PositionIndependent;
+        }
+        None => {}
+    }
     record.target.reference_width = match options.heap {
         HeapSize::Standard => ReferenceWidth::Narrow,
         HeapSize::Huge => ReferenceWidth::Wide,

@@ -26,6 +26,7 @@ const files = [...testFiles("")]
 
 // These pass where `bun build --compile --aot` and `bun run --aot` are refused.
 const needNoCompiler = [
+  "aot/engine-types-are-defined-once.test.ts",
   "aot/host-object-accessors.test.ts",
   "aot/mockable-function-arguments.test.ts",
   "aot/many-modules-in-place.test.ts",

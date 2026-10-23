@@ -573,10 +573,13 @@ impl BisectionSwitches {
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct TargetOptions { pub features: u64, pub architecture: Architecture, pub reference_width: ReferenceWidth }
+pub struct TargetOptions {
+    pub features: u64, pub architecture: Architecture, pub reference_width: ReferenceWidth, pub image_form: ImageForm, pub reserved: u32
+}
 const _: () = assert!(
-    size_of::<TargetOptions>() == 16 && align_of::<TargetOptions>() == 8 && core::mem::offset_of!(TargetOptions, features) == 0 &&
-    core::mem::offset_of!(TargetOptions, architecture) == 8 && core::mem::offset_of!(TargetOptions, reference_width) == 12
+    size_of::<TargetOptions>() == 24 && align_of::<TargetOptions>() == 8 && core::mem::offset_of!(TargetOptions, features) == 0 &&
+    core::mem::offset_of!(TargetOptions, architecture) == 8 && core::mem::offset_of!(TargetOptions, reference_width) == 12 &&
+    core::mem::offset_of!(TargetOptions, image_form) == 16 && core::mem::offset_of!(TargetOptions, reserved) == 20
 );
 impl TargetOptions {
     pub fn slice_from_bytes(bytes: &[u8]) -> Option<&[TargetOptions]> {
@@ -585,6 +588,7 @@ impl TargetOptions {
         for record in bytes.chunks_exact(size_of::<Self>()) {
             Architecture::from_wire(word_at(record, 8))?;
             ReferenceWidth::from_wire(word_at(record, 12))?;
+            ImageForm::from_wire(word_at(record, 16))?;
         }
         // SAFETY: length and alignment were checked, every enum field holds a declared discriminant, and every other field is valid for all bit patterns.
         Some(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len() / size_of::<Self>()) })
@@ -601,17 +605,17 @@ pub struct CompileOptions {
     pub excluded_code: ExcludedCode, pub sabotage: Sabotage, pub reserved: u32
 }
 const _: () = assert!(
-    size_of::<CompileOptions>() == 184 && align_of::<CompileOptions>() == 8 && core::mem::offset_of!(CompileOptions, bisection) == 0 &&
-    core::mem::offset_of!(CompileOptions, target) == 72 && core::mem::offset_of!(CompileOptions, lowered_limit_value) == 88 &&
-    core::mem::offset_of!(CompileOptions, size_class_progression) == 96 && core::mem::offset_of!(CompileOptions, executable_identity) == 104 &&
-    core::mem::offset_of!(CompileOptions, size) == 120 && core::mem::offset_of!(CompileOptions, action) == 124 &&
-    core::mem::offset_of!(CompileOptions, mismatch_policy) == 128 && core::mem::offset_of!(CompileOptions, checks) == 132 &&
-    core::mem::offset_of!(CompileOptions, reports) == 136 && core::mem::offset_of!(CompileOptions, testing) == 140 &&
-    core::mem::offset_of!(CompileOptions, instrumentation) == 144 && core::mem::offset_of!(CompileOptions, heat_override) == 148 &&
-    core::mem::offset_of!(CompileOptions, lowered_limit) == 152 && core::mem::offset_of!(CompileOptions, thread_count) == 156 &&
-    core::mem::offset_of!(CompileOptions, layout_seed) == 160 && core::mem::offset_of!(CompileOptions, admitted_code) == 164 &&
-    core::mem::offset_of!(CompileOptions, output) == 168 && core::mem::offset_of!(CompileOptions, excluded_code) == 172 &&
-    core::mem::offset_of!(CompileOptions, sabotage) == 176 && core::mem::offset_of!(CompileOptions, reserved) == 180
+    size_of::<CompileOptions>() == 192 && align_of::<CompileOptions>() == 8 && core::mem::offset_of!(CompileOptions, bisection) == 0 &&
+    core::mem::offset_of!(CompileOptions, target) == 72 && core::mem::offset_of!(CompileOptions, lowered_limit_value) == 96 &&
+    core::mem::offset_of!(CompileOptions, size_class_progression) == 104 && core::mem::offset_of!(CompileOptions, executable_identity) == 112 &&
+    core::mem::offset_of!(CompileOptions, size) == 128 && core::mem::offset_of!(CompileOptions, action) == 132 &&
+    core::mem::offset_of!(CompileOptions, mismatch_policy) == 136 && core::mem::offset_of!(CompileOptions, checks) == 140 &&
+    core::mem::offset_of!(CompileOptions, reports) == 144 && core::mem::offset_of!(CompileOptions, testing) == 148 &&
+    core::mem::offset_of!(CompileOptions, instrumentation) == 152 && core::mem::offset_of!(CompileOptions, heat_override) == 156 &&
+    core::mem::offset_of!(CompileOptions, lowered_limit) == 160 && core::mem::offset_of!(CompileOptions, thread_count) == 164 &&
+    core::mem::offset_of!(CompileOptions, layout_seed) == 168 && core::mem::offset_of!(CompileOptions, admitted_code) == 172 &&
+    core::mem::offset_of!(CompileOptions, output) == 176 && core::mem::offset_of!(CompileOptions, excluded_code) == 180 &&
+    core::mem::offset_of!(CompileOptions, sabotage) == 184 && core::mem::offset_of!(CompileOptions, reserved) == 188
 );
 impl CompileOptions {
     pub fn slice_from_bytes(bytes: &[u8]) -> Option<&[CompileOptions]> {
@@ -620,18 +624,19 @@ impl CompileOptions {
         for record in bytes.chunks_exact(size_of::<Self>()) {
             Architecture::from_wire(word_at(record, 80))?;
             ReferenceWidth::from_wire(word_at(record, 84))?;
-            CompileAction::from_wire(word_at(record, 124))?;
-            MismatchPolicy::from_wire(word_at(record, 128))?;
-            CheckSet::from_wire(word_at(record, 132))?;
-            ReportSet::from_wire(word_at(record, 136))?;
-            TestingSwitch::from_wire(word_at(record, 140))?;
-            Instrumentation::from_wire(word_at(record, 144))?;
-            HeatOverride::from_wire(word_at(record, 148))?;
-            LimitId::from_wire(word_at(record, 152))?;
-            AdmittedCode::from_wire(word_at(record, 164))?;
-            OutputOptions::from_wire(word_at(record, 168))?;
-            ExcludedCode::from_wire(word_at(record, 172))?;
-            Sabotage::from_wire(word_at(record, 176))?;
+            ImageForm::from_wire(word_at(record, 88))?;
+            CompileAction::from_wire(word_at(record, 132))?;
+            MismatchPolicy::from_wire(word_at(record, 136))?;
+            CheckSet::from_wire(word_at(record, 140))?;
+            ReportSet::from_wire(word_at(record, 144))?;
+            TestingSwitch::from_wire(word_at(record, 148))?;
+            Instrumentation::from_wire(word_at(record, 152))?;
+            HeatOverride::from_wire(word_at(record, 156))?;
+            LimitId::from_wire(word_at(record, 160))?;
+            AdmittedCode::from_wire(word_at(record, 172))?;
+            OutputOptions::from_wire(word_at(record, 176))?;
+            ExcludedCode::from_wire(word_at(record, 180))?;
+            Sabotage::from_wire(word_at(record, 184))?;
         }
         // SAFETY: length and alignment were checked, every enum field holds a declared discriminant, and every other field is valid for all bit patterns.
         Some(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len() / size_of::<Self>()) })

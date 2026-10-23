@@ -178,6 +178,7 @@ fn nesting_depth(mut value: &DataValue<'_>) -> usize {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tape_and_tree_give_equal_values() {
     with_scope(|atoms, arena, scratch| {
         let text = br#"{"a":[1,-2.5,null,true,"x"],"b":{}}"#;
@@ -201,6 +202,7 @@ fn tape_and_tree_give_equal_values() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn repeated_key_keeps_first_position_and_last_value() {
     with_scope(|atoms, arena, scratch| {
         let root = parse_tape(br#"{"a":1,"b":2,"a":3}"#, scratch);
@@ -214,6 +216,7 @@ fn repeated_key_keeps_first_position_and_last_value() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn repeated_key_in_large_object() {
     with_scope(|atoms, arena, _| {
         let mut builder = DataValueBuilder::new(arena, atoms);
@@ -238,6 +241,7 @@ fn repeated_key_in_large_object() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scalar_keys_become_property_keys() {
     with_scope(|atoms, arena, scratch| {
         let root = object_with_keys(&[
@@ -260,6 +264,7 @@ fn scalar_keys_become_property_keys() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn number_key_repeats_string_key() {
     with_scope(|atoms, arena, scratch| {
         let root = object_with_keys(&[string_expr(b"1"), string_expr(b"a"), number_expr(1.0)]);
@@ -273,6 +278,7 @@ fn number_key_repeats_string_key() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn collection_key_is_not_data() {
     with_scope(|_, _, scratch| {
         let keys = [
@@ -289,6 +295,7 @@ fn collection_key_is_not_data() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn ill_formed_bytes_become_replacement_characters() {
     with_scope(|atoms, arena, scratch| {
         let text = b"{\"k\xFF\":\"caf\xE9\"}";
@@ -304,6 +311,7 @@ fn ill_formed_bytes_become_replacement_characters() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn escaped_surrogates_stay_canonical() {
     with_scope(|atoms, arena, scratch| {
         let text = br#"["\uD800","\uD83D\uDE00"]"#;
@@ -319,6 +327,7 @@ fn escaped_surrogates_stay_canonical() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn surrogate_halves_of_rope_parts_are_joined() {
     with_scope(|atoms, arena, scratch| {
         let Data::EString(tail) = string_expr(b"\xED\xB8\x80").data else {
@@ -338,6 +347,7 @@ fn surrogate_halves_of_rope_parts_are_joined() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn well_formed_text_is_borrowed() {
     assert!(matches!(
         to_canonical_wtf8("caf\u{E9}".as_bytes()),
@@ -347,6 +357,7 @@ fn well_formed_text_is_borrowed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn hole_is_undefined() {
     with_scope(|atoms, arena, scratch| {
         let hole = Expr::init(E::Missing, Loc::EMPTY);
@@ -363,6 +374,7 @@ fn hole_is_undefined() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn big_int_takes_decimal_digits_only() {
     with_scope(|atoms, arena, scratch| {
         let decimal = big_int_expr(b"10");
@@ -390,6 +402,7 @@ fn only_utf8_tapes_are_data() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn proto_key_stays_own_key() {
     with_scope(|atoms, arena, scratch| {
         let root = parse_tape(br#"{"__proto__":1}"#, scratch);
@@ -410,6 +423,7 @@ fn proto_key_stays_own_key() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn lone_surrogate_round_trips() {
     with_scope(|atoms, arena, scratch| {
         let units: &[u16] = scratch.alloc_slice_copy(&[0x61u16, 0xD800]);
@@ -431,6 +445,7 @@ fn lone_surrogate_round_trips() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn rope_is_flattened() {
     with_scope(|atoms, arena, scratch| {
         let tail = string_expr(b"def");
@@ -448,6 +463,7 @@ fn rope_is_flattened() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn deep_array_converts_in_all_sinks() {
     with_scope(|atoms, arena, scratch| {
         let mut builder = DataValueBuilder::new(arena, atoms);
@@ -469,6 +485,7 @@ fn deep_array_converts_in_all_sinks() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn replay_equals_direct_result() {
     with_scope(|atoms, arena, scratch| {
         let root = parse_tree(br#"{"a":[1,"x",null],"b":{"c":false}}"#, scratch);
@@ -483,6 +500,7 @@ fn replay_equals_direct_result() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn expressions_are_not_data() {
     with_scope(|_, _, scratch| {
         let identifier = Expr::init(E::Identifier::init(Ref::NONE), Loc::EMPTY);
@@ -517,6 +535,7 @@ fn expressions_are_not_data() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn object_containing_itself_is_cyclic() {
     with_scope(|_, _, scratch| {
         let root = Expr::init(E::Object::default(), Loc::EMPTY);
@@ -529,6 +548,7 @@ fn object_containing_itself_is_cyclic() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn shared_object_is_written_twice() {
     with_scope(|atoms, arena, scratch| {
         let shared = Expr::init(E::Object::default(), Loc::EMPTY);
@@ -540,6 +560,7 @@ fn shared_object_is_written_twice() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn multiplying_shared_nodes_is_too_large() {
     with_scope(|_, _, scratch| {
         let mut root = number_expr(1.0);
@@ -553,6 +574,7 @@ fn multiplying_shared_nodes_is_too_large() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn limit_counts_values_and_not_keys() {
     with_scope(|_, _, scratch| {
         let largest = object_with_value_count(max_data_nodes());
@@ -576,6 +598,7 @@ fn limit_is_equal_in_every_build() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn toml_date_time_is_not_data() {
     with_scope(|_, _, scratch| {
         let date = E::EString::init_toml_datetime(b"1979-05-27", E::TomlDateTimeKind::LocalDate);
@@ -585,6 +608,7 @@ fn toml_date_time_is_not_data() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn each_error_is_reported_once() {
     assert_eq!(
         reported_text(NotData::Expression),
@@ -608,6 +632,7 @@ fn each_error_is_reported_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 #[should_panic(expected = "a finished sink holds one value")]
 fn finishing_empty_sink_panics() {
     with_scope(|atoms, arena, _| {

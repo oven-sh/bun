@@ -108,7 +108,7 @@ error: ./other-bun can't run code compiled by this Bun: it is revision 1f2e3d4c 
 note: use a build of the same revision of Bun with the same configuration
 ```
 
-Compiled code relies on the layout of the runtime it is attached to. The file can be another build of the same revision of Bun: stripped, linked differently, or built with other optimization flags. It can't be another version, another platform, or a build with different features. The message names the first difference.
+Compiled code relies on the layout of the runtime it is attached to. The file can be another build of the same revision of Bun: stripped, linked differently, position-independent or not, or built with other optimization flags. It can't be another version, another platform, or a build with different features. The message names the first difference.
 
 ### --aot does not apply to a package.json script
 

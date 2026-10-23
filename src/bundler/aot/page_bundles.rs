@@ -473,21 +473,25 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn create_entry_source_escapes_quotes() {
         assert_entry_imports_page(&[b"/p/a \"b\".html"]);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn create_entry_source_escapes_backslashes() {
         assert_entry_imports_page(&[b"C:\\p\\a.html"]);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn entry_imports_every_page_in_order() {
         assert_entry_imports_page(&[&b"/p/b.html"[..], b"/p/a.html", b"/q/index.html"]);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn entry_is_beside_first_page() {
         with_ast_scope(|heap| {
             let source = create_entry_source(&[&b"/q/b.html"[..], b"/p/a.html"], heap);
@@ -496,6 +500,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn no_pages_start_no_bundle() {
         with_test_context(
             |_| {},

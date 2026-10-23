@@ -2320,10 +2320,12 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
     const fixture = `
       ${prelude}
       const held = [];
+      let fullWith;
       for (;;) {
         try {
           held.push(fs.openSync("/dev/null", "r"));
-        } catch {
+        } catch (e) {
+          fullWith = e.code;
           break;
         }
       }
@@ -2339,7 +2341,7 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
       ${script}
       // LeakSanitizer opens /proc files when the process exits, and aborts when it cannot.
       for (const fd of held) fs.closeSync(fd);
-      report(2, { atTheLimit: held.length > 0, ...result });
+      report(2, { atTheLimit: fullWith === "EMFILE", ...result });
     `;
     await using proc = spawn({
       cmd: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", fixture],

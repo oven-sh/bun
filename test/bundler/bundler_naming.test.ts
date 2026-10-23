@@ -278,10 +278,12 @@ describe("bundler", () => {
       "<bun>": [`Multiple files share the same output path`],
     },
   });
-  // The entry point renders as "sub/entry.js" and the asset as "./sub/entry.js".
-  for (const [name, entry, logo] of [
-    ["", "entry.js", "./logo.file"],
-    ["InSubdirectory", "sub/entry.js", "../logo.file"],
+  // Two spellings of one path: the entry point renders as "sub/entry.js" and the asset as
+  // "./sub/entry.js", and "assets/../entry.js" is "entry.js" in the output directory.
+  for (const [name, entry, logo, assetNaming] of [
+    ["", "entry.js", "./logo.file", "entry.js"],
+    ["InSubdirectory", "sub/entry.js", "../logo.file", "sub/entry.js"],
+    ["ThroughParentDirectory", "entry.js", "./logo.file", "assets/../entry.js"],
   ] as const) {
     itBundled(`naming/AssetNoOverwriteEntryPoint${name}`, {
       files: {
@@ -292,7 +294,7 @@ describe("bundler", () => {
         "/src/logo.file": `the logo`,
       },
       root: "/src",
-      assetNaming: entry,
+      assetNaming,
       entryPointsRaw: [`./src/${entry}`],
       bundleErrors: {
         "<bun>": [`Multiple files share the same output path`],

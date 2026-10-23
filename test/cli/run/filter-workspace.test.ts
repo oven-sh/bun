@@ -1513,6 +1513,120 @@ describe("output timing", () => {
   });
 });
 
+// A script has one pipe for stdout and one for stderr. The runner reads them
+// in chunks, and a chunk can end in the middle of a line. A line must still
+// come out whole, whatever the other pipe delivers in between.
+describe("output lines", () => {
+  // Runs `script` as the package.json script `go` of package `app`. The script
+  // can `await step(text)`: that returns once the runner has printed `text`,
+  // which fixes the order in which the runner reads the two pipes.
+  async function runWithSteps(script: string, args = ["run", "--filter", "app", "go"]) {
+    using dir = tempDir("filter-lines", {
+      "package.json": JSON.stringify({ name: "ws-lines", workspaces: ["packages/*"] }),
+      "packages/app/package.json": JSON.stringify({ name: "app", scripts: { go: `"${bunExe()}" steps.js` } }),
+      "packages/app/steps.js": `
+        import fs from "node:fs";
+        const step = async text => {
+          const res = await fetch(process.env.STEP_URL + encodeURIComponent(text));
+          if (!res.ok) throw new Error("the runner never printed " + JSON.stringify(text));
+        };
+        ${script}
+      `,
+    });
+
+    let stdout = "";
+    let ended = false;
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        const text = decodeURIComponent(new URL(req.url).pathname.slice(1));
+        // If the runner does not print `text`, answer 500: the script fails with
+        // an error that names `text`, and the runner prints it. The deadline is
+        // below the 10 seconds after which Bun.serve drops a pending request.
+        const deadline = Date.now() + 5000;
+        while (!stdout.includes(text)) {
+          if (ended || Date.now() > deadline) return new Response("", { status: 500 });
+          await Bun.sleep(10);
+        }
+        return new Response("");
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, STEP_URL: server.url.href },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const decoder = new TextDecoder();
+    const read = (async () => {
+      for await (const chunk of proc.stdout) stdout += decoder.decode(chunk, { stream: true });
+      ended = true;
+    })();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, read]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    ["bun run --filter", ["run", "--filter", "app", "go"]],
+    ["bun --filter", ["--filter", "app", "go"]],
+    ["bun run --workspaces", ["run", "--workspaces", "go"]],
+  ])("%s: a stderr line does not land inside a stdout line of the same script", async (_, args) => {
+    const result = await runWithSteps(
+      `
+        fs.writeSync(1, "first\\nout-part-1 ");
+        await step("first");
+        fs.writeSync(2, "err-line\\n");
+        await step("err-line");
+        fs.writeSync(1, "out-part-2\\n");
+      `,
+      args,
+    );
+    expect(result).toEqual({
+      stdout: [
+        "app go: first",
+        "app go: err-line",
+        "app go: out-part-1 out-part-2",
+        "app go: Exited with code 0",
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a line that the runner reads in several chunks stays whole", async () => {
+    // 300 KB is more than the runner takes from a script in one read.
+    const { stdout, stderr, exitCode } = await runWithSteps(`
+      fs.writeSync(1, "first\\n" + Buffer.alloc(300_000, "x").toString());
+      await step("first");
+      fs.writeSync(2, "err-line\\n");
+      await step("err-line");
+      fs.writeSync(1, "out-part-2\\n");
+    `);
+    expect({ stdout: stdout.replace(/x{20,}/g, run => `<${run.length} x>`), stderr, exitCode }).toEqual({
+      stdout: [
+        "app go: first",
+        "app go: err-line",
+        "app go: <300000 x>out-part-2",
+        "app go: Exited with code 0",
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("the unterminated rest of each pipe is its own line", async () => {
+    expect(await runWithSteps(`fs.writeSync(1, "out-rest"); fs.writeSync(2, "err-rest");`)).toEqual({
+      stdout: ["app go: out-rest", "app go: err-rest", "app go: Exited with code 0", ""].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("auto-discovered bunfig.toml [run] section", () => {
   // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
   // tells which binary ran the script.

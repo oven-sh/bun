@@ -16,7 +16,6 @@ import {
   EnumerationType,
   FunctionDefinition,
   type FunctionOptions,
-  type ValueOptions,
   integers,
   type MemberOptions,
   ModuleDefinition,
@@ -29,6 +28,7 @@ import {
   type Type,
   UnionType,
   UnitType,
+  type ValueOptions,
 } from "./bindgen-lib-internal.ts";
 
 export type { Capability, Type } from "./bindgen-lib-internal.ts";

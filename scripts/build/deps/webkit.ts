@@ -2,6 +2,12 @@
  * WebKit commit — determines prebuilt download URL + what to checkout
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
+ *
+ * The Android prebuilt at this commit is built with the NDK named in the
+ * fork's Dockerfile.android (NDK_VERSION). It must equal `pins.androidNdk`
+ * in ci-images/spec.ts: Bun's objects and the prebuilt share libc++ types
+ * inline (std::expected across the parser seam), and libc++'s layout of
+ * those differs between NDK releases. Move the two together.
  */
 export const WEBKIT_VERSION = "5e3554face1338d738543540a82f23e3163045f5";
 

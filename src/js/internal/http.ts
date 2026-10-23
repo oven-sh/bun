@@ -54,7 +54,7 @@ const kHasQueuedReads = Symbol("kHasQueuedReads");
 const kClosedWithUnsentData = Symbol("kClosedWithUnsentData");
 const kCloseCallback = Symbol("closeCallback");
 
-// node:_http_server registers its pipelined-response machinery here at module
+// node:_http_server registers its pipelined-response machinery and its connection rules here at module
 // initialization, letting internal/http1_server_fallback drive the same
 // per-connection queue without widening node:_http_server's exports. The
 // fallback loads node:http (and with it _http_server) before reading these.
@@ -62,11 +62,26 @@ const http1ServerPipeline: {
   queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
   advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
   abortQueuedPipelinedResponses?: (socket: unknown) => void;
-  lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
+  lastPipelinedResponse?: (socket: unknown) => object | undefined;
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
   finishDrainedResponse?: (res: unknown) => void;
   kMustCloseConnection?: symbol;
+  // The server's connection rules, which a connection served from JS follows too.
+  socketOnError?: (this: unknown, err: unknown) => void;
+  socketOnTimeout?: (this: unknown) => void;
+  onResponseFinishHandleSocket?: (server: unknown, socket: unknown, res: unknown) => void;
+  resetSocketTimeout?: (server: unknown, socket: unknown) => void;
+  storeHTTPOptions?: (this: unknown, options: object) => void;
+  setupConnectionsTracking?: (this: unknown) => void;
+  kConnectionsCheckingInterval?: symbol;
+  // The other direction: internal/http1_server_fallback registers its part of the headers/request sweep when it loads.
+  checkHttp1Connections?: (
+    server: unknown,
+    headersTimeout: number,
+    requestTimeout: number,
+    onRequestTimeout: (socket: unknown) => void,
+  ) => void;
 } = {};
 
 export const enum NodeHTTPResponseAbortEvent {

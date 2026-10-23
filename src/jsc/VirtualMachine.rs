@@ -2115,6 +2115,11 @@ impl VirtualMachine {
         !self.bun_watcher.is_null()
     }
 
+    /// After the first `beforeExit`, `uncaught_exception` ends the process if no listener takes the error.
+    pub fn exits_on_uncaught_exception(&self) -> bool {
+        self.exit_on_uncaught_exception
+    }
+
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
     #[inline]
     pub fn set_is_main_thread_vm(value: bool) {
@@ -4475,6 +4480,20 @@ impl VirtualMachine {
         // Reported as it happens: it belongs to the context that is current.
         let owner = Bun__ModuleGraph__rejecting(global_object);
         self.unhandled_rejection_owned(global_object, reason, promise, owner);
+    }
+
+    /// Like `uncaught_exception(.., true)`, but the current `Bun.ModuleGraph` takes it first.
+    pub fn uncaught_rejection(&mut self, global_object: &JSGlobalObject, reason: JSValue) -> bool {
+        if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
+            return true;
+        }
+        let owner = Bun__ModuleGraph__rejecting(global_object);
+        if owner.is_cell()
+            && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
+        {
+            return true;
+        }
+        self.uncaught_exception(global_object, reason, true)
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`

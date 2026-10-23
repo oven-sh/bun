@@ -89,15 +89,40 @@ pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: 
     }
 }
 
-/// `export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm, promise)`
-// HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMainPromise, c)
-pub(crate) fn set_override_module_run_main_promise(
+// HOST_EXPORT(Bun__VirtualMachine__entryPointTakesRunMain, c)
+pub(crate) fn entry_point_takes_run_main(
     vm: &mut VirtualMachine,
+    name: &bun_core::String,
+    key: &bun_core::String,
     promise: *mut JSInternalPromise,
-) {
+) -> bool {
+    if !vm.has_patched_run_main {
+        // `reload_entry_point` loads the entry point itself. Run as `node`, `main` is the path as typed.
+        return key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME)
+            || key.eql_utf8(vm.main())
+            || name.eql_utf8(vm.main());
+    }
+    // `reload_entry_point` takes the first load of the `Module.runMain` that it calls.
     if vm.pending_internal_promise().is_none() {
         vm.set_pending_internal_promise(Some(promise));
+        return true;
     }
+    false
+}
+
+// HOST_EXPORT(Bun__onRunMainRejected)
+pub(crate) fn on_run_main_rejected(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> bun_jsc::JsResult<JSValue> {
+    let reason = callframe.argument(0);
+    let vm = global.bun_vm().as_mut();
+    // Rethrown, it goes to the rejection tracker, as a reloaded entry point's does: a watcher has to stay.
+    if vm.is_watcher_enabled() && vm.exits_on_uncaught_exception() {
+        return Err(global.throw_value(reason));
+    }
+    let _ = vm.uncaught_rejection(global, reason);
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.

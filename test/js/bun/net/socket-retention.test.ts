@@ -445,21 +445,19 @@ test("node:net socket nothing references still connects when GC runs during the 
   }
 });
 
-// Windows routes `unix:` through WindowsNamedPipe. A connect that fails
-// before libuv queues it (here: a TLS config that cannot build a context)
-// reports the error through `handle_connect_error` while the socket is still
-// detached, so that path releases nothing. The attempt ref taken in
-// `connect_inner` must be released by the caller, as the POSIX path does.
+// Windows routes `unix:` through WindowsNamedPipe. libuv reports a missing pipe
+// from the loop, but refuses a name with a NUL in it at once. By then the native
+// socket and its pipe exist, and the failed attempt has to release both.
 test.skipIf(!isWindows)(
   "a named-pipe connect that fails synchronously does not leak the native socket",
   async () => {
     const script = /* js */ `
     const { heapStats } = require("bun:jsc");
-    const socket = { open() {}, data() {}, close() {}, error() {}, connectError() {} };
-    const opts = {
-      unix: "\\\\\\\\.\\\\pipe\\\\bun-missing-" + process.pid,
-      tls: { cert: "not a cert", key: "not a key" },
-    };
+    let failed = 0;
+    const socket = { open() {}, data() {}, close() {}, error() {}, connectError() { failed++; } };
+    const opts = { unix: "\\\\\\\\.\\\\pipe\\\\bun-\\0-" + process.pid };
+    Bun.connect({ ...opts, socket }).catch(() => {});
+    const synchronous = failed === 1;
     async function run(n) {
       for (let i = 0; i < n; i += 100) {
         await Promise.all(Array.from({ length: 100 }, () => Bun.connect({ ...opts, socket }).catch(() => {})));
@@ -477,7 +475,7 @@ test.skipIf(!isWindows)(
     const before = pageCount();
     await run(4000);
     const after = pageCount();
-    console.log(JSON.stringify({ before, after, delta: after - before }));
+    console.log(JSON.stringify({ synchronous, before, after, delta: after - before }));
   `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -487,7 +485,8 @@ test.skipIf(!isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    const { synchronous, before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    expect(synchronous).toBe(true);
     // Without the balancing deref each run of 4000 leaks about 16 pages
     // (release) and many more under debug. With it the delta is heap noise.
     expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);

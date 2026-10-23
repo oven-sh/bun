@@ -171,7 +171,7 @@ impl UpgradedDuplex {
 
     /// `self` as the socket handle its `TLSSocket` holds.
     pub(crate) fn socket(&self) -> bun_uws::SocketTLS {
-        bun_uws::SocketTLS::from_transport(&self.handle)
+        bun_uws::SocketTLS::from_transport(&raw const self.handle)
     }
 
     /// The socket to dispatch an event to. Every dispatch runs under an entry point's [`Self::keep_alive`].

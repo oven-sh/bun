@@ -40,7 +40,7 @@ const tlsHandle = {
 } as const;
 const rustTraits = ["crate::socket::socket_body::TlsHandle"];
 /** The order `for-in` shows. */
-const byName = <T extends object>(members: T) =>
+const byName = <const T extends object>(members: T) =>
   Object.fromEntries(Object.entries(members).sort(([a], [b]) => (a < b ? -1 : 1))) as T;
 
 /** What `Bun.connect()` resolves to and the `open` handler of `Bun.listen()` takes. */

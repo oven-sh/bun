@@ -3551,18 +3551,18 @@ impl UpgradeOptions {
             };
             (ctx, config)
         } else if let Some(tls_js) = tls_js {
-            let parsed = if tls_js.is_boolean() {
-                ParsedTls::Empty
+            let mut config = if tls_js.is_boolean() {
+                vm.tls_config(Default::default(), is_server)
             } else {
-                ParsedTls::from_js(vm, global, tls_js, is_server)?
-            };
-            // `true`, or a client's object that sets no option, as in `Bun.connect`.
-            let mut config = if tls_js.is_boolean() || !is_server {
-                parsed.or_defaults(vm, is_server)
-            } else {
-                parsed
-                    .or_none()
-                    .ok_or_else(|| global.throw(format_args!("Expected \"tls\" option")))?
+                let parsed = ParsedTls::from_js(vm, global, tls_js, is_server)?;
+                if is_server {
+                    parsed
+                        .or_none()
+                        .ok_or_else(|| global.throw(format_args!("Expected \"tls\" option")))?
+                } else {
+                    // A client's object that sets no option is `true`, as in `Bun.connect`.
+                    parsed.or_defaults(vm, false)
+                }
             };
             (Self::cached_ctx(global, &mut config)?, Some(config))
         } else {

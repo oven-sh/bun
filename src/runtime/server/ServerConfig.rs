@@ -28,7 +28,7 @@ pub(crate) enum ServerTls {
     Off,
     /// The `tls` option. `server_names` are the entries of a `tls` array after the first, each with a `serverName`.
     Options {
-        default: SSLConfig,
+        default: Box<SSLConfig>,
         server_names: Vec<SSLConfig>,
     },
     /// The context a node:http server built in its constructor.
@@ -1170,7 +1170,7 @@ impl ServerConfig {
         }
 
         let from_options = |default: SSLConfig| ServerTls::Options {
-            default,
+            default: Box::new(default),
             server_names: Vec::new(),
         };
         if let Some(tls) = arg

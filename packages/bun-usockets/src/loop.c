@@ -530,6 +530,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 us_internal_accept_poll_event(p);
     #endif
             }
+    #ifdef LIBUS_USE_EPOLL
+            /* This event is the signal of every wakeup counted so far (the eventfd is edge-triggered), so the next tick has none of them to expect. */
+            if ((struct us_internal_async *) cb == cb->loop->data.wakeup_async) {
+                __atomic_store_n(&cb->loop->pending_wakeups, 0, __ATOMIC_RELAXED);
+            }
+    #endif
             cb->cb(cb->cb_expects_the_loop ? (struct us_internal_callback_t *) cb->loop : (struct us_internal_callback_t *) &cb->p);
             break;
         }

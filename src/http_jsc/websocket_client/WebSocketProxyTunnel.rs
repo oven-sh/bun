@@ -173,20 +173,12 @@ impl WebSocketProxyTunnel {
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
     ) -> RefPtr<WebSocketProxyTunnel> {
-        // `assume_ssl`/`assume_tcp` rebuild the handler around the same
-        // `InternalSocket`.
-        let socket = if SSL {
-            SocketUnion::Ssl(socket.assume_ssl())
-        } else {
-            SocketUnion::Tcp(socket.assume_tcp())
-        };
-
         RefPtr::new(WebSocketProxyTunnel {
             ref_count: Cell::new(1),
             upgrade_client: Cell::new(Some(upgrade_client)),
             connected_websocket: Cell::new(None),
             wrapper: OnceCell::new(),
-            socket: Cell::new(socket),
+            socket: Cell::new(SocketUnion::from_generic(socket)),
             sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
                 sni_hostname,
             ))),

@@ -1989,16 +1989,11 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                match ParsedTls::from_js(global_object.bun_vm(), global_object, tls, false)? {
-                    ParsedTls::Config(ssl_config) => {
-                        this.tls = valkey::TLS::Custom(Box::new(ssl_config));
-                    }
-                    ParsedTls::Empty => {
-                        return Err(
-                            global_object.throw_invalid_argument_type("tls", "tls", "object")
-                        );
-                    }
-                }
+                let parsed = ParsedTls::from_js(global_object.bun_vm(), global_object, tls, false)?;
+                let Some(ssl_config) = parsed.or_none() else {
+                    return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
+                };
+                this.tls = valkey::TLS::Custom(Box::new(ssl_config));
             } else {
                 return Err(global_object.throw_invalid_argument_type(
                     "tls",

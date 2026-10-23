@@ -581,6 +581,20 @@ impl ProxyTunnel {
             this.close_and_fail::<IS_SSL>(error, socket);
             return;
         };
+        Self::start_with_ctx(
+            this,
+            Socket::from_generic::<IS_SSL>(socket),
+            ssl_ctx,
+            start_payload,
+        );
+    }
+
+    fn start_with_ctx(
+        this: &mut HTTPClient,
+        socket: Socket,
+        ssl_ctx: bun_boringssl_sys::OwnedSslCtx,
+        start_payload: &[u8],
+    ) {
         let wrapper = ProxyTunnelWrapper::init_with_ctx(
             ssl_ctx,
             true,
@@ -603,7 +617,7 @@ impl ProxyTunnel {
         // hand-off to the keep-alive pool.
         let mut tunnel = ProxyTunnel::default();
         tunnel.wrapper = Some(wrapper);
-        tunnel.socket = Socket::from_generic::<IS_SSL>(socket);
+        tunnel.socket = socket;
         let proxy_tunnel = RefPtr::new(tunnel);
         let proxy_ptr = proxy_tunnel.as_ptr();
         this.proxy_tunnel = Some(proxy_tunnel);

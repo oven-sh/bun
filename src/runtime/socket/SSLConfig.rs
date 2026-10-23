@@ -136,28 +136,19 @@ pub(crate) fn protocol_version_code(name: &[u8]) -> i32 {
     }
 }
 
-/// What a `tls` object asks for.
-pub(crate) enum ParsedTls {
-    /// It sets no option, like `tls: {}`. Each API decides if that still turns TLS on.
-    Empty,
-    Config(SSLConfig),
-}
+/// What a `tls` object asks for. `None` inside: it sets no option, like `tls: {}`, and each API decides if that still turns TLS on.
+pub(crate) struct ParsedTls(Option<SSLConfig>);
 
 impl ParsedTls {
     /// For an API where `tls: {}` means `tls: true`.
     pub(crate) fn or_defaults(self, vm: &VirtualMachine, is_server: bool) -> SSLConfig {
-        match self {
-            Self::Empty => vm.tls_config(Default::default(), is_server),
-            Self::Config(config) => config,
-        }
+        self.0
+            .unwrap_or_else(|| vm.tls_config(Default::default(), is_server))
     }
 
     /// For an API where `tls: {}` means no `tls`.
     pub(crate) fn or_none(self) -> Option<SSLConfig> {
-        match self {
-            Self::Empty => None,
-            Self::Config(config) => Some(config),
-        }
+        self.0
     }
 
     pub(crate) fn from_js(
@@ -288,9 +279,9 @@ impl ParsedTls {
             || generated.client_renegotiation_window != 0;
 
         if !any {
-            return Ok(Self::Empty);
+            return Ok(Self(None));
         }
-        Ok(Self::Config(vm.tls_config(result, is_server)))
+        Ok(Self(Some(vm.tls_config(result, is_server))))
     }
 }
 

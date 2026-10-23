@@ -434,7 +434,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 bun_uws::socket_transfer::bsd_create_bound_socket_unix(
                     path_bytes.as_ptr().cast(),
                     path_bytes.len(),
-                    &mut err,
+                    &raw mut err,
                 )
             };
             if fd < 0 {

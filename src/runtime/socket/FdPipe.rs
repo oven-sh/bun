@@ -62,7 +62,7 @@ impl FdPipe {
         // SAFETY: just allocated, and freed only by the task that `close` queues.
         let pipe = unsafe { &*this };
         pipe.handle.set(this);
-        let handle = SocketTCP::from_transport(&pipe.handle);
+        let handle = SocketTCP::from_transport(&raw const pipe.handle);
         socket.socket.set(handle);
         Ok(TCPSocket::on_open(socket, handle))
     }
@@ -100,7 +100,7 @@ impl FdPipe {
         if let Some(socket) = self.socket.get() {
             fold(TCPSocket::on_writable(
                 socket,
-                SocketTCP::from_transport(&self.handle),
+                SocketTCP::from_transport(&raw const self.handle),
             ));
         }
     }
@@ -174,7 +174,7 @@ impl Transport for FdPipe {
             let _ = self.fd.close_allowing_bad_file_descriptor(None);
         }
         self.enqueue();
-        let handle = SocketTCP::from_transport(&self.handle);
+        let handle = SocketTCP::from_transport(&raw const self.handle);
         fold(TCPSocket::on_close(
             socket,
             handle,

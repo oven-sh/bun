@@ -707,6 +707,9 @@ static _Atomic(uint64_t) *bsd_owned_word(LIBUS_SOCKET_DESCRIPTOR fd) {
     _Atomic(uint64_t) *page = atomic_load(slot);
     if (UNLIKELY(!page)) {
         _Atomic(uint64_t) *fresh = us_calloc(BSD_OWNED_PAGE_BITS / 64, sizeof(uint64_t));
+        if (UNLIKELY(!fresh)) {
+            Bun__outOfMemory();
+        }
         if (atomic_compare_exchange_strong(slot, &page, fresh)) {
             page = fresh;
         } else {

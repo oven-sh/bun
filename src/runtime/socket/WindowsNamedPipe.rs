@@ -93,6 +93,14 @@ bun_jsc::impl_abort_handle_owner!(WindowsNamedPipe, abort_handle, |this, _cause|
     unsafe { &*this }.close_or_cancel_connect()
 });
 
+/// What a new pipe is opened over.
+enum Target<'a> {
+    /// A libuv descriptor.
+    Fd(Fd),
+    /// The name of the pipe to connect to.
+    Path(&'a [u8]),
+}
+
 /// The socket this pipe is the transport of.
 #[derive(Copy, Clone)]
 pub(crate) enum SocketType {
@@ -251,7 +259,7 @@ impl WindowsNamedPipe {
 
     /// `self` as the handle its socket holds.
     fn handle<const SSL: bool>(&self) -> uws::NewSocketHandler<SSL> {
-        uws::NewSocketHandler::from_transport(&self.handle)
+        uws::NewSocketHandler::from_transport(&raw const self.handle)
     }
 
     fn on_writable(&self) {
@@ -570,11 +578,12 @@ impl WindowsNamedPipe {
         this
     }
 
-    /// Makes a new pipe the transport of `socket`, then runs `start` on it. On `Err` the socket is detached again and has had no event.
+    /// Makes a new pipe over `target` the transport of `socket`. On `Err` the socket is detached again and has had no event.
     fn attach(
         cx: &bun_jsc::JsThread<'_>,
+        target: Target<'_>,
+        ssl_ctx: Option<boringssl::OwnedSslCtx>,
         socket: SocketType,
-        start: impl FnOnce(&WindowsNamedPipe) -> bun_sys::Result<()>,
     ) -> Result<(), SystemErrno> {
         // SAFETY: `create()` returns a live pipe with its only ref.
         let pipe = unsafe { &*Self::create(cx, socket) };
@@ -582,7 +591,11 @@ impl WindowsNamedPipe {
             s.socket.set(pipe.handle::<SSL>());
             Ok(())
         });
-        if start(pipe).is_ok() {
+        let started = match target {
+            Target::Fd(fd) => pipe.open(fd, ssl_ctx),
+            Target::Path(path) => pipe.connect_path(path, ssl_ctx),
+        };
+        if started.is_ok() {
             return Ok(());
         }
         pipe.socket.set(SocketType::None);
@@ -602,7 +615,7 @@ impl WindowsNamedPipe {
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
         socket: SocketType,
     ) -> Result<(), SystemErrno> {
-        Self::attach(cx, socket, |pipe| pipe.open(fd, ssl_ctx))
+        Self::attach(cx, Target::Fd(fd), ssl_ctx, socket)
     }
 
     /// Makes a pipe that connects to `path` the transport of `socket`.
@@ -612,16 +625,22 @@ impl WindowsNamedPipe {
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
         socket: SocketType,
     ) -> Result<(), SystemErrno> {
-        Self::attach(cx, socket, |pipe| {
-            if path[path.len() - 1] == 0 {
-                return pipe.connect(ZStr::from_slice_with_nul(path), ssl_ctx);
-            }
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let len = path.len().min(path_buf.len() - 1);
-            path_buf[..len].copy_from_slice(&path[..len]);
-            path_buf[len] = 0;
-            pipe.connect(ZStr::from_buf(&path_buf[..], len), ssl_ctx)
-        })
+        Self::attach(cx, Target::Path(path), ssl_ctx, socket)
+    }
+
+    fn connect_path(
+        &self,
+        path: &[u8],
+        ssl_ctx: Option<boringssl::OwnedSslCtx>,
+    ) -> bun_sys::Result<()> {
+        if path[path.len() - 1] == 0 {
+            return self.connect(ZStr::from_slice_with_nul(path), ssl_ctx);
+        }
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let len = path.len().min(path_buf.len() - 1);
+        path_buf[..len].copy_from_slice(&path[..len]);
+        path_buf[len] = 0;
+        self.connect(ZStr::from_buf(&path_buf[..], len), ssl_ctx)
     }
 
     /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s

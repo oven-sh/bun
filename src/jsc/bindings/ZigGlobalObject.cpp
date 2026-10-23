@@ -1565,49 +1565,6 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type)
-{
-
-// Windows doesn't have mmap
-// This code should pretty much only be called on Linux.
-#if !OS(WINDOWS)
-    // Empty makes the caller fall back to the copying path, which throws for this length.
-    if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    auto ptr = mmap(nullptr, totalLength, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-
-    if (ptr == MAP_FAILED) {
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(reinterpret_cast<char*>(ptr) + byteOffset), byteLength }, createSharedTask<void(void*)>([ptr, totalLength](void* p) {
-        munmap(ptr, totalLength);
-    }));
-
-    if (type == JSC::Uint8ArrayType) {
-        auto uint8array = JSC::JSUint8Array::create(globalObject, globalObject->m_typedArrayUint8.get(globalObject), WTF::move(buffer), 0, byteLength);
-        return JSValue::encode(uint8array);
-    }
-
-    if (type == JSC::ArrayBufferType) {
-
-        Structure* structure = globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default);
-
-        if (!structure) [[unlikely]] {
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
-        return JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), structure, WTF::move(buffer)));
-    } else {
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-#else
-    return JSC::JSValue::encode(JSC::JSValue {});
-#endif
-}
-
 extern "C" JSC::EncodedJSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

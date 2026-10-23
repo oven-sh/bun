@@ -45,6 +45,18 @@ pub(crate) mod read_file;
 #[path = "blob/write_file.rs"]
 pub(crate) mod write_file;
 
+/// The store count comes first: with one owner left, nobody else can make a copy.
+fn owns_bytes_alone(store: &Store) -> bool {
+    if !store.has_one_ref() {
+        return false;
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::has_copies(store) {
+        return false;
+    }
+    true
+}
+
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
 /// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
 /// produced by `RefPtr<Store>::into_raw()`.
@@ -326,7 +338,7 @@ pub(crate) trait BlobExt {
         buf: *mut [u8],
     ) -> JsResult<JSValue>;
     /// # Safety
-    /// `buf` must be valid for reads (and, for `Share`/`Transfer`, owned by the
+    /// `buf` must be valid for reads (and, for `Transfer`, owned by the
     /// store backing this blob); when `LIFETIME == Temporary` it must be a
     /// leaked default-allocator `Box<[u8]>` whose ownership transfers to JSC.
     unsafe fn to_array_buffer_view_with_bytes<
@@ -2673,7 +2685,7 @@ impl BlobExt for Blob {
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
     ///
     /// # Safety
-    /// `buf` must be valid for reads (and, for `Share`/`Transfer`, owned by the
+    /// `buf` must be valid for reads (and, for `Transfer`, owned by the
     /// store backing this blob); when `LIFETIME == Temporary` it must be a
     /// leaked default-allocator `Box<[u8]>` whose ownership transfers to JSC.
     unsafe fn to_array_buffer_view_with_bytes<
@@ -2688,11 +2700,14 @@ impl BlobExt for Blob {
         // leaked Box for `Temporary` or a store-backed view otherwise).
         let buf_len = unsafe { &*buf }.len();
         match LIFETIME {
-            Lifetime::Clone => {
+            // A buffer is writable, so `Share` gets its own bytes too.
+            Lifetime::Clone | Lifetime::Share => {
                 if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     // ArrayBuffer doesn't have this limit.
                     if buf_len > jsc::virtual_machine::synthetic_allocation_limit() {
-                        self.detach();
+                        if LIFETIME == Lifetime::Clone {
+                            self.detach();
+                        }
                         return Err(global.throw_out_of_memory());
                     }
                 }
@@ -2704,66 +2719,29 @@ impl BlobExt for Blob {
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
                             let allocated = bytes.allocated_slice();
-                            // SAFETY: `Clone` arm reads only; `buf` is store-backed.
+                            // SAFETY: this arm reads only; `buf` is store-backed.
                             if bun::is_slice_in_buffer(unsafe { &*buf }, allocated) {
-                                if let Some(memfd) = LinuxMemFdAllocator::from(bytes.allocator()) {
-                                    // A ref across the FFI call so a concurrent
-                                    // store-deref cannot close the fd mid-mmap.
-                                    // SAFETY: `memfd` is the live Box-allocated ptr
-                                    // smuggled through `StdAllocator.ptr` by
-                                    // `LinuxMemFdAllocator::allocator`.
-                                    let memfd = unsafe { bun_ptr::RefPtr::init_ref(memfd) };
-                                    let byte_offset = (buf.cast::<u8>() as usize)
-                                        .saturating_sub(allocated.as_ptr() as usize);
-                                    let result =
-                                        jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            memfd.fd.native() as i64,
-                                            global,
-                                            byte_offset,
-                                            buf_len,
-                                            allocated.len(),
-                                            TYPED_ARRAY_VIEW,
-                                        );
-                                    let result = result?;
-                                    debug!(
-                                        "toArrayBuffer COW clone({}, {}) = {}",
-                                        byte_offset,
-                                        buf_len,
-                                        (result != JSValue::ZERO) as u8
-                                    );
-                                    if result != JSValue::ZERO {
-                                        return Ok(result);
-                                    }
+                                let byte_offset = (buf.cast::<u8>() as usize)
+                                    .saturating_sub(allocated.as_ptr() as usize);
+                                if let Some(result) = LinuxMemFdAllocator::copy_on_write_js(
+                                    bytes,
+                                    global,
+                                    byte_offset,
+                                    buf_len,
+                                    TYPED_ARRAY_VIEW,
+                                ) {
+                                    debug!("toArrayBuffer COW clone({}, {})", byte_offset, buf_len);
+                                    return result;
                                 }
                             }
                         }
                     }
                 }
-                // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
+                // SAFETY: this arm copies into a new JSC allocation; `buf` is only read.
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
             }
-            Lifetime::Share => {
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
-                    && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
-                {
-                    return Err(global.throw_out_of_memory());
-                }
-                let store = self.store().expect("infallible: store present").clone();
-                // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
-                // pointer is then handed to JSC as an external buffer backing whose
-                // lifetime is the cloned `store` ref above (the deallocator releases
-                // that ref exactly once at GC). No Rust-side `&` to the Store bytes
-                // is live across this reborrow.
-                unsafe {
-                    jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW).to_js_with_context(
-                        global,
-                        store.into_raw().cast::<c_void>(),
-                        Some(blob_store_array_buffer_deallocator),
-                    )
-                }
-            }
             Lifetime::Transfer => {
-                if self.store().is_some_and(|s| !s.has_one_ref()) {
+                if self.store().is_some_and(|s| !owns_bytes_alone(s)) {
                     // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
                     let copied = unsafe {
                         self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(
@@ -2781,8 +2759,12 @@ impl BlobExt for Blob {
                 }
                 // Move the existing +1 out. Cloning then `transfer()` would leak a ref.
                 let store = self.take_store().expect("transfer with null store");
-                // SAFETY: see `Share` arm. After `take()` the store ref is moved
-                // out of `self`, so JSC becomes the sole owner via the deallocator.
+                // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
+                // pointer is then handed to JSC as an external buffer backing. After
+                // `take()` the store ref is moved out of `self`, so JSC becomes the
+                // sole owner via the deallocator, which releases that ref exactly
+                // once at GC. No Rust-side `&` to the Store bytes is live across
+                // this reborrow.
                 unsafe {
                     jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW).to_js_with_context(
                         global,
@@ -2837,12 +2819,7 @@ impl BlobExt for Blob {
             };
         }
 
-        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
-        // `RefPtr<Store>::as_ptr`). The `Clone` arm only reads (`&*buf`);
-        // `Share`/`Transfer` hand the ptr to JSC as an external ArrayBuffer
-        // backing via FFI and materialize `&mut *buf` to record ptr+len, which
-        // is sound now that the provenance is writable. The `Temporary` arm
-        // (`heap::take`) is statically unreachable below.
+        // `view_ptr` has mutable provenance: `Transfer` hands it to JSC as a writable backing.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
             return jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(cx.global(), b"");

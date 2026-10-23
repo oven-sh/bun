@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmHkdfParams.h"
 #include "CryptoKeyRaw.h"
+#include "OpenSSLUtilities.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/CrossThreadCopier.h>
 
@@ -45,27 +46,34 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHKDF::identifier() const
     return s_identifier;
 }
 
-void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+ExceptionOr<void> CryptoAlgorithmHKDF::validateDeriveBits(const CryptoAlgorithmHkdfParams& parameters, std::optional<size_t> length)
 {
-    if (!length) {
-        exceptionCallback(OperationError, "length cannot be null"_s);
-        return;
-    }
-    if (*length % 8) {
-        exceptionCallback(OperationError, "length must be a multiple of 8"_s);
-        return;
-    }
+    if (!length)
+        return Exception { OperationError, "length cannot be null"_s };
+    if (*length % 8)
+        return Exception { OperationError, "length must be a multiple of 8"_s };
+    // RFC 5869 section 2.3: the output is at most 255 blocks of the hash.
+    if (auto* digest = digestAlgorithm(parameters.hashIdentifier); digest && *length / 8 > 255 * EVP_MD_size(digest))
+        return Exception { OperationError, "length exceeds the maximum derived bit length"_s };
 
     // Node caps info at 1024 bytes (OpenSSL 3.x EVP_PKEY_CTX_add1_hkdf_info);
     // BoringSSL imposes no such limit, so match Node explicitly.
     constexpr size_t maximumInfoLength = 1024;
-    if (downcast<CryptoAlgorithmHkdfParams>(parameters).info.length() > maximumInfoLength) {
-        exceptionCallback(OperationError, "algorithm.info must be at most 1024 bytes"_s);
+    if (parameters.info.length() > maximumInfoLength)
+        return Exception { OperationError, "algorithm.info must be at most 1024 bytes"_s };
+    return {};
+}
+
+void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+{
+    auto& hkdfParameters = downcast<CryptoAlgorithmHkdfParams>(parameters);
+    if (auto result = validateDeriveBits(hkdfParameters, length); result.hasException()) {
+        exceptionCallback(result.exception().code(), result.exception().message());
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmHkdfParams>(parameters)), baseKey = WTF::move(baseKey), length = *length] {
+        [parameters = crossThreadCopy(hkdfParameters), baseKey = WTF::move(baseKey), length = *length] {
             return platformDeriveBits(parameters, downcast<CryptoKeyRaw>(baseKey.get()), length);
         });
 }

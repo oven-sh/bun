@@ -1084,6 +1084,257 @@ describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
   });
 });
 
+// SubtleCrypto.supports("deriveBits", algorithm, length) says whether deriveBits can work
+// with that algorithm and length, so each row holds its answer beside the outcome of the
+// real call. Each algorithm keeps the checks that need no key in one function for both.
+// https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
+describe("SubtleCrypto.supports for deriveBits and deriveKey", () => {
+  const supports = (...args: [operation: string, algorithm: unknown, lengthOrAdditionalAlgorithm?: unknown]): boolean =>
+    (SubtleCrypto as any).supports(...args);
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "fulfils",
+      e => `${e.name}: ${e.message}`,
+    );
+  const hkdf = { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(8), info: new Uint8Array(8) };
+  const pbkdf2 = { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(8), iterations: 1 };
+  const importKdfKey = (name: "HKDF" | "PBKDF2", usages: KeyUsage[] = ["deriveBits", "deriveKey"]) =>
+    crypto.subtle.importKey("raw", new Uint8Array(16), name, false, usages);
+  // `length` is a rest parameter so that a row can leave the argument out.
+  const deriveBitsRow = async (algorithm: { name: string }, key: CryptoKey, ...length: [unknown?]) => ({
+    supports: supports("deriveBits", algorithm, ...length),
+    deriveBits: await outcome(crypto.subtle.deriveBits(algorithm, key, ...(length as [number?]))),
+  });
+  const deriveKeyRow = async (
+    algorithm: { name: string },
+    key: CryptoKey,
+    derivedKeyType: AlgorithmIdentifier,
+    usages: KeyUsage[],
+  ) => ({
+    supports: supports("deriveKey", algorithm, derivedKeyType),
+    deriveKey: await outcome(crypto.subtle.deriveKey(algorithm, key, derivedKeyType, false, usages)),
+  });
+  const yes = { supports: true, deriveBits: "fulfils" };
+  const hkdfOverMaximum = "OperationError: length exceeds the maximum derived bit length";
+
+  it.each([
+    ["HKDF", hkdf],
+    ["PBKDF2", pbkdf2],
+  ] as const)("%s: answers as deriveBits does for each length", async (name, algorithm) => {
+    const key = await importKdfKey(name);
+    expect({
+      zero: await deriveBitsRow(algorithm, key, 0),
+      negativeZero: await deriveBitsRow(algorithm, key, -0),
+      eight: await deriveBitsRow(algorithm, key, 8),
+      seven: await deriveBitsRow(algorithm, key, 7),
+      null: await deriveBitsRow(algorithm, key, null),
+      undefined: await deriveBitsRow(algorithm, key, undefined),
+      omitted: await deriveBitsRow(algorithm, key),
+    }).toEqual({
+      zero: yes,
+      negativeZero: yes,
+      eight: yes,
+      seven: { supports: false, deriveBits: "OperationError: length must be a multiple of 8" },
+      null: { supports: false, deriveBits: "OperationError: length cannot be null" },
+      undefined: { supports: false, deriveBits: "OperationError: length cannot be null" },
+      omitted: { supports: false, deriveBits: "OperationError: length cannot be null" },
+    });
+  });
+
+  it("answers false for parameters that deriveBits rejects at every length", async () => {
+    const [hkdfKey, pbkdf2Key] = await Promise.all([importKdfKey("HKDF"), importKdfKey("PBKDF2")]);
+    const zeroIterations = { ...pbkdf2, iterations: 0 };
+    const info1024 = { ...hkdf, info: new Uint8Array(1024) };
+    const info1025 = { ...hkdf, info: new Uint8Array(1025) };
+    const noIterations = { supports: false, deriveBits: "OperationError: iterations cannot be zero" };
+    const infoTooLong = { supports: false, deriveBits: "OperationError: algorithm.info must be at most 1024 bytes" };
+    expect({
+      "PBKDF2 with 0 iterations, length 0": await deriveBitsRow(zeroIterations, pbkdf2Key, 0),
+      "PBKDF2 with 0 iterations, length 8": await deriveBitsRow(zeroIterations, pbkdf2Key, 8),
+      "HKDF with 1024 bytes of info, length 0": await deriveBitsRow(info1024, hkdfKey, 0),
+      "HKDF with 1024 bytes of info, length 8": await deriveBitsRow(info1024, hkdfKey, 8),
+      "HKDF with 1025 bytes of info, length 0": await deriveBitsRow(info1025, hkdfKey, 0),
+      "HKDF with 1025 bytes of info, length 8": await deriveBitsRow(info1025, hkdfKey, 8),
+    }).toEqual({
+      "PBKDF2 with 0 iterations, length 0": noIterations,
+      "PBKDF2 with 0 iterations, length 8": noIterations,
+      "HKDF with 1024 bytes of info, length 0": yes,
+      "HKDF with 1024 bytes of info, length 8": yes,
+      "HKDF with 1025 bytes of info, length 0": infoTooLong,
+      "HKDF with 1025 bytes of info, length 8": infoTooLong,
+    });
+  });
+
+  // deriveBits checks the key first, then the length, then the parameters of the algorithm.
+  it("deriveBits reports the key and the length before a PBKDF2 iteration count of 0", async () => {
+    const zeroIterations = { ...pbkdf2, iterations: 0 };
+    const [key, keyWithoutUsage] = await Promise.all([importKdfKey("PBKDF2"), importKdfKey("PBKDF2", ["deriveKey"])]);
+    expect({
+      "key without the deriveBits usage": await outcome(crypto.subtle.deriveBits(zeroIterations, keyWithoutUsage, 8)),
+      "null length": await outcome(crypto.subtle.deriveBits(zeroIterations, key, null)),
+      "length 7": await outcome(crypto.subtle.deriveBits(zeroIterations, key, 7)),
+      "length 8": await outcome(crypto.subtle.deriveBits(zeroIterations, key, 8)),
+    }).toEqual({
+      "key without the deriveBits usage": "InvalidAccessError: baseKey does not have deriveBits usage",
+      "null length": "OperationError: length cannot be null",
+      "length 7": "OperationError: length must be a multiple of 8",
+      "length 8": "OperationError: iterations cannot be zero",
+    });
+  });
+
+  // RFC 5869 limits the output of HKDF to 255 blocks of the hash.
+  it.each([
+    ["SHA-1", 160],
+    ["SHA-224", 224],
+    ["SHA-256", 256],
+    ["SHA-384", 384],
+    ["SHA-512", 512],
+    ["SHA3-256", 256],
+    ["SHA3-384", 384],
+    ["SHA3-512", 512],
+  ] as const)("HKDF with %s: answers as deriveBits does at the longest output", async (hash, hashLength) => {
+    const key = await importKdfKey("HKDF");
+    const algorithm = { ...hkdf, hash };
+    const maximum = 255 * hashLength;
+    expect({
+      maximum: await deriveBitsRow(algorithm, key, maximum),
+      "maximum + 8": await deriveBitsRow(algorithm, key, maximum + 8),
+    }).toEqual({
+      maximum: yes,
+      "maximum + 8": { supports: false, deriveBits: hkdfOverMaximum },
+    });
+  });
+
+  it("deriveBits reports the length before an HKDF info that is too long", async () => {
+    const key = await importKdfKey("HKDF");
+    const info1025 = { ...hkdf, info: new Uint8Array(1025) };
+    expect({
+      "null length": await outcome(crypto.subtle.deriveBits(info1025, key, null)),
+      "length 7": await outcome(crypto.subtle.deriveBits(info1025, key, 7)),
+      "length over the maximum": await outcome(crypto.subtle.deriveBits(info1025, key, 255 * 256 + 8)),
+      "length 8": await outcome(crypto.subtle.deriveBits(info1025, key, 8)),
+    }).toEqual({
+      "null length": "OperationError: length cannot be null",
+      "length 7": "OperationError: length must be a multiple of 8",
+      "length over the maximum": hkdfOverMaximum,
+      "length 8": "OperationError: algorithm.info must be at most 1024 bytes",
+    });
+  });
+
+  it("answers deriveKey as deriveKey does, from the length of the derived key", async () => {
+    const [hkdfKey, pbkdf2Key] = await Promise.all([importKdfKey("HKDF"), importKdfKey("PBKDF2")]);
+    const aes256 = { name: "AES-GCM", length: 256 };
+    const hmac = (length: number) => ({ name: "HMAC", hash: "SHA-256", length });
+    const zeroIterations = { ...pbkdf2, iterations: 0 };
+    const info1025 = { ...hkdf, info: new Uint8Array(1025) };
+    expect({
+      "HKDF to AES-GCM of 256 bits": await deriveKeyRow(hkdf, hkdfKey, aes256, ["encrypt"]),
+      "HKDF to HMAC of 8 bits": await deriveKeyRow(hkdf, hkdfKey, hmac(8), ["sign"]),
+      "HKDF to HMAC of 12 bits": await deriveKeyRow(hkdf, hkdfKey, hmac(12), ["sign"]),
+      "HKDF to HMAC of 255 blocks": await deriveKeyRow(hkdf, hkdfKey, hmac(255 * 256), ["sign"]),
+      "HKDF to HMAC of 255 blocks and 8 bits": await deriveKeyRow(hkdf, hkdfKey, hmac(255 * 256 + 8), ["sign"]),
+      "HKDF to HKDF, which has no length": await deriveKeyRow(hkdf, hkdfKey, "HKDF", ["deriveBits"]),
+      "PBKDF2 with 0 iterations to AES-GCM": await deriveKeyRow(zeroIterations, pbkdf2Key, aes256, ["encrypt"]),
+      "HKDF with 1025 bytes of info to AES-GCM": await deriveKeyRow(info1025, hkdfKey, aes256, ["encrypt"]),
+    }).toEqual({
+      "HKDF to AES-GCM of 256 bits": { supports: true, deriveKey: "fulfils" },
+      "HKDF to HMAC of 8 bits": { supports: true, deriveKey: "fulfils" },
+      "HKDF to HMAC of 12 bits": { supports: false, deriveKey: "OperationError: length must be a multiple of 8" },
+      "HKDF to HMAC of 255 blocks": { supports: true, deriveKey: "fulfils" },
+      "HKDF to HMAC of 255 blocks and 8 bits": { supports: false, deriveKey: hkdfOverMaximum },
+      "HKDF to HKDF, which has no length": { supports: false, deriveKey: "OperationError: length cannot be null" },
+      "PBKDF2 with 0 iterations to AES-GCM": {
+        supports: false,
+        deriveKey: "OperationError: iterations cannot be zero",
+      },
+      "HKDF with 1025 bytes of info to AES-GCM": {
+        supports: false,
+        deriveKey: "OperationError: algorithm.info must be at most 1024 bytes",
+      },
+    });
+  });
+
+  // These two take a null length as the whole secret, so undefined must not become 0 bits
+  // for HKDF and PBKDF2 while it stays acceptable here.
+  it.each([
+    ["X25519", "X25519"],
+    ["ECDH", { name: "ECDH", namedCurve: "P-256" }],
+  ] as const)("%s: answers as deriveBits does for each length", async (name, keyAlgorithm) => {
+    const { privateKey, publicKey } = (await crypto.subtle.generateKey(keyAlgorithm, false, [
+      "deriveBits",
+    ])) as CryptoKeyPair;
+    const algorithm = { name, public: publicKey };
+    expect({
+      null: await deriveBitsRow(algorithm, privateKey, null),
+      undefined: await deriveBitsRow(algorithm, privateKey, undefined),
+      omitted: await deriveBitsRow(algorithm, privateKey),
+      zero: await deriveBitsRow(algorithm, privateKey, 0),
+      wholeSecret: await deriveBitsRow(algorithm, privateKey, 256),
+      oneBitMore: await deriveBitsRow(algorithm, privateKey, 257),
+    }).toEqual({
+      null: yes,
+      undefined: yes,
+      omitted: yes,
+      zero: yes,
+      wholeSecret: yes,
+      oneBitMore: { supports: false, deriveBits: "OperationError: derived bit length is too small" },
+    });
+  });
+
+  it.each([
+    ["X25519", "X25519", "Ed25519"],
+    ["ECDH", { name: "ECDH", namedCurve: "P-256" }, { name: "ECDSA", namedCurve: "P-256" }],
+  ] as const)("%s: answers false for a `public` that the real call rejects", async (name, keyAlgorithm, other) => {
+    const [own, peer, otherAlgorithm] = (await Promise.all([
+      crypto.subtle.generateKey(keyAlgorithm, false, ["deriveBits", "deriveKey"]),
+      crypto.subtle.generateKey(keyAlgorithm, false, ["deriveBits"]),
+      crypto.subtle.generateKey(other, false, ["sign", "verify"]),
+    ])) as CryptoKeyPair[];
+    const aes256 = { name: "AES-GCM", length: 256 };
+    const rows = async (publicKey: CryptoKey) => ({
+      deriveBits: await deriveBitsRow({ name, public: publicKey }, own.privateKey, 256),
+      deriveKey: await deriveKeyRow({ name, public: publicKey }, own.privateKey, aes256, ["encrypt"]),
+    });
+    const notPublic = "InvalidAccessError: The requested operation is not valid for the provided key";
+    const mismatch = "InvalidAccessError: key algorithm mismatch";
+    expect({
+      "public key of the peer": await rows(peer.publicKey),
+      "private key of the peer": await rows(peer.privateKey),
+      "public key of another algorithm": await rows(otherAlgorithm.publicKey),
+    }).toEqual({
+      "public key of the peer": { deriveBits: yes, deriveKey: { supports: true, deriveKey: "fulfils" } },
+      "private key of the peer": {
+        deriveBits: { supports: false, deriveBits: notPublic },
+        deriveKey: { supports: false, deriveKey: notPublic },
+      },
+      "public key of another algorithm": {
+        deriveBits: { supports: false, deriveBits: mismatch },
+        deriveKey: { supports: false, deriveKey: mismatch },
+      },
+    });
+  });
+
+  // supports converts the length as deriveBits does, not by the typed overloads of the
+  // current WICG draft, so it throws what deriveBits rejects with.
+  it.each([
+    ["a BigInt", 0n, TypeError],
+    ["a Symbol", Symbol("length"), TypeError],
+    [
+      "an object whose valueOf throws",
+      {
+        valueOf() {
+          throw new RangeError("no length");
+        },
+      },
+      RangeError,
+    ],
+  ])("throws for a length that is %s, as deriveBits rejects", async (_, length, error) => {
+    const key = await importKdfKey("HKDF");
+    expect(() => supports("deriveBits", hkdf, length)).toThrow(error);
+    await expect(crypto.subtle.deriveBits(hkdf, key, length as never)).rejects.toThrow(error);
+  });
+});
+
 // The WebIDL for deriveBits is `optional unsigned long? length = null`: `null` (and an
 // omitted/undefined argument) mean "the whole secret", while `0` asks for zero bits.
 // Bun used to treat `0` as the null sentinel and hand back the entire ECDH/X25519 shared
@@ -1535,6 +1786,10 @@ describe("exception scope discipline", () => {
         "deriveKey importable but no key length = REJECTED NotSupportedError: Unrecognized algorithm name",
         "deriveBits ok = RESOLVED",
         "deriveBits bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "deriveBits zero iterations = REJECTED OperationError: iterations cannot be zero",
+        "supports deriveBits zero length = RESOLVED",
+        "supports deriveBits undefined length = RESOLVED",
+        "supports deriveBits unconvertible length = REJECTED Error: boom",
         "importKey ok = RESOLVED",
         "importKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "importKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",

@@ -42,7 +42,9 @@ const many_baz = ["baz","baz","baz","baz","baz","baz","baz"]
 console.log(JSON.stringify(json));
 values;`,
       "stuff.ts": `export default { foo: "bar", baz: "baz" }`,
-      "lmao.json": ``,
+      // Tests that register an onLoad plugin for this file replace its contents.
+      // The rest bundle it as is, so it must be valid JSON.
+      "lmao.json": `{}`,
       "binding.gyp": /* gyp */ `{
         "targets": [
           {

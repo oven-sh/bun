@@ -167,6 +167,9 @@ export function evaluateBundle(css: string): LayerEvaluation {
   return evaluateSources({ "bundle.css": css }, "bundle.css");
 }
 
+/** Whether `problem` says that `.t` gets another rule. The other problems are about the order of layers. */
+export const isWinnerProblem = (problem: string) => problem.startsWith(".t gets ");
+
 export function compare(expected: LayerEvaluation, actual: LayerEvaluation): string[] {
   const problems: string[] = [];
   if (expected.winner !== actual.winner) {

@@ -398,23 +398,34 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         //
                         // Regression: #28914
                         let original_rules = ast.rules.v.as_slice();
+                        let mut layer_count: usize = 0;
+                        let mut layers_ahead_of_imports: usize = 0;
                         let mut seen_import = false;
-                        let mut kept_count: usize = 0;
                         let mut prefix_end: usize = original_rules.len();
                         'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
-                            match stays_in_body(
-                                rule,
-                                &mut seen_import,
-                                pre_import_layers_printed_earlier,
-                            ) {
-                                Some(stays) => kept_count += stays as usize,
-                                None => {
+                            match rule {
+                                BundlerCssRule::Import(_) => seen_import = true,
+                                BundlerCssRule::Ignored => {}
+                                BundlerCssRule::LayerStatement(_) => {
+                                    layer_count += 1;
+                                    layers_ahead_of_imports += usize::from(!seen_import);
+                                }
+                                _ => {
                                     prefix_end = idx;
                                     break 'prefix_scan;
                                 }
                             }
                         }
-                        let dropped = prefix_end - kept_count;
+                        // Unlike esbuild, the statements ahead of the first "@import" leave only when an earlier entry prints them.
+                        let mut stripped = if pre_import_layers_printed_earlier
+                            && !has_import_behind_unknown_at_rules(&original_rules[prefix_end..])
+                        {
+                            layers_ahead_of_imports
+                        } else {
+                            0
+                        };
+                        layer_count -= stripped;
+                        let dropped = prefix_end - layer_count;
 
                         if dropped == 0 {
                             // Prefix is all "@layer" (or empty). Nothing to
@@ -426,17 +437,15 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // prefix and append the remaining tail.
                             let mut new_rules: ArenaVec<BundlerCssRule> =
                                 ArenaVec::with_capacity_in(
-                                    kept_count + (original_rules.len() - prefix_end),
+                                    layer_count + (original_rules.len() - prefix_end),
                                     bump,
                                 );
-                            seen_import = false;
                             for rule in &original_rules[0..prefix_end] {
-                                if stays_in_body(
-                                    rule,
-                                    &mut seen_import,
-                                    pre_import_layers_printed_earlier,
-                                ) == Some(true)
-                                {
+                                if matches!(rule, BundlerCssRule::LayerStatement(_)) {
+                                    if stripped > 0 {
+                                        stripped -= 1;
+                                        continue;
+                                    }
                                     // SAFETY: bitwise duplicate of a rule. The copy goes into
                                     // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                     // whose elements never run `Drop` (see `arena_rule_list` /
@@ -485,24 +494,20 @@ fn pre_import_entries_by_list(order: &[CssImportOrder]) -> Vec<(usize, u32)> {
     entries
 }
 
-/// Whether a rule of the leading run of a file stays in its body. `None` ends the run.
-fn stays_in_body(
-    rule: &BundlerCssRule,
-    seen_import: &mut bool,
-    pre_import_layers_printed_earlier: bool,
-) -> Option<bool> {
-    Some(match rule {
-        BundlerCssRule::Import(_) => {
-            *seen_import = true;
-            false
-        }
-        BundlerCssRule::Ignored => false,
-        // Unlike esbuild, the statements ahead of the first "@import" only leave when an earlier entry prints them.
-        BundlerCssRule::LayerStatement(_) => *seen_import || !pre_import_layers_printed_earlier,
-        // The parser accepts an "@import" behind an unknown at-rule statement.
-        BundlerCssRule::Unknown(_) => true,
-        _ => return None,
-    })
+/// Whether an "@import" is behind the unknown at-rule statements that `rules` starts with. The parser accepts one there, and it stays in the body.
+fn has_import_behind_unknown_at_rules(rules: &[BundlerCssRule]) -> bool {
+    rules
+        .iter()
+        .take_while(|rule| {
+            matches!(
+                rule,
+                BundlerCssRule::Unknown(_)
+                    | BundlerCssRule::Import(_)
+                    | BundlerCssRule::LayerStatement(_)
+                    | BundlerCssRule::Ignored
+            )
+        })
+        .any(|rule| matches!(rule, BundlerCssRule::Import(_)))
 }
 
 /// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.

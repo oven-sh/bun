@@ -1393,6 +1393,14 @@ extern "C" fn remove_node_gyp_tempdir() {
     }
 }
 
+const NODE_GYP_EXTNAME: &[u8] = b"node-gyp";
+
+/// True if `dir` is a directory that a `bun install` made for its `node-gyp` script. Any install
+/// up the process tree can have put one on PATH.
+pub fn is_node_gyp_script_dir(dir: &[u8]) -> bool {
+    fs::FileSystem::is_tmpname(bun_paths::basename(dir), NODE_GYP_EXTNAME)
+}
+
 fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
     if !manager.node_gyp_tempdir_name.is_empty() {
         return Ok(());
@@ -1401,7 +1409,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let tempdir = get_temporary_directory(manager);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
+        fs::FileSystem::tmpname(NODE_GYP_EXTNAME, &mut path_buf.0, bun_core::fast_random())?;
 
     // used later for adding to path for scripts
     manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
@@ -1461,20 +1469,31 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    #[cfg(all(not(windows), not(target_os = "android")))]
-    const CONTENT: &str = concat!(
-        "#!/bin/sh\n",
+    // `bun x` must not find this script, or the one of another install, when it looks for
+    // node-gyp on PATH. The script takes those directories off PATH itself, because the `bun` that
+    // PATH finds can be older than the `bun x` that skips them.
+    #[cfg(not(windows))]
+    const CONTENT: &str = const_format::concatcp!(
+        if cfg!(target_os = "android") {
+            "#!/system/bin/sh\n"
+        } else {
+            "#!/bin/sh\n"
+        },
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
-    #[cfg(target_os = "android")]
-    const CONTENT: &str = concat!(
-        "#!/system/bin/sh\n",
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
+        "  kept=\n",
+        "  ifs=$IFS\n",
+        "  IFS=:\n",
+        "  set -f\n",
+        "  for dir in $PATH; do\n",
+        "    name=${dir%/}\n",
+        "    case ${name##*/} in\n",
+        "      .[0123456789abcdef]*-[0123456789ABCDEF]*.node-gyp) ;;\n",
+        "      *) kept=$kept:$dir ;;\n",
+        "    esac\n",
+        "  done\n",
+        "  IFS=$ifs\n",
+        "  set +f\n",
+        "  PATH=${kept#:} bun x --silent node-gyp $@\n",
         "else\n",
         "  \"$npm_config_node_gyp\" $@\n",
         "fi\n"
@@ -1489,7 +1508,8 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Global::crash();
     }
 
-    // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
+    // An older `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be
+    // identical.
     let parts: [&[u8]; 3] = [
         strings::without_trailing_slash(tempdir.name),
         &[SEP],
@@ -1527,9 +1547,19 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
     let mut path_var: Vec<u8> =
         Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
-    path_var.extend_from_slice(existing_path);
-    if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
-        path_var.push(DELIMITER);
+    // A script of another `bun install` can start this one. An older `bun x` leaves out only the
+    // directory in BUN_WHICH_IGNORE_CWD, so that install's directory must not stay on PATH.
+    if !existing_path.is_empty() {
+        // A delimiter at the end already separates the new entry.
+        let inherited = existing_path
+            .strip_suffix(&[DELIMITER])
+            .unwrap_or(existing_path);
+        for dir in
+            strings::split(inherited, &[DELIMITER]).filter(|dir| !is_node_gyp_script_dir(dir))
+        {
+            path_var.extend_from_slice(dir);
+            path_var.push(DELIMITER);
+        }
     }
     path_var.extend_from_slice(&node_gyp_abs_dir);
     manager.env_mut().map.put(b"PATH", &path_var)?;

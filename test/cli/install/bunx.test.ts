@@ -30,7 +30,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, dirname, join, resolve } from "path";
+import { delimiter, dirname, join, relative, resolve, sep } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -3083,6 +3083,77 @@ it.concurrent("a package without a bin isn't installed again just to report that
     requests: [`/${name}`],
   });
 });
+
+// `bun install` puts a directory with a `node-gyp` script on the PATH of lifecycle scripts, and that
+// script runs `bun x node-gyp`. So `bun x` must not take the script for node-gyp. It knows such a
+// directory by the name that the install gives it, `.<hex>-<HEX>.node-gyp` (with zeros before both
+// numbers in 1.3), and it leaves out the directory in BUN_WHICH_IGNORE_CWD, whatever its name is.
+it.concurrent(
+  "node-gyp is not taken from the directory that a `bun install` made for its node-gyp script",
+  async () => {
+    using box = sandbox();
+    /** A directory for PATH. Its `bin` prints the name of the directory. */
+    function plant(name: string, bin = "node-gyp") {
+      const dir = join(box.dir, "path", name);
+      mkdirSync(dir, { recursive: true });
+      if (isWindows) writeFileSync(join(dir, `${bin}.cmd`), `@echo ${name}\r\n`);
+      else writeFileSync(join(dir, bin), `#!/bin/sh\necho '${name}'\n`, { mode: 0o755 });
+      return dir;
+    }
+    const made = [
+      ".57c41e258af0c3a3-1.node-gyp",
+      ".18e12f1c7864b7ff-00000001.node-gyp",
+      ".0-0.node-gyp",
+      ".ffffffffffffffff-FFFFFFFF.node-gyp",
+    ];
+    const others = [
+      ".DEADBEEF-1.node-gyp",
+      ".deadbeef-1f.node-gyp",
+      ".00000000000000000-1.node-gyp",
+      ".deadbeef-000000001.node-gyp",
+      "deadbeef-1.node-gyp",
+      ".deadbeef.node-gyp",
+      ".deadbeef-1.node-gypx",
+      "tools.node-gyp",
+    ];
+    const [real, renamed, first, second] = ["real", "renamed", made[0], made[1]].map(name => plant(name));
+    const system = pathWithout("node-gyp", box.env.PATH);
+    async function run(path: string[], ignore?: string, args = ["node-gyp"]) {
+      const env = { ...box.env, PATH: [...path, system].join(delimiter), BUN_WHICH_IGNORE_CWD: ignore };
+      const { stdout, stderr, exitCode } = await box.run(["--no-install", ...args], { env });
+      return exitCode === 0 ? stdout.trim() : stderr.trim();
+    }
+
+    const cases: Record<string, Promise<string>> = {
+      ...Object.fromEntries(made.map(name => [name, run([plant(name), real])])),
+      "with a separator at the end": run([first + sep, real]),
+      "relative to the working directory": run([relative(box.cwd, first), real]),
+      "two of them": run([first, second, real]),
+      "one that BUN_WHICH_IGNORE_CWD names too": run([first, real], first),
+      "one beside the one that BUN_WHICH_IGNORE_CWD names": run([first, second, real], second),
+      "a directory that only BUN_WHICH_IGNORE_CWD names": run([renamed, real], renamed),
+      "no other node-gyp on PATH": run([first]),
+      "another program in such a directory": run([plant(made[2], "other-program"), real], undefined, ["other-program"]),
+      ...Object.fromEntries(others.map(name => [name, run([plant(name), real])])),
+    };
+    expect(
+      Object.fromEntries(await Promise.all(Object.entries(cases).map(async ([name, ran]) => [name, await ran]))),
+    ).toEqual({
+      ...Object.fromEntries(made.map(name => [name, "real"])),
+      "with a separator at the end": "real",
+      "relative to the working directory": "real",
+      "two of them": "real",
+      "one that BUN_WHICH_IGNORE_CWD names too": "real",
+      "one beside the one that BUN_WHICH_IGNORE_CWD names": "real",
+      "a directory that only BUN_WHICH_IGNORE_CWD names": "real",
+      "no other node-gyp on PATH":
+        "error: Could not find an existing 'node-gyp' binary to run. Stopping because --no-install was passed.",
+      "another program in such a directory": made[2],
+      // These are not names that an install gives the directory, so their node-gyp runs.
+      ...Object.fromEntries(others.map(name => [name, name])),
+    });
+  },
+);
 
 describe("flags", () => {
   // Skipping a flag made the value of `--flag value` the package that is downloaded and run.

@@ -17,6 +17,7 @@ pub struct ImportRecord {
     pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
+    /// Only the `type` import attribute: the printer prints it back, so never store a resolved loader here.
     pub loader: Option<Loader>,
 
     pub source_index: Index,

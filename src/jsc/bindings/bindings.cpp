@@ -2228,8 +2228,17 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+    // Two URLs compare by href, as in toEqual (#4089, #6492).
+    if (auto* subsetURL = dynamicDowncast<JSDOMURL>(subsetObj)) {
+        auto* objURL = dynamicDowncast<JSDOMURL>(obj);
+        if (objURL && objURL->wrapped().href() != subsetURL->wrapped().href()) {
+            return false;
+        }
+    }
+
+    // Like Jest: the subset's own enumerable properties only, no private symbols.
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    subsetObj->methodTable()->getOwnPropertyNames(subsetObj, globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
     // TODO: add fast paths for:
@@ -2237,17 +2246,20 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
-    // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
-    RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
+    // An array pattern only matches an array. An object pattern may still match an array.
+    bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
+        bool objIsArray = isArray(globalObject, objValue);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!objIsArray) {
+            return false;
+        }
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        obj->methodTable()->getOwnPropertyNames(obj, globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {
             return false;

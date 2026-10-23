@@ -35,6 +35,7 @@ const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"
 struct RouterResolver<'a, 'r> {
     resolver: &'r mut Resolver<'a>,
     load: Load,
+    entered: &'r mut Vec<&'static [u8]>,
 }
 
 impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
@@ -52,7 +53,13 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
         if self.load == Load::FromDisk {
             bust_dir_cache(self.resolver, path);
         }
-        self.resolver.read_dir_info_ignore_error(path)
+        let info = self.resolver.read_dir_info_ignore_error(path)?;
+        // Some names of the resolver end with a separator. Two loads must name a directory alike.
+        self.entered
+            .push(strings::paths::without_trailing_slash_windows_path(
+                info.abs_path,
+            ));
+        Some(info)
     }
 }
 
@@ -66,6 +73,24 @@ fn bust_dir_cache(resolver: &mut Resolver<'_>, path: &[u8]) {
     #[cfg(windows)]
     let path = normalized.as_slice();
     let _ = resolver.bust_dir_cache(strings::paths::without_trailing_slash_windows_path(path));
+}
+
+/// Drops the resolver's record of each directory of `last` that is not in `entered`.
+fn forget_unentered(last: &[&'static [u8]], entered: &[&'static [u8]]) {
+    // A tree with no change is walked in the same order.
+    if last == entered {
+        return;
+    }
+    let mut is_entered = bun_collections::HashMap::<&[u8], ()>::with_capacity(entered.len());
+    for &path in entered {
+        is_entered.insert(path, ());
+    }
+    let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
+    for &path in last {
+        if !is_entered.contains_key(path) {
+            bust_dir_cache(resolver, path);
+        }
+    }
 }
 
 /// A ref on a string of the VM's interning cache.
@@ -102,6 +127,9 @@ pub(crate) struct FileSystemRouter {
     origin: Option<RefCountedString>,
     base_dir: RefCountedString,
     router: JsCell<Router::Router>,
+    /// Every directory below `dir` that the last load read. `reload()` makes the resolver forget
+    /// each one that it does not read again, for example one that was removed.
+    entered: JsCell<Vec<&'static [u8]>>,
     asset_prefix: Option<RefCountedString>,
 }
 
@@ -113,11 +141,13 @@ enum Load {
     FromDisk,
 }
 
-/// The routes of `config.dir`, or `None` if there is no such directory.
+/// The routes of `config.dir`, or `None` if there is no such directory. `entered` gets every
+/// directory below `config.dir` that the load read, also when the load fails.
 fn load_router(
     global: &JSGlobalObject,
     config: RouteConfig,
     load: Load,
+    entered: &mut Vec<&'static [u8]>,
 ) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
     let mut log = Log::Log::new();
     // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
@@ -145,7 +175,11 @@ fn load_router(
     let loaded = router.load_routes(
         &mut log,
         &root_dir_info,
-        &mut RouterResolver { resolver, load },
+        &mut RouterResolver {
+            resolver,
+            load,
+            entered,
+        },
         &config_dir,
     );
     if loaded.is_err() || (load == Load::Cached && log.errors + log.warnings > 0) {
@@ -211,7 +245,10 @@ impl FileSystemRouter {
             dir: strings::paths::clone_normalizing_separators(root_dir_path).into_boxed_slice(),
             extensions: extensions.into(),
         };
-        let Some((mut router, root_dir_info)) = load_router(global, config, Load::Cached)? else {
+        let mut entered = Vec::new();
+        let Some((mut router, root_dir_info)) =
+            load_router(global, config, Load::Cached, &mut entered)?
+        else {
             return Err(cx.heap.error(format_args!(
                 "Unable to find directory: {}",
                 bstr::BStr::new(root_dir_path)
@@ -244,6 +281,7 @@ impl FileSystemRouter {
                 .map(&mut ref_counted)
                 .transpose()?,
             router: JsCell::new(router),
+            entered: JsCell::new(entered),
         })
     }
 
@@ -341,13 +379,19 @@ impl FileSystemRouter {
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         let config = self.router.get().config.clone();
-        let Some((router, _)) = load_router(cx.global(), config, Load::FromDisk)? else {
+        let mut entered = Vec::with_capacity(self.entered.get().len());
+        let loaded = load_router(cx.global(), config, Load::FromDisk, &mut entered);
+        // Not before the load: the loader drops a directory that is still there, right before it
+        // reads it. A load that fails read no directory, and the last list stays for the next call.
+        forget_unentered(self.entered.get(), &entered);
+        let Some((router, _)) = loaded? else {
             return Err(cx.heap.error(format_args!(
                 "Unable to find directory: {}",
                 bstr::BStr::new(&*self.router.get().config.dir)
             )));
         };
         self.router.set(router);
+        self.entered.set(entered);
         js_FileSystemRouter::routes_set_cached(this_value.to_js(), cx.global(), JSValue::ZERO);
         Ok(this_value)
     }

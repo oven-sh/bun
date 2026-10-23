@@ -126,6 +126,20 @@ test.concurrent("many views interleave their commands on the one transport", asy
   });
 });
 
+// Chrome on Windows relaunches itself de-elevated when the parent runs as
+// Administrator, and the relaunched process does not inherit the pipe handles
+// (#42147). --do-not-de-elevate suppresses that. The fake sees the switches
+// the runtime puts before the script path as execArgv.
+test.concurrent("the default switches suppress Chrome's auto de-elevation", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    print(await view.evaluate("process.execArgv"));
+    view.close();
+  `);
+  expect(result).toContain("--do-not-de-elevate");
+});
+
 test.concurrent("an expression that throws rejects", async () => {
   const result = await runScenario(`
     const view = newView();

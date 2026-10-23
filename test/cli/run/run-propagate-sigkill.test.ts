@@ -4,7 +4,7 @@
 // have their disposition changed, so libc returns `EINVAL` there — that
 // must not reach `std.posix.sigaction`'s `else => unreachable`.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isLinux, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, isPosix, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
 
@@ -135,12 +135,11 @@ describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // An ASAN build prints one warning line at startup.
-    const unexpected = stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"));
 
-    expect({ stdout, stderr: unexpected, signalCode: proc.signalCode, exitCode }).toEqual({
+    // An ASAN build can warn on stderr when a handler on the alternate signal stack ends the process.
+    expect({ stdout, stderr: isASAN ? "" : stderr, signalCode: proc.signalCode, exitCode }).toEqual({
       stdout: "",
-      stderr: [],
+      stderr: "",
       signalCode: null,
       exitCode: 128 + constants.signals.SIGSYS,
     });

@@ -560,11 +560,10 @@ describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () =
       stderr: "pipe",
     });
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // An ASAN build prints one warning line at startup.
-    const unexpected = stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"));
-    expect({ stdout, stderr: unexpected, signalCode: proc.signalCode }).toEqual({
+    // An ASAN build can warn on stderr when a handler on the alternate signal stack ends the process.
+    expect({ stdout, stderr: isASAN ? "" : stderr, signalCode: proc.signalCode }).toEqual({
       stdout: "",
-      stderr: [],
+      stderr: "",
       signalCode: "SIGSYS",
     });
   });

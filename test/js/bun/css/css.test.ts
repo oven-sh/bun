@@ -5076,6 +5076,79 @@ describe("css tests", () => {
       },
     );
 
+    // Each name added after `system-ui` is listed once. Every other family stays as written.
+    for (const [source, expected] of [
+      [
+        "Roboto, system-ui, Roboto",
+        "Roboto, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Noto Sans, Ubuntu, Cantarell, Helvetica Neue",
+      ],
+      [
+        "system-ui, system-ui",
+        "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, system-ui",
+      ],
+      [
+        "Foo, Foo, system-ui, monospace, monospace",
+        "Foo, Foo, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, monospace, monospace",
+      ],
+      [
+        "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Arial",
+        "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Arial",
+      ],
+    ]) {
+      prefix_test(`.foo { font-family: ${source} }`, `.foo { font-family: ${expected}; }`, { firefox: 91 << 16 });
+    }
+
+    // The second rule merges into the first, and the merged declarations go through the font handler again.
+    prefix_test(
+      ".foo { font-family: system-ui, Arial } .foo { color: red }",
+      ".foo { color: red; font-family: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Arial; }",
+      { firefox: 91 << 16 },
+    );
+
+    // Browsers give the lone generic `monospace` a smaller default size than `monospace, monospace`.
+    minify_test(
+      "pre{font-family:monospace,monospace;font-size:1em}",
+      "pre{font-family:monospace,monospace;font-size:1em}",
+    );
+    minify_test("code{font:1em monospace,monospace}", "code{font:1em monospace,monospace}");
+    minify_test(
+      ".foo{font:10px serif;font-family:monospace,monospace;font-size:12px;font-style:italic;font-weight:bold;font-stretch:normal;font-variant-caps:small-caps;line-height:1.2em}",
+      ".foo{font:italic small-caps 700 12px/1.2em monospace,monospace}",
+    );
+    minify_test("pre{font-family:monospace,monospace!important}", "pre{font-family:monospace,monospace!important}");
+    minify_test(
+      "@media print{pre{font-family:monospace,monospace}}",
+      "@media print{pre{font-family:monospace,monospace}}",
+    );
+    minify_test("kbd{font-family:monospace,monospace,monospace}", "kbd{font-family:monospace,monospace,monospace}");
+    minify_test("kbd{font-family:monospace,serif,monospace}", "kbd{font-family:monospace,serif,monospace}");
+    minify_test(".foo{font-family:Foo,Foo,serif}", ".foo{font-family:Foo,Foo,serif}");
+    minify_test(
+      "a{font-family:monospace,monospace}b{font-family:monospace}",
+      "a{font-family:monospace,monospace}b{font-family:monospace}",
+    );
+    minify_test("a{font-family:monospace,monospace}a{color:red}", "a{color:red;font-family:monospace,monospace}");
+
+    test("Bun.build keeps a repeated font family", async () => {
+      const build = async (minify: boolean) => {
+        const { outputs } = await Bun.build({
+          entrypoints: ["/normalize.css"],
+          files: {
+            "/normalize.css": "pre{font-family:monospace,monospace;font-size:1em}code{font:1em monospace,monospace}",
+          },
+          minify,
+        });
+        // The unminified output starts with a comment that names the entry point relative to the cwd.
+        return (await outputs[0].text()).replace(/^\/\*.*\*\/\n/, "");
+      };
+
+      expect({ minified: await build(true), unminified: await build(false) }).toEqual({
+        minified: "pre{font-family:monospace,monospace;font-size:1em}code{font:1em monospace,monospace}\n",
+        unminified:
+          "pre {\n  font-family: monospace, monospace;\n  font-size: 1em;\n}\n\ncode {\n  font: 1em monospace, monospace;\n}\n",
+      });
+    });
+
     prefix_test(
       `
       .foo {

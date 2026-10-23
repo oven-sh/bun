@@ -322,13 +322,11 @@ pub enum FontFamily {
     /// A custom family name.
     // Arena-backed slice: the pointer targets bytes owned by the parser arena and is
     // only valid while that arena is alive (becomes `&'bump [u8]` once the 'bump
-    // lifetime is threaded through these types). With `*const [u8]`, derived
-    // PartialEq/Eq/Hash would compare by pointer; the manual impls below
-    // hash/compare by content (Wyhash over bytes).
+    // lifetime is threaded through these types). With `*const [u8]`, a derived
+    // PartialEq would compare by pointer; the manual impl below compares by
+    // content.
     FamilyName(*const [u8]),
 }
-
-type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
@@ -417,12 +415,12 @@ impl FontFamily {
         }
     }
 
-    // eql / hash / deepClone — `PartialEq`/`Clone` hand-impls below; bridged to
+    // eql / deepClone — `PartialEq`/`Clone` hand-impls below; bridged to
     // `CssEql`/`DeepClone` via `bridge_clone_partialeq!` in `generics.rs`.
 }
 
-// With `*const [u8]`, derived `PartialEq`/`Hash` would compare pointers;
-// hand-roll to compare/hash the bytes by *content*.
+// With `*const [u8]`, a derived `PartialEq` would compare pointers;
+// hand-roll to compare the bytes by *content*.
 impl PartialEq for FontFamily {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -432,23 +430,6 @@ impl PartialEq for FontFamily {
                 unsafe { (&**a).eq(&**b) }
             }
             _ => false,
-        }
-    }
-}
-impl Eq for FontFamily {}
-
-impl core::hash::Hash for FontFamily {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // Hash the active tag then the payload bytes. With `*const [u8]` a
-        // derived Hash would hash the pointer address, breaking
-        // FontFamilyHashMap dedupe semantics.
-        core::mem::discriminant(self).hash(state);
-        match self {
-            FontFamily::Generic(g) => g.hash(state),
-            FontFamily::FamilyName(p) => {
-                // SAFETY: arena-owned slice valid for the parse session.
-                unsafe { (&**p).hash(state) }
-            }
         }
     }
 }
@@ -996,27 +977,6 @@ impl FontHandler {
         let line_height: Option<LineHeight> = self.line_height.take();
         let variant_caps: Option<FontVariantCaps> = self.variant_caps.take();
 
-        if let Some(f) = family.as_mut() {
-            if f.len() > 1 {
-                // Dedupe
-                let mut seen: FontFamilyHashMap<()> = Default::default();
-
-                let mut i: usize = 0;
-                while i < f.len() {
-                    use bun_collections::array_hash_map::MapEntry;
-                    match seen.entry(f.at(i).clone()) {
-                        MapEntry::Occupied(_) => {
-                            let _ = f.ordered_remove(i);
-                        }
-                        MapEntry::Vacant(v) => {
-                            v.insert(());
-                            i += 1;
-                        }
-                    }
-                }
-            }
-        }
-
         if let (Some(_), Some(_), Some(_), Some(_), Some(_), Some(_), Some(variant_caps_v)) = (
             family.as_ref(),
             size.as_ref(),
@@ -1100,33 +1060,50 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"Helvetica Neue",
 ];
 
+fn system_font(name: &'static [u8]) -> FontFamily {
+    FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(name))
+}
+
 #[inline]
 fn compatible_font_family(
-    _family: Option<Vec<FontFamily>>,
+    family: Option<Vec<FontFamily>>,
     is_supported: bool,
 ) -> Option<Vec<FontFamily>> {
-    let mut family = _family;
     if is_supported {
         return family;
     }
+    let families = family?;
+    let Some(system_ui) = families.slice_const().iter().position(is_system_ui) else {
+        return Some(families);
+    };
 
-    if let Some(families) = family.as_mut() {
-        // Iterating the slice while inserting into `families` mid-loop would
-        // alias the &mut needed for `insert` (and `insert` may reallocate,
-        // invalidating the iterator).
-        // Capture the system-ui index first, drop the borrow, then
-        // perform the inserts using the captured index.
-        if let Some(i) = families.slice_const().iter().position(is_system_ui) {
-            for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
-                families.insert(
-                    i + j + 1,
-                    FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name)),
-                );
+    // Unlike lightningcss, only the inserted names are deduped. Dropping any other repeated
+    // family can change rendering: https://github.com/parcel-bundler/lightningcss/issues/1221
+    let mut listed = [false; DEFAULT_SYSTEM_FONTS.len()];
+    let mut expanded = Vec::with_capacity(families.len() + DEFAULT_SYSTEM_FONTS.len());
+    for (i, entry) in families.into_iter().enumerate() {
+        let fallback = DEFAULT_SYSTEM_FONTS
+            .iter()
+            .position(|&name| entry == system_font(name));
+        if let Some(fallback) = fallback {
+            if listed[fallback] {
+                continue;
+            }
+            listed[fallback] = true;
+        }
+        expanded.push(entry);
+
+        if i == system_ui {
+            for (&name, is_listed) in DEFAULT_SYSTEM_FONTS.iter().zip(&mut listed) {
+                if !*is_listed {
+                    *is_listed = true;
+                    expanded.push(system_font(name));
+                }
             }
         }
     }
 
-    family
+    Some(expanded)
 }
 
 #[inline]

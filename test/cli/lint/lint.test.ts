@@ -5382,6 +5382,107 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
+      // From tsgolint 7.0.2003. It walks the comments too, where TypeScript parses the type of some tags.
+      test("no-unnecessary-type-parameters counts a type parameter in the type of a JSDoc tag", async () => {
+        const counted = [
+          "@returns {T}",
+          "@return {T}",
+          "@param {T} a",
+          "@arg {T} a",
+          "@argument {T} a",
+          "@type {T}",
+          "@this {T}",
+          "@throws {T}",
+          "@exception {T}",
+          "@satisfies {T}",
+          "@typedef {T} X",
+          "@template {T} U",
+          "@implements {T}",
+          "@augments {T}",
+          "@extends {T}",
+          "@returns {T[]}",
+          "@returns {Array<T>}",
+          "@returns {Map<string, T>}",
+          "@returns {{ a: T }}",
+          "@returns {(x: T) => void}",
+          "@returns {?T}",
+          "@returns {T=}",
+          "@param {...T} a",
+          "@returns {T | string}",
+          "@returns {keyof T}",
+          "@returns { T }",
+        ];
+        const ignored = [
+          "@enum {T}",
+          "@property {T} a",
+          "@template T",
+          "@see {T}",
+          "{@link T}",
+          "@unknown {T}",
+          "@yields {T}",
+          "@deprecated {T}",
+          "@returns {T.x}",
+          "@returns {x.T}",
+          "@returns {typeof T}",
+          "@returns {{ T: string }}",
+          "@returns {'T'}",
+          "@returns {TT}",
+          "@returns {string} T",
+          "@returns T",
+          "text {T}",
+        ];
+        const members = (tags: string[]) => tags.map(tag => `  /** ${tag} */ m<T = string>(a?: string): T;`);
+        const places = [
+          `export interface A {`,
+          `  /** @returns {T} */ /** second */ a<T = string>(): T;`,
+          `  /** first */ /** @returns {T} */ b<T = string>(): T;`,
+          `  /** @returns {T} */ <T = string>(): T;`,
+          `}`,
+          `/** @returns {T} */ export function c<T = string>(): T { return undefined as T; }`,
+          `/** @returns {T} */ export default function <T = string>(): T { return undefined as T; }`,
+          `export const d = /** @returns {T} */ function <T = string>(): T { return undefined as T; };`,
+          `export const e = /** @returns {T} */ <T = string>(): T => undefined as T;`,
+          `export const f = {\n/** @returns {T} */ m<T = string>(): T { return undefined as T; } };`,
+          `export class G {\n/** @returns {T} */ static m<T = string>(): T { return undefined as T; } }`,
+          // These comments belong to something else.
+          `export const f2 = { /** @returns {T} */ m<T = string>(): T { return undefined as T; } };`,
+          `export class G2 { /** @returns {T} */ static m<T = string>(): T { return undefined as T; } }`,
+          `/* @returns {T} */ export function h<T = string>(): T { return undefined as T; }`,
+          `/** @returns {T} */ export const i = function <T = string>(): T { return undefined as T; };`,
+          `/** @returns {T} */ export type J = <T = string>() => T;`,
+          `export type K = /** @returns {T} */ <T = string>() => T;`,
+          `export const l = { /** @returns {T} */ p: <T = string>(): T => undefined as T };`,
+          `export class M { /** @returns {T} */ p = <T = string>(): T => undefined as T; }`,
+          // The only use that's not in the body, so that's where the report is.
+          `/** @type {T} */ export class N<T = string> { a?: T; }`,
+        ];
+        const { raw } = await lint(
+          {
+            ".oxlintrc.json": rc({ rules: { "typescript/no-unnecessary-type-parameters": "error" } }),
+            "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } }),
+            "counted.ts": `export interface A {\n${members(counted).join("\n")}\n}\n`,
+            "ignored.ts": `export interface A {\n${members(ignored).join("\n")}\n}\n`,
+            "places.ts": places.join("\n") + "\n",
+          },
+          ["-f", "unix", "--type-aware"],
+        );
+        const at = (file: string) =>
+          [...raw.matchAll(/^(\w+\.ts):(\d+):(\d+): /gm)].filter(it => it[1] === file).map(it => `${it[2]}:${it[3]}`);
+        expect(at("counted.ts")).toEqual([]);
+        expect(at("ignored.ts").map(it => Number(it.split(":")[0]))).toEqual(ignored.map((_, index) => index + 2));
+        expect(at("places.ts")).toEqual([
+          "14:58",
+          "15:63",
+          "16:53",
+          "17:63",
+          "18:55",
+          "19:55",
+          "20:59",
+          "21:58",
+          "22:12",
+        ]);
+      });
+
       // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
       // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
       test("type-aware rules see through redundant parentheses", async () => {

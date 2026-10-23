@@ -14,14 +14,19 @@ const cases = all
   // systems do not take all of them.
   .filter(c => isLinux || ((isMacOS ? c.mac : c.win) && !/[^\x20-\x7e\n]/.test(c.files + c.extract)));
 
-/** One failure message that names every case that differs, instead of one test per case. */
+/** One failure message for all the cases that differ, instead of one test per case. */
 function differences(results: { index: number; expected: string; actual: string }[]) {
-  return results
-    .filter(r => r.actual !== r.expected)
-    .map(r => `case ${r.index}\n--- expected\n${r.expected}--- actual\n${r.actual}`)
-    .slice(0, 5)
-    .join("\n");
+  const different = results.filter(r => r.actual !== r.expected);
+  if (different.length === 0) return "";
+  return [
+    `${different.length} of ${results.length} differ`,
+    ...different.slice(0, 5).map(r => `case ${r.index}\n--- expected\n${r.expected}--- actual\n${r.actual}`),
+  ].join("\n");
 }
+
+// What a refused archive leaves behind depends on which error a system call fails with, and that
+// differs between systems: opening "dir/" for writing is EISDIR on Linux and ENOENT on macOS.
+const comparable = (extracted: string) => (!isLinux && extracted.startsWith("rejected\n") ? "rejected\n" : extracted);
 
 describe("Bun.Archive reads archives the way it was recorded to", () => {
   test("files()", async () => {
@@ -39,8 +44,8 @@ describe("Bun.Archive reads archives the way it was recorded to", () => {
       const results = await Promise.all(
         cases.map(async c => ({
           index: c.index,
-          expected: c.extract,
-          actual: await observeExtract(c.archive, join(String(dir), String(c.index))),
+          expected: comparable(c.extract),
+          actual: comparable(await observeExtract(c.archive, join(String(dir), String(c.index)))),
         })),
       );
       expect(differences(results)).toBe("");

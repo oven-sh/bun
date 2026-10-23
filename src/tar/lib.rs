@@ -8,6 +8,14 @@
 //! before, and parts of this crate are derived from its tar reader and pax writer (BSD-2-Clause,
 //! see LICENSE.md).
 #![forbid(unsafe_code)]
+// Archives come from anywhere and a panic aborts the process.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 #![warn(unused_must_use)]
 
 pub mod compose;

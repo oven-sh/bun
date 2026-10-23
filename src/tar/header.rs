@@ -1,6 +1,7 @@
 //! The 512-byte header block.
 
 use crate::num::parse_field;
+use bun_core::strings;
 
 pub(crate) type Block = [u8; 512];
 
@@ -55,7 +56,7 @@ pub(crate) mod gnu {
 }
 
 pub(crate) fn is_null(h: &Block) -> bool {
-    h.iter().all(|&b| b == 0)
+    strings::index_of_not_char(h, 0).is_none()
 }
 
 /// Old BSD, Solaris and HP-UX tars summed signed bytes, so either sum is accepted.
@@ -92,8 +93,10 @@ trait TrimSpaces {
 }
 impl TrimSpaces for [u8] {
     fn trim_ascii_start_spaces(&self) -> &[u8] {
-        let n = self.iter().position(|&c| c != b' ').unwrap_or(self.len());
-        self.get(n..).unwrap_or_default()
+        match strings::index_of_not_char(self, b' ') {
+            Some(n) => self.get(n as usize..).unwrap_or_default(),
+            None => &[],
+        }
     }
 }
 

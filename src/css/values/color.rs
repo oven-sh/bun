@@ -1251,13 +1251,16 @@ where
     T: ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB> + Copy,
 {
     const JND: f32 = 0.02;
-    const EPSILON: f32 = 0.00001;
+    const EPSILON: f32 = 0.0001;
+    // Tighter than EPSILON, so a near-white color such as oklch(99.995% .01 0)
+    // is still gamut mapped instead of snapping to pure white.
+    const LIGHTNESS_EPSILON: f32 = 0.00001;
 
-    // https://www.w3.org/TR/css-color-4/#binsearch
+    // https://www.w3.org/TR/css-color-4/#pseudo-binsearch
     let mut current: OKLCH = color.into();
 
     // If lightness is >= 100%, return pure white.
-    if (current.l - 1.0).abs() < EPSILON || current.l > 1.0 {
+    if (current.l - 1.0).abs() < LIGHTNESS_EPSILON || current.l > 1.0 {
         let oklch = OKLCH {
             l: 1.0,
             c: 0.0,
@@ -1268,7 +1271,7 @@ where
     }
 
     // If lightness <= 0%, return pure black.
-    if current.l < EPSILON {
+    if current.l < LIGHTNESS_EPSILON {
         let oklch = OKLCH {
             l: 0.0,
             c: 0.0,
@@ -1281,34 +1284,41 @@ where
     // Per CSS Color 4, if clipping the origin is already within the JND, use
     // the clip directly. Without this, colors sitting essentially on the gamut
     // boundary (e.g. sRGB blue) get desaturated by the chroma search below.
-    let clipped = T::from(current).clip();
+    let mut clipped = T::from(current).clip();
     if delta_eok(clipped, current) < JND {
         return clipped;
     }
 
     let mut min: f32 = 0.0;
     let mut max = current.c;
+    let mut min_in_gamut = true;
 
     while (max - min) > EPSILON {
         let chroma = (min + max) / 2.0;
         current.c = chroma;
 
         let converted = T::from(current);
-        if converted.in_gamut() {
+        if min_in_gamut && converted.in_gamut() {
             min = chroma;
             continue;
         }
 
-        let clipped = converted.clip();
+        clipped = converted.clip();
         let delta_e = delta_eok(clipped, current);
         if delta_e < JND {
-            return clipped;
+            // Close enough to the JND: the clip is the answer. Otherwise keep
+            // searching upward for the most saturated chroma still under it.
+            if JND - delta_e < EPSILON {
+                break;
+            }
+            min_in_gamut = false;
+            min = chroma;
+        } else {
+            max = chroma;
         }
-
-        max = chroma;
     }
 
-    T::from(current)
+    clipped
 }
 
 fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { dedent, itBundled } from "../expectBundled";
+import { BundlerTestInput, dedent, itBundled as itBundledBase } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
@@ -8,7 +8,12 @@ import { dedent, itBundled } from "../expectBundled";
 
 // To understand what `dce: true` is doing, see ../expectBundled.md's "dce: true" section
 
-describe("bundler", () => {
+// Default to the CLI backend: itBundled registers API-backend cases with
+// it.serial (Bun.build needs process.chdir), so only CLI-backend cases overlap
+// under describe.concurrent.
+const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
+
+describe.concurrent("bundler", () => {
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -1236,7 +1241,6 @@ describe("bundler", () => {
       },
       minifyWhitespace: minify,
       emitDCEAnnotations: emitDCEAnnotations,
-      backend: "cli",
       onAfterBundle(api) {
         const code = api.readFile("/out.js");
         expect(code).not.toContain("_yes"); // should not contain any *_yes variables
@@ -1300,6 +1304,10 @@ describe("bundler", () => {
     },
     target: "bun",
     dce: true,
+    // The harness passes jsx.runtime as --jsx-runtime, and any --jsx-* flag makes
+    // `bun build` use the production JSX runtime (Arguments.rs sets development: false).
+    // This fixture only ships jsx-dev-runtime, so build with the API.
+    backend: "api",
     run: {
       stdout: `["F",{"children":[null,{"children":["div",{}]}]}]`,
     },
@@ -1464,7 +1472,8 @@ describe("bundler", () => {
       "/b.js": `export class Base { x() { console.log(1); return this; } }`,
     },
     dce: true,
-    dceKeepMarkerCount: false,
+    // `class Keep` and `new Keep()`
+    dceKeepMarkerCount: 2,
     run: {
       stdout: "1\n2",
     },
@@ -1623,7 +1632,6 @@ describe("bundler", () => {
       `,
     },
     dce: true,
-    dceKeepMarkerCount: false,
     run: {
       stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
     },
@@ -1803,7 +1811,8 @@ describe("bundler", () => {
     },
     format: "esm",
     dce: true,
-    dceKeepMarkerCount: false,
+    // keep1 and keep2: the two declarations, the two string literals, and the two calls
+    dceKeepMarkerCount: 6,
     run: {
       stdout: '["keep1",{"default":"keep2"}]',
     },
@@ -2062,6 +2071,10 @@ describe("bundler", () => {
     dce: true,
     minifySyntax: true,
     bundling: false,
+    onAfterBundle(api) {
+      // the unused imports could be types, so TS drops them despite the eval and keeps no bare import
+      api.expectFile("/out.js").toBe('eval("foo(a, b, c)");\n');
+    },
   });
   itBundled("dce/DCEClassStaticBlocks", {
     files: {
@@ -2118,6 +2131,18 @@ describe("bundler", () => {
     },
     dce: true,
     entryPoints: ["/a.js", "/b.js", "/c.js"],
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import a from './out/a.js'
+        import b from './out/b.js'
+        import * as c from './out/c.js'
+        console.log(JSON.stringify([a, b, c.foo]))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '[{"keep":123},{"keep":123},{"keep":123}]',
+    },
   });
   itBundled("dce/DCETemplateLiteral", {
     files: {
@@ -3233,6 +3258,23 @@ describe("bundler", () => {
     },
     entryPoints: ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"],
     dce: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const log = console.log
+        console.log = (...args) => log(args.map(x => JSON.stringify(x)).join(' '))
+        await import('./out/enum-entry.js')
+        await import('./out/const-entry.js')
+        await import('./out/nested-entry.js')
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: [
+        '[6,-6,-7,false,"number"] [9,-3,18,0.5,3,729] [true,false,true,false,false,true,false,true] [12,3,3] [2,7,5] [6,3,3]',
+        '[6,-6,-7,false,"number"] [9,-3,18,0.5,3,729] [true,false,true,false,false,true,false,true] [12,3,3] [2,7,5] [6,3,3]',
+        '{"should be 4":4,"should be 32":32}',
+      ].join("\n"),
+    },
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
     files: {
@@ -3455,6 +3497,40 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry-outer.js"],
+    minifySyntax: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.args = {
+          tag: 'args',
+          [Symbol.iterator]() {
+            console.log('spread')
+            return {
+              next() {
+                return { done: true, value: undefined }
+              }
+            }
+          }
+        };
+        globalThis.check = (...values) => console.log(JSON.stringify(values));
+
+        await import('./out/entry.js');
+        console.log('---')
+        await import('./out/entry-outer.js');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      // each spread iterates `args` exactly once, and only identity2 returns its argument
+      stdout: [
+        "spread",
+        "spread",
+        '[null,null,null,null,{"tag":"args"},null]',
+        "---",
+        "spread",
+        "spread",
+        '[null,null,null,null,{"tag":"args"},null]',
+      ].join("\n"),
+    },
   });
   // im confused what this is testing. cross platform slash? there is none?? not even in the go source
   itBundled("dce/PackageJsonSideEffectsFalseCrossPlatformSlash", {
@@ -3484,6 +3560,9 @@ describe("bundler", () => {
         /* @__PURE__ */ noSideEffects();
       `,
     },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("");
+    },
     run: {
       stdout: "",
     },
@@ -3493,6 +3572,9 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         /* @__PURE__ */ new NoSideEffects();
       `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("");
     },
     run: {
       stdout: "",

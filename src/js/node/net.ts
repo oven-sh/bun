@@ -266,7 +266,7 @@ function appendTlsKeylog(path: string, line: Buffer) {
 }
 let BlockList, SocketAddress;
 function lazyBlockList() {
-  return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
+  return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList"));
 }
 const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
@@ -418,6 +418,14 @@ function failWriteWith(self, er, callback) {
       self.destroy();
     }
   }
+}
+// No drain comes from a handle that has closed. Node cancels the write that waits for one after 'error' and before 'close'.
+function cancelPendingWriteNT(self) {
+  const callback = self[kwriteCallback];
+  if (!callback || !self[kclosed]) return;
+  self._pendingData = self[kwriteCallback] = null;
+  const reason = self.encrypted ? "Canceled because of SSL destruction" : undefined;
+  callback(new ErrnoException(uv().UV_ECANCELED, "write", reason));
 }
 // Node's errnoException(status, 'write') for the negative errno $write returns.
 function writeErrnoException(negErrno) {
@@ -2545,9 +2553,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     }
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
   } else {
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
@@ -4631,7 +4641,7 @@ const netExports = {
     Object.defineProperty(netExports, "BlockList", { value, writable: true, enumerable: true, configurable: true });
   },
   get SocketAddress() {
-    return (SocketAddress ??= $rust("node_net_binding.rs", "SocketAddress"));
+    return (SocketAddress ??= $bindgen("SocketAddress.bind.ts", "SocketAddress"));
   },
   set SocketAddress(value) {
     Object.defineProperty(netExports, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });

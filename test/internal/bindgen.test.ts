@@ -1,7 +1,10 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
-import { runWithError } from "harness";
+import { bunEnv, bunExe, runWithError, tempDir } from "harness";
 import { BlockList, SocketAddress } from "node:net";
+import { join } from "node:path";
+import vm from "node:vm";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
 
@@ -92,12 +95,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.loose.allowBigInt.validateInteger()).toThrow(".validateInteger() refuses a BigInt");
   expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
-  const instance = b.classRef("SocketAddress");
-  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any })]) {
-    expect(() => b.dictionary({ type })).toThrow("b.classRef is only for an argument");
-    expect(() => b.array(type)).toThrow("b.classRef is only for an argument");
+  const refCounted = b.class({ rustPath: "T", refCounted: true });
+  const inline = b.class({ rustPath: "T" });
+  for (const type of [inline, inline.nullable, b.union({ instance: inline, ignored: b.any }), refCounted]) {
+    expect(() => b.dictionary({ type })).toThrow(
+      "an instance that Rust takes as &T cannot be in an array or a dictionary",
+    );
+    expect(() => b.array(type)).toThrow("an instance that Rust takes as &T cannot be in an array or a dictionary");
   }
-  expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
+  expect(() => b.union({ instance: inline, again: inline })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
   expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
     "f: write what b.fn takes, without b.fn",
@@ -116,7 +122,12 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   }
   for (const held of ["handle", "copied", "pinned"] as const) {
     expect(() => b.bytes({ from: ["string", "buffer"], held }).optional).toThrow(
-      'only b.bytes that is held: "borrowed" can be absent',
+      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
+    );
+  }
+  for (const modifier of ["optional", "falsyAsNull", "emptyStringAsNull"] as const) {
+    expect(() => b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" })[modifier]).toThrow(
+      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
     );
   }
   expect(() => stringOrBuffer.default("")).toThrow("cannot have a default");
@@ -181,9 +192,21 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "when: .asDate is a result",
   );
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
-  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
+  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
   }
+  const mutable = b.class({ rustPath: "T", proto: { f: { mutates: true } } });
+  for (const type of [mutable, mutable.nullable, b.union({ object: mutable, none: b.null })]) {
+    expect(() => b.fn({ args: { value: type } })).toThrow(
+      "value: a class with a mutates member is not an argument type",
+    );
+  }
+  expect(() => b.class({ rustPath: "T", proto: { f: { mutates: true }, g: { capability: "js" } } })).toThrow(
+    "g: JavaScript could call a mutates member of the same object while this one runs",
+  );
+  expect(() => b.class({ rustPath: "T", estimatedSize: true, proto: { f: { mutates: true } } })).toThrow(
+    "estimatedSize: a marking thread would read the struct while a mutates member writes it",
+  );
   expect(() => b.dictionary({ fooBar: b.bool, foo_bar: b.bool })).toThrow("two fields are both foo_bar");
   expect(() => b.union({ "a-b": b.bool })).toThrow("an alternative is named in camelCase");
   expect(() => b.enumeration(["self"])).toThrow("Self cannot name anything in Rust");
@@ -208,16 +231,38 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   );
   const label = { getter: b.string, setter: true } as const;
   expect(() => b.class({ rustPath: "T", proto: { label, setLabel: {} } })).toThrow("are both set_label");
-  b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {}, getLabel: {} } });
+  expect(() => b.class({ rustPath: "T", proto: { label, getLabel: {} } })).toThrow("are both get_label");
+  b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {} } });
   expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.any } } })).toThrow('takes capability: "heap"');
   expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
   const constructible = { rustPath: "T", construct: {} };
-  for (const extra of [{ cache: true }, { setter: true }]) {
-    // @ts-expect-error
-    expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, ...extra } } })).toThrow(
-      "x: a static getter has no cache and no setter",
-    );
-  }
+  // @ts-expect-error
+  expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, cache: true } } })).toThrow(
+    "x: a static getter has no cache",
+  );
+  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, writable: true } } })).toThrow(
+    "x: writable is only for a cached getter",
+  );
+  expect(() =>
+    b.class({ rustPath: "T", proto: { x: { getter: b.u32, cache: true, writable: true, setter: true } } }),
+  ).toThrow("x: writable stores the value itself, so there is no setter to call");
+  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, cache: true, setter: true } } })).toThrow(
+    "x: the setter of a cached getter takes passThis, to replace the cached value",
+  );
+  expect(() => b.class({ rustPath: "T", construct: { passStructure: true } })).toThrow(
+    'passStructure: creating the object takes capability: "heap" or "js"',
+  );
+  expect(() => b.class({ rustPath: "T", overridesToJS: true })).toThrow("overridesToJS is only for a refCounted class");
+  expect(() => b.class({ rustPath: "T", final: false })).toThrow(
+    "final: false is only for a refCounted class: otherwise the struct is stored in the object, where a subclass's fields would go",
+  );
+  expect(() => b.class({ rustPath: "T", forBind: true, prototypeBase: "Error" })).toThrow(
+    "forBind has no prototypeBase: the prototype inherits from Function.prototype",
+  );
+  expect(() => b.class({ rustPath: "T", forBind: true, proto: { x: { getter: b.i32, setter: true } } })).toThrow(
+    "forBind: a member is a function or a getter without a setter",
+  );
+  expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call needs a constructor object: add construct");
   // @ts-expect-error
   expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
     "x: a builtin is a property of the prototype",
@@ -236,6 +281,47 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
     "camelCase: rustName is written in snake_case",
   );
+  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow("x: name is only for an @@ key");
+  expect(() =>
+    b.class({
+      rustPath: "T",
+      proto: {
+        x: [
+          { rustName: "x_string", args: { value: b.string }, invalidThis: "undefined" },
+          { rustName: "x_number", args: { value: b.f64 } },
+        ],
+      },
+    }),
+  ).toThrow("x: its overloads have one invalidThis");
+  expect(() => b.class({ rustPath: "T", proto: { "@@x": { getter: b.i32 } } })).toThrow(
+    "@@x: only a function has an @@ key",
+  );
+  expect(() => b.class({ rustPath: "T", proto: { "@@x": { privateSymbol: "x" } } })).toThrow(
+    "@@x: an @@ key has no privateSymbol",
+  );
+  expect(() => b.class({ rustPath: "T", construct: {}, static: { "@@x": {} } })).toThrow(
+    "@@x: an @@ key is a property of the prototype",
+  );
+  for (const refCounted of [false, true]) {
+    expect(() =>
+      b.class({
+        rustPath: "T",
+        refCounted,
+        internalFields: ["x"],
+        construct: {},
+        // @ts-expect-error
+        static: { x: { internalField: "x" } },
+      }),
+    ).toThrow("x: an internalField accessor is a property of the prototype");
+  }
+  expect(() =>
+    // @ts-expect-error
+    b.class({ rustPath: "T", construct: {}, static: { x: { getter: b.i32, passThis: true } } }),
+  ).toThrow("x: a static getter has no passThis");
+  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { mutates: true } } })).toThrow(
+    "a refCounted class has no mutates",
+  );
+  expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -528,7 +614,7 @@ describe("strings", () => {
   });
 });
 
-describe("instances of a class of a .classes.ts file", () => {
+describe("imported classes as arguments", () => {
   const address = new SocketAddress({ port: 8080 });
   const notInstances = [undefined, null, 1, "a", {}, SocketAddress.prototype, Object.create(address), new BlockList()];
 
@@ -563,10 +649,44 @@ describe("instances of a class of a .classes.ts file", () => {
     expect(bindgen.isAddress(address)).toBe(true);
     for (const value of notInstances) expect(bindgen.isAddress(value)).toBe(false);
   });
+});
 
-  it("is one kind of value however many times the schema names the class", () => {
-    expect(bindgen.portPlus(address, 2)).toBe(8082);
-    expect(bindgen.portPlus(address, "abc")).toBe(8083);
+describe("b.any.variadic", () => {
+  it("collects the remaining arguments", () => {
+    const object = {};
+    expect(bindgen.afterFirst(1, 2, object, undefined)).toEqual([2, object, undefined]);
+    expect(bindgen.afterFirst(1, object)[0]).toBe(object);
+    expect(bindgen.afterFirst(1)).toEqual([]);
+    expect(bindgen.afterFirst()).toEqual([]);
+    const many = Array.from({ length: 1000 }, (_, i) => i);
+    expect(bindgen.afterFirst(...many)).toEqual(many.slice(1));
+  });
+
+  it("does not count in length", () => {
+    expect(bindgen.afterFirst.length).toBe(1);
+    expect((bindgen as any).TestError.prototype.countArguments.length).toBe(0);
+  });
+
+  it("tells a missing argument from undefined", () => {
+    const error = new (bindgen as any).TestError(0);
+    expect(error.countArguments()).toBe(0);
+    expect(error.countArguments(undefined)).toBe(1);
+    expect(error.countArguments(undefined, undefined)).toBe(2);
+  });
+
+  it("is only the last argument", () => {
+    expect(() => b.fn({ args: { rest: b.any.variadic, last: b.any } })).toThrow(
+      "rest: .variadic is only for the last argument",
+    );
+    expect(() => b.dictionary({ rest: b.any.variadic })).toThrow("rest: .variadic is only for the last argument");
+    expect(() => b.union({ rest: b.any.variadic, other: b.null })).toThrow(
+      "rest: .variadic is only for the last argument",
+    );
+    expect(() => b.array(b.any.variadic)).toThrow("an array is a Vec, where the GC does not see JS values");
+    expect(() => b.any.variadic.optional).toThrow("any[] already takes undefined");
+    expect(() =>
+      b.fn({ returns: b.any.variadic, capability: "heap" }).signatures[0].returns.rustToJS("x", {} as any),
+    ).toThrow("any[] cannot be returned to JavaScript");
   });
 });
 
@@ -576,6 +696,7 @@ describe("enumerations", () => {
     expect(bindgen.nextColor("green")).toBe("blue");
     expect(bindgen.nextColor("lime")).toBe("blue");
     expect(bindgen.nextColor("blue")).toBe("red");
+    expect(bindgen.nextColor(new String("blue"))).toBe("red");
   });
 
   it("rejects anything else", () => {
@@ -623,30 +744,26 @@ describe("dictionaries", () => {
   });
 
   it("a default written in the schema reaches every member, the nested ones included", () => {
-    const defaults = "inner: a=true b=7 name=inner; value: undefined; choice: none; rest: undefined; counter: false";
+    const defaults = "inner: a=true b=7 name=inner; value: undefined; choice: none; rest: undefined";
     expect(bindgen.describeDefaults()).toBe(defaults);
     expect(bindgen.describeDefaults(undefined)).toBe(defaults);
     expect(bindgen.describeDefaults({ inner: {} })).toBe(defaults);
-    expect(bindgen.describeDefaults({})).toBe(
-      "inner: none; value: undefined; choice: none; rest: undefined; counter: false",
-    );
+    expect(bindgen.describeDefaults({})).toBe("inner: none; value: undefined; choice: none; rest: undefined");
     expect(
       bindgen.describeDefaults({
         inner: { a: false, name: "n" },
         value: null,
         choice: true,
         rest: "lime",
-        counter: new (bindgen as any).TestCounter(),
       }),
-    ).toBe("inner: a=false b=7 name=n; value: given; choice: true; rest: Green; counter: true");
+    ).toBe("inner: a=false b=7 name=n; value: given; choice: true; rest: Green");
   });
 
   it("a member that is absent is absent, whatever was on the stack before", () => {
-    const counter = new (bindgen as any).TestCounter();
     for (let i = 0; i < 100; i++) {
-      expect(bindgen.describeDefaults({ counter })).toEndWith("counter: true");
-      expect(bindgen.describeDefaults({})).toEndWith("counter: false");
-      expect(bindgen.describeDefaults({ counter: null })).toEndWith("counter: false");
+      expect(bindgen.describeDefaults({ inner: {} })).toStartWith("inner: a=true");
+      expect(bindgen.describeDefaults({})).toStartWith("inner: none");
+      expect(bindgen.describeDefaults({ inner: null })).toStartWith("inner: none");
     }
   });
 
@@ -997,7 +1114,7 @@ describe("unions", () => {
   });
 
   it("an enumeration takes strings, and b.any what nothing before it took", () => {
-    const rest = (value: unknown) => bindgen.describeDefaults({ rest: value }).match(/rest: (.*);/)![1];
+    const rest = (value: unknown) => bindgen.describeDefaults({ rest: value }).match(/rest: (.*)$/)![1];
     expect(rest("blue")).toBe("Blue");
     expect(() => rest("purple")).toThrow('TestOuter.rest must be "red", "green", or "blue"');
     expect(rest(new Uint8Array([1, 2]))).toBe("[1, 2]");
@@ -1257,7 +1374,61 @@ describe("buffers", () => {
   });
 });
 
+describe("b.callable", () => {
+  it("takes what can be called", () => {
+    expect(bindgen.callOr(() => 1, 2)).toBe(1);
+    expect(
+      bindgen.callOr(function () {
+        return this;
+      }, 2),
+    ).toBeUndefined();
+    expect(bindgen.callOr(new Proxy(() => 1, {}), 2)).toBe(1);
+    expect(bindgen.callOr(Math.random.bind(null), 2)).toBeNumber();
+    expect(() => bindgen.callOr(class {}, 2)).toThrow("Cannot call a class constructor");
+  });
+
+  it("can be absent", () => {
+    expect(bindgen.callOr(undefined, 2)).toBe(2);
+    expect(bindgen.callOr(null, 2)).toBe(2);
+  });
+
+  it.each([0, "", "text", {}, [[]], Symbol.iterator, 1n, new Proxy({}, {})])("refuses %p", value => {
+    expect(() => bindgen.callOr(value, 2)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining("callback") }),
+    );
+  });
+});
+
+describe(".emptyStringAsNull", () => {
+  it("takes undefined, null and the empty string as absent", () => {
+    for (const absent of [undefined, null, ""]) {
+      expect(bindgen.presentUnlessEmptyString(absent, absent)).toEqual([false, false]);
+    }
+  });
+
+  it("converts every other value", () => {
+    expect(bindgen.presentUnlessEmptyString(0, 0)).toEqual([true, true]);
+    expect(bindgen.presentUnlessEmptyString(NaN, false)).toEqual([true, true]);
+    expect(bindgen.presentUnlessEmptyString(1, new String(""))).toEqual([true, true]);
+    for (const value of [false, 0n, "1", new String("")]) {
+      expect(() => bindgen.presentUnlessEmptyString(value, 1)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining("number") }),
+      );
+    }
+  });
+});
+
 describe("a string or a buffer, as bytes", () => {
+  it('string: "asIs" can be absent', () => {
+    expect(bindgen.stringAsIsOrBytesIfAny()).toBeNull();
+    expect(bindgen.stringAsIsOrBytesIfAny(null)).toBeNull();
+    expect(bindgen.stringAsIsOrBytesIfAny("")).toEqual([1]);
+    expect(bindgen.stringAsIsOrBytesIfAny("a")).toEqual([1, 97]);
+    expect(bindgen.stringAsIsOrBytesIfAny(new Uint8Array([7]))).toEqual([0, 7]);
+    expect(bindgen.stringAsIsOrBytesIfAny(new Uint8Array(0))).toEqual([0]);
+    expect(() => bindgen.stringAsIsOrBytesIfAny(1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
   it("can be absent", () => {
     expect(bindgen.sumBytesIfAny()).toBe(-1);
     expect(bindgen.sumBytesIfAny(undefined)).toBe(-1);
@@ -1382,6 +1553,39 @@ describe("a string or a buffer, as bytes", () => {
       }
     }
     expect(bindgen.bytesOfRefusingUndefined(new Blob(["abc"]))).toEqual(utf8("[object Blob]"));
+  });
+
+  it('from: "blob" takes an output of Bun.build() as the Blob that it holds', async () => {
+    using dir = tempDir("bindgen-build-output", { "entry.js": `console.log("abc");` });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const inMemory = (await Bun.build({ entrypoints })).outputs[0];
+    const written = (await Bun.build({ entrypoints, outdir: join(String(dir), "out") })).outputs[0];
+    const code = [...new Uint8Array(await inMemory.arrayBuffer())];
+    expect(code.length).toBeGreaterThan(0);
+    const fileBlob = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "File blob cannot be used here",
+    });
+    for (const f of [bindgen.bytesOfBufferOrBlob, bindgen.bytesOfOrToString]) {
+      expect(f(inMemory)).toEqual(code);
+      expect(() => f(written)).toThrow(fileBlob);
+    }
+    expect(bindgen.bytesBeforeAndAfterCallback(inMemory, () => Bun.gc(true))).toEqual([code, code]);
+    expect(bindgen.stringAsIsOrBytes(inMemory)).toEqual([0, ...code]);
+    expect(() => bindgen.stringAsIsOrBytes(written)).toThrow(fileBlob);
+    expect(bindgen.bytesOfRefusingUndefined(inMemory)).toEqual(utf8("[object BuildArtifact]"));
+  });
+
+  it('from: "blob" does not take a value that holds no Blob', () => {
+    // A Response and a URL have the cell type of a Blob.
+    for (const [value, text] of [
+      [new Response("abc"), "[object Response]"],
+      [new URL("http://example.com/path"), "http://example.com/path"],
+    ] as const) {
+      expect(bindgen.bytesOfOrToString(value)).toEqual(utf8(text));
+      expect(() => bindgen.bytesOfBufferOrBlob(value)).toThrow(refusal("an ArrayBuffer, ArrayBufferView or Blob"));
+    }
   });
 
   it("from: takes only what it lists, without converting anything else", () => {
@@ -1663,7 +1867,7 @@ describe("errors", () => {
 });
 
 describe("classes", () => {
-  const { TestCounter, TestHolder } = bindgen as any;
+  const { TestCounter } = bindgen as any;
 
   it("looks like a class", () => {
     expect(typeof TestCounter).toBe("function");
@@ -1914,14 +2118,12 @@ describe("classes", () => {
     expect(Object.getPrototypeOf(bindgen.makeToken(8))).toBe(prototype);
   });
 
-  it("a payload keeps another object alive with a Strong", () => {
-    const holder = new TestHolder(new TestCounter(5));
-    Bun.gc(true);
-    expect(holder.counter).toBeInstanceOf(TestCounter);
-    expect(holder.counter).toBe(holder.counter);
-    expect(holder.incrementCounter()).toBe(6);
-    expect(holder.counter.count).toBe(6);
-    expect(() => new TestHolder({})).toThrow("counter must be an instance of TestCounter");
+  it("mutates: the member and the setter take &mut self", () => {
+    const object = new (bindgen as any).TestMutates(1);
+    expect(object.increment(2)).toBe(3);
+    expect(object.count).toBe(3);
+    object.label = "label";
+    expect(object.label).toBe("label");
   });
 
   it("drops the Rust value when the object is collected", () => {
@@ -1931,14 +2133,390 @@ describe("classes", () => {
       counter.label = "label " + i;
       counter.listen(() => counter);
       counter.tag;
-      return new TestHolder(counter);
+      return counter;
     });
     Bun.gc(true);
     expect(TestCounter.alive()).toBeGreaterThanOrEqual(counters.length);
     counters = null;
-    // The first collection drops the holders and their Strongs, the second the counters.
-    Bun.gc(true);
     Bun.gc(true);
     expect(TestCounter.alive()).toBeLessThan(count);
   });
+
+  describe("properties", () => {
+    const { TestError } = bindgen as any;
+    const attributes = (object: object, key: string) => {
+      const { enumerable, configurable } = Object.getOwnPropertyDescriptor(object, key)!;
+      return { enumerable, configurable };
+    };
+
+    it("enumerable and configurable are the class's, unless a getter has its own configurable", () => {
+      const { prototype } = TestError;
+      expect(attributes(prototype, "message")).toEqual({ enumerable: false, configurable: true });
+      expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: true });
+      expect(attributes(prototype, "nonConfigurableCode")).toEqual({ enumerable: false, configurable: false });
+      expect(Object.keys(prototype)).toEqual(["name"]);
+      expect(attributes(TestCounter.prototype, "count")).toEqual({ enumerable: true, configurable: false });
+      expect(attributes(TestCounter.prototype, "increment")).toEqual({ enumerable: true, configurable: false });
+    });
+
+    it("prototypeBase is what the prototype inherits from", () => {
+      expect(Object.getPrototypeOf(TestError.prototype)).toBe(Error.prototype);
+      const error = new TestError(4);
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).toBe("TestError: error 4");
+    });
+
+    it("with prototypeBase, the prototype's name is the class's", () => {
+      expect(Object.getOwnPropertyDescriptor(TestError.prototype, "name")).toEqual({
+        value: "TestError",
+        writable: false,
+        enumerable: true,
+        configurable: true,
+      });
+    });
+
+    it("assigning to a writable cached getter replaces the value", () => {
+      const error = new TestError(4);
+      expect(error.message).toBe("error 4");
+      const replacement = { toString: () => "replaced" };
+      error.message = replacement;
+      expect(error.message).toBe(replacement);
+      expect(new TestError(5).message).toBe("error 5");
+      const untouched = new TestError(6);
+      untouched.message = undefined;
+      expect(untouched.message).toBeUndefined();
+      expect(() => Reflect.set(TestError.prototype, "message", 1, {})).toThrow(TypeError);
+    });
+
+    it("the setter of a cached getter stores what the getter returns next", () => {
+      const error = new TestError(4);
+      expect(error.detail).toBe(4);
+      error.detail = 10;
+      expect(error.detail).toBe(20);
+    });
+
+    it("call: the constructor works without new", () => {
+      const error = TestError(1, 2, 3);
+      expect(error).toBeInstanceOf(TestError);
+      expect(error.code).toBe(6);
+      expect(TestError().code).toBe(0);
+      expect(new TestError(4).code).toBe(4);
+      expect(() => (bindgen as any).TestCounter()).toThrow("TestCounter constructor cannot be invoked without 'new'");
+    });
+
+    it("get_constructor and from_js", () => {
+      expect(bindgen.errorConstructor()).toBe(TestError);
+      expect(bindgen.tokenIdFromJS(bindgen.makeToken(7))).toBe(7);
+      for (const value of [undefined, 7, {}, new TestError(7), Object.create(bindgen.makeToken(7))])
+        expect(bindgen.tokenIdFromJS(value)).toBeNull();
+    });
+
+    it("a static getter can have a setter", () => {
+      expect(TestError.level).toBe(0);
+      try {
+        TestError.level = 3;
+        expect(TestError.level).toBe(3);
+        expect(() => (TestError.level = Symbol())).toThrow(TypeError);
+        expect(TestError.level).toBe(3);
+      } finally {
+        TestError.level = 0;
+      }
+    });
+  });
+
+  describe.each(["TestNote", "TestRefCountedNote"])("%s", name => {
+    const Note = (bindgen as any)[name];
+    // Cell header, one internal field, then the struct or the pointer to it, in 16-byte steps.
+    const ownSize = name === "TestNote" ? 48 : 48 + 16;
+
+    it("passStructure: the constructor creates the object and sets an internal field", () => {
+      const text = {};
+      const note = new Note(text);
+      expect(note).toBeInstanceOf(Note);
+      expect(note.text).toBe(text);
+      expect(() => new Note()).toThrow(new TypeError("text is required"));
+    });
+
+    it("passStructure: the structure is that of new.target", () => {
+      class Subclass extends Note {
+        extra = 1;
+      }
+      const note = new Subclass("text");
+      expect(Object.getPrototypeOf(note)).toBe(Subclass.prototype);
+      expect(note.text).toBe("text");
+      expect(note.extra).toBe(1);
+      expect(Object.getPrototypeOf(Reflect.construct(Note, ["text"], Array))).toBe(Array.prototype);
+    });
+
+    it("new.target.prototype is read before the arguments are converted", () => {
+      const order: string[] = [];
+      const newTarget = new Proxy(function () {}, {
+        get(target, key, receiver) {
+          if (key === "prototype") order.push("prototype");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(() => Reflect.construct(Note, ["text", "not a number"], newTarget)).toThrow(TypeError);
+      expect(order).toEqual(["prototype"]);
+    });
+
+    it("from_js_direct takes only an instance with the structure of the class", () => {
+      expect(bindgen.isNoteFromJSDirect(new Note("text"))).toBe(true);
+      expect(bindgen.isNoteFromJSDirect(new (class extends Note {})("text"))).toBe(false);
+      expect(bindgen.isNoteFromJSDirect(Object.assign(new Note("text"), { own: 1 }))).toBe(false);
+      for (const value of [{}, "text", Symbol(), 1, null, undefined, Note.prototype])
+        expect(bindgen.isNoteFromJSDirect(value)).toBe(false);
+    });
+
+    it("memory_cost is reported to heap snapshots, else estimated_size", () => {
+      expect(estimateShallowMemoryUsageOf(new Note("text", 1000))).toBe(ownSize + 1000 + (name === "TestNote" ? 1 : 0));
+    });
+
+    it("estimated_size is reported to the GC", () => {
+      Bun.gc(true);
+      const before = heapStats().extraMemorySize;
+      const size = 1024 * 1024;
+      const note = new Note("text", size);
+      Bun.gc(true);
+      expect(heapStats().extraMemorySize - before).toBeGreaterThanOrEqual(size);
+      expect(note.text).toBe("text");
+    });
+
+    it("creating objects with a large estimated_size triggers GC", () => {
+      Bun.gc(true);
+      const count = 100;
+      for (let i = 0; i < count; i++) new Note("text", 8 * 1024 * 1024);
+      expect(heapStats().objectTypeCounts[name]).toBeLessThan(count);
+    });
+  });
+
+  describe("forBind", () => {
+    const { TestBoundThis } = bindgen as any;
+    const bound = (value: number) =>
+      Object.setPrototypeOf(function () {}.bind(new TestBoundThis(value)), TestBoundThis.prototype);
+
+    it("the receiver is a function bound to an instance", () => {
+      const five = bound(5);
+      expect(five.value).toBe(5);
+      expect(five.plus(2)).toBe(7);
+      expect(five.label).toBe("label 1 of 5");
+    });
+
+    it("a cached getter caches in the instance", () => {
+      const instance = new TestBoundThis(1);
+      const [first, second] = [0, 1].map(() =>
+        Object.setPrototypeOf(function () {}.bind(instance), TestBoundThis.prototype),
+      );
+      const { get } = Object.getOwnPropertyDescriptor(TestBoundThis.prototype, "label")!;
+      expect(get!.call(first)).toBe("label 1 of 1");
+      expect(get!.call(second)).toBe("label 1 of 1");
+    });
+
+    it("the prototype inherits from Function.prototype", () => {
+      expect(Object.getPrototypeOf(TestBoundThis.prototype)).toBe(Function.prototype);
+      expect(bound(1).call).toBe(Function.prototype.call);
+    });
+
+    it.each([
+      ["an instance", () => new TestBoundThis(1)],
+      ["a function bound to something else", () => function () {}.bind({})],
+      ["a function", () => function () {}],
+      ["undefined", () => undefined],
+    ])("%s is not a receiver", (_, receiver) => {
+      const { value, plus } = Object.getOwnPropertyDescriptors(TestBoundThis.prototype);
+      expect(() => value.get!.call(receiver())).toThrow(
+        new TypeError("The TestBoundThis.value getter can only be used on instances of TestBoundThis"),
+      );
+      expect(() => plus.value.call(receiver(), 1)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+      );
+    });
+  });
+
+  it("rustTraits, overridesToJS and final: false", () => {
+    const { TestNonFinal } = bindgen as any;
+    expect(new TestNonFinal(4).value).toBe(4);
+    const doubled = TestNonFinal.doubled(4);
+    expect(doubled).toBeInstanceOf(TestNonFinal);
+    expect(doubled.value).toBe(8);
+    const { get } = Object.getOwnPropertyDescriptor(TestNonFinal.prototype, "value")!;
+    expect(() => get!.call({})).toThrow(TypeError);
+  });
+
+  describe("refCounted", () => {
+    const { TestRefCounted } = bindgen as any;
+
+    it("a getter and a setter read and write the struct", () => {
+      const object = new TestRefCounted(3);
+      expect(object).toBeInstanceOf(TestRefCounted);
+      expect(object.value).toBe(3);
+      object.value = 4;
+      expect(object.value).toBe(4);
+      expect(new TestRefCounted().value).toBe(0);
+    });
+
+    it("an accessor with passThis reaches the internal fields", () => {
+      const object = new TestRefCounted();
+      expect(object.listener).toBeUndefined();
+      const listener = () => {};
+      object.listener = listener;
+      Bun.gc(true);
+      expect(object.listener).toBe(listener);
+    });
+
+    it("an internalField accessor reads and writes the field", () => {
+      const object = new TestRefCounted();
+      expect(object.sameListener).toBeUndefined();
+      const value = { any: "value" };
+      object.sameListener = value;
+      Bun.gc(true);
+      expect([object.sameListener, object.readOnlyListener, object.listener]).toEqual([value, value, value]);
+      expect(object.sameListener).toBe(value);
+      expect(() => {
+        "use strict";
+        object.readOnlyListener = 1;
+      }).toThrow(TypeError);
+      const { get, set } = Object.getOwnPropertyDescriptor(TestRefCounted.prototype, "sameListener")!;
+      expect(() => get!.call({})).toThrow(TypeError);
+      expect(() => set!.call({}, 1)).toThrow(TypeError);
+      expect(Object.getOwnPropertyDescriptor(TestRefCounted.prototype, "readOnlyListener")!.set).toBeUndefined();
+    });
+
+    it("a method that calls into JavaScript can be re-entered", () => {
+      const object = new TestRefCounted(1);
+      const receivers: unknown[] = [];
+      object.listener = function (this: unknown) {
+        receivers.push(this);
+        object.value += 10;
+        if (receivers.length < 3) object.notify();
+      };
+      expect(object.notify()).toBe(31);
+      expect(receivers).toEqual([object, object, object]);
+      object.listener = () => {
+        throw new RangeError("from the listener");
+      };
+      expect(() => object.notify()).toThrow(new RangeError("from the listener"));
+    });
+
+    it('"@@dispose" defines prototype[Symbol.dispose]', () => {
+      const object = new TestRefCounted(5);
+      expect(Object.getOwnPropertyDescriptor(TestRefCounted.prototype, Symbol.dispose)).toEqual({
+        value: expect.any(Function),
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+      expect(TestRefCounted.prototype[Symbol.dispose].name).toBe("[Symbol.dispose]");
+      expect(TestRefCounted.prototype[Symbol.dispose].length).toBe(0);
+      expect(Object.getOwnPropertyNames(TestRefCounted.prototype)).not.toContain("dispose");
+      {
+        using _ = object;
+      }
+      expect(object.value).toBe(-1);
+    });
+
+    it("name overrides the name of an @@ function", () => {
+      expect(TestRefCounted.prototype[Symbol.toPrimitive].name).toBe("");
+      expect(+new TestRefCounted(7)).toBe(7);
+    });
+
+    it('invalidThis: "undefined" returns undefined for an invalid this', () => {
+      const { valueOrUndefined, keep } = TestRefCounted.prototype;
+      expect(valueOrUndefined.call(new TestRefCounted(6))).toBe(6);
+      for (const receiver of [undefined, null, 1, {}, Object.create(TestRefCounted.prototype)])
+        expect(valueOrUndefined.call(receiver)).toBeUndefined();
+      expect(() => keep.call({})).toThrow(TypeError);
+    });
+
+    it("takes and returns b.self.optional and b.self.nullable", () => {
+      const [object, negative] = [new TestRefCounted(1), new TestRefCounted(-1)];
+      expect(object.orUndefined()).toBe(object);
+      expect(object.orNull()).toBe(object);
+      expect(negative.orUndefined()).toBeUndefined();
+      expect(negative.orNull()).toBeNull();
+      expect(object.isSame(object)).toBe(true);
+      for (const other of [negative, null, undefined]) expect(object.isSame(other)).toBe(false);
+      expect(object.isSame.length).toBe(0);
+      expect(() => object.isSame({})).toThrow(TypeError);
+    });
+
+    it("from_js returns the struct only for instances", () => {
+      expect(TestRefCounted.valueFromJS(new TestRefCounted(9))).toBe(9);
+      class Derived extends TestRefCounted {}
+      expect(TestRefCounted.valueFromJS(new Derived(10))).toBe(10);
+      for (const other of [undefined, null, 1, "9", {}, Object.create(TestRefCounted.prototype), new TestCounter(9)])
+        expect(TestRefCounted.valueFromJS(other)).toBeNull();
+    });
+
+    it("the struct outlives its object while Rust holds a ref, and finalize runs when the object is collected", () => {
+      const keepOne = (value: number) => void new TestRefCounted(value).keep();
+      let collected: { kept: number; value: number } | undefined;
+      for (let i = 0; i < 100 && !collected; i++) {
+        keepOne(i);
+        Bun.gc(true);
+        const [value, finalized] = TestRefCounted.kept();
+        if (finalized === 1) collected = { kept: i, value };
+      }
+      expect(collected).toEqual({ kept: expect.any(Number), value: collected?.kept });
+      const before = TestRefCounted.alive();
+      TestRefCounted.release();
+      expect(TestRefCounted.kept()).toEqual([]);
+      expect(TestRefCounted.alive()).toBe(before - 1);
+    });
+
+    it("drops the struct when the object is collected and nothing else holds a ref", () => {
+      const count = 1000;
+      let all: unknown[] | null = Array.from({ length: count }, (_, i) => new TestRefCounted(i));
+      Bun.gc(true);
+      expect(TestRefCounted.alive()).toBeGreaterThanOrEqual(all.length);
+      all = null;
+      Bun.gc(true);
+      expect(TestRefCounted.alive()).toBeLessThan(count);
+    });
+
+    it("does not leak the struct when the script is terminated as the constructor returns", () => {
+      const script = new vm.Script("for (;;) new TestRefCounted(1);");
+      const context = vm.createContext({ TestRefCounted });
+      // Few of the runs end at that point.
+      for (let i = 0; i < 200; i++) expect(() => script.runInContext(context, { timeout: 1 })).toThrow("timed out");
+      Bun.gc(true);
+      expect(TestRefCounted.alive()).toBe(heapStats().objectTypeCounts.TestRefCounted ?? 0);
+    });
+
+    it("the size of the object includes the struct", () => {
+      // The cell, then size_of::<TestRefCounted>().
+      expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
+    });
+  });
+});
+
+itAlways("the name of a symbol-keyed method is [Symbol.x]", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  using socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+  using udpSocket = await Bun.udpSocket({ hostname: "127.0.0.1" });
+  using session = new Bun.FetchSession();
+  await using subprocess = Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, stdout: "ignore" });
+  const prototypes = {
+    terminal: Bun.Terminal.prototype,
+    resolveMessage: ResolveMessage.prototype,
+    buildMessage: BuildMessage.prototype,
+  };
+  for (const [name, object] of Object.entries({ server, listener, socket, udpSocket, session, subprocess })) {
+    prototypes[name] = Object.getPrototypeOf(object);
+  }
+  for (const [name, prototype] of Object.entries(prototypes)) {
+    const symbol = [Symbol.dispose, Symbol.asyncDispose, Symbol.toPrimitive].find(symbol =>
+      Object.hasOwn(prototype, symbol),
+    )!;
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(prototype, symbol)!;
+    expect({ class: name, name: value.name, length: value.length, ...attributes }).toEqual({
+      class: name,
+      name: `[${symbol.description}]`,
+      length: symbol === Symbol.toPrimitive ? 1 : 0,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
 });

@@ -2235,10 +2235,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 return self.c.name_of_type_literal(file, node);
             }
             Some(&(file, Decl::ObjectLiteral(e))) => return self.c.name_of_object_literal(file, e),
-            Some(&(file, Decl::File)) => {
-                let file_name = displayed_path(files.module(file).file_name());
-                return cat! { b"\"", remove_file_extension(&file_name), b"\"" };
-            }
+            Some(&(file, Decl::File)) => return self.name_of_file_symbol(file),
             _ => {}
         }
         if name.is_some() {
@@ -2275,11 +2272,19 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     }
 
     /// `symbol.Name`. Empty for an anonymous symbol.
-    fn symbol_name(&self, symbol: Sym) -> &'p [u8] {
-        match self.c.files().symbol(symbol).name {
-            name if name.is_some() => self.c.atoms().bytes(name),
-            _ => &b""[..],
+    fn symbol_name(&self, symbol: Sym) -> Vec<u8> {
+        let files = self.c.files();
+        match (files.symbol(symbol).name, files.decls_of(symbol).first()) {
+            (name, _) if name.is_some() => self.c.atoms().bytes(name).to_vec(),
+            (_, Some(&(file, Decl::File))) => self.name_of_file_symbol(file),
+            _ => Vec::new(),
         }
+    }
+
+    /// `bindSourceFileAsExternalModule`: a file's symbol is named after its path, in quotes and without the extension.
+    fn name_of_file_symbol(&self, file: FileId) -> Vec<u8> {
+        let file_name = displayed_path(self.c.files().module(file).file_name());
+        cat! { b"\"", remove_file_extension(&file_name), b"\"" }
     }
 
     /// `symbolToExpression` of a chain of one, as `symbolToString` has it.
@@ -2531,7 +2536,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 && bun_core::strings::contains(&specifier, b"/node_modules/")
             {
                 self.encountered_error = true;
-                let name = self.symbol_name(symbol).to_vec();
+                let name = self.symbol_name(symbol);
                 self.report(Report::LikelyUnsafeImportRequired(specifier.clone(), name));
             }
             self.approximate_length += specifier.len() + 10;

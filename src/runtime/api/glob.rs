@@ -1,6 +1,6 @@
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
-use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
@@ -9,7 +9,7 @@ use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
 
-use crate::generated_bindgen::glob::{GlobClass, GlobScanArgument, GlobScanOptions};
+use crate::generated_bindgen::glob::{GlobScanArgument, GlobScanOptions};
 
 /// `Bun.Glob`, declared in `Glob.bind.ts`.
 pub(crate) struct Glob {
@@ -423,17 +423,15 @@ impl Glob {
     }
 }
 
-impl GlobClass for Glob {
-    type Error<'a> = ScanError<'a>;
-
-    fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
+impl Glob {
+    pub(crate) fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
         Glob {
             shape: bun_glob::matcher::Shape::of(pattern.slice()),
             pattern,
         }
     }
 
-    fn r#match<'a>(&self, str: &'a [u8]) -> bool {
+    pub(crate) fn r#match<'a>(&self, str: &'a [u8]) -> bool {
         bun_glob::matcher::match_prepared::<{ cfg!(windows) }>(
             self.pattern.slice(),
             &self.shape,
@@ -443,12 +441,12 @@ impl GlobClass for Glob {
         .matches()
     }
 
-    fn scan<'a>(
-        this: JsWrapper<'a, Self>,
+    pub(crate) fn scan<'a>(
+        &self,
         cx: &mut JsScope<'a>,
         options: Option<GlobScanArgument<'a>>,
     ) -> Result<JsLocal<'a>, ScanError<'a>> {
-        let walker = this.with(&cx.payloads, |glob| glob.make_glob_walker(options, "scan"))?;
+        let walker = self.make_glob_walker(options, "scan")?;
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
         Job::<WalkTask>::schedule(
@@ -459,7 +457,7 @@ impl GlobClass for Glob {
         Ok(JsLocal::new(&cx.heap, value))
     }
 
-    fn scan_sync<'a>(
+    pub(crate) fn scan_sync<'a>(
         &self,
         heap: &JsHeap<'a>,
         options: Option<GlobScanArgument<'a>>,

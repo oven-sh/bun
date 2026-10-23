@@ -42,12 +42,18 @@ pub(crate) enum OverrideRule<'a> {
 }
 
 impl<'a> OverrideRule<'a> {
+    /// The rule as stored: the name in its key and its value. `catalog:` is the entry of that name.
+    #[inline]
+    pub(crate) fn dep(self) -> &'a Dependency {
+        match self {
+            OverrideRule::Flat(dep) => dep,
+            OverrideRule::Scoped(rule) => &rule.dep,
+        }
+    }
+
     #[inline]
     pub(crate) fn version(self) -> &'a dependency::Version {
-        match self {
-            OverrideRule::Flat(dep) => &dep.version,
-            OverrideRule::Scoped(rule) => &rule.dep.version,
-        }
+        &self.dep().version
     }
 }
 

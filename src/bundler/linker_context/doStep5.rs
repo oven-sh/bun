@@ -325,7 +325,11 @@ impl LinkerContext<'_> {
                     .unwrap()
                     .get(ref_)
                     .unwrap();
-                let use_: &mut SymbolUse = symbol_uses.get_ptr_mut(ref_).unwrap();
+                // The parser drops the entry if a replaced macro call was the last plain use.
+                let use_: &mut SymbolUse = symbol_uses
+                    .get_or_put_value(*ref_, SymbolUse::default())
+                    .expect("OOM")
+                    .value_ptr;
 
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {

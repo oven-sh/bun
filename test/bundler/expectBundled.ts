@@ -433,6 +433,8 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
+  /** Run in this directory, relative to the test root. Takes priority over `setCwd`. */
+  cwd?: string;
   /** Expect a certain non-zero exit code */
   exitCode?: number;
   /** Run a function with stdout and stderr. Use expect to assert exact outputs */
@@ -1823,7 +1825,7 @@ for (const [key, blob] of build.outputs) {
           },
           timeout: 60_000,
           stdio: ["ignore", "pipe", "pipe"],
-          cwd: run.setCwd ? root : originalCwd,
+          cwd: run.cwd !== undefined ? path.join(root, run.cwd) : run.setCwd ? root : originalCwd,
         });
         const [runStdout, runStderr, exitCode] = await Promise.all([
           runProc.stdout.bytes(),

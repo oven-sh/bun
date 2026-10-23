@@ -355,6 +355,73 @@ test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
   },
 );
 
+// A UTF-8 byte order mark (EF BB BF) is the encoding signature of the program that wrote stdin. The dialogs drop
+// one mark, at the first bytes that a dialog reads in the process. A U+FEFF that a dialog reads later stays.
+describe.concurrent("byte order mark at the first dialog read of stdin", () => {
+  const mark = "\uFEFF";
+  // U+FEFF is invisible, so the child and the expectation both spell it out.
+  const spelled = results => JSON.stringify(results).replaceAll(mark, "<U+FEFF>");
+  const expected = results => ({ stderr: spelled(results) + "\n", exitCode: 0 });
+
+  /** Runs `calls`, an array literal of dialog calls, in a fresh process: the first dialog read comes once per process. */
+  async function run(calls, stdin) {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.error(JSON.stringify(${calls}).replaceAll("\\uFEFF", "<U+FEFF>"))`],
+      stdin: Buffer.from(stdin),
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  test.each([
+    ["confirm: y", `[confirm("ok?")]`, mark + "y\n", [true]],
+    ["confirm: Y, windows newline", `[confirm("ok?")]`, mark + "Y\r\n", [true]],
+    ["confirm: only one mark is removed", `[confirm("ok?")]`, mark + mark + "y\n", [false]],
+    ["confirm: empty line, windows newline", `[confirm("a"), confirm("b")]`, mark + "\r\ny\n", [false, true]],
+    ["prompt: answer", `[prompt("q")]`, mark + "yes\n", ["yes"]],
+    ["prompt: answer, windows newline", `[prompt("q")]`, mark + "yes\r\n", ["yes"]],
+    ["prompt: empty line gives the default", `[prompt("q", "dflt")]`, mark + "\n", ["dflt"]],
+    ["prompt: empty line, windows newline", `[prompt("q", "dflt")]`, mark + "\r\n", ["dflt"]],
+    ["prompt: only one mark is removed", `[prompt("q")]`, mark + mark + "x\n", [mark + "x"]],
+    ["confirm, then prompt", `[confirm("ok?"), prompt("q")]`, mark + "y\n" + mark + "b\n", [true, mark + "b"]],
+    ["prompt twice", `[prompt("a"), prompt("b")]`, mark + "a\n" + mark + "b\n", ["a", mark + "b"]],
+    ["confirm leaves the next line", `[confirm("ok?"), await Bun.stdin.text()]`, mark + "y\nrest\n", [true, "rest\n"]],
+    ["alert takes the mark with its line", `[alert("a"), confirm("ok?")]`, mark + "\ny\n", [null, true]],
+    ["confirm: the mark, end of stdin", `[confirm("ok?")]`, mark, [false]],
+    ["prompt: the mark, end of stdin", `[prompt("q", "dflt")]`, mark, [null]],
+  ])("the first answer does not include it (%s)", async (_, calls, stdin, results) => {
+    expect(await run(calls, stdin)).toEqual(expected(results));
+  });
+
+  test.each([
+    ["after a prompt", `[prompt("a"), prompt("b")]`, "a\n" + mark + "b\n", ["a", mark + "b"]],
+    ["after an empty prompt", `[prompt("a", "dflt"), prompt("b")]`, "\n" + mark + "b\n", ["dflt", mark + "b"]],
+    ["after a confirm", `[confirm("ok?"), prompt("q")]`, "y\n" + mark + "b\n", [true, mark + "b"]],
+    ["after an empty confirm", `[confirm("a"), confirm("b")]`, "\n" + mark + "y\n", [false, false]],
+    ["after an alert", `[alert("a"), confirm("ok?")]`, "\n" + mark + "y\n", [null, false]],
+    ["after the answer", `[prompt("q")]`, "a" + mark + "\n", ["a" + mark]],
+  ])("a U+FEFF that is not at the start stays (%s)", async (_, calls, stdin, results) => {
+    expect(await run(calls, stdin)).toEqual(expected(results));
+  });
+
+  // Every character from U+F000 to U+FFFF starts with the byte EF. U+FF7F is EF BD BF, U+FEC0 is EF BB 80.
+  test.each([
+    ["confirm: EF, newline", `[confirm("a"), confirm("b")]`, [0xef, 0x0a, 0x79, 0x0a], [false, true]],
+    ["confirm: EF BB, newline", `[confirm("a"), confirm("b")]`, [0xef, 0xbb, 0x0a, 0x79, 0x0a], [false, true]],
+    // A rejected line stops at CR, as it does without a mark: the LF is the empty line of the next dialog.
+    ["confirm: EF, windows newline", `[confirm("a"), confirm("b")]`, [0xef, 0x0d, 0x0a, 0x79, 0x0a], [false, false]],
+    ["confirm: U+FF7F, then y", `[confirm("ok?"), await Bun.stdin.text()]`, "\uFF7Fy\nrest\n", [false, "rest\n"]],
+    ["confirm: U+FEC0, then y", `[confirm("ok?"), await Bun.stdin.text()]`, "\uFEC0y\nrest\n", [false, "rest\n"]],
+    ["confirm: EF, end of stdin", `[confirm("ok?")]`, [0xef], [false]],
+    ["prompt: EF BB, newline", `[prompt("a"), prompt("b")]`, [0xef, 0xbb, 0x0a, 0x62, 0x0a], ["\uFFFD", "b"]],
+  ])("bytes that only begin like it are input (%s)", async (_, calls, stdin, results) => {
+    expect(await run(calls, stdin)).toEqual(expected(results));
+  });
+});
+
 test("confirm (yes) unix newline", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],

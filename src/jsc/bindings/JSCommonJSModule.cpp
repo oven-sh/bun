@@ -1652,7 +1652,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
 {
     return JSC::SourceCode(
-        JSC::SyntheticSourceProvider::create(
+        JSC::SyntheticSourceProvider::createDeferred(
             [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,

@@ -2758,6 +2758,8 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        // `global_exit()` does not return, so the end of this function never frees the list.
+        drop(all_test_files);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;

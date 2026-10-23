@@ -179,12 +179,6 @@ impl Entry {
         self.base_lowercase_.slice()
     }
 
-    /// Interned in DirnameStore.
-    #[inline]
-    pub fn dir(&self) -> &'static [u8] {
-        self.dir
-    }
-
     /// Returns `Interned::EMPTY` until a fill has been published. Lock-free.
     #[inline]
     pub fn abs_path(&self) -> Interned {

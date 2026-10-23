@@ -1354,6 +1354,9 @@ const routesBelow = (router: FileSystemRouter, root: string) =>
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([name, filePath]) => [name, path.relative(root, filePath).replaceAll("\\", "/")]),
   );
+/** What `import()` and `Bun.resolveSync()` throw for a module that is not there, and what `require()` throws. */
+const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
+const requireNotFound = expect.objectContaining({ code: "MODULE_NOT_FOUND" });
 
 describe("a new router reads the directory from disk", () => {
   // Each of these leaves a record of `pages` in the resolver's directory cache.
@@ -1466,12 +1469,12 @@ describe("a directory that the resolver looked for before it existed", () => {
       expect(() => Bun.resolveSync("./blog/deep/post", pages)).toThrow(notFound),
     ],
     "require()": pages => [
-      expect(() => require(path.join(pages, "blog", "post.tsx"))).toThrow(),
-      expect(() => require(path.join(pages, "blog", "deep", "post.tsx"))).toThrow(),
+      expect(() => require(path.join(pages, "blog", "post.tsx"))).toThrow(requireNotFound),
+      expect(() => require(path.join(pages, "blog", "deep", "post.tsx"))).toThrow(requireNotFound),
     ],
     "import()": async pages => [
-      await expect(import(path.join(pages, "blog", "post.tsx"))).rejects.toThrow(),
-      await expect(import(path.join(pages, "blog", "deep", "post.tsx"))).rejects.toThrow(),
+      await expect(import(path.join(pages, "blog", "post.tsx"))).rejects.toThrow(notFound),
+      await expect(import(path.join(pages, "blog", "deep", "post.tsx"))).rejects.toThrow(notFound),
     ],
   };
   const expected = { "/a": "a.tsx", "/blog/deep/post": "blog/deep/post.tsx", "/blog/post": "blog/post.tsx" };
@@ -1502,7 +1505,7 @@ describe("a directory that the resolver looked for before it existed", () => {
   });
 });
 
-describe("bun --hot", () => {
+describe.concurrent("bun --hot", () => {
   /** Runs `server.js` under `--hot`, calls `change` after its first line, and returns all it wrote when it exits. */
   async function run(root: string, firstLine: string, change: () => void) {
     await using runner = Bun.spawn({
@@ -1678,7 +1681,6 @@ it("routes and match() keep the scan they came from until reload()", () => {
   });
 });
 
-const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
 /** What the resolver answers for `specifier` from `from`: a path below `from`, or "not found". */
 const resolved = (specifier: string, from: string) => {
   try {
@@ -1999,7 +2001,7 @@ it("a dir that is a file, is below a file, is a link to itself or has a name too
 });
 
 // The owner of a file reads it on Windows whatever its mode is.
-it.skipIf(isWindows)("an unreadable dir is an error, and what is unreadable below it is left out", async () => {
+it.concurrent.skipIf(isWindows)("an unreadable dir is an error, what is unreadable below it is left out", async () => {
   using dir = tempDir("fsr-no-access", {
     "locked/a.tsx": page,
     "pages/a.tsx": page,
@@ -2074,7 +2076,7 @@ it.skipIf(isWindows)("an unreadable dir is an error, and what is unreadable belo
 });
 
 // ulimit: the limit of a Windows process is not one a shell sets.
-it.skipIf(isWindows)("a scan with no file descriptor left is an error, not a table with routes missing", async () => {
+it.concurrent.skipIf(isWindows)("a scan with no file descriptor left is an error, not a partial table", async () => {
   using dir = tempDir("fsr-no-descriptor", {
     "pages/a.tsx": page,
     "pages/sub/b.tsx": page,
@@ -2187,7 +2189,7 @@ it("skips a link to nothing", () => {
 });
 
 // mkfifo: Windows has no FIFO in a directory.
-it.skipIf(isWindows)("skips a FIFO and a link to a FIFO", async () => {
+it.concurrent.skipIf(isWindows)("skips a FIFO and a link to a FIFO", async () => {
   using dir = tempDir("fsr-not-a-file", { "pages/a.tsx": page });
   const root = String(dir);
   const pages = path.join(root, "pages");
@@ -2241,7 +2243,7 @@ it("a link that leads back into the tree is not followed again", () => {
 });
 
 // On Windows the bound is what 16 bits count and not the length of a path: 1,285 junctions deep.
-it.skipIf(isWindows)("a chain of links ends where a route name is as long as a path can be", async () => {
+it.concurrent.skipIf(isWindows)("a chain of links ends where a route name is as long as a path can be", async () => {
   // Each link adds 51 bytes to the name of a route and leads to a directory with a short path,
   // so the length of a path does not end the walk. The whole chain makes a name of 71,400 bytes.
   using dir = tempDir("fsr-link-chain", {
@@ -2407,7 +2409,7 @@ describe("two files for one route", () => {
   });
 });
 
-describe("dir is reached through a link", () => {
+describe.concurrent("dir is reached through a link", () => {
   async function run(fixture: string, files: Record<string, string>, link: [target: string, name: string]) {
     using dir = tempDir("fsr-linked-dir", { "fixture.ts": fixture, ...files });
     fs.symlinkSync(path.join(String(dir), link[0]), path.join(String(dir), link[1]), "junction");
@@ -2480,7 +2482,7 @@ describe("dir is reached through a link", () => {
   });
 });
 
-it("reload() returns when the resolver has dir cached without a trailing separator", async () => {
+it.concurrent("reload() returns when the resolver has dir cached without a trailing separator", async () => {
   // The failed resolve and the router over `sub` leave `pages` cached without a trailing separator.
   using dir = tempDir("fsr-reload-failed-resolve", {
     "fixture.ts": /* ts */ `
@@ -2516,7 +2518,7 @@ it("reload() returns when the resolver has dir cached without a trailing separat
   }).toEqual({ stdout: "/ /b /sub/c | / /b /sub/c /", stderr: "", exitCode: 0, signalCode: null });
 });
 
-it("after reload(), the resolver reads again each directory that the scan read", async () => {
+it.concurrent("after reload(), the resolver reads again each directory that the scan read", async () => {
   using dir = tempDir("fsr-reload-resolver", {
     "fixture.ts": /* ts */ `
       import fs from "fs";
@@ -2688,7 +2690,7 @@ describe.skipIf(!dtUnknownReaddir.available)("on a file system whose readdir rep
   });
 });
 
-it("with --preserve-symlinks a route below a link is named by the link, as the resolver names it", async () => {
+it.concurrent("with --preserve-symlinks a route below a link is named by the link, as the resolver does", async () => {
   using dir = tempDir("fsr-preserve-symlinks", {
     "fixture.ts": /* ts */ `
       import path from "path";
@@ -2747,7 +2749,7 @@ it("with --preserve-symlinks a route below a link is named by the link, as the r
   });
 });
 
-it.each([".", ""])("reload() of dir %j makes the resolver read the current directory again", async cwd => {
+it.concurrent.each([".", ""])("reload() of dir %j makes the resolver read the current directory again", async cwd => {
   using dir = tempDir("fsr-reload-cwd", { "x.tsx": page, "sub/y.tsx": page });
   const root = String(dir);
   await using proc = Bun.spawn({
@@ -2809,12 +2811,17 @@ it.skipIf(isWindows)("a backslash in a name is a part of the name", () => {
 it.skipIf(!isLinux)("a directory whose real path is too long to name is an error as dir and left out below dir", () => {
   using dir = tempDir("fsr-unnameable", { "pages/top.tsx": page });
   const root = String(dir);
-  // Two links keep each path that a call gets short. The real path of `unnameable` has 4,400 bytes.
-  const half = Array(11).fill(Buffer.alloc(200, "s").toString()).join("/");
-  fs.mkdirSync(path.join(root, half), { recursive: true });
-  fs.symlinkSync(path.join(root, half), path.join(root, "l1"));
-  fs.mkdirSync(path.join(root, "l1", half), { recursive: true });
-  fs.symlinkSync(path.join("l1", half), path.join(root, "unnameable"));
+  // A chain of links keeps each path and each link target short: a file system can limit a target to 1,023 bytes.
+  // Each link adds a directory of 200 bytes, so the real path of `unnameable` has 4,400 bytes.
+  const name = Buffer.alloc(200, "s").toString();
+  let deepest = "";
+  for (let i = 1; i <= 22; i++) {
+    const target = path.join(deepest, name);
+    fs.mkdirSync(path.join(root, target));
+    deepest = "l" + i;
+    fs.symlinkSync(target, path.join(root, deepest));
+  }
+  fs.symlinkSync(deepest, path.join(root, "unnameable"));
   fs.writeFileSync(path.join(root, "unnameable", "a.tsx"), page);
   fs.symlinkSync("../unnameable", path.join(root, "pages", "dir"));
   fs.symlinkSync("../unnameable/a.tsx", path.join(root, "pages", "file.tsx"));

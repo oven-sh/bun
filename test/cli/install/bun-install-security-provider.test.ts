@@ -877,7 +877,7 @@ describe("Dependencies that do not come from a registry", () => {
         const { pathname } = new URL(req.url);
         if (pathname === "/dep.tgz") return new Response(depTarball);
         if (pathname === "/repos/user/repo/tarball/main") return new Response(repoTarball);
-        if (pathname === "/repos/user/my-lib/tarball/main") return new Response(myLibTarball);
+        if (pathname.startsWith("/repos/user/my-lib/tarball/")) return new Response(myLibTarball);
         return new Response("Not Found", { status: 404 });
       },
     });
@@ -1031,20 +1031,23 @@ describe("Dependencies that do not come from a registry", () => {
   });
 
   // `my-lib` ends in no commit, so the scanner gets the ref of package.json and the URL that the
-  // install downloads.
-  it.concurrent("a github package is passed with its ref when its tarball names no commit", async () => {
-    const specifier = "github:user/my-lib#main";
-    const expected = {
-      requestedRange: specifier,
-      version: specifier,
-      tarball: `http://${origin}/repos/user/my-lib/tarball/main`,
-    };
-    const result = await install({ specifier, ...expected }, "hoisted", "none");
-    using dir = result.dir;
-    expect(result.packages).toEqual([{ name: "dep", ...expected }]);
-    expect(existsSync(join(String(dir), "node_modules", "dep", "ran.txt"))).toBe(true);
-    expect(result.exitCode).toBe(0);
-  });
+  // install downloads. It used to get the end of the name (`#lib`, `/tarball/lib`).
+  it.concurrent.each(["main", "feature/x"])(
+    "a github package is passed with its ref %s when its tarball names no commit",
+    async ref => {
+      const specifier = `github:user/my-lib#${ref}`;
+      const expected = {
+        requestedRange: specifier,
+        version: specifier,
+        tarball: `http://${origin}/repos/user/my-lib/tarball/${ref}`,
+      };
+      const result = await install({ specifier, ...expected }, "hoisted", "none");
+      using dir = result.dir;
+      expect(result.packages).toEqual([{ name: "dep", ...expected }]);
+      expect(existsSync(join(String(dir), "node_modules", "dep", "ran.txt"))).toBe(true);
+      expect(result.exitCode).toBe(0);
+    },
+  );
 });
 
 describe("Large payload via ipc pipe", () => {

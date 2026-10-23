@@ -170,21 +170,9 @@ impl PackageManager {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
-            // A `resolved` that names no commit is the same for every ref. The lockfile has one
-            // ref of the package, and another one was downloaded.
-            let relocked = existing.resolution.tag.is_git() && {
-                let buf = self.lockfile.buffers.string_bytes.as_slice();
-                let (locked, fetched) = (
-                    existing.resolution.repository(),
-                    package.resolution.repository(),
-                );
-                !locked.resolved.is_empty()
-                    && !fetched.resolved.is_empty()
-                    && locked.locked_committish(buf) != fetched.locked_committish(buf)
-            };
             let moved = match existing.resolution.tag {
                 // A nested git ref can move, so `bun update` resolves the dependencies again.
-                ResolutionTag::Git | ResolutionTag::Github => self.to_update || relocked,
+                ResolutionTag::Git | ResolutionTag::Github => self.to_update,
                 // Only `repins_tarball` reads one again that bun.lock has.
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     existing.meta.integrity != data.integrity
@@ -218,9 +206,6 @@ impl PackageManager {
             existing.bin = package.bin;
             if data.integrity.tag.is_supported() {
                 existing.meta.integrity = data.integrity;
-            }
-            if relocked {
-                existing.resolution = package.resolution;
             }
             self.lockfile.packages.set(existing_id as usize, existing);
             package = existing;

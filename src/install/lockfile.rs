@@ -3495,7 +3495,7 @@ impl Lockfile {
             string_builder.fmt_count(format_args!(
                 "{}@{}\n",
                 bstr::BStr::new(names[i].slice(bytes)),
-                resolutions[i].fmt_hashed(bytes, PathSep::Posix)
+                resolutions[i].fmt(bytes, PathSep::Posix)
             ));
         }
 
@@ -3539,7 +3539,7 @@ impl Lockfile {
             let _ = string_builder.fmt(format_args!(
                 "{}@{}\n",
                 bstr::BStr::new(names[i as usize].slice(bytes)),
-                resolutions[i as usize].fmt_hashed(bytes, PathSep::Any)
+                resolutions[i as usize].fmt(bytes, PathSep::Any)
             ));
         }
 

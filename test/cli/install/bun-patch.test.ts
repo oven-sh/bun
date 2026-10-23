@@ -1143,6 +1143,55 @@ describe.concurrent.each([
   });
 });
 
+// A host behind GITHUB_API_URL can name the root folder of a tarball after the repository (`my-lib`). Such a name ends
+// in no commit, so bun.lock has the ref of the package after the `#`. The label of the package still ends in the end of
+// the name (`#lib`), and the label is the `patchedDependencies` key: a patch keeps its key. `bun patch` takes both.
+test.concurrent("a github dependency whose tarball root names no commit", async () => {
+  const tgz = await new Bun.Archive(
+    {
+      "my-lib/package.json": JSON.stringify({ name: "pkg-to-patch", version: "1.0.0" }),
+      "my-lib/index.js": `module.exports = "original";\n`,
+    },
+    { compress: "gzip" },
+  ).bytes();
+  await using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      new URL(req.url).pathname === "/repos/testowner/my-lib/tarball/v1"
+        ? new Response(tgz)
+        : new Response("not found", { status: 404 }),
+  });
+  await using tmp = tempDir("patch-github-root-without-commit", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { "pkg-to-patch": "github:testowner/my-lib#v1" } }),
+  });
+  const dir = String(tmp);
+  const env = { ...projectEnv(dir), GITHUB_API_URL: `http://localhost:${server.port}` };
+  const inLockfile = "pkg-to-patch@github:testowner/my-lib#v1";
+  const label = "pkg-to-patch@github:testowner/my-lib#lib";
+  const lockfile = async () => Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text());
+
+  await bunOk(dir, env, "install");
+  expect((await lockfile()).packages["pkg-to-patch"][0]).toBe(inLockfile);
+
+  await expectPrepared(dir, env, inLockfile, "pkg-to-patch", join("node_modules", "pkg-to-patch"));
+  await Bun.write(join(dir, "node_modules", "pkg-to-patch", "index.js"), `module.exports = "patched";\n`);
+  await bunOk(dir, env, "patch", "--commit", label);
+  const { patchedDependencies } = await Bun.file(join(dir, "package.json")).json();
+  expect(Object.keys(patchedDependencies)).toEqual([label]);
+
+  rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+  await bunOk(dir, { ...env, BUN_INSTALL_CACHE_DIR: join(dir, "empty-cache") }, "install", "--frozen-lockfile");
+  expect({
+    packages: Object.values((await lockfile()).packages).map(row => (row as unknown[])[0]),
+    patchedDependencies: (await lockfile()).patchedDependencies,
+    installed: await Bun.file(join(dir, "node_modules", "pkg-to-patch", "index.js")).text(),
+  }).toEqual({
+    packages: [inLockfile],
+    patchedDependencies,
+    installed: `module.exports = "patched";\n`,
+  });
+});
+
 // bundled-transitive@1.0.0 bundles no-deps@1.0.0 and has a regular dependency on one-dep@1.0.0. The
 // root alias takes the name `one-dep`, so the hoisted linker nests one-dep@1.0.0 next to the bundled copy.
 const bundledAndNested = { dependencies: { "bundled-transitive": "1.0.0", "one-dep": "npm:no-deps@2.0.0" } };

@@ -626,7 +626,7 @@ fn build_package_json(
                             &crate::package_manager_real::run_tasks::alloc_github_url_for_ref(
                                 manager,
                                 repository,
-                                repository.locked_committish(string_buf),
+                                repository.pinned_ref(string_buf),
                             ),
                         );
                     }

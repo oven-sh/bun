@@ -59,6 +59,39 @@ const script = `
     if (typeof out !== "string" || out.length === 0) throw new Error(name + " produced no output");
     console.log("OK:" + name);
   }
+
+  // Every \`all\` resets the block again. Custom properties, \`direction\` and
+  // \`unicode-bidi\` outlive it, so a reset that walks everything the earlier
+  // resets kept is O(n^2), too slow for the spawn timeout at this size. A
+  // build that never resets is fast, and prints another block.
+  const m = 24000;
+  const numbers = Array.from({ length: m }, (_, i) => i);
+  // each("--c", ":1;") is "--c0:1;--c1:1;" and so on. One native join per list
+  // keeps the setup fast in a debug build.
+  const each = (before, after) => before + numbers.join(after + before) + after;
+  const kept = each("--c", ":1;");
+  const reset = "all:initial;";
+  const allFloods = {
+    "all-pairs": ["a{" + each("--c", ":1;all:initial;") + "}", "a{" + kept + "all:initial}"],
+    "all-after-kept": [
+      "a{" + kept + Buffer.alloc(m * reset.length, reset).toString() + "}",
+      "a{" + kept + "all:initial}",
+    ],
+    "all-important": [
+      "a{" + each("--c", ":1!important;all:initial!important;") + "}",
+      "a{" + each("--c", ":1!important;") + "all:initial!important}",
+    ],
+    "all-unparsed": ["a{" + each("--c", ":1;all:var(--x);") + "}", "a{" + kept + "all:var(--x)}"],
+    "all-unparsed-direction": [
+      "a{" + each("direction:var(--d", ");all:initial;") + "}",
+      "a{" + each("direction:var(--d", ");") + "all:initial}",
+    ],
+    "all-merged-rules": [each(".a{--c", ":1;all:initial}"), ".a{" + kept + "all:initial}"],
+  };
+  for (const [name, [src, expected]] of Object.entries(allFloods)) {
+    if (c.minifyTest(src, "") !== expected) throw new Error(name + " produced the wrong output");
+    console.log("OK:" + name);
+  }
 `;
 
 test("duplicate declarations across merged rules minify in linear time instead of hanging", async () => {
@@ -85,6 +118,12 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:clamp",
       "OK:distinct-custom-props",
       "OK:distinct-selectors",
+      "OK:all-pairs",
+      "OK:all-after-kept",
+      "OK:all-important",
+      "OK:all-unparsed",
+      "OK:all-unparsed-direction",
+      "OK:all-merged-rules",
       "",
     ].join("\n"),
     stderr: "",

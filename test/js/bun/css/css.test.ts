@@ -8003,6 +8003,33 @@ describe("css tests", () => {
       ".foo { color: red !important; all: unset !important; color: blue !important }",
       ".foo{all:unset!important;color:#00f!important}",
     );
+    // A later `all` resets again. It drops the earlier `all` and what does not survive
+    // after it, and it leaves what the earlier `all` kept where it is.
+    minify_test(
+      ".foo { --x: 1; color: red; all: unset; --y: 2; margin: 0; all: initial; --z: 3 }",
+      ".foo{--x:1;--y:2;all:initial;--z:3}",
+    );
+    minify_test(
+      ".foo { --a: 1; all: unset; color: red; --b: 2; unknown: 1; --c: 3; all: initial }",
+      ".foo{--a:1;--b:2;--c:3;all:initial}",
+    );
+    minify_test(
+      ".foo { --x: 1 !important; all: unset !important; --y: 2 !important; all: initial !important }",
+      ".foo{--x:1!important;--y:2!important;all:initial!important}",
+    );
+    minify_test(".foo { --x: 1; all: var(--a); --y: 2; all: var(--b) }", ".foo{--x:1;--y:2;all:var(--b)}");
+    minify_test(
+      ".foo { direction: var(--d); all: unset; unicode-bidi: var(--u); all: initial }",
+      ".foo{direction:var(--d);unicode-bidi:var(--u);all:initial}",
+    );
+    minify_test(".foo { direction: rtl; all: unset; --x: 1; all: initial }", ".foo{--x:1;all:initial;direction:rtl}");
+    minify_test(".foo { --x: 1; all: unset; all: none; --y: 2; all: initial }", ".foo{--x:1;--y:2;all:initial}");
+    minify_test(".foo { --x: 1; all: unset } .foo { --y: 2; all: initial }", ".foo{--x:1;--y:2;all:initial}");
+    // Every block uses the same handlers, so a block after one with `all` starts clean.
+    minify_test(
+      ".a { --x: 1; --y: 2; all: unset } .b { color: blue; --z: 3 } .c { color: red; all: unset }",
+      ".a{--x:1;--y:2;all:unset}.b{color:#00f;--z:3}.c{all:unset}",
+    );
     // An unknown property is reset like any other.
     minify_test(".foo { unknown: 1; all: unset }", ".foo{all:unset}");
     // `all` with a value only known at runtime still overrides what precedes it.

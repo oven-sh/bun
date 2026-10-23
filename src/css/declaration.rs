@@ -531,27 +531,24 @@ impl<'bump> DeclarationHandler<'bump> {
     }
 
     /// Drops everything the block declared so far that `all` resets.
+    ///
+    /// `handle_all` pushes the `all` right after every reset, so the last resetting `all` in
+    /// `decls` marks where the previous reset stopped. Nothing ahead of it is looked at again.
     fn reset_for_all(&mut self) {
         let bump: &'bump Bump = self.decls.bump();
         let previous = core::mem::replace(self, DeclarationHandler::new(bump));
         self.direction = previous.direction;
         self.unicode_bidi = previous.unicode_bidi;
-        for decl in previous.decls {
-            let survives = match &decl {
-                css::Property::Custom(custom) => {
-                    matches!(custom.name, CustomPropertyName::Custom(..))
-                }
-                css::Property::Direction(..) | css::Property::UnicodeBidi(..) => true,
-                css::Property::Unparsed(unparsed) => matches!(
-                    unparsed.property_id,
-                    css::PropertyId::Direction | css::PropertyId::UnicodeBidi
-                ),
-                _ => false,
-            };
-            if survives {
-                self.decls.push(decl);
+        self.decls = previous.decls;
+        let start = self.decls.iter().rposition(resets_all).unwrap_or(0);
+        let mut kept = start;
+        for index in start..self.decls.len() {
+            if survives_all(&self.decls[index]) {
+                self.decls.swap(kept, index);
+                kept += 1;
             }
         }
+        self.decls.truncate(kept);
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -575,5 +572,30 @@ impl<'bump> DeclarationHandler<'bump> {
             unicode_bidi: None,
             decls: DeclarationList::new_in(bump),
         }
+    }
+}
+
+/// Whether `property` is an `all` that `DeclarationHandler::handle_all` resets the block for.
+fn resets_all(property: &css::Property) -> bool {
+    match property {
+        css::Property::All(..) => true,
+        css::Property::Unparsed(unparsed) => {
+            matches!(unparsed.property_id, css::PropertyId::All)
+                && unparsed.value.has_variable_reference()
+        }
+        _ => false,
+    }
+}
+
+/// Whether `all` leaves `property` alone.
+fn survives_all(property: &css::Property) -> bool {
+    match property {
+        css::Property::Custom(custom) => matches!(custom.name, CustomPropertyName::Custom(..)),
+        css::Property::Direction(..) | css::Property::UnicodeBidi(..) => true,
+        css::Property::Unparsed(unparsed) => matches!(
+            unparsed.property_id,
+            css::PropertyId::Direction | css::PropertyId::UnicodeBidi
+        ),
+        _ => false,
     }
 }

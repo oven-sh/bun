@@ -1625,6 +1625,9 @@ pub struct BoundIn<S: Storage> {
     /// scope. It takes the whole program to tell whether the alias is a value. Sorted by
     /// expression.
     pub alias_idents: S::List<(ExprId, ScopeId)>,
+    /// The identifiers in a namespace or an enum that resolve to a declaration outside of it, each with its enclosing
+    /// scope. Another file's declaration of the namespace or enum may export the name. Sorted by expression.
+    pub idents_out_of_namespaces: S::List<(ExprId, ScopeId)>,
     /// The `arguments` identifiers that refer to the arguments of an enclosing function. Sorted.
     pub arguments_objects: S::Few<ExprId>,
     /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName`
@@ -2612,6 +2615,7 @@ impl BoundBuilder {
             classes_of_private_names,
             free_idents,
             alias_idents,
+            idents_out_of_namespaces,
             arguments_objects,
             identifiers_in_parameters,
             jsdoc_param_errors,
@@ -2707,6 +2711,7 @@ impl BoundBuilder {
         classes_of_private_names.clear();
         free_idents.clear();
         alias_idents.clear();
+        idents_out_of_namespaces.clear();
         arguments_objects.clear();
         identifiers_in_parameters.clear();
         jsdoc_param_errors.clear();
@@ -2838,6 +2843,7 @@ impl BoundBuilder {
             ),
             free_idents: copy_to_arena(&mut self.free_idents, arena),
             alias_idents: copy_to_arena(&mut self.alias_idents, arena),
+            idents_out_of_namespaces: copy_to_arena(&mut self.idents_out_of_namespaces, arena),
             arguments_objects: few_to_arena(std::mem::take(&mut self.arguments_objects), arena),
             identifiers_in_parameters: few_to_arena(
                 std::mem::take(&mut self.identifiers_in_parameters),
@@ -2989,6 +2995,7 @@ impl Bound<'_> {
             ),
             free_idents: Fixed::shared(&self.free_idents),
             alias_idents: Fixed::shared(&self.alias_idents),
+            idents_out_of_namespaces: Fixed::shared(&self.idents_out_of_namespaces),
             arguments_objects: ArenaFew::from_iter_in(
                 self.arguments_objects.iter().cloned(),
                 arena,

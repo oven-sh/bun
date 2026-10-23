@@ -18041,6 +18041,144 @@ export const p17: 0 = l17(null! as { [key: string]: () => Promise<File<X>> });
       expect(exitCode).toBe(1);
     });
 
+    test("a value that another file's declaration of a namespace or an enum exports hides one declared outside of it", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "noUnusedLocals": true, "types": [] } }
+`,
+        "one.ts": `namespace N {
+  export const x = 1;
+  export let v: string | undefined;
+  export function f() { return 1; }
+  export class C { a = 1; }
+  export namespace M { export const deep = 1; }
+  export enum Color { Red }
+}
+enum E { A = 1 }
+const enum CE { A = 1 }
+`,
+        "two.ts": `const x = "outer";
+let v: number | undefined;
+function f() { return "outer"; }
+class C { b = 2; }
+const deep = "outer";
+const A = "outer";
+const Red = "outer";
+namespace N {
+  export const y: 0 = x;
+  export const z: 0 = f();
+  export const w: 0 = new C().a;
+  if (v) { v.length; v.toFixed(); }
+  v = "s"; v = 1;
+  export const o = { x, v };
+  export const oo: 0 = o;
+  export namespace M { export const d: 0 = deep; export const e: 0 = x; }
+  export enum Color { Blue = Red }
+  export function g(p = x) { const r: 0 = p; return () => x; }
+  export const h: 0 = g()();
+}
+enum E { B = A }
+const enum CE { B = A }
+namespace Other { export const y: 0 = x; export const d: 0 = deep; }
+const keep = [E.B, CE.B, N.Color.Blue, Other.y, A, Red];
+`,
+        "mod.ts": `export namespace N { export const x = 1; }
+export const marker = 1;
+`,
+        "aug.ts": `import "./mod";
+const x = "outer";
+declare module "./mod" {
+  namespace N { const y: typeof x; }
+}
+export {};
+`,
+        "useaug.ts": `import { N } from "./mod";
+import "./aug";
+export const r: 0 = N.y;
+`,
+        "g.d.ts": `declare namespace N { const x: 1; type T = 1; class C { a: 1 } namespace Inner { type U = 1 } }
+declare namespace S { const x: 1; type T = 1 }
+`,
+        "m.ts": `export {};
+declare const x: "outer";
+type T = "outer";
+declare class C { b: 2 }
+declare namespace Inner { type U = "outer" }
+declare global {
+  namespace N {
+    interface P { v: typeof x; t: T; c: typeof C; ci: C; u: Inner.U }
+    const y: typeof x;
+    function f(a?: typeof x): T;
+  }
+}
+declare const p: N.P;
+export const r1: 0 = p.v, r2: 0 = p.t, r3: 0 = new p.c().a, r4: 0 = p.ci.a, r5: 0 = p.u, r6: 0 = N.y, r7: 0 = N.f();
+`,
+        "ae.d.ts": `export declare class AssertionError { b: 2 }
+`,
+        "cy.d.ts": `declare namespace Chai {
+  interface ChaiStatic { AssertionError: typeof AssertionError }
+  export class AssertionError { a: 1 }
+}
+`,
+        "types.d.ts": `import { AssertionError as Imported } from "./ae";
+declare global {
+  namespace Chai {
+    export interface ChaiStatic { AssertionError: typeof AssertionError }
+    export interface Probe { p: typeof AssertionError; t: AssertionError }
+    export type { Imported as AssertionError };
+  }
+}
+export const AssertionError: typeof Imported;
+`,
+        "use.ts": `declare const c: Chai.Probe;
+new c.p().a; new c.p().b; c.t.a; c.t.b;
+declare const d: Chai.AssertionError;
+d.a; d.b;
+new Chai.AssertionError().a; new Chai.AssertionError().b;
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "aug.ts(2,7): error TS6133: 'x' is declared but its value is never read.
+          console.d.ts(1,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'console' must be of type 'Console', but here has type '{ log(...args: unknown[]): void; }'.
+          g.d.ts(1,29): error TS2451: Cannot redeclare block-scoped variable 'x'.
+          g.d.ts(1,53): error TS2300: Duplicate identifier 'C'.
+          m.ts(3,6): error TS6196: 'T' is declared but never used.
+          m.ts(9,11): error TS2451: Cannot redeclare block-scoped variable 'y'.
+          m.ts(14,14): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,27): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,40): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,61): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,77): error TS2322: Type '1' is not assignable to type '0'.
+          m.ts(14,103): error TS2322: Type '1' is not assignable to type '0'.
+          one.ts(2,16): error TS2451: Cannot redeclare block-scoped variable 'x'.
+          one.ts(5,16): error TS2300: Duplicate identifier 'C'.
+          two.ts(9,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(9,16): error TS2451: Cannot redeclare block-scoped variable 'y'.
+          two.ts(10,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(11,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(12,24): error TS2551: Property 'toFixed' does not exist on type 'string'. Did you mean 'fixed'?
+          two.ts(13,12): error TS2322: Type 'number' is not assignable to type 'string'.
+          two.ts(15,16): error TS2322: Type '{ x: 1; v: string | undefined; }' is not assignable to type '0'.
+          two.ts(16,37): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(16,63): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(18,36): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(18,36): error TS6133: 'r' is declared but its value is never read.
+          two.ts(19,16): error TS2322: Type '1' is not assignable to type '0'.
+          two.ts(23,32): error TS2322: Type '"outer"' is not assignable to type '0'.
+          two.ts(23,55): error TS2322: Type '"outer"' is not assignable to type '0'.
+          types.d.ts(6,19): error TS2484: Export declaration conflicts with exported declaration of 'AssertionError'.
+          use.ts(2,24): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          use.ts(2,38): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          use.ts(4,8): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          use.ts(5,56): error TS2339: Property 'b' does not exist on type 'AssertionError'.
+          useaug.ts(3,14): error TS2322: Type '1' is not assignable to type '0'."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

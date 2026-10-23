@@ -1775,8 +1775,14 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `Resolve` for the value `name`, limited to what the file declares. Runs once everything is
-    /// declared. Returns `None` for `argumentsSymbol`.
-    fn resolve(&self, mut scope: ScopeId, name: Atom) -> Option<SymbolId> {
+    /// declared. Returns `None` for `argumentsSymbol`. Sets `outside_namespace` if the search continues outside of a
+    /// namespace or an enum.
+    fn resolve(
+        &self,
+        mut scope: ScopeId,
+        name: Atom,
+        outside_namespace: &mut bool,
+    ) -> Option<SymbolId> {
         let (b, tables) = (&self.b, &self.tables);
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
@@ -1847,6 +1853,7 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 return None;
             }
+            *outside_namespace |= matches!(s.kind, ScopeKind::Module(_) | ScopeKind::Enum(_));
             from = s.kind;
             scope = s.parent;
         }
@@ -1934,7 +1941,7 @@ impl<'f, 's> Binder<'f, 's> {
             return self.b.arguments_objects.binary_search(&e).is_ok();
         }
         let scope = self.scope_of_name(node);
-        let Some(symbol) = self.resolve(scope, known::arguments) else {
+        let Some(symbol) = self.resolve(scope, known::arguments, &mut false) else {
             return true;
         };
         self.b
@@ -2037,7 +2044,8 @@ impl<'f, 's> Binder<'f, 's> {
             if name == known::empty {
                 continue;
             }
-            let Some(symbol) = self.resolve(scope, name) else {
+            let mut outside_namespace = false;
+            let Some(symbol) = self.resolve(scope, name, &mut outside_namespace) else {
                 self.b.arguments_objects.push(expr);
                 continue;
             };
@@ -2048,6 +2056,9 @@ impl<'f, 's> Binder<'f, 's> {
                 && self.is_intrinsic_jsx_identifier(expr)
             {
                 continue;
+            }
+            if symbol.is_some() && outside_namespace {
+                self.b.idents_out_of_namespaces.push((expr, scope));
             }
             if symbol.is_none() {
                 self.b.free_idents.push((expr, scope));
@@ -2078,6 +2089,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.yields.sort_unstable_by_key(|it| it.0);
         self.b.exits.sort_unstable_by_key(|it| it.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
+        (self.b.idents_out_of_namespaces).sort_unstable_by_key(|it| it.0);
         self.b.arguments_objects.as_mut_slice().sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is checked less
         // strictly.

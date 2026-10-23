@@ -2172,6 +2172,13 @@ impl<'p, 's> Checker<'p, 's> {
         let (files, bound) = (self.files(), self.bound(file));
         let local = bound.symbol_of_expr(e);
         if local.is_some() {
+            let idents = &bound.idents_out_of_namespaces;
+            if let Ok(i) = idents.binary_search_by_key(&e, |it| it.0)
+                && let Some(found) = files.resolve_name(file, idents[i].1, name, SymFlags::VALUE)
+                && found.file != file
+            {
+                return Ok(Some(found));
+            }
             let sym = files.sym(file, local);
             // `getSymbol`: an alias that doesn't resolve to a value doesn't match the value
             // meaning, and the search continues in outer scopes. If that finds nothing it is an

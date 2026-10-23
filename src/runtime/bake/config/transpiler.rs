@@ -47,6 +47,8 @@ impl Framework {
         out.options.out_extensions = bun_collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
+        // Server chunks are loaded from memory, where `import.meta.require` finds no chunk file.
+        out.options.split_require = false;
 
         // force disable filesystem output, even though bundle_v2
         // is special cased to return before that code is reached.

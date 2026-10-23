@@ -54,9 +54,26 @@ test.concurrent.each(["should run test 2|a{4294967295}b", "(?:z)?x{4294967295}|s
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const output = normalizeBunSnapshot(stdout + stderr);
-    expect(output).toContain("(pass) parent > should run > test 2");
-    expect(output).toContain(" 1 pass\n 5 filtered out\n 0 fail");
+    expect(normalizeBunSnapshot(stdout + stderr)).toMatchInlineSnapshot(`
+      "bun test <version> (<revision>)
+      <parent beforeAll>
+      <beforeAll>
+      <parent beforeEach>
+      <beforeEach>
+      <test 2>
+      <afterEach>
+      <parent afterEach>
+      <afterAll>
+      <parent afterAll>
+
+      test/cli/test/test-filter-lifecycle.js:
+      (pass) parent > should run > test 2
+
+       1 pass
+       5 filtered out
+       0 fail
+      Ran 1 test across 1 file."
+    `);
     expect(exitCode).toBe(0);
   },
 );

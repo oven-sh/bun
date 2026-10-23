@@ -464,6 +464,47 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // From ESLint 9.39.5 and 10.12.0 with @typescript-eslint/parser 8.71.1. `Promise` is only a type in the parser's libraries.
+  // ESLint's own parser has no libraries.
+  test.each([
+    ["9.39.5", "a.ts", "through Foo:4 baz:5, Promise 1 4 2"],
+    ["10.12.0", "a.ts", "through Promise:2 Foo:4 baz:5, Promise 1 4"],
+    ["9.39.5", "a.js", "through Promise:1 baz:2, Promise none"],
+    ["10.12.0", "a.js", "through Promise:1 baz:2, Promise none"],
+  ])(
+    "before ESLint 10, a value resolves to a type of TypeScript's libraries: eslint %s, %s",
+    async (version, name, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `const globals = {
+              create: context => ({
+                "Program:exit"(node) {
+                  const scope = context.sourceCode.scopeManager.globalScope;
+                  const line = it => it.identifier.loc.start.line;
+                  const through = scope.through.map(it => it.identifier.name + ":" + line(it)).join(" ");
+                  const references = scope.set.get("Promise")?.references.map(line).join(" ") ?? "none";
+                  context.report({ node, message: "through " + through + ", Promise " + references });
+                },
+              }),
+            };
+            export default [{
+              files: ["a.*"],
+              languageOptions: { ecmaVersion: 5, sourceType: "script" },
+              plugins: { demo: { rules: { globals } } },
+              rules: { "demo/globals": "error" },
+            }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.ts":
+            "function f<T>(): Promise<T> {\n  return Promise.resolve({} as T);\n}\ntype A = () => Promise<Foo>;\nbaz(f);\n",
+          "a.js": "Promise.resolve(1);\nbaz();\n",
+        },
+        ["-f", "json", name],
+      );
+      expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual([expected]);
+    },
+    timeout,
+  );
+
   // From ESLint 8.57.1, 9.39.5 and 10.12.0. `unicorn/prefer-string-slice` of eslint-plugin-unicorn 56 passes a number.
   test.each([
     ["8.57.1", "1 + 2;\n", "", 0],
@@ -2864,6 +2905,63 @@ declare const either: Shape | Store;
         "<dir>/a.js:1:1: two [Error/local/two]",
       ]);
       expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // From @typescript-eslint/parser 7.18.0 and 8.71.1. `no-unused-vars` of typescript-eslint 7, which eslint-plugin-unused-imports 3
+  // runs, looks for the scope of `typeParameter.name` to mark the key of a mapped type as used.
+  test.each([
+    [
+      "7.18.0",
+      [
+        "TSTypeParameter TSMappedType TSTypeAliasDeclaration Program, TSTypeOperator TSTypeParameter TSMappedType TSTypeAliasDeclaration Program, mappedType",
+        "TSEnumMember TSEnumDeclaration Program",
+        "TSImportType TSTypeAnnotation Identifier VariableDeclarator VariableDeclaration Program",
+      ],
+    ],
+    ["8.71.1", [", , global", "none", "none"]],
+  ])(
+    "the nodes of deprecated properties have a parent if the installed parser is older than version 8: %s",
+    async (version, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `
+          const up = node => {
+            const types = [];
+            for (let it = node.parent; it; it = it.parent) types.push(it.type);
+            return types.join(" ");
+          };
+          const old = {
+            create: ({ sourceCode, report }) => ({
+              TSMappedType(node) {
+                const { name, constraint } = node.typeParameter;
+                let scope = null;
+                for (let it = name; it && !scope; it = it.parent) scope = sourceCode.scopeManager.acquire(it, true);
+                scope ??= sourceCode.scopeManager.scopes[0];
+                report({ node, message: [up(name), up(constraint.typeAnnotation), scope.type].join(", ") });
+              },
+              TSEnumDeclaration: node => report({ node, message: up(node.members[0].id) || "none" }),
+              TSImportType: node => report({ node, message: up(node.argument) || "none" }),
+            }),
+          };
+          export default [
+            {
+              files: ["a.ts"],
+              plugins: { own: { rules: { old } } },
+              languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+              rules: { "own/old": "error" },
+            },
+          ];`,
+          "node_modules/@typescript-eslint/parser/package.json": JSON.stringify({
+            name: "@typescript-eslint/parser",
+            version,
+          }),
+          "a.ts": 'type A = { [K in keyof B]: 1 };\nenum E { a = 1 }\nlet c: import("d").e;\n',
+        },
+        ["-f", "json", "a.ts"],
+      );
+      expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual(expected);
     },
     timeout,
   );

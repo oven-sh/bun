@@ -382,12 +382,13 @@ function typedServices() {
   return typed.asked.has(currentRule?.position) ? typed.services : null;
 }
 
-// The major version of the `typescript` with which the parser of the file would make the types: TypeScript 6 has renumbered
-// `ts.TypeFlags`. `null` if there is none. By the module of the parser, `undefined` for one that only the configuration file has.
-const typescriptMajors = new Map();
-function typescriptMajor() {
+// The major version of the package `name` that the parser of the file would load, or of the parser. `null` if there is none. By the
+// name and the module of the parser, `undefined` for one that only the configuration file has.
+const installedMajors = new Map();
+function installedMajor(name) {
   const known = fileSettings.parser?.module;
-  if (!typescriptMajors.has(known)) {
+  const key = `${name} ${known}`;
+  if (!installedMajors.has(key)) {
     const here = nodePath.join(cwd, "noop.js");
     const attempt = get => {
       try {
@@ -397,12 +398,10 @@ function typescriptMajor() {
       }
     };
     const parser = known ?? attempt(() => createRequire(here).resolve("@typescript-eslint/parser/package.json"));
-    const versions = [parser ?? here, here].map(it =>
-      attempt(() => createRequire(it)("typescript/package.json").version),
-    );
-    typescriptMajors.set(known, parseInt(versions.find(it => it !== undefined)) || null);
+    const versions = [parser ?? here, here].map(it => attempt(() => createRequire(it)(`${name}/package.json`).version));
+    installedMajors.set(key, parseInt(versions.find(it => it !== undefined)) || null);
   }
-  return typescriptMajors.get(known);
+  return installedMajors.get(key);
 }
 
 function readTypes() {
@@ -443,7 +442,8 @@ function readTypes() {
       native.askWords(WANTED_TYPE, kind.join(" "), 0);
     }
     const word = offset => (at === -1 ? 0 : words[at + offset]);
-    const getFlags = () => word((typescriptMajor() ?? refuse("Type.flags without typescript")) < 6 ? 4 : 3);
+    // TypeScript 6 has renumbered `ts.TypeFlags`.
+    const getFlags = () => word((installedMajor("typescript") ?? refuse("Type.flags without typescript")) < 6 ? 4 : 3);
     return lookAlike("Type", {
       get flags() {
         return getFlags();

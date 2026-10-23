@@ -431,8 +431,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         }
 
         if let Some(layers) = css_chunk.anonymous_layers.as_deref_mut() {
-            let entry_count = css_chunk.imports_in_chunk_in_order.len();
-            print_anonymous_layer_blocks(c, layers, entry_count, bump);
+            print_anonymous_layer_blocks(c, layers, &mut css_chunk.asts, bump);
         }
     }
 }
@@ -444,18 +443,34 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
 fn print_anonymous_layer_blocks(
     c: &LinkerContext,
     layers: &mut CssAnonymousLayers,
-    entry_count: usize,
+    asts: &mut [BundlerStyleSheet],
     bump: &Bump,
 ) {
+    // A layer with no rules in it gets no block: an empty `@layer {}` does nothing. Its
+    // first entry takes what an entry with no rules keeps of the conditions, such as the
+    // `@layer x;` of a named layer around it. A layer inside another comes later in the
+    // list, so this goes from the last one to the first.
+    let mut has_block = vec![true; layers.layers.len()];
+    for (layer, has_block) in layers.layers.iter().zip(has_block.iter_mut()).rev() {
+        let entries = &mut asts[layer.first as usize..=layer.last as usize];
+        if entries.iter().all(|ast| ast.rules.v.is_empty()) {
+            wrap_rules_with_conditions(&mut entries[0], bump, &layer.conditions);
+            *has_block = false;
+        }
+    }
+
     // SAFETY: as for `to_css` above: the two symbol map types have one layout.
     let symbols: &bun_ast::symbol::Map =
         unsafe { &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>() };
     // `deltas[i]` is the change in depth from entry `i - 1` to entry `i`.
-    let mut deltas = vec![0i64; entry_count + 1];
+    let mut deltas = vec![0i64; asts.len() + 1];
     // The layers around the one that is printed, as (last entry, blocks).
     let mut around: Vec<(u32, u32)> = Vec::new();
     let mut depth: u32 = 0;
-    for layer in layers.layers.iter_mut() {
+    for (layer, has_block) in layers.layers.iter_mut().zip(has_block) {
+        if !has_block {
+            continue;
+        }
         while let Some(&(last, blocks)) = around.last() {
             if last >= layer.first {
                 break;
@@ -498,7 +513,7 @@ fn print_anonymous_layer_blocks(
         around.push((layer.last, layer.blocks));
     }
     let mut open_blocks: i64 = 0;
-    layers.depths = deltas[..entry_count]
+    layers.depths = deltas[..asts.len()]
         .iter()
         .map(|delta| {
             open_blocks += delta;

@@ -2144,6 +2144,323 @@ c {
     outfile: "/out.css",
   });
 
+  // `@import "x.css" layer;` puts all that x.css brings in into one anonymous layer, and each
+  // `@layer {}` block is a layer of its own. So the files under one such import print in one
+  // block. In Chrome 153, `.t` gets the same color from each `out` as from its source files.
+  const anonymousLayerImports: Record<string, { files: Record<string, string>; out: string }> = {
+    // `div.t` is more specific than `.t`, and both are in the one layer.
+    SeveralFiles: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./leaf.css"; .t { color: green }`,
+        "/leaf.css": `div.t { color: red }`,
+      },
+      out: "@layer{div.t{color:red}.t{color:green}}",
+    },
+    // In one layer the later `!important` wins. In two layers the one in the earlier layer wins.
+    Important: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./leaf.css"; .t { color: green !important }`,
+        "/leaf.css": `.t { color: red !important }`,
+      },
+      out: "@layer{.t{color:red!important}.t{color:green!important}}",
+    },
+    // The layer has the sublayers x and y, in that order.
+    Sublayers: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./a.css"; @import "./b.css"; @layer x { .t { color: gray } }`,
+        "/a.css": `@layer x { .t { color: red } }`,
+        "/b.css": `@layer y { .t { color: green } }`,
+      },
+      out: "@layer{@layer x{.t{color:red}}@layer y{.t{color:green}}@layer x{.t{color:gray}}}",
+    },
+    NamedLayerImportInside: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./a.css" layer(x); @import "./b.css" layer(y); @import "./c.css" layer(x);`,
+        "/a.css": `.t { color: red }`,
+        "/b.css": `.t { color: green }`,
+        "/c.css": `.t { color: gray }`,
+      },
+      out: "@layer{@layer x{.t{color:red}}@layer y{.t{color:green}}@layer x{.t{color:gray}}}",
+    },
+    Nested: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./mid.css" layer; .lib { color: gray }`,
+        "/mid.css": `@import "./leaf.css"; .t { color: green }`,
+        "/leaf.css": `div.t { color: red }`,
+      },
+      out: "@layer{@layer{div.t{color:red}.t{color:green}}.lib{color:gray}}",
+    },
+    WithSupportsAndMedia: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer supports(display: grid) screen;`,
+        "/lib.css": `@import "./leaf.css"; .t { color: green }`,
+        "/leaf.css": `div.t { color: red }`,
+      },
+      out: "@media screen{@supports (display:grid){@layer{div.t{color:red}.t{color:green}}}}",
+    },
+    // A minified `@media all` has no block.
+    WithMediaAll: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer all;`,
+        "/lib.css": `@import "./leaf.css"; .t { color: green }`,
+        "/leaf.css": `div.t { color: red }`,
+      },
+      out: "@layer{div.t{color:red}.t{color:green}}",
+    },
+    ConditionalImportInside: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./leaf.css" screen; .t { color: green }`,
+        "/leaf.css": `div.t { color: red }`,
+      },
+      out: "@layer{@media screen{div.t{color:red}}.t{color:green}}",
+    },
+    InNamedLayer: {
+      files: {
+        "/entry.css": `@import "./mid.css" layer(x) screen; .e { color: gray }`,
+        "/mid.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./leaf.css"; .t { color: green }`,
+        "/leaf.css": `div.t { color: red }`,
+      },
+      out: "@media screen{@layer x{@layer{div.t{color:red}.t{color:green}}}}@media screen{@layer x;}.e{color:gray}",
+    },
+    // The first copy of foo.css is replaced by "@layer foo;". It declares foo ahead of bar in the layer.
+    DuplicateFileInside: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./foo.css"; @import "./bar.css"; @import "./foo.css";`,
+        "/foo.css": `@layer foo { .t { color: red } }`,
+        "/bar.css": `@layer bar { .t { color: green } }`,
+      },
+      out: "@layer{@layer foo;@layer bar{.t{color:green}}@layer foo{.t{color:red}}}",
+    },
+    // The two imports are two layers, and each one has its own copy of a file that both bring in.
+    TwoImportsShareAFile: {
+      files: {
+        "/entry.css": `@import "./a.css" layer; @import "./b.css" layer;`,
+        "/a.css": `@import "./shared.css"; .t { color: green !important }`,
+        "/b.css": `@import "./shared.css"; .b { color: gray }`,
+        "/shared.css": `div.t { color: red !important }`,
+      },
+      out: "@layer{div.t{color:red!important}.t{color:green!important}}@layer{div.t{color:red!important}.b{color:gray}}",
+    },
+    SameImportTwice: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer; @import "./other.css" layer(x); @import "./lib.css" layer;`,
+        "/lib.css": `@import "./leaf.css"; .lib { color: gray }`,
+        "/leaf.css": `.t { color: red !important }`,
+        "/other.css": `.t { color: green !important }`,
+      },
+      out: "@layer{.t{color:red!important}.lib{color:gray}}@layer x{.t{color:green!important}}@layer{.t{color:red!important}.lib{color:gray}}",
+    },
+    // A later copy of a file does not stand for a copy in an anonymous layer: the `!important`
+    // in the first layer wins over the one in x.
+    OneFileTwice: {
+      files: {
+        "/entry.css": `@import "./a.css" layer; @import "./b.css" layer(x); @import "./a.css" layer;`,
+        "/a.css": `.t { color: red !important }`,
+        "/b.css": `.t { color: green !important }`,
+      },
+      out: "@layer{.t{color:red!important}}@layer x{.t{color:green!important}}@layer{.t{color:red!important}}",
+    },
+    OneFileThenWithNoLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer; @import "./b.css" layer(x); @import "./a.css";`,
+        "/a.css": `.t { color: red !important }`,
+        "/b.css": `.t { color: green !important }`,
+      },
+      out: "@layer{.t{color:red!important}}@layer x{.t{color:green!important}}.t{color:red!important}",
+    },
+    OneFile: {
+      files: {
+        "/entry.css": `@import "./a.css" layer; .t { color: green }`,
+        "/a.css": `div.t { color: red }`,
+      },
+      out: "@layer{div.t{color:red}}.t{color:green}",
+    },
+    // A layer with no rules in it has no block.
+    NoRules: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer; .t { color: green }`,
+        "/lib.css": `@import "./a.css"; @import "./b.css";`,
+        "/a.css": ``,
+        "/b.css": `/* no rules */`,
+      },
+      out: ".t{color:green}",
+    },
+    NoRulesInNamedLayer: {
+      files: {
+        "/entry.css": `@import "./mid.css" layer(x); @layer y { .t { color: red } } @layer x { .t { color: green } }`,
+        "/mid.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "./a.css"; @import "./b.css";`,
+        "/a.css": ``,
+        "/b.css": ``,
+      },
+      out: "@layer x;@layer x;@layer y{.t{color:red}}@layer x{.t{color:green}}",
+    },
+    // at-layer/008 and cycles/008 of css/CSSAtImportConditionsFromExternalRepo.
+    AtLayer008: {
+      files: {
+        "/entry.css": `@import url("a.css") layer;`,
+        "/a.css": `@import "b.css" layer; .t { color: green; }`,
+        "/b.css": `.t { color: red; }`,
+      },
+      out: "@layer{@layer{.t{color:red}}.t{color:green}}",
+    },
+    Cycles008: {
+      files: {
+        "/entry.css": `@import url("b.css"); @import url("c.css");`,
+        "/a.css": `@import url("red.css") layer; @import url("b.css");`,
+        "/b.css": `@import url("green.css") layer; @import url("a.css");`,
+        "/c.css": `@import url("a.css") layer;`,
+        "/green.css": `.t { color: green; }`,
+        "/red.css": `.t { color: red; }`,
+      },
+      out: "@layer{.t{color:green}}@layer{.t{color:red}}@layer{@layer{.t{color:red}}@layer{.t{color:green}}}",
+    },
+    // An "@import" rule cannot be in a block. An import that is not bundled keeps a bare "layer"
+    // of its own, so it is in another layer than the rules of lib.css, as on main.
+    ExternalImportInside: {
+      files: {
+        "/entry.css": `@import "./lib.css" layer;`,
+        "/lib.css": `@import "http://example.com/x.css"; .t { color: green }`,
+      },
+      out: '@import "http://example.com/x.css" layer;@layer{.t{color:green}}',
+    },
+    SameExternalImportInsideTwo: {
+      files: {
+        "/entry.css": `@import "./a.css" layer; @import "./b.css" layer;`,
+        "/a.css": `@import "http://example.com/x.css"; .a { color: red }`,
+        "/b.css": `@import "http://example.com/x.css"; .b { color: green }`,
+      },
+      out: '@import "http://example.com/x.css" layer;@import "http://example.com/x.css" layer;@layer{.a{color:red}}@layer{.b{color:green}}',
+    },
+    ExternalImportAheadOfLayer: {
+      files: {
+        "/entry.css": `@import "http://example.com/top.css"; @import "./lib.css" layer; .e { color: gray }`,
+        "/lib.css": `@import "http://example.com/in.css" screen; @import "./leaf.css"; .t { color: green }`,
+        "/leaf.css": `div.t { color: red }`,
+      },
+      out: '@import "http://example.com/top.css";@import "data:text/css,@import \\"http://example.com/in.css\\" screen;" layer;@layer{div.t{color:red}.t{color:green}}.e{color:gray}',
+    },
+  };
+  for (const [name, { files, out }] of Object.entries(anonymousLayerImports)) {
+    itBundled(`css/CSSAtImportAnonymousLayer${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+      },
+    });
+  }
+
+  const nestedAnonymousLayerImports = {
+    "/entry.css": `@import "./lib.css" layer screen;`,
+    "/lib.css": `@import "./mid.css" layer; .lib { color: gray }`,
+    "/mid.css": `@import "./foo.css"; @import "./leaf.css"; @import "./foo.css"; .t { color: green }`,
+    "/foo.css": `@layer foo { .t { color: navy } }`,
+    "/leaf.css": `div.t { color: red }`,
+  };
+  const nestedAnonymousLayerImportsOut = `@media screen {
+  @layer {
+    @layer {
+      @layer foo;
+
+      /* leaf.css */
+      div.t {
+        color: red;
+      }
+
+      /* foo.css */
+      @layer foo {
+        .t {
+          color: navy;
+        }
+      }
+
+      /* mid.css */
+      .t {
+        color: green;
+      }
+    }
+
+    /* lib.css */
+    .lib {
+      color: gray;
+    }
+  }
+}
+
+/* entry.css */
+
+`;
+  itBundled("css/CSSAtImportAnonymousLayerNotMinified", {
+    files: nestedAnonymousLayerImports,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(nestedAnonymousLayerImportsOut);
+    },
+  });
+  itBundled("css/CSSAtImportAnonymousLayerBuildAPI", {
+    files: nestedAnonymousLayerImports,
+    outfile: "/out.css",
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(nestedAnonymousLayerImportsOut);
+    },
+  });
+  // The printer minifies and the file comments stay.
+  itBundled("css/CSSAtImportAnonymousLayerMinifySyntax", {
+    files: anonymousLayerImports.SeveralFiles.files,
+    outfile: "/out.css",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe("@layer{/* leaf.css */\ndiv.t{color:red}\n/* lib.css */\n.t{color:green}}\n/* entry.css */\n");
+    },
+  });
+  itBundled("css/CSSAtImportAnonymousLayerFromJS", {
+    files: { ...nestedAnonymousLayerImports, "/entry.js": `import "./entry.css";` },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(nestedAnonymousLayerImportsOut);
+    },
+  });
+  itBundled("css/CSSAtImportAnonymousLayerFromHTML", {
+    files: {
+      ...nestedAnonymousLayerImports,
+      "/index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./entry.css"></head><body></body></html>`,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const [, href] = api.readFile("/out/index.html").match(/href="([^"]+\.css)"/)!;
+      api.expectFile(join("/out", href)).toBe(nestedAnonymousLayerImportsOut);
+    },
+  });
+  // `composes` is not allowed in a rule inside a block, and the block of the import counts.
+  itBundled("css/CSSAtImportAnonymousLayerComposes", {
+    files: {
+      "/entry.js": `import styles from "./entry.module.css"; console.log(styles);`,
+      "/entry.module.css": `@import "./lib.module.css" layer; .e { color: gray }`,
+      "/lib.module.css": `@import "./leaf.module.css"; .a { composes: b; color: red } .b { color: green }`,
+      "/leaf.module.css": `.leaf { color: navy }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/lib.module.css": ["Failed to generate CSS for this file (PrintError)"],
+    },
+  });
+
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     files: {

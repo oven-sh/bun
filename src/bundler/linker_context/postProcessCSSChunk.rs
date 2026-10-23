@@ -76,6 +76,12 @@ pub(crate) fn post_process_css_chunk(
         let source_index = compile_result.source_index();
 
         while let Some(layer) = layers.get(next_layer).filter(|l| l.first as usize == i) {
+            open_layers.push(next_layer);
+            next_layer += 1;
+            // A layer with no rules in it has no block.
+            if layer.blocks == 0 {
+                continue;
+            }
             if comments && newline_before_comment {
                 j.push_static(b"\n");
                 line_offset.advance(b"\n");
@@ -91,8 +97,6 @@ pub(crate) fn post_process_css_chunk(
                 line_offset.advance(b"\n");
             }
             depth += layer.blocks;
-            open_layers.push(next_layer);
-            next_layer += 1;
         }
 
         if comments && Index::init(source_index).is_valid() {
@@ -132,7 +136,8 @@ pub(crate) fn post_process_css_chunk(
 
         if !compile_result.code().is_empty() {
             newline_before_comment = true;
-            if indent_lines {
+            // A file with no rules prints as an empty line.
+            if indent_lines && compile_result.code()[0] != b'\n' {
                 push_indent(&mut j, &mut line_offset, depth);
             }
         }
@@ -183,7 +188,9 @@ pub(crate) fn post_process_css_chunk(
                 }
             }
             open_layers.pop();
-            newline_before_comment = true;
+            if layer.blocks > 0 {
+                newline_before_comment = true;
+            }
         }
     }
 

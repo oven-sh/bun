@@ -654,7 +654,6 @@ dependencies = [
 name = "bun_http_jsc"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_analytics",
  "bun_base64",

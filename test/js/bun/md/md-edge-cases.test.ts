@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1888,6 +1888,259 @@ describe("indented HTML in a paragraph", () => {
 describe("blank lines of code in list items", () => {
   test("blanks that are less than the indentation of the item are not code", () => {
     expect(Markdown.html("- ```\n  a\n \n  ```\n")).toBe("<ul>\n<li>\n<pre><code>a\n\n</code></pre>\n</li>\n</ul>\n");
+  });
+});
+
+// CommonMark 5.3: a list is loose if a blank line is between two of its items, or between two blocks of one item.
+describe("loose and tight lists", () => {
+  const code = "<pre><code>code\n</code></pre>\n";
+  const checkbox = '<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>';
+
+  test.each([
+    // The blank line is behind indented code, and the code does not go on behind it.
+    ["-     code\n\n  text\n", `<ul>\n<li>\n${code}<p>text</p>\n</li>\n</ul>\n`],
+    ["1.     code\n\n   text\n", `<ol>\n<li>\n${code}<p>text</p>\n</li>\n</ol>\n`],
+    ["-     code\n\n\n  text\n", `<ul>\n<li>\n${code}<p>text</p>\n</li>\n</ul>\n`],
+    ["-     code\r\n\r\n  text\r\n", `<ul>\n<li>\n${code}<p>text</p>\n</li>\n</ul>\n`],
+    ["-     code\n\n- text\n", `<ul>\n<li>\n${code}</li>\n<li>\n<p>text</p>\n</li>\n</ul>\n`],
+    [
+      "- a\n  -     code\n\n  text\n",
+      `<ul>\n<li>\n<p>a</p>\n<ul>\n<li>\n${code}</li>\n</ul>\n<p>text</p>\n</li>\n</ul>\n`,
+    ],
+    // What is behind it is indented code too, but not more of the same.
+    [
+      "- a\n-     code\n\n-     more\n",
+      `<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n${code}</li>\n<li>\n<pre><code>more\n</code></pre>\n</li>\n</ul>\n`,
+    ],
+    [
+      "- a\n  000000001.     code\n\n      more\n",
+      `<ul>\n<li>\n<p>a</p>\n<ol>\n<li>\n${code}</li>\n</ol>\n<pre><code>more\n</code></pre>\n</li>\n</ul>\n`,
+    ],
+    // The blank line ends HTML.
+    ["- <div>\n  note\n  </div>\n\n  text\n", "<ul>\n<li>\n<div>\nnote\n</div>\n<p>text</p>\n</li>\n</ul>\n"],
+    [
+      "- <details>\n  **Logs**\n  </details>\n\n  text\n",
+      "<ul>\n<li>\n<details>\n**Logs**\n</details>\n<p>text</p>\n</li>\n</ul>\n",
+    ],
+    ["- <a>\n\n  text\n", "<ul>\n<li>\n<a>\n<p>text</p>\n</li>\n</ul>\n"],
+    ["- <div>\r\n\r\n  text\r\n", "<ul>\n<li>\n<div>\n<p>text</p>\n</li>\n</ul>\n"],
+    ["- <div>\n\n- text\n", "<ul>\n<li>\n<div>\n</li>\n<li>\n<p>text</p>\n</li>\n</ul>\n"],
+    ["- a\n  - <div>\n\n    text\n", "<ul>\n<li>a\n<ul>\n<li>\n<div>\n<p>text</p>\n</li>\n</ul>\n</li>\n</ul>\n"],
+    // Behind the blank line is a marker and nothing else.
+    ["- a\n\n-\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li></li>\n</ul>\n"],
+    ["- a\r\n\r\n-\r\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li></li>\n</ul>\n"],
+    ["1. a\n\n2.\n", "<ol>\n<li>\n<p>a</p>\n</li>\n<li></li>\n</ol>\n"],
+    ["- a\n\n-\n  b\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n"],
+    ["- a\n\n- [ ]\n", `<ul>\n<li>\n<p>a</p>\n</li>\n${checkbox}</li>\n</ul>\n`],
+    ["- a\n\n- [ ]\n  b\n", `<ul>\n<li>\n<p>a</p>\n</li>\n${checkbox}\n<p>b</p>\n</li>\n</ul>\n`],
+    ["- a\n\n  >\n", "<ul>\n<li>\n<p>a</p>\n<blockquote>\n</blockquote>\n</li>\n</ul>\n"],
+    ["- a\n\n  >\n  > b\n", "<ul>\n<li>\n<p>a</p>\n<blockquote>\n<p>b</p>\n</blockquote>\n</li>\n</ul>\n"],
+    ["- a\n\n  -\n", "<ul>\n<li>\n<p>a</p>\n<ul>\n<li></li>\n</ul>\n</li>\n</ul>\n"],
+    ["- a\n\n  1.\n", "<ul>\n<li>\n<p>a</p>\n<ol>\n<li></li>\n</ol>\n</li>\n</ul>\n"],
+    ["- a\n- <div>\n\n-\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<div>\n</li>\n<li></li>\n</ul>\n"],
+    ["- a\n-     code\n\n-\n", `<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n${code}</li>\n<li></li>\n</ul>\n`],
+    // Behind the blank line is a reference definition. cmark has these two tight, commonmark.js loose.
+    ["- a\n-     code\n\n  [r]: /u\n", `<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n${code}</li>\n</ul>\n`],
+    ["- a\n- <div>\n\n  [r]: /u\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<div>\n</li>\n</ul>\n"],
+    [
+      "- a\n-     code\n\n  [r]: /u\n- c\n",
+      `<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n${code}</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n`,
+    ],
+    [
+      "- a\n- <div>\n\n  [r]: /u\n- c\n",
+      "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<div>\n</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n",
+    ],
+  ])("%j is loose", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
+  });
+
+  test.each([
+    [{ tasklists: false }, "- a\n\n-\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li></li>\n</ul>\n"],
+    [{ noIndentedCodeBlocks: true }, "- <div>\n\n  text\n", "<ul>\n<li>\n<div>\n<p>text</p>\n</li>\n</ul>\n"],
+    [{ noHtmlBlocks: true }, "-     code\n\n  text\n", `<ul>\n<li>\n${code}<p>text</p>\n</li>\n</ul>\n`],
+  ])("with %j, %j is loose", (options, markdown, html) => {
+    expect(Markdown.html(markdown, options)).toBe(html);
+  });
+
+  const quoted = "<blockquote>\n<ul>\n<li>b</li>\n</ul>\n</blockquote>\n";
+
+  test.each([
+    ["- > - b\n  >\n- c\n", `<ul>\n<li>\n${quoted}</li>\n<li>c</li>\n</ul>\n`],
+    ["- a\n  > - b\n  >\n  c\n", `<ul>\n<li>a\n${quoted}c</li>\n</ul>\n`],
+    // Two empty lines: the last one decides, and it is in the block quote.
+    ["- > - b\n  >\n  >\n- c\n", `<ul>\n<li>\n${quoted}</li>\n<li>c</li>\n</ul>\n`],
+    // The list is between two block quotes: the innermost one has the blank line.
+    [
+      "> - a\n> - > - b\n>   >\n> - c\n",
+      `<blockquote>\n<ul>\n<li>a</li>\n<li>\n${quoted}</li>\n<li>c</li>\n</ul>\n</blockquote>\n`,
+    ],
+    [
+      "> - a\n> - > - b\n>   >\n>   c\n",
+      `<blockquote>\n<ul>\n<li>a</li>\n<li>\n${quoted}c</li>\n</ul>\n</blockquote>\n`,
+    ],
+    // Only the line behind the blank line looks at it: the lists that come later are tight.
+    [
+      "- > - b\n  >\n- c\n  - d\n    - e\n    - f\n",
+      `<ul>\n<li>\n${quoted}</li>\n<li>c\n<ul>\n<li>d\n<ul>\n<li>e</li>\n<li>f</li>\n</ul>\n</li>\n</ul>\n</li>\n</ul>\n`,
+    ],
+  ])("%j is tight: the blank line is in the block quote", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
+  });
+
+  test.each([
+    // The blank line is in the block quote, behind indented code, behind HTML, and before a marker.
+    [
+      "- a\n- > -     code\n  >\n- c\n",
+      `<ul>\n<li>a</li>\n<li>\n<blockquote>\n<ul>\n<li>\n${code}</li>\n</ul>\n</blockquote>\n</li>\n<li>c</li>\n</ul>\n`,
+    ],
+    [
+      "- a\n- > - <div>\n  >\n- c\n",
+      "<ul>\n<li>a</li>\n<li>\n<blockquote>\n<ul>\n<li>\n<div>\n</li>\n</ul>\n</blockquote>\n</li>\n<li>c</li>\n</ul>\n",
+    ],
+    ["- a\n- > - b\n  >\n-\n", `<ul>\n<li>a</li>\n<li>\n${quoted}</li>\n<li></li>\n</ul>\n`],
+    // The list is in the block quote with the blank line.
+    ["> - a\n>\n> - b\n", "<blockquote>\n<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n</blockquote>\n"],
+    // Two empty lines: the last one decides, and it is not in the block quote.
+    ["- > - b\n  >\n\n- c\n", `<ul>\n<li>\n${quoted}</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n`],
+    // The blank line is in the code, or in HTML that it does not end.
+    [
+      "- a\n-     code\n\n      more\n",
+      "<ul>\n<li>a</li>\n<li>\n<pre><code>code\n\nmore\n</code></pre>\n</li>\n</ul>\n",
+    ],
+    [
+      "- a\n-     code\n\n      more\n  text\n",
+      "<ul>\n<li>a</li>\n<li>\n<pre><code>code\n\nmore\n</code></pre>\ntext</li>\n</ul>\n",
+    ],
+    ["- ```\n  a\n\n- b\n", "<ul>\n<li>\n<pre><code>a\n\n</code></pre>\n</li>\n<li>b</li>\n</ul>\n"],
+    // cmark has this one loose, commonmark.js tight.
+    ["- <pre>\n\n- b\n", "<ul>\n<li>\n<pre>\n\n</li>\n<li>b</li>\n</ul>\n"],
+    // Nothing of the list is behind the blank line.
+    ["- a\n-     code\n\nafter\n", `<ul>\n<li>a</li>\n<li>\n${code}</li>\n</ul>\n<p>after</p>\n`],
+    ["- a\n- <div>\n\nafter\n", "<ul>\n<li>a</li>\n<li>\n<div>\n</li>\n</ul>\n<p>after</p>\n"],
+    ["- a\n\nb\n- c\n- d\n", "<ul>\n<li>a</li>\n</ul>\n<p>b</p>\n<ul>\n<li>c</li>\n<li>d</li>\n</ul>\n"],
+    ["- a\n-     code\n\n[r]: /u\n", `<ul>\n<li>a</li>\n<li>\n${code}</li>\n</ul>\n`],
+    // Behind the blank line is a reference definition, and before it a paragraph.
+    ["- a\n- b\n\n  [r]: /u\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n"],
+    ["- a\n\n  [r]: /u\n", "<ul>\n<li>\n<p>a</p>\n</li>\n</ul>\n"],
+  ])("%j stays as it is", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
+  });
+
+  test("render(), react() and ansi() have the paragraph of a loose list", () => {
+    const markdown = "-     bun install\n\n  Then run it.\n";
+    expect(Markdown.render(markdown, { paragraph: children => `<p>${children}</p>` })).toBe(
+      "bun install\n<p>Then run it.</p>",
+    );
+    const [list] = (Markdown.react(markdown).props as { children: any[] }).children;
+    expect(list.props.children[0].props.children.map((child: any) => child.type ?? child)).toEqual(["pre", "p"]);
+    // The blank line before the text is what a paragraph adds.
+    expect(Markdown.ansi(markdown, { colors: false })).toBe(
+      "  * \n\n    +-\n    | bun install\n    +-\n\n    Then run it.\n",
+    );
+  });
+
+  test("render() does not call paragraph in a list that is tight", () => {
+    const paragraph = jest.fn((children: string) => `<p>${children}</p>`);
+    expect(Markdown.render("- a\n  > - b\n  >\n  c\n", { paragraph })).toBe("abc");
+    expect(paragraph).not.toHaveBeenCalled();
+  });
+
+  // Lists of every kind of block. M is a paragraph in an item of the list that is looked at: it has a <p> if the list is loose.
+  describe("every kind of block", () => {
+    const X: Record<string, string[]> = {
+      paragraph: ["x"],
+      heading: ["# x"],
+      rule: ["***"],
+      fence: ["```", "x", "```"],
+      "indented code": ["    x"],
+      "html 6": ["<div>"],
+      "html 6, three lines": ["<details>", "x", "</details>"],
+      "html 7": ["<a>"],
+      "html 2": ["<!-- x -->"],
+      "html 1": ["<pre>", "x", "</pre>"],
+      quote: ["> x"],
+      "sub list": ["- x"],
+      "ordered sub list": ["1. x"],
+      table: ["| x |", "|---|"],
+    };
+    const Y: Record<string, string[]> = {
+      paragraph: ["y"],
+      heading: ["# y"],
+      rule: ["***"],
+      fence: ["```", "y", "```"],
+      "indented code": ["    y"],
+      "html 6": ["<div>"],
+      quote: ["> y"],
+      "sub list": ["- y"],
+      "empty quote": [">"],
+      "empty sub item": ["-"],
+      "empty ordered sub item": ["1."],
+    };
+    // What a block quote in an item holds when a line with only its `>` comes.
+    const inQuoteX: Record<string, string[]> = {
+      ...X,
+      "sub list, two items": ["- x", "- x2"],
+      "paragraph, then sub list": ["x", "- x2"],
+      "sub list in sub list": ["- x", "  - z"],
+      "empty sub item": ["-"],
+      "sub list of code": ["-     x"],
+      "sub list of html 6": ["- <div>"],
+    };
+    const item = (mark: string, lines: string[]) =>
+      lines.map((l, i) => (i === 0 ? mark : l === "" ? "" : " ".repeat(mark.length)) + l).join("\n") + "\n";
+    const quote = (lines: string[]) => lines.map(l => (l === "" ? ">" : "> " + l));
+    const lines = (text: string) => text.trimEnd().split("\n");
+
+    const shapes: Record<string, [markdown: string, loose: boolean][]> = {};
+    const add = (shape: string, markdown: string, loose: boolean) => (shapes[shape] ??= []).push([markdown, loose]);
+    for (const mark of ["- ", "1. "]) {
+      const M = item(mark, ["M"]);
+      for (const [xn, x] of Object.entries(X)) {
+        for (const [yn, y] of Object.entries(Y)) {
+          // Indented code after a blank line goes on with the indented code before it: one block.
+          const oneBlock = xn === "indented code" && yn === "indented code";
+          // Y is in the last item of the sub list X, or is its next item.
+          const yIsInX =
+            (xn === "sub list" && ["indented code", "sub list", "empty sub item"].includes(yn)) ||
+            (xn === "ordered sub list" && ["indented code", "empty ordered sub item"].includes(yn));
+          // The same for the sub list that X is an item of.
+          const yIsInSubList = ["indented code", "sub list", "empty sub item"].includes(yn);
+          add("two blocks of one item", M + item(mark, [...x, "", ...y]), !oneBlock && !yIsInX);
+          add(
+            "a block in a sub item, then a block of the item",
+            M + item(mark, ["a", ...lines(item("- ", x)), "", ...y]),
+            !yIsInSubList,
+          );
+          add("two blocks of a sub item", M + item(mark, ["a", ...lines(item("- ", [...x, "", ...y]))]), false);
+        }
+        add("two items", item(mark, x) + "\n" + M, true);
+        add("two items", M + "\n" + item(mark, x), true);
+        add("the list ends", M + item(mark, x) + "\nafter\n", false);
+        add("the list is in a block quote", quote(lines(M + item(mark, [...x, "", "y"]))).join("\n") + "\n", true);
+        add("the blank line is in a block quote in the item", M + item(mark, quote([...x, "", "y"])), false);
+      }
+      add("two items", M + "\n" + mark.trimEnd() + "\n", true);
+      add("two items", mark.trimEnd() + "\n\n" + M, true);
+      add("the blank line is in a leaf block", M + item(mark, ["    x", "", "    y"]), false);
+      add("the blank line is in a leaf block", M + item(mark, ["```", "x", "", "y", "```"]), false);
+      add("the blank line is in a leaf block", M + item(mark, ["<pre>", "x", "", "y", "</pre>"]), false);
+      add("the blank line is in a leaf block", item(mark, ["```", "x", ""]) + M, false);
+      add("the blank line is in a leaf block", M + item(mark, ["    x", "", "    y", "", "z"]), true);
+      for (const x of Object.values(inQuoteX)) {
+        const q = quote(x);
+        const inItem = M + item(mark, [...q, ">"]) + item(mark, ["c"]);
+        add("`>` line, then the next item", inItem, false);
+        add("`>` line, then a paragraph of the item", M + item(mark, [...q, ">", "y"]), false);
+        add("`>` line in the item of M, then the next item", item(mark, ["M", ...q, ">"]) + item(mark, ["c"]), false);
+        add("`>` line, all of it in a block quote", quote(lines(inItem)).join("\n") + "\n", false);
+        add("`> >` line, then the next item", M + item(mark, [...quote(q), "> >"]) + item(mark, ["c"]), false);
+      }
+    }
+
+    test.each(Object.entries(shapes))("%s", (_, cases) => {
+      const wrong = cases.filter(([markdown, loose]) => Markdown.html(markdown).includes("<p>M</p>") !== loose);
+      expect(wrong).toEqual([]);
+    });
   });
 });
 

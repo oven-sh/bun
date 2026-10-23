@@ -3956,6 +3956,10 @@ describe("css tests", () => {
        `,
       `
          .foo {
+           -webkit-box-orient: horizontal;
+           -moz-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           -moz-box-direction: normal;
            flex-direction: row;
          }
        `,
@@ -4040,6 +4044,10 @@ describe("css tests", () => {
        `,
       `
          .foo {
+           -webkit-box-orient: horizontal;
+           -moz-box-orient: horizontal;
+           -webkit-box-direction: normal;
+           -moz-box-direction: normal;
            flex-flow: wrap;
          }
        `,
@@ -4609,6 +4617,146 @@ describe("css tests", () => {
         safari: 11 << 16,
       },
     );
+
+    // `-webkit-line-clamp` needs `display: -webkit-box` and `-webkit-box-orient: vertical`.
+    // `flex-direction` and `flex-flow` do not replace `box-orient` and `box-direction` there.
+    describe("box-orient and box-direction stay next to flex-direction", () => {
+      // The browser targets that `bun build` resolves to by default.
+      const defaults = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+
+      describe("line clamp", () => {
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; flex-direction: column; overflow: hidden }",
+          ".foo { display: -webkit-box; -webkit-line-clamp: 3; overflow: hidden; -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { -webkit-line-clamp: 3; display: -webkit-box; -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo { -webkit-line-clamp: 3; display: -webkit-box; -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; flex-direction: column; -webkit-line-clamp: 3 }",
+          ".foo { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; flex-direction: row }",
+          ".foo { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; flex-direction: row; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; flex-flow: column wrap }",
+          ".foo { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; flex-flow: column wrap; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3 !important; flex-direction: column }",
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; flex-direction: column; -webkit-line-clamp: 3 !important; }",
+          defaults,
+        );
+        // Adjacent rules with the same selector merge, and the merged rule is minified again.
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3 } .foo { flex-direction: column }",
+          ".foo { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { flex-direction: column; -webkit-box-orient: vertical } .foo { overflow: hidden }",
+          ".foo { overflow: hidden; -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+      });
+
+      describe("with no line clamp", () => {
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-box-direction: reverse; flex-direction: column }",
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-box-direction: reverse; flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { display: -webkit-box; -moz-box-orient: vertical; -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -moz-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-flex-direction: column }",
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -webkit-flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -ms-flex-direction: column }",
+          ".foo { display: -webkit-box; -webkit-box-orient: vertical; -ms-flex-direction: column; }",
+          defaults,
+        );
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical !important; flex-direction: column !important }",
+          ".foo { -webkit-box-orient: vertical !important; flex-direction: column !important; }",
+          defaults,
+        );
+      });
+
+      describe("with other rules", () => {
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical; flex-direction: column } .bar { -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo, .bar { -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        // Needs #44704: the duplicate-rule check ignores unknown names and importance, so the first `.foo` rule is deleted.
+        cssTestTodo(
+          ".foo { -webkit-line-clamp: 2; flex-direction: column; -webkit-box-orient: vertical } .bar { color: red } .foo { cursor: pointer; -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo { -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex-direction: column; } .bar { color: red; } .foo { cursor: pointer; -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+        cssTestTodo(
+          ".foo { -webkit-box-orient: vertical; flex-direction: row !important } .bar { color: red } .foo { -webkit-box-orient: vertical; flex-direction: column }",
+          ".foo { -webkit-box-orient: vertical; flex-direction: row !important; } .bar { color: red; } .foo { -webkit-box-orient: vertical; flex-direction: column; }",
+          defaults,
+        );
+      });
+
+      // Targets that need the 2009 syntax get it generated from `flex-direction`.
+      // In one rule, only the prefixes the author did not write are generated.
+      describe("targets that need the 2009 syntax", () => {
+        const old = { safari: 4 << 16, firefox: 4 << 16, ie: 10 << 16 };
+
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical; flex-direction: row }",
+          ".foo { -webkit-box-orient: vertical; -webkit-box-direction: normal; -webkit-flex-direction: row; flex-direction: row; }",
+          { safari: 6 << 16 },
+        );
+        prefix_test(
+          ".foo { flex-direction: row; -webkit-box-orient: vertical }",
+          ".foo { -webkit-box-orient: vertical; -webkit-box-direction: normal; -webkit-flex-direction: row; flex-direction: row; }",
+          { safari: 6 << 16, chrome: 120 << 16 },
+        );
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical; -webkit-box-direction: reverse; flex-direction: row }",
+          ".foo { -webkit-box-orient: vertical; -webkit-box-direction: reverse; -webkit-flex-direction: row; flex-direction: row; }",
+          { safari: 6 << 16 },
+        );
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical; flex-direction: row }",
+          ".foo { -webkit-box-orient: vertical; -moz-box-orient: horizontal; -moz-box-direction: normal; flex-direction: row; }",
+          { firefox: 20 << 16, chrome: 120 << 16 },
+        );
+        prefix_test(
+          ".foo { -moz-box-orient: vertical; -moz-box-direction: reverse; flex-direction: row }",
+          ".foo { -moz-box-orient: vertical; -moz-box-direction: reverse; flex-direction: row; }",
+          { firefox: 20 << 16 },
+        );
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical; flex-direction: row }",
+          ".foo { -webkit-box-orient: vertical; -moz-box-orient: horizontal; -webkit-box-direction: normal; -moz-box-direction: normal; -webkit-flex-direction: row; -ms-flex-direction: row; flex-direction: row; }",
+          old,
+        );
+        prefix_test(
+          ".foo { -webkit-box-orient: vertical; -webkit-box-direction: reverse; flex-flow: row wrap }",
+          ".foo { -webkit-box-orient: vertical; -webkit-box-direction: reverse; -moz-box-orient: horizontal; -moz-box-direction: normal; -webkit-flex-flow: wrap; -ms-flex-flow: wrap; flex-flow: wrap; }",
+          old,
+        );
+      });
+    });
   });
 
   describe("linear-gradient", () => {

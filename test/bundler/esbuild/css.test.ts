@@ -784,6 +784,61 @@ describe("bundler", () => {
       `);
     },
   });
+
+  // `-webkit-line-clamp` needs `display: -webkit-box` and `-webkit-box-orient: vertical`.
+  // A `flex-direction` in the same rule, or in the next rule of the same selector,
+  // must not remove the `-webkit-box-orient`.
+  const lineClampFiles = {
+    "/entry.css": /* css */ `
+      .a { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; flex-direction: column; overflow: hidden }
+      .b { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden }
+      .c { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden }
+      .c { flex-direction: column }
+    `,
+  };
+  itBundled("css/LineClampKeepsBoxOrient", {
+    files: lineClampFiles,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        .a {
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          overflow: hidden;
+          -webkit-box-orient: vertical;
+          flex-direction: column;
+        }
+        .b {
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          overflow: hidden;
+          -webkit-box-orient: vertical;
+        }
+        .c {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          overflow: hidden;
+          -webkit-box-orient: vertical;
+          flex-direction: column;
+        }
+      `);
+    },
+  });
+  itBundled("css/LineClampKeepsBoxOrientMinified", {
+    files: lineClampFiles,
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe(
+          ".a{display:-webkit-box;-webkit-line-clamp:3;overflow:hidden;-webkit-box-orient:vertical;flex-direction:column}" +
+            ".b{display:-webkit-box;-webkit-line-clamp:3;overflow:hidden;-webkit-box-orient:vertical}" +
+            ".c{display:-webkit-box;-webkit-line-clamp:2;overflow:hidden;-webkit-box-orient:vertical;flex-direction:column}\n",
+        );
+    },
+  });
 });
 
 describe("esbuild-bundler", () => {

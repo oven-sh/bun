@@ -74,6 +74,53 @@ describe.concurrent.each(["", ":2", ":2:1", ":2:2", ":7:1", ":100:1"])("--aot-te
   }, 120_000);
 });
 
+// Each program holds one kind of prediction and little else: more places with the line than without it.
+const kinds = {
+  "a text parsed by a type": [
+    `type Pair = { left: number; right: { name: string; tags: string[] } };\nconst text = '{"left":1,"right":{"name":"n","tags":["a","b"]}}';\n`,
+    `const pair = JSON.parse<Pair>(text);\nconsole.log(pair.left, pair.right.name, pair.right.tags.join());\n`,
+    "1 n a,b\n",
+  ],
+  "an object of a declared type made a text": [
+    `type Pair = { left: number; right: { name: string; tags: string[] } };\nconst make = (left: number): Pair => ({ left, right: { name: "n" + left, tags: ["a", "b"] } });\nconst pairs = [make(1), make(2)];\n`,
+    `function textOf(pair: Pair): string {\n  return JSON.stringify(pair);\n}\nfor (const pair of pairs) console.log(textOf(pair));\n`,
+    `{"left":1,"right":{"name":"n1","tags":["a","b"]}}\n{"left":2,"right":{"name":"n2","tags":["a","b"]}}\n`,
+  ],
+  "the result of an async function": [
+    `const box = (value: number): { value: number } | Promise<{ value: number }> => (value % 2 ? { value } : Promise.resolve({ value }));\n`,
+    `async function boxed(value: number) {\n  return box(value);\n}\nconsole.log((await boxed(1)).value, (await boxed(2)).value);\n`,
+    "1 2\n",
+  ],
+  "an await of a number": [
+    `const numbers = [1, 2, 3];\n`,
+    `async function sum() {\n  let total = 0;\n  for (const number of numbers) total += await number;\n  return total;\n}\nconsole.log(await sum());\n`,
+    "6\n",
+  ],
+};
+describe.concurrent.each(Object.entries(kinds))("%s", (_, [head, line, answer]) => {
+  test.each(["", ":2:1", ":2:2", ":3:1"])(
+    "fails unasked with FailPredictions%s",
+    async numbers => {
+      using folder = tempDir("aot-predictions-fail", {
+        "program.ts": head + line,
+        "without.ts": head + "console.log(1);\n",
+      });
+      const cwd = String(folder);
+      const flags = ["--aot-testing=FailPredictions" + numbers, "--explain=statistics"];
+      const places = placesIn(await build(cwd, "failing", flags));
+      const built = await spawned(
+        [bunExe(), "build", "--compile", "--aot", ...flags, "without.ts", "--outfile", "without"],
+        cwd,
+      );
+      expect(built.exitCode).toBe(0);
+      expect(places).toBeGreaterThan(placesIn(built));
+      const { stdout, stderr, exitCode } = await spawned(withoutCoreDump([join(cwd, "failing")]), cwd);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: answer, stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+});
+
 test("without the switch there is no such place", async () => {
   using folder = tempDir("aot-predictions-fail", { "program.ts": program });
   expect(placesIn(await build(String(folder), "plain", ["--explain=statistics"]))).toBe(0);

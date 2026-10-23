@@ -70,7 +70,8 @@ async function crashed(flags: string[]) {
   expect(buildErrors).not.toContain("error");
   expect(buildExitCode).toBe(0);
   await using run = spawn({
-    cmd: [join(dir, "app")],
+    // It crashes on purpose, and leaves no core file.
+    cmd: isWindows ? [join(dir, "app")] : ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--", join(dir, "app")],
     cwd: dir,
     env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
     stdout: "pipe",

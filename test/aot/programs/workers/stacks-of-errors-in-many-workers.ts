@@ -22,7 +22,7 @@ async function later(kind: number): Promise<never> {
   await null;
   return middle(kind);
 }
-const clean = (stack: string | undefined) => (stack ?? "none").split("\n").map((line, index) => (index === 0 ? line.split(":")[0] : line)).map(line => line.trim().replace(/\(?(?:file:\/\/)?\/[^)]*\/([^/)]+)\)?$/, "$1")).filter(line => !/native|bun:|node:|internal|processTicks/.test(line)).join(" < ");
+const clean = (stack: string | undefined) => (stack ?? "none").split("\n").map((line, index) => (index === 0 ? line.split(":")[0] : line)).map(line => line.trim().replace(/\(?(?:file:\/\/)?(?:[A-Z]:)?[\\/][^)]*[\\/]([^\\/)]+)\)?$/, "$1")).filter(line => !/native|bun:|node:|internal|processTicks/.test(line)).join(" < ");
 async function all(): Promise<string> {
   const lines: string[] = [];
   for (let kind = 0; kind < 8; kind++) {

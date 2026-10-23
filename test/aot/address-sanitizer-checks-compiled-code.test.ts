@@ -112,10 +112,19 @@ test.skipIf(!isASAN || !isLinux || process.arch !== "x64").each([
     using dir = tempDir("asan-red-zone-cells", { "entry.ts": shorterObject });
     for (const falseProof of [[], ["--aot-testing=ProveEverything"]]) {
       const executable = join(String(dir), falseProof.length ? "planted" : "sound");
-      const build = await run([bunExe(), "build", "--compile", "--aot", ...falseProof, ...flags, "entry.ts", "--outfile", executable], String(dir));
-      expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const build = await run(
+        [bunExe(), "build", "--compile", "--aot", ...falseProof, ...flags, "entry.ts", "--outfile", executable],
+        String(dir),
+      );
+      expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
 
-      const { stdout, stderr, exitCode } = await run([executable], String(dir), { ...bunEnv, ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":symbolize=0" });
+      const { stdout, stderr, exitCode } = await run([executable], String(dir), {
+        ...bunEnv,
+        ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":symbolize=0",
+      });
       if (!falseProof.length) {
         expect({ stdout, exitCode }).toEqual({ stdout: "32\n", exitCode: 0 });
         continue;

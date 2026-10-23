@@ -49,7 +49,7 @@ tell("timers", () => {
   cancel(require("node:timers").setTimeout(() => {}, 1));
   return "set";
 });
-tell("url", () => require("node:url").pathToFileURL("/x").href);
+tell("url", () => require("node:url").pathToFileURL("/x").href.replace("/C:", ""));
 tell("string_decoder", () => new (require("node:string_decoder").StringDecoder)("utf8").write(new Uint8Array([104, 105])));
 tell("zlib", () => require("node:zlib").gunzipSync(require("node:zlib").gzipSync("hi")).toString());
 tell("crypto", () => require("node:crypto").createHash("sha1").update("x").digest("hex").length);

@@ -1,10 +1,10 @@
 // Values of every width and kind that stay alive across joins: what a code generator moves between registers and frame slots where paths meet, and what it has to find again behind a call, a throw or a wait.
 //
-//   values    6 to 400 variables a function, some of them parameters, each of one kind for good: int32, uint32, an integer wider than 32 bits, double, any number in turn, boolean, string, one of four literal strings,
-//             an object of a class, a typed array of each element width or an array, `T | undefined` and `T | null` of these, anything in turn
+//   values    6 to 900 variables a function, some of them parameters, each of one kind for good: int32, uint32, an integer wider than 32 bits, double, any number in turn, boolean, string, one of four literal strings,
+//             an object of a class, one of three subclasses behind their base, an array of objects, a Map, a typed array of each element width or an array, `T | undefined` and `T | null` of these, anything in turn
 //   edges     the ends of int32 and their neighbors, the ends of the safe integers, -0, NaN with every payload a typed array can hold
-//   joins     both arms of an if, or all arms of a switch, assign the same 6 to 64 variables, mostly by copies of one another; rotations and other permutations of 2 to 40 variables, alone and in loops
-//   flow      if, the same test twice, for, while, do, for-of, switch that falls through, with 16 cases, with cases that share a target, on strings; labelled blocks and loops; all of it inside try, catch and finally too; return, break and continue that leave through a finally
+//   joins     both arms of an if, or all arms of a switch, assign the same 6 to 64 variables, mostly by copies of one another; rotations and other permutations of 2 to 40 variables, alone, in loops and in the step of a loop whose test still reads others
+//   flow      if, the same test twice, for, while, do, for-of, switch that falls through, with 16 cases, with cases that share a target, with one to three cases at the end of a loop's body, on strings; labelled blocks and loops; all of it inside try, catch and finally too; return, break and continue that leave through a finally
 //   throws    by a callee, two or three frames below or in the engine itself, with a number, a double, a string or an object, into a handler that reads what was assigned on the way, or out of the function through its finally blocks
 //   calls     functions the compiler cannot look through, with up to 14 parameters of mixed kinds, in tail position too; one that fills the stack below with bytes of every kind; the function itself; an earlier function; closures that write variables
 //   waits     half of the functions are generators, async functions or async generators. Generators are also closed early and thrown into; three calls of an async function are in flight at once
@@ -13,7 +13,7 @@
 // Always TypeScript: the mode `erased` gives the untyped form. A variable of a union type is read through a cast to that type, so that no narrowing of the checker's makes a read an error.
 import type { Random } from "./random";
 
-type Kind = "int" | "uint" | "wide" | "double" | "number" | "flag" | "text" | "word" | "box" | "memory" | "maybeInt" | "maybeDouble" | "maybeFlag" | "maybeText" | "maybeBox" | "any";
+type Kind = "int" | "uint" | "wide" | "double" | "number" | "flag" | "text" | "word" | "box" | "shape" | "boxes" | "table" | "memory" | "maybeInt" | "maybeDouble" | "maybeFlag" | "maybeText" | "maybeBox" | "any";
 type Form = "plain" | "generator" | "async" | "asyncGenerator";
 interface Variable {
   name: string;
@@ -50,6 +50,58 @@ class Box {
     this.label = n & 16 ? "l" : undefined;
   }
 }
+abstract class Shape {
+  constructor(public id: number) {}
+  abstract area(k: number): number;
+  get twice(): number {
+    return this.id * 2;
+  }
+  grown(by: number): Shape {
+    this.id = (this.id + by) | 0;
+    return this;
+  }
+}
+class Square extends Shape {
+  constructor(
+    id: number,
+    public side: number,
+  ) {
+    super(id);
+  }
+  area(k: number): number {
+    return (Math.imul(this.side, this.side) + k) | 0;
+  }
+}
+class Disc extends Shape {
+  constructor(
+    id: number,
+    public r: number,
+  ) {
+    super(id);
+  }
+  area(k: number): number {
+    return this.r * 3.25 + k;
+  }
+}
+class Strip extends Shape {
+  constructor(
+    id: number,
+    public from: Box,
+    public label: string,
+  ) {
+    super(id);
+  }
+  area(k: number): number {
+    return (this.from.n + this.label.length + k) | 0;
+  }
+  get twice(): number {
+    return this.from.w;
+  }
+}
+function shapeOf(x: number, box: Box): Shape {
+  tick();
+  return x % 3 === 0 ? new Square(x, x & 255) : x % 3 === 1 || x % 3 === -1 ? new Disc(x, x * 0.5) : new Strip(x, box, "s" + (x & 3));
+}
 const odd = new Float64Array(
   new BigUint64Array([0x7ffa000000000000n, 0x7ffb000000000000n, 0x7ffc000000000000n, 0xfffa000000000000n, 0x7ff8000000000000n, 0x7ff0000000000000n, 0x8000000000000000n, 0xfffe000000000001n]).buffer,
 );
@@ -74,6 +126,12 @@ function fold(value: any): number {
     default:
       if (value === null) return 11;
       if (value instanceof Box) return foldBox(value) ^ (value.next === null ? 0 : Math.imul(foldBox(value.next), 31));
+      if (value instanceof Shape) return value.id ^ fold(value.area(1)) ^ fold(value.twice);
+      if (value instanceof Map) {
+        let sum = value.size;
+        for (const [key, held] of value) sum = (Math.imul(sum, 31) + fold(key) + fold(held)) | 0;
+        return sum;
+      }
       let sum = 0;
       for (let i = 0; i < value.length; i++) sum = (Math.imul(sum, 31) + fold(value[i])) | 0;
       return sum;
@@ -195,7 +253,7 @@ function settled(result: PromiseSettledResult<number>): number {
 `;
 
 const types: Record<Exclude<Kind, "memory">, string> = {
-  int: "number", uint: "number", wide: "number", double: "number", number: "number", flag: "boolean", text: "string", word: "Word", box: "Box", any: "any",
+  int: "number", uint: "number", wide: "number", double: "number", number: "number", flag: "boolean", text: "string", word: "Word", box: "Box", shape: "Shape", boxes: "Box[]", table: "Map<number, number>", any: "any",
   maybeInt: "number | undefined", maybeDouble: "number | null", maybeFlag: "boolean | undefined", maybeText: "string | undefined", maybeBox: "Box | null",
 }; // prettier-ignore
 const memories = ["Int8Array", "Uint8Array", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float32Array", "Float64Array", "number[]"];
@@ -225,15 +283,16 @@ export function generate(random: Random): string {
 
   for (let number = 0; number < functions; number++) {
     // prettier-ignore
-    const [count, depth, size] = random.weighted([[3, [6, 3, 40]], [4, [12, 4, 80]], [4, [24, 5, 160]], [4, [48, 5, 260]], [2, [120, 4, 300]], [1, [400, 3, 200]]] as const);
+    const [count, depth, size] = random.weighted([[3, [6, 3, 40]], [4, [12, 4, 80]], [4, [24, 5, 160]], [4, [48, 5, 260]], [2, [120, 4, 300]], [1, [400, 3, 200]], [1, [900, 2, 120]]] as const);
     const mix = random.pick<readonly (readonly [number, Kind])[]>([
       [[3, "int"], [2, "double"], [2, "wide"], [1, "uint"], [1, "number"]],
       [[1, "int"], [6, "double"]],
       [[2, "int"], [2, "box"], [2, "maybeBox"], [1, "text"], [1, "word"], [1, "maybeText"]],
       [[2, "int"], [2, "maybeInt"], [2, "maybeDouble"], [1, "maybeFlag"], [1, "flag"], [1, "double"]],
       [[2, "int"], [1, "uint"], [1, "wide"], [2, "memory"], [1, "double"]],
-      [[2, "int"], [1, "uint"], [1, "wide"], [1, "double"], [1, "number"], [1, "flag"], [1, "text"], [1, "word"], [1, "box"], [1, "memory"], [1, "maybeInt"], [1, "maybeDouble"], [1, "maybeFlag"], [1, "maybeText"], [1, "maybeBox"], [1, "any"]],
-      [[2, "int"], [1, "uint"], [1, "wide"], [1, "double"], [1, "number"], [1, "flag"], [1, "text"], [1, "word"], [1, "box"], [1, "memory"], [1, "maybeInt"], [1, "maybeDouble"], [1, "maybeFlag"], [1, "maybeText"], [1, "maybeBox"], [1, "any"]],
+      [[2, "int"], [2, "shape"], [1, "boxes"], [1, "table"], [1, "box"], [1, "maybeBox"], [1, "text"], [1, "double"]],
+      [[2, "int"], [1, "uint"], [1, "wide"], [1, "double"], [1, "number"], [1, "flag"], [1, "text"], [1, "word"], [1, "box"], [1, "shape"], [1, "boxes"], [1, "table"], [1, "memory"], [1, "maybeInt"], [1, "maybeDouble"], [1, "maybeFlag"], [1, "maybeText"], [1, "maybeBox"], [1, "any"]],
+      [[2, "int"], [1, "uint"], [1, "wide"], [1, "double"], [1, "number"], [1, "flag"], [1, "text"], [1, "word"], [1, "box"], [1, "shape"], [1, "boxes"], [1, "table"], [1, "memory"], [1, "maybeInt"], [1, "maybeDouble"], [1, "maybeFlag"], [1, "maybeText"], [1, "maybeBox"], [1, "any"]],
     ]); // prettier-ignore
     const variables: Variable[] = Array.from({ length: count }, (_, index) => {
       const kind = index < 2 ? "int" : random.weighted(mix);
@@ -266,6 +325,7 @@ export function generate(random: Random): string {
       const [u, w, d, x] = [of("uint") ?? `(${a} >>> 0)`, of("wide") ?? a, of("double") ?? a, of("number") ?? b];
       const [f, t, k, o, y] = [of("flag") ?? `(${a} > 0)`, of("text") ?? '"t"', of("word") ?? "(words[1] as Word)", of("box") ?? "spare", of("any") ?? a];
       const [mi, md, mf, mt, mo] = [of("maybeInt") ?? `(${o}.some as number | undefined)`, of("maybeDouble") ?? `(${o}.ratio as number | null)`, of("maybeFlag") ?? `(${o}.flagged as boolean | undefined)`, of("maybeText") ?? `(${o}.label as string | undefined)`, of("maybeBox") ?? `(${o}.next as Box | null)`]; // prettier-ignore
+      const [s, bs, tb] = [of("shape") ?? "round", of("boxes") ?? "row", of("table") ?? "counts"];
       const mem = drawn("memory")?.name ?? "odd";
       const m = `${mem}[${a} & 7]`;
       const shift = () => random.pick(["1", "2", "3", "4", "9"]);
@@ -277,30 +337,32 @@ export function generate(random: Random): string {
             `(${a} + ${below(100)}) | 0`, `(${a} / ((${b} & 15) + 1)) | 0`, `(${a} % ((${b} & 15) + 1)) | 0`, `(${a} % (${b} | 1)) | 0`, `(${a} / (${b} | 1)) | 0`, `~${a}`, `-${a} | 0`, `Math.clz32(${a})`, `Math.abs(${a}) | 0`, `Math.min(${a}, ${b}, ${c})`, `Math.max(${a}, ${b})`,
             random.pick(edgesOfInt), `(${a} + ${random.pick(edgesOfInt)}) | 0`, `(${d} * 3) | 0`, `${w} | 0`, `(${w} / 4294967296) | 0`, `${u} | 0`, `${x} | 0`, `${t}.length`, `${t}.charCodeAt(${a} & 3) | 0`, `${k}.length`, `${o}.n | 0`, `fold(${y})`, `${f} ? ${a} : ${b}`, `+${f}`,
             `(${mi} ?? ${b}) | 0`, `${mo}?.n ?? ${a}`, `${mo} === null ? ${a} : ${b}`, `${mf} === undefined ? ${a} : ${mf} ? ${b} : ${c}`, `(${mt} ?? "").length`, `((${md} ?? 0.5) * 2) | 0`, `${m} | 0`, `opaqueInt(${a}, ${b})`, `scribble(${a} & 7, ${below(3)})`,
-            `(${a} + ${b} + ${c} + opaqueInt(${b}, ${c}) + ${a} + ${c}) | 0`, `${a} << ${b}`, `${a} >> ${b}`, `(${a} >>> ${b}) | 0`, `1 << (${a} & 31)`, `(${w} | 0) + (${u} | 0) | 0`, `Math.sign(${a})`, `(${w} % 256) | 0`, `${mem}[(${a} << ${random.pick(["1", "2", "3"])}) & 7] | 0`, `${mem}[((${a} << ${shift()}) >>> 0) % 8] | 0`, `${t}.charCodeAt((${a} << 1) & 3) | 0`,
+            `(${a} + ${b} + ${c} + opaqueInt(${b}, ${c}) + ${a} + ${c}) | 0`, `${s}.area(${a}) | 0`, `${s}.id`, `${s}.twice | 0`, `(${s} instanceof Square ? (${s} as Square).side : ${a}) | 0`, `${s} instanceof Strip ? (${s} as Strip).from.n | 0 : ${b}`, `${bs}[${a} & 3].n | 0`, `${bs}[${a} & 3].next?.next?.n ?? ${b}`, `${bs}.length`,
+            `(${tb}.get(${a} & 7) ?? ${b}) | 0`, `${tb}.size`, `${tb}.has(${a} & 7) ? ${a} : ${b}`, `${t}.indexOf("1")`, `(${t}[${a} & 1] ?? "x").length`, `(${o}.next as Box | null)?.next?.n ?? ${a}`, `opaqueInt(...([${a}, ${b}] as [number, number]))`,
+            `${a} << ${b}`, `${a} >> ${b}`, `(${a} >>> ${b}) | 0`, `1 << (${a} & 31)`, `(${w} | 0) + (${u} | 0) | 0`, `Math.sign(${a})`, `(${w} % 256) | 0`, `${mem}[(${a} << ${random.pick(["1", "2", "3"])}) & 7] | 0`, `${mem}[((${a} << ${shift()}) >>> 0) % 8] | 0`, `${t}.charCodeAt((${a} << 1) & 3) | 0`,
             `(${a} / ${random.pick(["3", "7", "-1", "10", "16", "-5", "65536", "0"])}) | 0`, `(${a} % ${random.pick(["3", "8", "-1", "10", "1", "-7", "65536"])}) | 0`, `(${u} / ${random.pick(["3", "10", "2"])}) | 0`, `${u} % ${random.pick(["3", "10", "16"])}`,
             ...(guards || !below(6) ? [`mayThrow(${a})`, `throwsFromBelow(${a}, ${below(3)})`, `opaqueAny(${a} & 7 ? ${o} : null).n | 0`] : []), ...mixed, ...closures.map(each => `${each}(${a})`)]);
         case "uint":
           return random.pick([`${a} >>> 0`, `(${u} + ${a}) >>> 0`, `${u} >>> (${a} & 31)`, `(${u} * 3) >>> 0`, `Math.imul(${u}, ${a}) >>> 0`, `(${u} ^ ${a}) >>> 0`, "4294967295", "2147483648", "2147483647", `${o}.u`, `${f} ? ${u} : 4294967294`, `${w} >>> 0`, `(${u} << ${shift()}) >>> 0`, `(${a} << ${shift()}) >>> 0`, `~${u} >>> 0`, `${u} >>> ${a}`, `(${a} + ${b}) >>> 0`, `(${u} - ${a}) >>> 0`, `(${a} * ${random.pick(["2", "4", "8", "5"])}) >>> 0`, ...mixed]);
         case "wide":
           return random.pick([`${w} + ${a}`, `${w} - ${u}`, `${a} * 4294967296 + ${u}`, `(${w} * 3) % 9007199254740991`, `Math.floor(${w} / 3)`, `${a} * ${b}`, `${u} * 65537`, `${w} % 4294967296`, `-${w}`, `Math.abs(${w})`, `Math.trunc(${d} > 1e15 || ${d} < -1e15 || ${d} !== ${d} ? 1 : ${d})`,
-            `${o}.w`, `${w} > 4503599627370496 || ${w} < -4503599627370496 ? ${a} : ${w} * 2`, random.pick(edgesOfWide), `${a} + ${random.pick(edgesOfWide)}`, `opaqueWide(${w}, ${a})`, `${f} ? ${w} : ${a}`, `${f} ? ${w} : ${u}`, `${a} + ${b}`, `${u} + ${u}`, `${a} - ${u}`, `-${a}`, `${a} * ${random.pick(["3", "-1", "65537", "2147483647"])}`, `((${a} << ${shift()}) >>> 0) + ${w}`, `((${u} << ${shift()}) >>> 0) + ${u}`, `(${a} << ${shift()}) + ${w}`, `((${a} + ${b}) >>> 0) + ${w}`, `((${a} * 3) >>> 0) + ${u}`,
+            `${o}.w`, `${bs}[${a} & 3].w`, `Math.trunc(${s}.twice)`, `${w} > 4503599627370496 || ${w} < -4503599627370496 ? ${a} : ${w} * 2`, random.pick(edgesOfWide), `${a} + ${random.pick(edgesOfWide)}`, `opaqueWide(${w}, ${a})`, `${f} ? ${w} : ${a}`, `${f} ? ${w} : ${u}`, `${a} + ${b}`, `${u} + ${u}`, `${a} - ${u}`, `-${a}`, `${a} * ${random.pick(["3", "-1", "65537", "2147483647"])}`, `((${a} << ${shift()}) >>> 0) + ${w}`, `((${u} << ${shift()}) >>> 0) + ${u}`, `(${a} << ${shift()}) + ${w}`, `((${a} + ${b}) >>> 0) + ${w}`, `((${a} * 3) >>> 0) + ${u}`,
             `(${a} >>> ${shift()}) + ${w}`, `(${a} >> ${shift()}) + ${w}`, `(${w} | 0) + ${w}`, `(${w} >>> 0) + ${w}`, `${w} * ${random.pick(["2", "4", "8", "3"])} % 9007199254740991`, `${u} * ${random.pick(["2", "4", "8"])} + ${a}`, `${w} + ${random.pick(edgesOfWide)}`, ...mixed]);
         case "double":
           return random.pick([`${d} * 0.5 + ${a}`, `${d} - ${b} * 0.25`, `${a} / ((${b} & 7) + 1)`, `Math.sqrt(Math.abs(${d}))`, `${d} > 1e6 || ${d} < -1e6 ? 0.5 : ${d} * 1.5`, `opaqueDouble(${d}, ${a})`, `${f} ? ${d} : ${a} + 0.5`, `Math.floor(${d}) + 0.25`, `-${d}`,
             `${a} & 1 ? NaN : ${d}`, `${a} & 3 ? ${d} : -0`, `${d} * 0`, `(${a} & 7) / (${b} & 1)`, `${d} !== ${d} ? ${a} : ${d}`, `odd[${a} & 7]`, `${o}.d`, `${md} ?? ${d}`, `Math.fround(${d})`, `${w} / 3`, `${u} * 0.5`, `Math.min(${d}, ${a})`, `Math.max(${d}, ${w})`, `${m} * 0.5`,
-            `Math.round(${d}) - 0.5`, `Math.ceil(${d} * 0.1)`, `Math.trunc(${d}) * 0.5`, `Math.sign(${d}) * 0.5`, `Math.abs(${d})`, `${d} + ${a} * 0.1 + opaqueDouble(${d}, ${b}) - ${d}`, ...mixed]);
+            `${s}.area(${a}) * 0.5`, `${s} instanceof Disc ? (${s} as Disc).r : ${d}`, `${bs}[${a} & 3].d`, `(${tb}.get(${a} & 7) ?? ${d}) * 0.5`, `Math.round(${d}) - 0.5`, `Math.ceil(${d} * 0.1)`, `Math.trunc(${d}) * 0.5`, `Math.sign(${d}) * 0.5`, `Math.abs(${d})`, `${d} + ${a} * 0.1 + opaqueDouble(${d}, ${b}) - ${d}`, ...mixed]);
         case "number":
           return below(3) ? value(random.pick<Kind>(["int", "uint", "wide", "double", "double"])) : random.pick([`${f} ? ${a} : ${d}`, `${f} ? ${u} : ${w}`, `${f} ? ${w} : ${d}`, `${f} ? ${a} : ${u}`, `${f} ? ${x} : ${a}`, `${mi} ?? ${d}`, `${md} ?? ${a}`, `${f} ? ${a} : ${w}`]);
         case "flag":
-          return random.pick([`${a} < ${b}`, `!${f}`, `${f} && ${a} > 3`, `${f} || ${d} < 0`, `${t} < "m"`, `${mo} === null`, `${y} === undefined`, `${a} === ${b}`, `${mf} ?? ${f}`, `${o}.on`, `${k} === "green"`, `${d} !== ${d}`, `${u} > 2147483647`, `${w} > ${a}`, `${mi} === undefined`, `${x} < ${d}`, ...mixed]);
+          return random.pick([`${a} < ${b}`, `!${f}`, `${f} && ${a} > 3`, `${f} || ${d} < 0`, `${t} < "m"`, `${mo} === null`, `${y} === undefined`, `${a} === ${b}`, `${mf} ?? ${f}`, `${o}.on`, `${s} instanceof Square`, `${tb}.has(${a} & 7)`, `${bs}[${a} & 3] === ${o}`, `${bs}[${a} & 3].on`, `${k} === "green"`, `${d} !== ${d}`, `${u} > 2147483647`, `${w} > ${a}`, `${mi} === undefined`, `${x} < ${d}`, ...mixed]);
         case "text":
-          return random.pick([`(${t} + "a").slice(-6)`, `String(${a} & 15)`, `(${t} + ${t}.length).slice(-4)`, `opaqueText(${t}, ${a})`, `${f} ? ${t} : "z"`, `${t}.slice(1) + "q"`, `\`\${${a} & 3}\${${t}.slice(0, 3)}\``, k, `${mt} ?? ${t}`, `${o}.name`, `${f} ? ${k} : ${t}`,
+          return random.pick([`(${t} + "a").slice(-6)`, `String(${a} & 15)`, `(${t} + ${t}.length).slice(-4)`, `opaqueText(${t}, ${a})`, `${f} ? ${t} : "z"`, `${t}.slice(1) + "q"`, `\`\${${a} & 3}\${${t}.slice(0, 3)}\``, k, `${mt} ?? ${t}`, `${o}.name`, `${s} instanceof Strip ? (${s} as Strip).label : ${t}`, `${t}.toUpperCase().slice(0, 4)`, `${t}.padStart(3, "0").slice(-4)`, `${t}.at(-1) ?? ""`, `${bs}[${a} & 3].name`, `(${t} + ${k} + ${t}).slice(-5)`, `${f} ? ${k} : ${t}`,
             `\`\${${a} & 7}:\${${k}}:\${${f}}:\${${t}.slice(0, 2)}\`.slice(-7)`, `${f} ? "" : opaqueText(${t}, ${b})`, ...mixed]);
         case "word":
           return random.pick([`opaqueWord(${a})`, `words[${a} & 3]`, `${f} ? "red" : "blue"`, `${o}.tag`, k, `${f} ? ${k} : ""`, `${a} & 1 ? "green" : ${k}`, `${k} === "red" ? "green" : ${k}`, ...mixed]);
         case "box":
-          return random.pick([`new Box(${a}, null)`, `new Box(${a}, ${mo})`, `${mo} ?? ${o}`, `opaqueBox(${o}, ${a})`, `${f} ? ${o} : spare`, o, `(${o}.next as Box | null) ?? ${o}`, `${f} ? ((${o}.next as Box | null) ?? spare) : opaqueBox(${o}, ${b})`, ...mixed]);
+          return random.pick([`new Box(${a}, null)`, `new Box(${a}, ${mo})`, `${mo} ?? ${o}`, `opaqueBox(${o}, ${a})`, `${f} ? ${o} : spare`, o, `${bs}[${a} & 3]`, `${s} instanceof Strip ? (${s} as Strip).from : ${o}`, `(${o}.next as Box | null) ?? ${o}`, `${f} ? ((${o}.next as Box | null) ?? spare) : opaqueBox(${o}, ${b})`, ...mixed]);
         case "maybeInt":
           return random.pick([`${f} ? ${a} : undefined`, mi, `${o}.some`, "undefined as number | undefined", a, `${mi} === undefined ? ${a} : (${mi}! + 1) | 0`, `opaqueMaybe(${a})`, random.pick(edgesOfInt), `${f} ? ${random.pick(edgesOfInt)} : ${mi}`, `${a} & 3 ? ${mi} : ${b}`, ...mixed]);
         case "maybeDouble":
@@ -310,7 +372,13 @@ export function generate(random: Random): string {
         case "maybeText":
           return random.pick([`${f} ? ${t} : undefined`, mt, `${o}.label`, "undefined as string | undefined", t, k, `${mt} === undefined ? ${t} : ${mt}!.slice(1)`, `${a} & 1 ? undefined : ""`]);
         case "maybeBox":
-          return random.pick([`${o}.next`, `${f} ? ${o} : null`, mo, "null as Box | null", o, `${mo}?.next ?? null`, `${a} & 3 ? ${mo} : new Box(${b}, null)`, `${f} ? ${mo} : opaqueBox(${o}, ${a})`, ...mixed]);
+          return random.pick([`${o}.next`, `${bs}[${a} & 3].next`, `(${o}.next as Box | null)?.next ?? null`, `${f} ? ${o} : null`, mo, "null as Box | null", o, `${mo}?.next ?? null`, `${a} & 3 ? ${mo} : new Box(${b}, null)`, `${f} ? ${mo} : opaqueBox(${o}, ${a})`, ...mixed]);
+        case "shape":
+          return random.pick([`shapeOf(${a}, ${o})`, `new Square(${a}, ${b})`, `new Disc(${a}, ${d})`, `new Strip(${a}, ${o}, ${t})`, s, `${f} ? ${s} : round`, `${s}.grown(${a} & 3)`, `${a} & 1 ? new Square(${b}, ${a}) : new Disc(${b}, ${d})`]);
+        case "boxes":
+          return random.pick([bs, `[${o}, ${o}, spare, ${mo} ?? ${o}]`, `${f} ? ${bs} : row`, `[${bs}[1], ${bs}[2], ${bs}[3], ${bs}[0]]`, `${bs}.slice()`]);
+        case "table":
+          return random.pick([tb, `new Map([[${a} & 7, ${b}], [${b} & 7, ${d}]])`, `${f} ? ${tb} : counts`, `${tb}.set(${a} & 7, ${x})`]);
         case "memory":
           return "odd";
         default:
@@ -323,7 +391,7 @@ export function generate(random: Random): string {
       if (variable) return variable;
       const [a, o] = [int(), of("box") ?? "spare"];
       // prettier-ignore
-      return { int: a, uint: `${a} >>> 0`, wide: `${a} * 65536`, double: `${a} * 0.5`, number: a, flag: `${a} > 0`, text: '"s"', word: `words[${a} & 3]`, box: o, memory: "odd", any: a,
+      return { int: a, uint: `${a} >>> 0`, wide: `${a} * 65536`, double: `${a} * 0.5`, number: a, flag: `${a} > 0`, text: '"s"', word: `words[${a} & 3]`, box: o, shape: "round", boxes: "row", table: "counts", memory: "odd", any: a,
         maybeInt: `${a} & 1 ? ${a} : undefined`, maybeDouble: `${a} & 1 ? ${a} * 0.5 : null`, maybeFlag: `${a} & 1 ? true : undefined`, maybeText: `${a} & 1 ? "s" : undefined`, maybeBox: `${a} & 1 ? ${o} : null` }[kind];
     }
     const store = (variable: Variable): string => {
@@ -343,6 +411,11 @@ export function generate(random: Random): string {
         const [field, kind] = random.pick(fields);
         return `${o.name}.${field} = ${value(kind)};`;
       }
+      const [bs, tb, s] = [drawn("boxes"), drawn("table"), drawn("shape")];
+      if (bs && !below(12)) return `${bs.name}[${int()} & 3] = ${value("box")};`;
+      if (tb && !below(12)) return random.pick([`${tb.name}.set(${int()} & 7, ${value("number")});`, `${tb.name}.delete(${int()} & 7);`]);
+      if (s && !below(12)) return `${s.name}.id = ${value("int")};`;
+      if (o && !below(16)) return `({ n: ${int()}, on: ${drawn("flag")?.name ?? "sunk"} } = ${o.name});`;
       return store(variables[below(count)]);
     };
     const condition = () => {
@@ -354,6 +427,8 @@ export function generate(random: Random): string {
         `(${a} & ${random.pick(["1", "8", "255", "65536", "-2147483648"])}) ${random.pick(["===", "!=="])} 0`, `(${a} & ${b}) === 0`, `!(${a} & 4)`, `(${a} + ${b}) | 0`, `(${of("wide") ?? a} | 0) ${random.pick(["<", "===", ">="])} ${b}`, `(${of("wide") ?? a} | 0) === (${of("wide") ?? b} | 0)`,
         `(${of("wide") ?? a} & 255) === ${below(4)}`, `${of("uint") ?? a} ${random.pick(["<", ">", "<=", "==="])} ${of("uint") ?? b}`, `${of("wide") ?? a} ${random.pick(["<", ">", "===", "!=="])} ${random.pick(edgesOfWide)}`, `${of("wide") ?? a} ${random.pick(["<", ">=", "==="])} ${of("wide") ?? b}`,
         `${a} ${random.pick(["<", ">", "===", "<="])} ${random.pick(edgesOfInt)}`, `${of("double") ?? a} ${random.pick(["<", ">", "<=", ">=", "===", "!=="])} ${of("double") ?? b}`, `!(${of("double") ?? a} < ${of("double") ?? b})`, `${of("uint") ?? a} > ${a}`, `(${a} >>> 0) > (${b} >>> 0)`, `${of("double") ?? a}`, `${of("wide") ?? a}`,
+        `${of("double") ?? a} * 0.5 + ${a} > ${of("wide") ?? b} / 3 - ${of("uint") ?? b}`, `(((${a} ^ ${b}) + (${int()} & ${a})) | 0) > ((${b} - ${int()}) | 0)`, `${of("double") ?? a} + ${of("double") ?? b} < ${of("double") ?? a} * ${of("double") ?? b}`,
+        `Math.imul(${a}, ${b}) + ${of("wide") ?? a} > ${of("uint") ?? b} * 3`, `(${of("maybeDouble") ?? a} ?? ${of("double") ?? b}) + ${a} > (${of("maybeInt") ?? b} ?? ${int()})`, `${of("wide") ?? a} + ${a} > ${of("wide") ?? b} - ${b} && ${of("double") ?? a} - ${b} < ${of("double") ?? b} + ${a}`,
         of("text") ?? `${a} & 16`, `${of("text") ?? "spare.name"} === ${of("text") ?? "spare.name"}`, `(${drawn("memory")?.name ?? "odd"}[${a} & 7] | 0) > ${b}`]);
     };
     // The same variables, of one type, moved round by one place; or each given what any of them held before.
@@ -405,8 +480,8 @@ export function generate(random: Random): string {
           guards--;
           return block;
         };
-        const kind = left > 0 ? below(38) : below(4);
-        switch ([6, 7, 12, 14, 24].includes(kind) && turns > 40 ? 0 : kind) {
+        const kind = left > 0 ? below(44) : below(4);
+        switch ([6, 7, 12, 14, 24, 38].includes(kind) && turns > 40 ? 0 : kind) {
           case 0: case 1: case 2: case 3: all += assign(); break; // prettier-ignore
           case 4: case 5: all += `if (${condition()}) {${inner()}} else {${inner()}}`; break; // prettier-ignore
           case 6: {
@@ -448,6 +523,22 @@ export function generate(random: Random): string {
           case 24: {
             const counter = "c" + names++;
             all += `for (let ${counter} = 0; ${counter} < ${2 + below(4)}; ${counter}++) {${rotation()}${below(2) ? `${int()} = opaqueInt(${int()}, ${counter});` : ""}${below(2) ? `if (${condition()}) {${below(2) ? rotation() : permutation()}}` : permutation()}${below(3) ? "" : wait()}}`;
+            break;
+          }
+          case 38: {
+            const counter = "c" + names++;
+            const ring = sameType(random.pick([2, 3, 5, 9, 17]));
+            const step = ring.length < 2 ? "" : ring.slice(1).map((each, index) => `, ${ring[index].name} = ${each.name}`).join("");
+            all += `for (let ${counter} = 0; ${counter} < ${2 + below(3)} && (${condition()} || ${counter} < 1); ${counter}++${step}) {${below(2) ? assign() : rotation()}${below(2) ? `${int()} = opaqueInt(${int()}, ${counter});` : ""}${below(3) ? "" : wait()}}`;
+            break;
+          }
+          case 39: case 40: {
+            // One to three cases, the first body right behind the switch; the default is missing, shares a body with a case, or is the way back to the head of a loop.
+            const labels = random.sample(["0", "1", "2", "3", "5", "6", "7", "-1", "128"], random.between(1, 3));
+            const shared = below(3) ? -1 : below(labels.length);
+            const small = `switch (${random.pick([`${int()} & 7`, `${int()} & 3`, `${int()} as number`, `(${condition()} ? ${value("int")} : 128) & 7`])}) {${labels.map((each, index) => `case ${each}: ${index === shared ? "default: " : ""}${below(2) ? assign() : arm(random.sample(variables, random.pick([2, 5, 12])))} ${below(4) ? "break;" : ""}`).join("")}}`;
+            const counter = "c" + names++;
+            all += below(2) || turns > 40 ? small : `for (let ${counter} = 0; ${counter} < ${2 + below(3)}; ${counter}++) {${assign()}${below(2) ? rotation() : ""}${small}}`;
             break;
           }
           case 25: {
@@ -509,13 +600,13 @@ export function generate(random: Random): string {
     // prettier-ignore
     const first: Record<Kind, (index: number, type: string) => string> = {
       int: index => `(a * ${index + 1} + b * ${below(9)} + ${below(50)}) | 0`, uint: index => `(a * ${index + 1} - b) >>> 0`, wide: index => `a * ${random.pick(["4294967296", "1099511627776", "65536", "-8589934592"])} + b + ${index}`, double: index => `a * ${index}.5 + b / 4`,
-      number: index => random.pick([`a + ${index}`, `a * 0.5`, `a * 4294967296`]), flag: index => `((a + ${index}) & 1) === 0`, text: index => `String((a + ${index}) & 31)`, word: index => `words[(a + ${index}) & 3]`, box: index => `new Box(b + ${index}, null)`,
+      number: index => random.pick([`a + ${index}`, `a * 0.5`, `a * 4294967296`]), flag: index => `((a + ${index}) & 1) === 0`, text: index => `String((a + ${index}) & 31)`, word: index => `words[(a + ${index}) & 3]`, box: index => `new Box(b + ${index}, null)`, shape: index => `shapeOf(a + ${index}, new Box(b, null))`, boxes: index => `[new Box(a, null), new Box(b, null), new Box(${index}, null), new Box(a + b, null)]`, table: index => `new Map([[a & 7, b], [${index & 7}, a * 0.5]])`,
       memory: (_, type) => (type === "number[]" ? contents : `new ${type}(${contents})`), maybeInt: index => `(a + ${index}) & 1 ? a : undefined`, maybeDouble: index => `(a + ${index}) & 1 ? a * 0.5 : null`, maybeFlag: index => `(a + ${index}) & 1 ? a > b : undefined`,
       maybeText: index => `(a + ${index}) & 1 ? String(b) : undefined`, maybeBox: index => `(a + ${index}) & 1 ? new Box(a, null) : null`, any: index => random.pick([`a + ${index}`, `String(b)`, "undefined", `new Box(a, null)`, `a * 0.5`, "null"]),
     };
     // Ways out before the function needs anything.
     let body = random.pick(["", "", "if ((a & 15) === 3) return b;", "if (b > 60) return (a + b) | 0;", "if (a === 7) return opaqueInt(a, b);if (a === 9) return a;"]);
-    body += "const spare = new Box(a, null);";
+    body += "const spare = new Box(a, null);const round: Shape = new Disc(b, a * 0.5);const row: Box[] = [spare, spare, spare, spare];const counts = new Map<number, number>([[1, a]]);let sunk = false;";
     variables.forEach((each, index) => parameters.includes(each) || (body += `let ${each.name}: ${each.type} = ${first[each.kind](index, each.type)};`));
     for (let made = below(3); made--; ) {
       const [closure, written] = ["closure" + closures.length, int()];

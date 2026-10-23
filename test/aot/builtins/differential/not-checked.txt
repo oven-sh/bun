@@ -68,6 +68,7 @@ NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/0: it is n
 NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/1: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/1: it is not called: this realm does not have it
+NativeNewRustFunctionNode_cluster_bindingRsClusterRawBind/0: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeRustNode_crypto_bindingRsCreateNodeCryptoBindingZig/0: it is not called: this realm does not have it
 NativeRustNode_fs_bindingRsCreateBinding/0: it is not called: this realm does not have it
 PrivateGlobalsInherits/0: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which

@@ -301,7 +301,7 @@ export class ProductBed implements Bed {
   }
 
   async judge(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
-    const executable = join(folder, "executable");
+    const executable = join(folder, process.platform === "win32" ? "executable.exe" : "executable");
     try {
       if (programs.length !== 1 || this.options.workers) return await this.#judgeTogether(folder, programs, flags);
       const [program] = programs;
@@ -357,7 +357,7 @@ ${table}if (isMainThread) {
   // One build holds every program as a module of its own, and an argument says which one a run imports: Bun's own library is
   // compiled once for all of them, and no run sees what another did. What the compiler proves, it proves about all of them at once.
   async #judgeTogether(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
-    const executable = join(folder, "executable");
+    const executable = join(folder, process.platform === "win32" ? "executable.exe" : "executable");
     const results = new Array<Judged>(programs.length);
     const entry = (members: number[]) => this.#writeEntryPoint(folder, programs, members);
     const all = programs.map((_, index) => index);

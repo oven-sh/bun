@@ -38,8 +38,13 @@ if (what === "limit") {
 console.log("the end");
 `;
 
-// The limit counts every process of the user, so 1 is reached wherever the tests run. It does not bind root.
-const underLimit = (executable: string) => ["sh", "-c", 'ulimit -u 1 && exec "$0"', executable];
+// The limit counts every process of the user, so 1 is reached wherever the tests run. It does not bind root. In dash its letter is p.
+const underLimit = (executable: string) => [
+  "sh",
+  "-c",
+  '{ ulimit -u 1 2>/dev/null || ulimit -p 1; } && exec "$0"',
+  executable,
+];
 
 describe.skipIf(!isLinux || isASAN)("a compiled program that can start no thread", () => {
   const folder = tempDir("aot-no-thread", { "program.ts": program });
@@ -64,7 +69,8 @@ describe.skipIf(!isLinux || isASAN)("a compiled program that can start no thread
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,
     });
-    isBound = !(await ask("limit")).stdout.startsWith("0\n");
+    // The program ran and could start no process: an uncaught EAGAIN. A shell that cannot set the limit ends with 2.
+    isBound = (await ask("limit")).exitCode === 1;
     if (!isBound)
       console.error("SKIPPED: the tests of no-thread-can-be-started.test.ts: `ulimit -u` does not bind this user");
   }, 120_000);

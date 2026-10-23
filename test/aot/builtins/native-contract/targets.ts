@@ -36,6 +36,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/BunDebugger\.cpp|console\.takeHeapSnapshot|jsFunction_(start|stop|collect)\w*(Profiler|Coverage)/, "it opens the inspector, waits for it or profiles the process"],
   [/spawnThreadsForTesting|createNodeWorker|jsFunctionPostMessage|^Bun\.WebView|^Bun\.Terminal$/, "it starts a thread, a process or a terminal"],
   [/Bun__FFI__cc|^%FFI%|napi_body/, "it compiles or loads machine code"],
+  [/^Bun\.FFI\.(CString|closeCallback|toArrayBuffer|toBuffer)$/, "it takes a number for an address, and reads or frees what is there"],
   [/upgrade_command\.rs|install_binding\.rs|trim_testing\.rs|patch\.rs:TestingAPIs\.apply|PackageManifest\.bindings|jsReadTarball|loadNpmrcFromJS/, "it works on files that its operands name outside the folder of the test"],
   [/jsSetSocketFault|jsClearSocketFaults|jsSetAsyncHooksEnabled|jsPsiTrigger|injectStdioReadError|setMax\w+ForTesting|emitMemoryPressure|seedCacheForTesting/, "it changes how the rest of the process behaves"],
   [/^%EventEmitter%\.prototype\.(removeAllListeners|off|removeListener|emit|setMaxListeners)$|^dispatchEvent$/, "with its own receiver it takes away or runs the handlers of the process"],

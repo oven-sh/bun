@@ -54,7 +54,7 @@ const prelude = `class Subclass extends Array {}
 function freezeInCallee(a) { return Object.freeze(a); }
 function storeInCallee(a, k, v) { a[k] = v; }
 function normalize(s, i) { return s.split(String(i + 1)).join("J").split(String(i)).join("I"); }
-function count(f) { const seen = {}; for (let i = 1000; i < 21000; i++) { let outcome; try { outcome = normalize(String(f(i)), i); } catch (e) { outcome = "uncaught " + e.name; } seen[outcome] = (seen[outcome] || 0) + 1; } return JSON.stringify(seen); }
+function count(f) { const seen = {}; for (let i = 1000; i < ${isASAN ? 5000 : 21000}; i++) { let outcome; try { outcome = normalize(String(f(i)), i); } catch (e) { outcome = "uncaught " + e.name; } seen[outcome] = (seen[outcome] || 0) + 1; } return JSON.stringify(seen); }
 `;
 
 export function frozenArrayTests(part: number, parts: number) {

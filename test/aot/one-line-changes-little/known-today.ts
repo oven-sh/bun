@@ -61,7 +61,15 @@ export const knownInLibrary: Readonly<Record<string, string>> = {
   "promise-new": "bytes of code 233648 -> 300288",
   "top-level-await": "bytes of code 233648 -> 301152",
   "response-json": "bytes of code 233648 -> 301488",
-  ...(process.platform === "win32" && { "process-binding": "bytes of code 233648 -> 299328" }),
+  ...(process.platform === "win32" && {
+    "process-binding": "bytes of code 233648 -> 299328",
+    "process-env": "bytes of code 233648 -> 771044",
+    "abort-controller": "bytes of code 233648 -> 299616",
+    "async-function": "bytes of code 233648 -> 299840",
+    "event-target": "bytes of code 233648 -> 299584",
+    "promise-then": "bytes of code 233648 -> 299872",
+    "promise-then-write": "bytes of code 233648 -> 299600",
+  }),
 };
 
 /** accesses free | tested | by name, calls direct | guarded | unknown, bytes of code of the program; alone: 66 | 15 | 9, 35 | 0 | 0, 8,715 */

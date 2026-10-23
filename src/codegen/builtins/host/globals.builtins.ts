@@ -1507,11 +1507,24 @@ export default b.declarations(
       { start: b.inspected, end: b.inspected },
     ),
   }),
-  // The three that load machine code: dlopen, linkSymbols and CFunction of bun:ffi call them. The module takes the third off the object when it is evaluated.
-  b.namespace(
-    "Bun.FFI",
-    Object.fromEntries(["cfunction", "dlopen", "linkSymbols"].map(name => [name, b.otherwiseBy(b.generic)])),
-  ),
+  // Three load machine code: dlopen, linkSymbols and CFunction of bun:ffi call them. The module takes cfunction off the object when it is evaluated.
+  b.namespace("Bun.FFI", {
+    ...Object.fromEntries(
+      [
+        "CString",
+        "callback",
+        "cfunction",
+        "closeCallback",
+        "dlopen",
+        "linkSymbols",
+        "ptr",
+        "toArrayBuffer",
+        "toBuffer",
+        "viewSource",
+      ].map(name => [name, b.otherwiseBy(b.generic)]),
+    ),
+    read: b.property(b.any),
+  }),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
     ...Object.fromEntries(undeclaredFunctionsOfDNS.map(name => [name, b.otherwiseBy(b.generic)])),

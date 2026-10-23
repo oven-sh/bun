@@ -992,7 +992,26 @@ fn emit_path_from_own_directory(
     let length = member::emit_get(lowering, directory, length);
     let slice = lowering.builder.builtin(BuiltinId::StringPrototypeSlice);
     let arguments = Arguments::Values(smallvec![length]);
-    let rest = call::emit_call(lowering, slice, Some(text), arguments, CallSite::default());
+    let mut rest = call::emit_call(lowering, slice, Some(text), arguments, CallSite::default());
+    // `path.join` answers `B:\~BUN\root\plugins\a.js` there.
+    let platform = lowering.file.inputs.options.platform;
+    if platform.contains(Platforms::WINDOWS) {
+        let replace_all = lowering
+            .builder
+            .builtin(BuiltinId::StringPrototypeReplaceAll);
+        let separators = [&b"\\"[..], b"/"].map(|separator| {
+            let separator = lowering.file.intern_bytes(separator);
+            lowering.builder.string(separator)
+        });
+        let arguments = Arguments::Values(smallvec![separators[0], separators[1]]);
+        rest = call::emit_call(
+            lowering,
+            replace_all,
+            Some(rest),
+            arguments,
+            CallSite::default(),
+        );
+    }
     let dot = lowering.file.intern_bytes(b".");
     let dot = lowering.builder.string(dot);
     let from_folder = lowering.builder.strcat(&[dot, rest]);

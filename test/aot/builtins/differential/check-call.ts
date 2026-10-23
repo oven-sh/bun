@@ -92,8 +92,8 @@ function findInvocation(realm: Realm, { entry, mode }: Call): Invocation | strin
   // A function that a native binding answers is known by the name of its native code.
   const binding = realm.bindingAnswering(entry.token)?.binding;
   const reason = reasonNeverCalled(entry.path) ?? (binding && reasonTargetIsSkipped(binding.path));
-  // A read or a store of the member calls nothing. What makes a standard stream is a getter.
-  const isPlainRead = (mode === "Get" || mode === "Set") && entry.kind === "DataProperty" && !/^process\.std/.test(entry.path);
+  // A read or a store of the member calls nothing, and a read of such a binding only makes the function. What makes a standard stream is a getter.
+  const isPlainRead = (mode === "Get" || mode === "Set") && (entry.kind === "DataProperty" || /^native:New(Cpp|Rust)Function:/.test(entry.path)) && !/^process\.std/.test(entry.path);
   if (reason !== undefined && !isPlainRead) return reason;
   const hasHolder = entry.holder === null || realm.valueOf(entry.holder) !== undefined;
   if (!hasHolder && realm.valueOf(entry.token) === undefined) return "this realm does not have its holder";

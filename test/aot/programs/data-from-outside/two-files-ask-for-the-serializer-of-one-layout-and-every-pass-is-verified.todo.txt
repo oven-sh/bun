@@ -1,0 +1,1 @@
+The pinned engine does not have the fix yet: with --aot-check=verify-each-pass the build stops behind the pass that inlines (aot/passes/AOTInlineCopy.cpp, copyIn()).

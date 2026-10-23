@@ -44,6 +44,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^Bun\.(sleepSync|spawn|spawnSync|openInEditor|serve|listen|connect|udpSocket|build|\$|plugin|generateHeapSnapshot|shrink)$/, "it blocks, starts a process or opens a socket"],
   [/^Atomics\.wait$/, "it blocks the thread"],
   [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
+  [/^native:NewRustFunction:node_cluster_binding\.rs:clusterRawBind$/, "it asks the name servers about every string that is no address, and waits for them"],
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
   [/^ShadowRealm\.prototype\.importValue$/, "it loads whatever its operand names"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],

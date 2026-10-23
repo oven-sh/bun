@@ -21,7 +21,7 @@
 //
 // The first three groups have a file each, one-line-changes-little-<part>.test.ts, and the fourth, whose builds hold the library, has five: a line is a build.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -127,7 +127,8 @@ function addedToLibrary(alone: Measured, withLine: Measured) {
   const found: string[] = [];
   if (withLine.functions > alone.functions + mostFunctionsAdded)
     found.push(moved("functions", alone.functions, withLine.functions));
-  if (withLine.codeBytes > alone.codeBytes + mostCodeBytesAdded)
+  // An ASAN build emits four times the bytes for the same functions.
+  if (!isASAN && withLine.codeBytes > alone.codeBytes + mostCodeBytesAdded)
     found.push(moved("bytes of code", alone.codeBytes, withLine.codeBytes));
   return found;
 }

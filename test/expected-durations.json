@@ -4770,6 +4770,9 @@
     "default": 37,
     "windows": 60
   },
+  "aot/stores-that-are-refused-while-predictions-fail-and-collections-run.test.ts": {
+    "default": 60000
+  },
   "aot/stores-to-class-objects-avoid-runtime.test.ts": {
     "default": 413,
     "windows": 61

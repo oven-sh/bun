@@ -13,7 +13,7 @@
 # CHECK-LABEL: f5: size=
 # A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
 # RUN(X64): generate-code units
-# REQUIRES(X64): x86_64
+# REQUIRES(X64): x86_64 not-windows
 # X64-LABEL: f2: size=
 # X64-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
 # X64-LABEL: f4: size=

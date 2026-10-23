@@ -397,7 +397,7 @@ describe("bundler", () => {
       files: {
         "/entry.ts": /* js */ `
           const [a, b] = await Promise.all([import("./a"), import("./b")]);
-          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
+          const root = Bun.main.slice(0, Math.max(Bun.main.lastIndexOf("/"), Bun.main.lastIndexOf("\\\\")) + 1);
           const pathIn = (stack: string) => stack.slice(stack.indexOf(root), stack.indexOf(".js", stack.indexOf(root)) + 3);
           const { mock, jest } = await new Function("return import('bun:test')")();
           const replacement = () => ({ table: { kept: "mocked", other: "mocked" }, readTable: () => "mocked", fromA: () => "mocked" });
@@ -491,7 +491,7 @@ describe("bundler", () => {
           const load = () => import("./lazy");
           const first = await load();
           console.log(first.bump(), first.bump());
-          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
+          const root = Bun.main.slice(0, Math.max(Bun.main.lastIndexOf("/"), Bun.main.lastIndexOf("\\\\")) + 1);
           const listed = Object.keys(require.cache).filter(name => name.startsWith(root) && name !== Bun.main);
           for (const name of listed) delete require.cache[name];
           console.log(listed.length, (await load()) === first, first.bump());

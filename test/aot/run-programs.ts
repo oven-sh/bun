@@ -485,7 +485,11 @@ async function expectBuildErrors(program: CompiledProgram, stored: string) {
 }
 
 function expectStored(file: string, result: RunResult) {
-  const text = result.stdout + (result.exitCode ? `exit code ${result.exitCode}\n${result.stderr}\n` : result.stderr);
+  // What is stored names the files of an executable as they are named elsewhere than on Windows.
+  const text = (result.stdout + (result.exitCode ? `exit code ${result.exitCode}\n${result.stderr}\n` : result.stderr)).replace(
+    /B:\\~BUN\\root[^\s'":]*/g,
+    path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/"),
+  );
   if (updates) writeFileSync(file, text);
   expect(text).toBe(readFileSync(file, "utf8"));
 }

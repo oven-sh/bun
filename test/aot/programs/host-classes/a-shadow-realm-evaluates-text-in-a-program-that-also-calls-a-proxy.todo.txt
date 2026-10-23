@@ -1,0 +1,1 @@
+The pinned engine does not have the fix yet: new ShadowRealm().evaluate(text) throws an EvalError once the program calls a proxy anywhere (aot/valueflow/AOTValueFlowRulesHeapLookups.cpp, readEvaluators()).

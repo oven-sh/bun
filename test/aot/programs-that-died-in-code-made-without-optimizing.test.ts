@@ -5,7 +5,7 @@
 // No machine that runs one of these lanes can be asked afterwards, so where a program dies this test prints what is needed to read the fault: what the executable
 // said, the code of the program's own functions, and the code around each place of the stack that lies in compiled code. A line `CODE <name> <offset> <bytes in hexadecimal>`.
 import { expect } from "bun:test";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
 import { built, slot, spawned, withoutCoreDump } from "./run-programs";
@@ -15,8 +15,10 @@ const programs = [
   "type-rules/loop-bounds-that-arrive-boxed.ts",
   "structural-types/typed-arrays-are-read-past-their-end-into-an-int32.ts",
   "typed-objects/null-checks-of-narrow-references.ts",
+  "language/a-case-that-is-compiled-right-behind-its-switch-reads-its-own-registers.ts",
   "language/a-shift-of-32-bits-is-no-part-of-a-64-bit-sum.ts",
   "language/a-value-of-32-bits-feeds-a-phi-of-64-bits-in-the-same-frame-slot.ts",
+  "language/an-index-shifted-in-32-bits-wraps-before-it-is-an-address.ts",
   "language/equalities-joined-by-or-and-switches-within-64-values.ts",
   "language/int32-read-once-used-variously.ts",
   "language/switch-cases-share-targets.ts",
@@ -24,7 +26,7 @@ const programs = [
   "language/untyped-value-vs-many-integers.js",
   "structural-types/a-switch-over-a-sparse-enum-gets-numbers-that-wrap-around-to-a-member.ts",
   "structural-types/enum-typed-fields-elements-and-variables-hold-any-number.ts",
-];
+].filter(name => !existsSync(join(import.meta.dir, "programs", name.replace(/\.[a-z]+$/, ".todo.txt"))));
 
 function codeOf(executable: Buffer) {
   const magic = Buffer.from("BUNAOT01", "latin1");

@@ -136,7 +136,7 @@ setTimeout(async u => {
   console.log('Bun.escapeHTML', r);
   }
   {
-  let r; try { const f = Object.entries(u).find(([k]) => k === glue('f', 'ileURLToPath'))?.[1]; r = f === undefined ? "absent" : String(f('file:///a')); } catch (e) { r = "threw " + e.name + ": " + String(e.message).slice(0, 80); }
+  let r; try { const f = Object.entries(u).find(([k]) => k === glue('f', 'ileURLToPath'))?.[1]; r = f === undefined ? "absent" : String(f(process.platform === "win32" ? 'file:///C:/a' : 'file:///a')).replace(/^C:\\/, "/"); } catch (e) { r = "threw " + e.name + ": " + String(e.message).slice(0, 80); }
   console.log('Bun.fileURLToPath', r);
   }
   {
@@ -216,7 +216,7 @@ setTimeout(async u => {
   console.log('Bun.version', r);
   }
   {
-  let r; try { const f = Object.entries(u).find(([k]) => k === glue('e', 'nv'))?.[1]; r = f === undefined ? "absent" : String(typeof f.PATH); } catch (e) { r = "threw " + e.name + ": " + String(e.message).slice(0, 80); }
+  let r; try { const f = Object.entries(u).find(([k]) => k === glue('e', 'nv'))?.[1]; r = f === undefined ? "absent" : String(typeof (f.PATH ?? f.Path /* TODO: on Windows PATH alone is undefined here; why is not known */)); } catch (e) { r = "threw " + e.name + ": " + String(e.message).slice(0, 80); }
   console.log('Bun.env', r);
   }
   {

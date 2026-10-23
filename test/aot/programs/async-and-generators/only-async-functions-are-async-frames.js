@@ -1,7 +1,7 @@
 // Only async functions wait, so only they are async frames of an error that native code creates. A plain function between two of them has handed on the promise and returned.
 const { promises } = require("node:fs");
 const missing = "/nonexistent-path/does-not-exist.txt";
-const framesOf = error => JSON.stringify((error.stack ?? "").split("\n").slice(1).map(line => line.trim().replace(/\(.*[\/]/, "(")));
+const framesOf = error => JSON.stringify((error.stack ?? "").split("\n").slice(1).map(line => line.trim().replace(/\(.*[\\\/]/, "(")));
 async function innermost() { return await promises.readFile(missing); }
 function handsOn() { return innermost(); }
 const arrowHandsOn = () => handsOn();

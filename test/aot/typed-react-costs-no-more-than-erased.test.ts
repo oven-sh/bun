@@ -2,7 +2,7 @@
 // built again with --aot-erase-types. A type is knowledge. Code that has it may not cost more than the same code without it: not in instructions a turn, not in bytes.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 import { countTurn, functionsOf, type Turn } from "./impostors-keep-their-fast-paths/look";
 import { whyInstructionsCannotBeCounted } from "./instruction-counts/count-instructions";
@@ -21,7 +21,11 @@ const typedReconciler = join(
   "cjs",
   "react-reconciler.production.js",
 );
-const whyNotCounted = unsupported ? "" : await whyInstructionsCannotBeCounted();
+const whyNotCounted = unsupported
+  ? ""
+  : isASAN || isDebug
+    ? "the counts are those of a release build"
+    : await whyInstructionsCannotBeCounted();
 
 // The build costs 1.10 times the instructions of the erased build and 1.12 times its bytes. Neither share may pass these. Both belong at 1 or below: the two todo tests.
 const known = { instructionsOfATurn: 1.12, bytesOfCode: 1.15 };

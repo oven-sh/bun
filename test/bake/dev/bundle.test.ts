@@ -1511,6 +1511,413 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// The dev server keeps the output of a barrel between bundles. It parses the barrel again only
+// for an import that reads a re-export which that output left deferred.
+
+/** The module ids of the hot update that `getMostRecentHmrChunk` returned. */
+function hotUpdateModules(chunk: string): string[] {
+  let ids: string[] = [];
+  new Function("self", chunk)({
+    [Symbol.for("bun:hmr")]: (modules: object) => void (ids = Object.keys(modules)),
+  });
+  return ids;
+}
+// A barrel with three re-exports. An app that reads one of them leaves the other two deferred.
+const alphaBetaGamma = (dir: string) => ({
+  [`${dir}/index.js`]: `
+    export { Alpha } from './alpha.js';
+    export { Beta } from './beta.js';
+    export { Gamma } from './gamma.js';
+  `,
+  [`${dir}/alpha.js`]: `export const Alpha = "ALPHA";`,
+  [`${dir}/beta.js`]: `export const Beta = "BETA";`,
+  [`${dir}/gamma.js`]: `export const Gamma = "GAMMA";`,
+});
+const alphaBetaGammaPackage = {
+  "node_modules/barrel-lib/package.json": JSON.stringify({
+    name: "barrel-lib",
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  ...alphaBetaGamma("node_modules/barrel-lib"),
+};
+
+{
+  const app = (n: number) => `
+    import { Alpha } from './lib/index.js';
+    import './other';
+    import.meta.hot.accept();
+    console.log("app${n} ran " + Alpha);
+  `;
+  devTest("barrel optimization: a save of an importer sends only the importer", {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      // The barrel is app code, so that the test can save it too.
+      "package.json": JSON.stringify({ name: "app", sideEffects: false }),
+      "app.ts": app(1),
+      "other.ts": `
+        import { Beta } from './lib/index.js';
+        import { helper } from './helper';
+        import.meta.hot.accept();
+        console.log("other ran " + Beta + " " + helper);
+      `,
+      "helper.ts": `
+        import { Beta } from './lib/index.js';
+        export const helper = "helper(" + Beta + ")";
+      `,
+      ...alphaBetaGamma("lib"),
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { storeHotChunks: true });
+      await c.expectMessage("other ran BETA helper(BETA)", "app1 ran ALPHA");
+
+      await dev.write("app.ts", app(2));
+      expect(hotUpdateModules(await c.getMostRecentHmrChunk())).toEqual(["app.ts"]);
+      // other.ts imports the barrel too. It does not run again.
+      await c.expectMessage("app2 ran ALPHA");
+
+      // A save of the barrel sends the barrel. gamma.js stays deferred.
+      const barrel = dev.read("lib/index.js");
+      await dev.write("lib/index.js", barrel + "// saved");
+      expect(hotUpdateModules(await c.getMostRecentHmrChunk())).toEqual(["lib/index.js"]);
+      await c.expectMessageInAnyOrder("other ran BETA helper(BETA)", "app2 ran ALPHA");
+
+      // The same after a save that does not parse.
+      await dev.write("lib/index.js", barrel + "export {", { errors: null });
+      await dev.write("lib/index.js", barrel + "// fixed");
+      expect(hotUpdateModules(await c.getMostRecentHmrChunk())).toEqual(["lib/index.js"]);
+      await c.expectMessageInAnyOrder("other ran BETA helper(BETA)", "app2 ran ALPHA");
+    },
+  });
+}
+
+{
+  const other = (n: number) => `
+    import { Alpha } from 'barrel-lib';
+    import.meta.hot.accept();
+    console.log("other${n} ran " + Alpha);
+  `;
+  devTest("barrel optimization: a save keeps the re-exports that a namespace import made live", {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      // index.ts does not accept hot updates. An update of a module that it imports reloads the page.
+      "index.ts": `
+        import { Alpha } from 'barrel-lib';
+        import './other';
+        console.log("index ran " + Alpha);
+      `,
+      "other.ts": other(1),
+      ...alphaBetaGammaPackage,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { storeHotChunks: true });
+      await c.expectMessage("other1 ran ALPHA", "index ran ALPHA");
+
+      await c.expectReload(async () => {
+        await dev.write(
+          "index.ts",
+          `
+            import * as ns from 'barrel-lib';
+            import './other';
+            globalThis.readBarrel = () => Object.keys(ns).sort().map(name => ns[name]).join(" ");
+            console.log("index ran " + globalThis.readBarrel());
+          `,
+        );
+      });
+      await c.expectMessage("other1 ran ALPHA", "index ran ALPHA BETA GAMMA");
+
+      await dev.write("other.ts", other(2));
+      expect(hotUpdateModules(await c.getMostRecentHmrChunk())).toEqual(["other.ts"]);
+      await c.expectMessage("other2 ran ALPHA");
+      expect(await c.js`globalThis.readBarrel()`).toBe("ALPHA BETA GAMMA");
+    },
+  });
+}
+
+// The server graph, the SSR graph and the client graph each hold their own output of a barrel.
+{
+  const page = (names: string, n: number) => `
+    import { ${names} } from 'barrel-lib';
+    import "../Comp";
+    export default function () {
+      return Response.json({ used: [${names}], loads: globalThis.loads });
+    }
+    // ${n}
+  `;
+  const comp = (n: number) => `
+    "use client";
+    import { Alpha } from 'barrel-lib';
+    export const marker = Alpha + ${n};
+  `;
+  devTest("barrel optimization: an unchanged barrel is parsed once per graph", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    pluginFile: countLoads("barrel-lib.index[.]js$"),
+    files: {
+      "routes/index.ts": page("Alpha", 1),
+      "routes/other.ts": `
+        import { Alpha } from 'barrel-lib';
+        export default function () {
+          return new Response(Alpha);
+        }
+      `,
+      "Comp.ts": comp(1),
+      ...alphaBetaGammaPackage,
+      // No import reads Gamma, so this file is never parsed.
+      "node_modules/barrel-lib/gamma.js": `export const Gamma = <<<SYNTAX_ERROR>>>;`,
+    },
+    async test(dev) {
+      const oncePerGraph = { "index.js": 2, "index.js (client)": 1 };
+      expect(await dev.fetch("/").json()).toEqual({ used: ["ALPHA"], loads: oncePerGraph });
+
+      // The first bundle of another route.
+      await dev.fetch("/other").equals("ALPHA");
+      expect(await dev.fetch("/").json()).toEqual({ used: ["ALPHA"], loads: oncePerGraph });
+
+      await dev.write("routes/index.ts", page("Alpha", 2));
+      await dev.write("Comp.ts", comp(2));
+      expect(await dev.fetch("/").json()).toEqual({ used: ["ALPHA"], loads: oncePerGraph });
+
+      // The output of the server graph left Beta deferred: one parse, for that graph.
+      const oneMoreForTheServer = { "index.js": 3, "index.js (client)": 1 };
+      await dev.write("routes/index.ts", page("Alpha, Beta", 3));
+      expect(await dev.fetch("/").json()).toEqual({ used: ["ALPHA", "BETA"], loads: oneMoreForTheServer });
+      await dev.write("routes/index.ts", page("Alpha, Beta", 4));
+      expect(await dev.fetch("/").json()).toEqual({ used: ["ALPHA", "BETA"], loads: oneMoreForTheServer });
+    },
+  });
+}
+
+{
+  // A barrel package with the entry file `<name>.js`, so that `countLoads` tells the packages apart.
+  const lib = (name: string, index: string, files: Record<string, string>) => ({
+    [`node_modules/${name}/package.json`]: JSON.stringify({
+      name,
+      version: "1.0.0",
+      main: `./${name}.js`,
+      sideEffects: false,
+    }),
+    [`node_modules/${name}/${name}.js`]: index,
+    ...Object.fromEntries(Object.entries(files).map(([file, text]) => [`node_modules/${name}/${file}`, text])),
+  });
+  const abLib = (name: string) =>
+    lib(name, `export { a } from './a.js'; export { b } from './b.js';`, {
+      "a.js": `export const a = "A";`,
+      "b.js": `export const b = "B";`,
+    });
+  // Each importer first reads `a`. Its second form reads `b`, which the barrel left deferred.
+  // The second form reads when `read` is called: the hot update has loaded the barrel by then.
+  const importers: Record<string, [first: string, second: string]> = {
+    named: [
+      `import { a } from 'named-lib'; export const read = () => a;`,
+      `import { a, b } from 'named-lib'; export const read = () => a + b;`,
+    ],
+    namespace: [
+      `import { a } from 'namespace-lib'; export const read = () => a;`,
+      `import * as ns from 'namespace-lib'; export const read = () => Object.keys(ns).sort().map(name => ns[name]).join("");`,
+    ],
+    required: [
+      `import { a } from 'required-lib'; export const read = () => a;`,
+      `export const read = () => { const lib = require('required-lib'); return lib.a + lib.b; };`,
+    ],
+    dynamic: [
+      `import { a } from 'dynamic-lib'; export const read = () => a;`,
+      `export const read = async () => { const lib = await import('dynamic-lib'); return lib.a + lib.b; };`,
+    ],
+    star: [
+      `import { a } from 'star-lib'; export const read = () => a;`,
+      `export const read = async () => { const all = await import('./star-all'); return all.a + all.b; };`,
+    ],
+  };
+  const once = Object.fromEntries(Object.keys(importers).map(name => [`${name}-lib.js`, 1]));
+  devTest("barrel optimization: an import that reads a deferred re-export parses the barrel again", {
+    framework: minimalFramework,
+    pluginFile: countLoads("-lib[.]js$"),
+    files: {
+      "routes/index.ts": `
+        ${Object.keys(importers)
+          .map(name => `import * as ${name} from "../${name}";`)
+          .join("\n")}
+        export default async function () {
+          return Response.json({
+            read: { ${Object.keys(importers)
+              .map(name => `${name}: await ${name}.read()`)
+              .join(", ")} },
+            loads: globalThis.loads,
+          });
+        }
+      `,
+      ...Object.fromEntries(Object.entries(importers).map(([name, [first]]) => [`${name}.ts`, first])),
+      "star-all.ts": `export * from 'star-lib';`,
+      ...Object.assign({}, ...Object.keys(importers).map(name => abLib(`${name}-lib`))),
+      // The import of `bad` fails to resolve.
+      ...lib("failing-lib", `export { a } from './a.js'; export { bad } from './missing.js';`, {
+        "a.js": `export const a = "A";`,
+      }),
+      "failing.ts": `import { a } from 'failing-lib'; export const read = () => a;`,
+    },
+    async test(dev) {
+      const read = Object.fromEntries(Object.keys(importers).map(name => [name, "A"]));
+      const loads = { ...once };
+      expect(await dev.fetch("/").json()).toEqual({ read, loads });
+
+      for (const [name, [, second]] of Object.entries(importers)) {
+        await dev.write(`${name}.ts`, second);
+        read[name] = "AB";
+        loads[`${name}-lib.js`] = 2;
+        expect(await dev.fetch("/").json()).toEqual({ read, loads });
+      }
+
+      // The barrel that failed is parsed again, and fails again, when another importer is saved.
+      await dev.write("routes/index.ts", `import "../failing"; ` + dev.read("routes/index.ts"));
+      expect(await dev.fetch("/").json()).toEqual({ read, loads: { ...loads, "failing-lib.js": 1 } });
+      await dev.write("failing.ts", `import { a, bad } from 'failing-lib'; export const read = () => a + bad;`);
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("named.ts", `import "failing-lib"; ` + importers.named[1]);
+      expect((await dev.fetch("/")).status).toBe(500);
+    },
+  });
+}
+
+// late.ts is parsed after outer/index.ts: it reads `p` through a barrel that deferred it.
+{
+  const through = (names: string, read: string) => `
+    import { ${names} } from './outer/index.ts';
+    export const read = async () => ${read};
+  `;
+  const inner = (names: string, read: string) => `
+    import { ${names} } from 'inner-lib';
+    export const read = () => ${read};
+  `;
+  devTest("barrel optimization: a barrel keeps the re-exports that another barrel reads", {
+    framework: minimalFramework,
+    pluginFile: countLoads("(outer.index[.]ts|inner-lib.index[.]js)$"),
+    files: {
+      "routes/index.ts": `
+        import * as through from "../through";
+        import * as inner from "../inner";
+        export default async function () {
+          return Response.json({
+            read: { through: await through.read(), inner: inner.read() },
+            loads: globalThis.loads,
+          });
+        }
+      `,
+      "through.ts": through("a", "a"),
+      "inner.ts": inner("q", "q"),
+      "late.ts": `
+        import { p } from './outer/index.ts';
+        export const read = () => p;
+      `,
+      // App code re-exports through a getter, so `p` reads what the inner barrel has now.
+      "outer/package.json": JSON.stringify({ name: "outer", sideEffects: false }),
+      "outer/index.ts": `
+        export { a } from './a.ts';
+        export { p } from 'inner-lib';
+        export { late } from './late.ts';
+      `,
+      "outer/a.ts": `export const a = "A";`,
+      "outer/late.ts": `export const late = () => import('../late');`,
+      "node_modules/inner-lib/package.json": JSON.stringify({
+        name: "inner-lib",
+        version: "1.0.0",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "node_modules/inner-lib/index.js": `
+        export { p } from './p.js';
+        export { q } from './q.js';
+        export { r } from './r.js';
+      `,
+      "node_modules/inner-lib/p.js": `export const p = "P";`,
+      "node_modules/inner-lib/q.js": `export const q = "Q";`,
+      "node_modules/inner-lib/r.js": `export const r = "R";`,
+    },
+    async test(dev) {
+      expect(await dev.fetch("/").json()).toEqual({
+        read: { through: "A", inner: "Q" },
+        loads: { "index.ts": 1, "index.js": 1 },
+      });
+
+      // The outer barrel is parsed again for `late`. Then late.ts asks it for `p`, and the
+      // inner barrel is parsed again for `p`.
+      await dev.write("through.ts", through("a, late", "a + (await late()).read()"));
+      expect(await dev.fetch("/").json()).toEqual({
+        read: { through: "AP", inner: "Q" },
+        loads: { "index.ts": 2, "index.js": 2 },
+      });
+
+      // The inner barrel is parsed again for `r`. No import of this bundle reads `p`.
+      await dev.write("inner.ts", inner("q, r", "q + r"));
+      expect(await dev.fetch("/").json()).toEqual({
+        read: { through: "AP", inner: "QR" },
+        loads: { "index.ts": 2, "index.js": 3 },
+      });
+    },
+  });
+}
+
+// HMR lowering merges the two statements of './x.js' into one. `b` is a name of the second
+// statement, and late.ts asks for it after the barrel was parsed with './x.js' deferred.
+devTest("barrel optimization: a later statement of a deferred path is read after the barrel is parsed", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { late } from 'lib';
+      const { b } = await late();
+      console.log('got: ' + typeof b);
+    `,
+    "late.ts": `export { b } from 'lib';`,
+    "node_modules/lib/package.json": JSON.stringify({
+      name: "lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/lib/index.js": `
+      export { a } from './x.js';
+      export { late } from './late.js';
+      export { b } from './x.js';
+    `,
+    "node_modules/lib/x.js": `export const a = "A"; export function b() {}`,
+    "node_modules/lib/late.js": `export const late = () => import('../../late');`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function");
+  },
+});
+
+// The server graph has one list of imports for the server output and the SSR output of a file.
+// Here the server output of the barrel imports all three files and the SSR output only beta.js.
+devTest("barrel optimization: the server graph keeps the imports of both outputs of a barrel", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    "routes/index.ts": `
+      import * as ns from '../lib/index.js';
+      import "../Comp";
+      export default function () {
+        return new Response(Object.keys(ns).sort().map(name => ns[name]).join(" "));
+      }
+    `,
+    "Comp.ts": `
+      "use client";
+      import { Beta } from './lib/index.js';
+      export const marker = Beta;
+    `,
+    "lib/package.json": JSON.stringify({ name: "lib", sideEffects: false }),
+    ...alphaBetaGamma("lib"),
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("ALPHA BETA GAMMA");
+    await dev.delete("lib/alpha.js", { errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
 // The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
 // user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
 devTest("a render() that does not return a Response is reported as that", {

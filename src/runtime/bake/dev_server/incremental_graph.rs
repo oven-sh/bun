@@ -294,6 +294,9 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) edges: Vec<Edge<SIDE>>,
     /// Freed edge slots for reuse by `new_edge`.
     pub(crate) edges_free_list: Vec<EdgeIndex>,
+    /// `barrel_imports::held_exports` of each bundled output that left a re-export deferred,
+    /// by `barrel_slot`. An output that is not in here has every re-export live.
+    pub(crate) barrel_exports: ArrayHashMap<u32, Box<[u64]>>,
     // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
     /// Total byte length of the current JS chunk being assembled.
     pub(crate) current_chunk_len: usize,
@@ -384,6 +387,80 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.bundled_files.values()[index.get() as usize].html_route_bundle_index
     }
 
+    /// Key of `barrel_exports`. The server graph holds two outputs of one file: server and SSR.
+    #[inline]
+    fn barrel_slot(file: FileIndex<SIDE>, graph: bake::Graph) -> u32 {
+        (file.get() << 1) | u32::from(graph == bake::Graph::Ssr)
+    }
+
+    /// `barrel_imports::held_exports` of the output held for `file` in `graph`. Empty: that
+    /// output has no deferred re-export.
+    pub(crate) fn barrel_exports(
+        &self,
+        file: FileIndex<SIDE>,
+        graph: bake::Graph,
+    ) -> bun_ptr::RawSlice<u64> {
+        if self.barrel_exports.is_empty() {
+            return bun_ptr::RawSlice::EMPTY;
+        }
+        match self.barrel_exports.get(&Self::barrel_slot(file, graph)) {
+            Some(exports) => bun_ptr::RawSlice::new(exports),
+            None => bun_ptr::RawSlice::EMPTY,
+        }
+    }
+
+    /// `barrel_exports` of the output held for `path` in `graph`, stale or not. A new parse of
+    /// the file keeps live what that output has live. `None`: the graph holds no output of it.
+    pub(crate) fn held_barrel_exports(
+        &self,
+        path: &[u8],
+        graph: bake::Graph,
+    ) -> Option<bun_ptr::RawSlice<u64>> {
+        let index = self.get_file_index(path)?;
+        let exports = self.barrel_exports(index, graph);
+        if !exports.is_empty() {
+            return Some(exports);
+        }
+        let file = self.get_file_by_index(index);
+        let has_output = match SIDE {
+            Side::Client => matches!(&file.content, Content::Js(code) if !code.is_empty()),
+            Side::Server => {
+                file.kind == FileKind::Js
+                    && !file.failed
+                    && if graph == bake::Graph::Ssr {
+                        file.is_ssr
+                    } else {
+                        file.is_rsc
+                    }
+            }
+        };
+        has_output.then_some(exports)
+    }
+
+    /// Keeps `exports` with the output that `receive_chunk` just took for `index` in `graph`.
+    pub(crate) fn receive_barrel_exports(
+        &mut self,
+        ctx: &mut HotUpdateContext<'_>,
+        index: bun_ast::Index,
+        graph: bake::Graph,
+        exports: Box<[u64]>,
+    ) -> Result<(), bun_alloc::AllocError> {
+        if exports.is_empty() && self.barrel_exports.is_empty() {
+            return Ok(());
+        }
+        let file = ctx
+            .get_cached_index(SIDE, index)
+            .unwrap::<SIDE>()
+            .expect("unresolved index");
+        let slot = Self::barrel_slot(file, graph);
+        if exports.is_empty() {
+            self.barrel_exports.swap_remove(&slot);
+        } else {
+            self.barrel_exports.put(slot, exports)?;
+        }
+        Ok(())
+    }
+
     // ── per-bundle scratch accessors (kept for existing call sites) ────────
 
     /// Does NOT count `size_of::<Self>()`.
@@ -398,6 +475,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         graph += self.edge_lists.capacity() * size_of::<EdgeLists>();
         graph += self.edges.capacity() * size_of::<Edge<SIDE>>();
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
+        graph += self.barrel_exports.count() * (size_of::<u32>() + size_of::<Box<[u64]>>());
+        for exports in self.barrel_exports.values() {
+            graph += exports.len() * size_of::<u64>();
+        }
         match SIDE {
             Side::Client => {
                 graph += self.current_chunk_parts.capacity() * size_of::<FileIndex<SIDE>>();
@@ -540,6 +621,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // any such dependencies before freeing it so they do not dangle.
         directory_watchers
             .remove_dependencies_for_file(&self.bundled_files.keys()[file_index.get() as usize]);
+
+        if !self.barrel_exports.is_empty() {
+            for graph in [SIDE.graph(), bake::Graph::Ssr] {
+                self.barrel_exports
+                    .swap_remove(&Self::barrel_slot(file_index, graph));
+            }
+        }
 
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
@@ -820,6 +908,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             .unwrap::<SIDE>()
             .expect("unresolved index"); // do not process for failed chunks
 
+        // The server graph has one import list for the server output and the SSR output of a
+        // file. The second output of a bundle adds its imports to the list of the first.
+        let mut adds_to_list = false;
+        if mode == ProcessMode::Normal && matches!(SIDE, Side::Server) {
+            adds_to_list = ctx.server_seen_bit_set.is_set(file_index.get() as usize);
+            ctx.server_seen_bit_set.set(file_index.get() as usize);
+        }
+
         // Build a map from the existing import list. Later, entries that
         // were not marked as `.seen = true` will be freed.
         let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::default();
@@ -832,7 +928,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 quick_lookup.put_no_clobber(
                     dep.imported,
                     TempLookup {
-                        seen: false,
+                        seen: adds_to_list,
                         edge_index,
                     },
                 )?;
@@ -843,17 +939,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // Snapshot the length so the new ones are ignored when removing edges.
         let quick_lookup_values_to_care_len = quick_lookup.count();
 
-        // A new import linked list is constructed from scratch.
-        let mut new_imports: Option<EdgeIndex> = None;
-
-        if mode == ProcessMode::Normal && matches!(SIDE, Side::Server) {
-            if ctx.server_seen_bit_set.is_set(file_index.get() as usize) {
-                self.edge_lists[file_index.get() as usize].first_import = new_imports;
-                return Ok(());
-            }
-            // RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`) is
-            // intentionally not implemented.
-        }
+        // A new import linked list is constructed from scratch, or on top of the list of the
+        // first output.
+        let mut new_imports: Option<EdgeIndex> = if adds_to_list {
+            self.edge_lists[file_index.get() as usize].first_import
+        } else {
+            None
+        };
 
         match mode {
             ProcessMode::Normal => self.process_chunk_import_records(

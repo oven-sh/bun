@@ -281,6 +281,9 @@ pub(super) fn finalize_bundle(
     };
 
     let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
+    let named_exports = bv2.graph.ast.items_named_exports();
+    let named_imports = bv2.graph.ast.items_named_imports();
+    let input_file_flags = bv2.graph.input_files.items_flags();
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     debug_assert_eq!(
@@ -348,7 +351,8 @@ pub(super) fn finalize_bundle(
             }
         };
         let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
-        match targets[part_range.source_index.get() as usize].bake_graph() {
+        let graph = targets[part_range.source_index.get() as usize].bake_graph();
+        match graph {
             bake::Graph::Client => dev.client_graph.receive_chunk(
                 &mut ctx,
                 index,
@@ -385,6 +389,28 @@ pub(super) fn finalize_bundle(
                 },
                 graph == bake::Graph::Ssr,
             )?,
+        }
+        // `is_file_cached` answers for this output of a barrel by what it left deferred.
+        let barrel_exports = if input_file_flags[index.get() as usize]
+            .contains(bundler::Graph::InputFileFlags::HAS_DEFERRED_BARREL_EXPORT)
+        {
+            bundler::barrel_imports::held_exports(
+                &named_exports[index.get() as usize],
+                &named_imports[index.get() as usize],
+                import_records[index.get() as usize].as_slice(),
+            )
+        } else {
+            Box::default()
+        };
+        match graph {
+            bake::Graph::Client => {
+                dev.client_graph
+                    .receive_barrel_exports(&mut ctx, index, graph, barrel_exports)?
+            }
+            bake::Graph::Server | bake::Graph::Ssr => {
+                dev.server_graph
+                    .receive_barrel_exports(&mut ctx, index, graph, barrel_exports)?
+            }
         }
     }
 

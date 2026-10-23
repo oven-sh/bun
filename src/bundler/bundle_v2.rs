@@ -398,6 +398,8 @@ pub mod bv2_impl {
         #[derive(Copy, Clone)]
         pub struct CacheEntry {
             pub kind: CacheKind,
+            /// `barrel_imports::held_exports` of the cached output. Empty: it has no deferred re-export.
+            pub barrel_exports: bun_ptr::RawSlice<u64>,
         }
         /// INTERNAL_PREFIX ++ "/asset" = "/_bun/asset".
         pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
@@ -6569,12 +6571,20 @@ pub mod bv2_impl {
             // parse_result.value (invalidating the `result` pointer).
             let source_index = result.source.index;
             let target = result.ast.target;
+            let requests = this
+                .dev_server
+                .is_some()
+                .then_some(barrel_imports::ImporterRequests {
+                    named_imports: &result.ast.named_imports,
+                    export_star_import_records: &result.ast.export_star_import_records,
+                });
             let mut resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
                 import_records: &mut result.ast.import_records,
                 source: &result.source,
                 loader: result.loader,
                 target,
                 only_records: None,
+                requests,
             });
 
             if let Some(err) = resolve_result.last_error {
@@ -6645,6 +6655,8 @@ pub mod bv2_impl {
         pub(crate) target: options::Target,
         /// See `only_selected_record`.
         pub(crate) only_records: Option<&'a [u32]>,
+        /// Dev server: what the records read from their targets.
+        pub(crate) requests: Option<barrel_imports::ImporterRequests<'a>>,
     }
 
     pub(crate) struct ResolveImportRecordResult {
@@ -6714,10 +6726,12 @@ pub mod bv2_impl {
 
             let mut last_error: Option<Error> = None;
 
-            'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
+            'outer: for i in 0..ctx.import_records.len() {
                 if !only_selected_record(only_records, i) {
                     continue;
                 }
+                // Borrowed again after the dev server's cache question reads the other records.
+                let mut import_record = &mut ctx.import_records[i];
 
                 // Preserve original import specifier before resolution modifies path
                 if import_record.original_path.is_empty() {
@@ -7223,7 +7237,24 @@ pub mod bv2_impl {
 
                         import_record.source_index = Index::INVALID;
 
-                        if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
+                        let mut cached = dev_server.is_file_cached(path.text, bake_graph);
+                        if let Some(entry) = cached
+                            && !entry.barrel_exports.is_empty()
+                        {
+                            // The cached output of a barrel left re-exports deferred. It serves
+                            // this record unless the record reads one of them.
+                            if ctx.requests.is_none_or(|requests| {
+                                requests.reads_deferred_export(
+                                    ctx.import_records,
+                                    i,
+                                    &entry.barrel_exports,
+                                )
+                            }) {
+                                cached = None;
+                            }
+                            import_record = &mut ctx.import_records[i];
+                        }
+                        if let Some(entry) = cached {
                             let rel = bun_paths::resolve_path::relative_platform::<
                                 bun_paths::resolve_path::platform::Loose,
                                 false,

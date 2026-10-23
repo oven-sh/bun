@@ -17,6 +17,7 @@ use crate::Graph::InputFileFlags;
 use crate::Index;
 use crate::bundle_v2::BundleV2;
 use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
+use crate::options_impl::TargetExt as _;
 use crate::parse_task;
 
 bun_core::declare_scope!(barrel, hidden);
@@ -83,6 +84,120 @@ fn resolve_barrel_export(
     })
 }
 
+/// One re-export in the list the dev server keeps for the bundled output of a barrel
+/// (`held_exports`): the hash of its name. The low bit tells if that output left the import
+/// record of the name deferred.
+#[inline]
+fn held_export(alias: &[u8], deferred: bool) -> u64 {
+    (bun_wyhash::hash(alias) & !1) | u64::from(deferred)
+}
+
+/// The sorted `held_export` of each re-export of a printed file, for the dev server to keep
+/// with the output. Empty when the output has no deferred re-export.
+pub fn held_exports(
+    named_exports: &bun_ast::ast_result::NamedExports,
+    named_imports: &bun_ast::ast_result::NamedImports,
+    import_records: &[bun_ast::ImportRecord],
+) -> Box<[u64]> {
+    let mut exports: Vec<u64> = Vec::with_capacity(named_exports.count());
+    let mut has_deferred = false;
+    for (alias, entry) in named_exports.iter() {
+        let Some(imp) = named_imports.get(&entry.ref_) else {
+            continue;
+        };
+        let deferred = import_records
+            .get(imp.import_record_index as usize)
+            .is_some_and(|rec| rec.flags.contains(import_record::Flags::IS_BARREL_DEFERRED));
+        has_deferred |= deferred;
+        exports.push(held_export(alias, deferred));
+    }
+    if !has_deferred {
+        return Box::default();
+    }
+    exports.sort_unstable();
+    exports.into_boxed_slice()
+}
+
+/// What the import records of a parsed file read from their targets. The dev server's cache
+/// question (`resolve_import_records`) needs it for a target that is a barrel.
+#[derive(Clone, Copy)]
+pub(crate) struct ImporterRequests<'a> {
+    pub(crate) named_imports: &'a JSAst::NamedImports,
+    pub(crate) export_star_import_records: &'a [u32],
+}
+
+impl ImporterRequests<'_> {
+    /// True if record `index` reads a re-export that the cached output of its target left
+    /// deferred. `held` is the `held_exports` of that output. The reads are the requests that
+    /// `schedule_barrel_deferred_imports` records for a target that this bundle parses.
+    pub(crate) fn reads_deferred_export(
+        self,
+        records: &[bun_ast::ImportRecord],
+        index: usize,
+        held: &[u64],
+    ) -> bool {
+        let record = &records[index];
+        if matches!(record.kind, ImportKind::Require | ImportKind::Dynamic)
+            || self.export_star_import_records.contains(&(index as u32))
+        {
+            return true;
+        }
+        self.named_imports.values().iter().any(|ni| {
+            let through = ni.import_record_index as usize;
+            if through != index {
+                // HMR lowering merges a later statement of the same path into the statement
+                // of this record. The record of the later statement stays unresolved.
+                let Some(merged) = records.get(through) else {
+                    return false;
+                };
+                if !merged.flags.contains(import_record::Flags::IS_UNUSED)
+                    || merged.path.text != record.original_path
+                {
+                    return false;
+                }
+            }
+            ni.alias_is_star
+                || ni.alias.is_some_and(|alias| {
+                    held.binary_search(&held_export(alias.slice(), true))
+                        .is_ok()
+                })
+        })
+    }
+}
+
+/// True if `alias` is a re-export that the output `held` (`held_exports`) has live.
+#[inline]
+fn is_held_live(held: &[u64], alias: &[u8]) -> bool {
+    held.binary_search(&held_export(alias, false)).is_ok()
+}
+
+/// Debug check where `schedule_barrel_deferred_imports` drops a request because this bundle
+/// does not parse the target. `reads_deferred_export` answered for `record` then, so the
+/// cached output of the target serves the request. `alias` is `None` for every export.
+#[inline]
+fn debug_assert_cached_target_serves(
+    dev: Option<crate::dispatch::DevServerHandle>,
+    record: &bun_ast::ImportRecord,
+    path: &[u8],
+    target: bun_ast::Target,
+    alias: Option<&[u8]>,
+) {
+    if cfg!(debug_assertions)
+        && record.tag != bun_ast::ImportRecordTag::BakeResolveToSsrGraph
+        && let Some(cached) = dev.and_then(|dev| dev.is_file_cached(path, target.bake_graph()))
+    {
+        let held: &[u64] = &cached.barrel_exports;
+        debug_assert!(
+            match alias {
+                Some(alias) => held.binary_search(&held_export(alias, true)).is_err(),
+                None => held.is_empty(),
+            },
+            "a request reads a re-export that the cached output of {} left deferred",
+            bstr::BStr::new(path),
+        );
+    }
+}
+
 /// Analyze a parsed file to determine if it's a barrel and mark unneeded
 /// import records as is_unused so they won't be resolved. Runs BEFORE resolution.
 ///
@@ -120,17 +235,31 @@ fn apply_barrel_optimization_impl(
     if !is_explicit && !is_side_effects_false {
         return Ok(());
     }
+    // `DevServerHandle` is `Copy`; copied out so the `&self` borrow
+    // doesn't conflict with later `&mut this.requested_exports`.
+    let dev_handle = this.dev_server_handle().copied();
+    // Dev server: the `held_exports` of the output that this graph holds for the file.
+    let source_path = result.source.path.text;
+    let graph = result.ast.target.bake_graph();
+    let held_output = || dev_handle.and_then(|dev| dev.held_barrel_exports(source_path, graph));
+    let mut held = None;
+
     // An entry point's exports are the public interface of the build. No file
     // imports an entry point, so nothing seeds `requested_exports` for it and a
     // deferred record would never be un-deferred. The linked output would then
     // emit the export clause with the re-exported bindings shaken away.
-    if this
+    let is_entry_point = this
         .graph
         .entry_points
         .iter()
-        .any(|ep| ep.get() == source_index)
-    {
-        return Ok(());
+        .any(|ep| ep.get() == source_index);
+    if is_entry_point {
+        // The dev server bundles a saved file as an entry point. A held output with a
+        // deferred re-export means that other files import this one, so it stays a barrel.
+        held = held_output();
+        if held.is_none_or(|held| held.is_empty()) {
+            return Ok(());
+        }
     }
 
     let ast = &mut result.ast;
@@ -165,6 +294,14 @@ fn apply_barrel_optimization_impl(
         None => None,
     };
 
+    if !is_entry_point {
+        held = held_output();
+        // A held output with every re-export live stays so.
+        if held.is_some_and(|held| held.is_empty()) {
+            return Ok(());
+        }
+    }
+
     // Build the set of needed import_record_indices from already-requested
     // export names. Export * records are always needed.
     let mut needed_records: ArrayHashMap<u32, ()> = ArrayHashMap::default();
@@ -183,13 +320,22 @@ fn apply_barrel_optimization_impl(
         }
     }
 
+    // Dev server: a re-export that is live in the held output stays live. A file that this
+    // bundle does not parse can read it, and no request of this bundle says so.
+    if let Some(held) = held {
+        for (alias, entry) in ast.named_exports.iter() {
+            if is_held_live(&held, alias)
+                && let Some(imp) = ast.named_imports.get(&entry.ref_)
+            {
+                needed_records.put(imp.import_record_index, ())?;
+            }
+        }
+    }
+
     // Dev server: also include exports persisted from previous builds. This
     // handles the case where file A imports Alpha from the barrel (previous
     // build) and file B adds Beta (current build). Without this, Alpha would
     // be re-deferred because only B's requests are in requested_exports.
-    // `DevServerHandle` is `Copy`; copied out so the `&self` borrow
-    // doesn't conflict with later `&mut this.requested_exports`.
-    let dev_handle = this.dev_server_handle().copied();
     if let Some(dev) = dev_handle {
         // SAFETY: barrel_needed_exports is owned by DevServer; bundler runs on the bundle
         // thread which holds the DevServer lock during this callback.
@@ -285,12 +431,11 @@ fn apply_barrel_optimization_impl(
         // Merge with existing entry (keep already-requested names) or create new
         let _ = RequestedExports::entry(&mut this.requested_exports, source_index);
 
-        // Register with DevServer so isFileCached returns null for this barrel,
-        // ensuring it gets re-parsed on every incremental build. This is needed
-        // because the set of needed exports can change when importing files change.
-        if let Some(dev) = dev_handle {
-            dev.register_barrel_with_deferrals(result.source.path.text)
-                .map_err(|_| AllocError)?;
+        // The dev server keeps the `held_exports` of this output. Its cache question then
+        // parses the barrel again only for an import that reads a deferred re-export.
+        if dev_handle.is_some() {
+            this.graph.input_files.items_flags_mut()[source_index as usize] |=
+                InputFileFlags::HAS_DEFERRED_BARREL_EXPORT;
         }
     }
 
@@ -311,6 +456,31 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) 
     rec.flags
         .remove(import_record::Flags::IS_UNUSED | import_record::Flags::IS_BARREL_DEFERRED);
     true
+}
+
+/// Dev server: `un_defer_record` for the record of a name that a request reads. Returns the
+/// records that went live, in ascending order.
+///
+/// HMR lowering merges every statement of one path into the first one, and that statement
+/// prints through the record of the first. So every deferred record of the path goes live,
+/// like `apply_barrel_optimization` keeps them all for a needed path.
+fn un_defer_path(import_records: &mut import_record::List, record_idx: usize) -> Vec<u32> {
+    let Some(path) = import_records
+        .as_slice()
+        .get(record_idx)
+        .filter(|rec| rec.flags.contains(import_record::Flags::IS_BARREL_DEFERRED))
+        .map(|rec| rec.path.text)
+    else {
+        return Vec::new();
+    };
+    let mut un_deferred = Vec::new();
+    for idx in 0..import_records.len() {
+        if import_records.as_slice()[idx].path.text == path && un_defer_record(import_records, idx)
+        {
+            un_deferred.push(idx as u32);
+        }
+    }
+    un_deferred
 }
 
 /// The record's patched source_index, or (dev server, where indices are left
@@ -378,6 +548,16 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
+    // Dev server: the barrel reads through a record what its own imports name.
+    let requests = this.dev_server.is_some().then(|| {
+        (
+            core::mem::take(&mut this.graph.ast.items_named_imports_mut()[idx]),
+            core::mem::replace(
+                &mut this.graph.ast.items_export_star_import_records_mut()[idx],
+                bun_alloc::AstAlloc::vec(),
+            ),
+        )
+    });
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
@@ -385,8 +565,20 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         loader,
         target,
         only_records: Some(un_deferred),
+        requests: requests
+            .as_ref()
+            .map(
+                |(named_imports, export_star_import_records)| ImporterRequests {
+                    named_imports,
+                    export_star_import_records,
+                },
+            ),
     });
 
+    if let Some((named_imports, export_star_import_records)) = requests {
+        this.graph.ast.items_named_imports_mut()[idx] = named_imports;
+        this.graph.ast.items_export_star_import_records_mut()[idx] = export_star_import_records;
+    }
     this.graph.input_files.items_source_mut()[idx] = source;
 
     let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
@@ -538,7 +730,20 @@ pub(crate) fn schedule_barrel_deferred_imports(
         } else if let Some(map) = path_to_source_index_map {
             match map.get().get(resolved_path_text) {
                 Some(t) => t,
-                None => continue,
+                None => {
+                    if ni.alias_is_star || ni.alias.is_some() {
+                        debug_assert_cached_target_serves(
+                            dev_handle,
+                            ir,
+                            resolved_path_text,
+                            result_ast_target,
+                            ni.alias
+                                .filter(|_| !ni.alias_is_star)
+                                .map(|alias| alias.slice()),
+                        );
+                    }
+                    continue;
+                }
             }
         } else {
             continue;
@@ -571,6 +776,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
     //   safely assume which exports will be used.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
         let Some(target) = record_target(ir, path_to_source_index_map) else {
+            if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
+                debug_assert_cached_target_serves(
+                    dev_handle,
+                    ir,
+                    ir.path.text,
+                    result_ast_target,
+                    None,
+                );
+            }
             continue;
         };
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
@@ -704,6 +918,13 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         }
         let Some(target) = record_target(ir, path_to_source_index_map) else {
+            debug_assert_cached_target_serves(
+                dev_handle,
+                ir,
+                ir.path.text,
+                result_ast_target,
+                None,
+            );
             continue;
         };
         let (found, value) = RequestedExports::entry(&mut this.requested_exports, target);
@@ -932,11 +1153,18 @@ pub(crate) fn schedule_barrel_deferred_imports(
         };
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        let went_live = un_defer_record(barrel_ir, resolution.import_record_index as usize);
-        if went_live {
+        let merged: Vec<u32>;
+        let un_deferred: &[u32] = if dev_handle.is_some() {
+            merged = un_defer_path(barrel_ir, resolution.import_record_index as usize);
+            &merged
+        } else if un_defer_record(barrel_ir, resolution.import_record_index as usize) {
+            core::slice::from_ref(&resolution.import_record_index)
+        } else {
+            &[]
+        };
+        if !un_deferred.is_empty() {
             // Resolve now: propagation below needs the source index.
-            newly_scheduled +=
-                resolve_barrel_records(this, barrel_idx, &[resolution.import_record_index]);
+            newly_scheduled += resolve_barrel_records(this, barrel_idx, un_deferred);
         }
 
         // `original_alias` is an arena-backed `StoreStr` valid for the
@@ -945,10 +1173,21 @@ pub(crate) fn schedule_barrel_deferred_imports(
             Some(p) => p.slice(),
             None => alias,
         };
-        let rec_si = this.graph.ast.items_import_records()[barrel_idx as usize]
+        let rec = this.graph.ast.items_import_records()[barrel_idx as usize]
             .as_slice()
-            .get(resolution.import_record_index as usize)
-            .map(|rec| rec.source_index);
+            .get(resolution.import_record_index as usize);
+        if let Some(rec) = rec
+            && record_target(rec, path_to_source_index_map).is_none()
+        {
+            debug_assert_cached_target_serves(
+                dev_handle,
+                rec,
+                rec.path.text,
+                this.graph.ast.items_target()[barrel_idx as usize],
+                (!resolution.alias_is_star).then_some(propagate_alias),
+            );
+        }
+        let rec_si = rec.map(|rec| rec.source_index);
         if let Some(rec_si) = rec_si.filter(|si| si.is_valid()) {
             // When the barrel re-exports a namespace import (`import * as X; export { X }`),
             // propagate as a star import so the target barrel loads all exports.
@@ -964,11 +1203,11 @@ pub(crate) fn schedule_barrel_deferred_imports(
             // parsing. Propagating only the alias that triggered the un-defer
             // makes a downstream barrel's deferral set (and with it the
             // symbol binding the linker produces) depend on parse completion
-            // order (#40657).
-            if went_live {
+            // order (#40657). The records that went live with it have the same target.
+            if !un_deferred.is_empty() {
                 let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
                 for ni in named_imports.values() {
-                    if ni.import_record_index != resolution.import_record_index {
+                    if !un_deferred.contains(&ni.import_record_index) {
                         continue;
                     }
                     if ni.alias_is_star {

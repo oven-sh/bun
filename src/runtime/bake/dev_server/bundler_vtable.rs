@@ -51,6 +51,7 @@ bun_bundler::link_impl_DevServerHandle! {
                         FileKind::Asset => CacheKind::Asset,
                         FileKind::Css => CacheKind::Css,
                     },
+                    barrel_exports: e.barrel_exports,
                 }
             })
         },
@@ -62,13 +63,7 @@ bun_bundler::link_impl_DevServerHandle! {
                 .map(|c| (&raw mut c.start_data).cast::<()>())
                 .unwrap_or(core::ptr::null_mut())
         },
-        register_barrel_with_deferrals(path) => {
-            let _ = (*this)
-                .barrel_files_with_deferrals
-                .get_or_put(path)
-                .map_err(|_| bun_alloc::out_of_memory());
-            Ok(())
-        },
+        held_barrel_exports(abs_path, side) => (*this).held_barrel_exports(abs_path, side),
         register_barrel_export(barrel_path, alias) => {
             // Silently drop on alloc failure.
             let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {

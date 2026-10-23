@@ -81,15 +81,12 @@ impl DevServer {
 #[derive(Copy, Clone)]
 pub(crate) struct CacheEntry {
     pub(crate) kind: FileKind,
+    /// See `IncrementalGraph::barrel_exports`.
+    pub(crate) barrel_exports: bun_ptr::RawSlice<u64>,
 }
 
 impl DevServer {
     pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
-        // Barrel files with deferred records must always be re-parsed.
-        if self.barrel_files_with_deferrals.contains_key(path) {
-            return None;
-        }
-
         let _g = self.graph_safety_lock.guard();
 
         macro_rules! check {
@@ -99,14 +96,15 @@ impl DevServer {
                 if g.stale_files.is_set(index) {
                     return None;
                 }
-                let $file = g.get_file_by_index(incremental_graph::FileIndex::init(
-                    u32::try_from(index).expect("int cast"),
-                ));
+                let index =
+                    incremental_graph::FileIndex::init(u32::try_from(index).expect("int cast"));
+                let $file = g.get_file_by_index(index);
                 if !$bundled_for_side {
                     return None;
                 }
                 return Some(CacheEntry {
                     kind: $file.file_kind(),
+                    barrel_exports: g.barrel_exports(index, side),
                 });
             }};
         }
@@ -121,6 +119,21 @@ impl DevServer {
                         file.is_rsc
                     }
             }),
+        }
+    }
+
+    /// See `IncrementalGraph::held_barrel_exports`.
+    pub(crate) fn held_barrel_exports(
+        &mut self,
+        path: &[u8],
+        side: bake::Graph,
+    ) -> Option<bun_ptr::RawSlice<u64>> {
+        let _g = self.graph_safety_lock.guard();
+        match side {
+            bake::Graph::Client => self.client_graph.held_barrel_exports(path, side),
+            bake::Graph::Server | bake::Graph::Ssr => {
+                self.server_graph.held_barrel_exports(path, side)
+            }
         }
     }
 

@@ -1495,7 +1495,33 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         &[SEP],
         &manager.node_gyp_tempdir_name,
     ];
-    let node_gyp_abs_dir = parts.concat();
+    let mut node_gyp_abs_dir = parts.concat();
+    // A script runs in its own package, where a name that is relative to this working directory
+    // leads elsewhere.
+    if !bun_paths::is_fully_qualified(&node_gyp_abs_dir) {
+        let cwd = FileSystem::instance().top_level_dir();
+        let absolute = if cfg!(windows) {
+            // Windows does not open every name as a join resolves it: an empty one is the
+            // working directory. So the handle gives the path.
+            let mut opened = bun_paths::path_buffer_pool::get();
+            match bun_sys::get_fd_path(node_gyp_tempdir.fd, &mut opened) {
+                Ok(path) => path.to_vec(),
+                Err(_) => {
+                    resolve_path::join_abs_string::<platform::Windows>(cwd, &[&node_gyp_abs_dir])
+                        .to_vec()
+                }
+            }
+        } else {
+            // Only a prefix: the kernel resolved the name as it is spelled, and a normalized
+            // `link/..` names another directory.
+            bun_paths::join_sep_maybe_z::<false>(&[cwd, &node_gyp_abs_dir]).into_vec()
+        };
+        // PATH cannot hold a name with the delimiter in it. The relative name still leads the
+        // root's scripts to the directory.
+        if !strings::contains_char(&absolute, DELIMITER) {
+            node_gyp_abs_dir = absolute;
+        }
+    }
 
     // Add our node-gyp tempdir to the path
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");

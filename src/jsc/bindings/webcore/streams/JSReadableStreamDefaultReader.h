@@ -58,4 +58,9 @@ private:
 
 using JSReadableStreamDefaultReaderConstructor = JSStreamConstructor<JSReadableStreamDefaultReader>;
 
+// All userJS: yes. Not static: node:stream's pipeline() binds them with $newCppFunction, past a patched prototype.
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_cancel);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_releaseLock);
+
 } // namespace WebCore

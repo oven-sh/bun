@@ -61,6 +61,8 @@ declare var $alwaysInline;
 interface ReadableStream<R = any> extends _ReadableStream<R> {
   /** The native source behind a Bun-created stream: `undefined` when there is none, `-1` once it is detached. */
   $bunNativePtr: TODO | undefined;
+  /** The built-in `values()`, which is also `[Symbol.asyncIterator]()`, under a name that a program cannot replace. */
+  $values: _ReadableStream<R>["values"];
 }
 
 declare var ReadableStream: {
@@ -630,5 +632,7 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
 ): K extends keyof T ? T[`$${K}`] : T extends { [P in `$${K}`]: infer V } ? V : never;
 
 declare var $Promise: PromiseConstructor;
+declare var $ReadableStream: typeof ReadableStream;
+declare var $ReadableStreamDefaultReader: typeof ReadableStreamDefaultReader;
 
 declare function $isPromise<T>(value: unknown): value is Promise<T>;

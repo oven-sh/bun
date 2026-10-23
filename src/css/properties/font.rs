@@ -863,6 +863,8 @@ pub struct FontHandler {
     line_height: Option<LineHeight>,
     variant_caps: Option<FontVariantCaps>,
     flushed_properties: FontProperty,
+    /// A `font` is buffered. Unlike lightningcss, `flush` writes `font` only then: it also resets longhands with no field here.
+    has_shorthand: bool,
     has_any: bool,
 }
 
@@ -927,6 +929,7 @@ impl FontHandler {
                 self.stretch = Some(val.stretch);
                 self.line_height = Some(val.line_height.clone());
                 self.variant_caps = Some(val.variant_caps);
+                self.has_shorthand = true;
                 self.has_any = true;
                 // TODO: reset other properties
             }
@@ -978,6 +981,7 @@ impl FontHandler {
         }
 
         self.has_any = false;
+        let has_shorthand = core::mem::take(&mut self.has_shorthand);
 
         let mut family: Option<Vec<FontFamily>> = self.family.take();
         if !self.flushed_properties.contains(FontProperty::FONT_FAMILY) {
@@ -1025,7 +1029,8 @@ impl FontHandler {
             stretch.as_ref(),
             line_height.as_ref(),
             variant_caps.as_ref(),
-        ) {
+        ) && has_shorthand
+        {
             let caps = *variant_caps_v;
             push_prop!(
                 Font,

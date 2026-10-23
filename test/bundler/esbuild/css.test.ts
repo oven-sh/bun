@@ -2315,4 +2315,54 @@ c {
       "/across-files-url.css",
     ],
   });
+
+  // `font` also resets the sub-properties that `body` sets here, so `.title` keeps its seven longhands.
+  const fontLonghands = /* css */ `
+    body { font-feature-settings: "tnum"; font-kerning: none; font-optical-sizing: none; font-variation-settings: "wght" 450 }
+    .title { font-family: Inter, sans-serif; font-size: 2rem; font-style: normal; font-weight: 700; font-stretch: normal; font-variant-caps: normal; line-height: 1.25 }
+  `;
+  const fontLonghandsExpected = /* css */ `
+    body {
+      font-feature-settings: "tnum";
+      font-kerning: none;
+      font-optical-sizing: none;
+      font-variation-settings: "wght" 450;
+    }
+    .title {
+      font-family: Inter, sans-serif;
+      font-size: 2rem;
+      font-style: normal;
+      font-variant-caps: normal;
+      font-weight: 700;
+      font-stretch: normal;
+      line-height: 1.25;
+    }
+  `;
+  itBundled("css/FontLonghandsStayLonghands", {
+    files: { "/entry.css": fontLonghands },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace("/* entry.css */" + fontLonghandsExpected);
+    },
+  });
+  itBundled("css/FontLonghandsStayLonghandsMinified", {
+    files: { "/entry.css": fontLonghands },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toEqualIgnoringWhitespace(
+          `body{font-feature-settings:"tnum";font-kerning:none;font-optical-sizing:none;font-variation-settings:"wght" 450}.title{font-family:Inter,sans-serif;font-size:2rem;font-style:normal;font-variant-caps:normal;font-weight:700;font-stretch:100%;line-height:1.25}`,
+        );
+    },
+  });
+  itBundled("css/FontLonghandsStayLonghandsNoBundle", {
+    files: { "/entry.css": fontLonghands },
+    outfile: "/out.css",
+    bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(fontLonghandsExpected);
+    },
+  });
 });

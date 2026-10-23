@@ -9983,7 +9983,13 @@ impl LowerUsingDeclarationsContext {
                         continue;
                     }
                 }
-                js_ast::StmtData::SExportDefault(_) => {
+                js_ast::StmtData::SExportDefault(export_default) => {
+                    if let js_ast::StmtOrExpr::Stmt(value) = &export_default.value
+                        && matches!(value.data, js_ast::StmtData::SFunction(_))
+                    {
+                        // Hoist function declarations for cross-file ESM references
+                        result.push(stmt);
+                    }
                     continue; // this prevents re-exporting default since we already have it as an .s_export_clause
                 }
                 js_ast::StmtData::SExportClause(data) => {

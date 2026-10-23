@@ -1480,4 +1480,210 @@ describe("bundler", () => {
       run: { stdout: "1" },
     });
   });
+
+  describe.concurrent("a default export, with React Fast Refresh", () => {
+    // A .tsx module calls `$RefreshSig$` and `$RefreshReg$` as globals. The host defines them.
+    const host = {
+      "/host.ts": /* ts */ `
+        const signed = new Set();
+        const registered = [];
+        globalThis.$RefreshSig$ = () => type => (type && signed.add(type), type);
+        globalThis.$RefreshReg$ = (type, id) => registered.push([type, id]);
+        export const isSigned = type => signed.has(type);
+        export const isRegistered = (type, id) => registered.some(([t, i]) => t === type && i.endsWith(id));
+      `,
+      "/react.ts": /* ts */ `
+        export function useState(value) { return [value, () => {}]; }
+      `,
+    };
+
+    const functions = {
+      ...host,
+      "/named.tsx": /* tsx */ `
+        import { useState } from "./react";
+        export const typeBeforeDeclaration = typeof Named;
+        export default function Named() {
+          const [value] = useState("named");
+          return value;
+        }
+      `,
+      "/anonymous.tsx": /* tsx */ `
+        import { useState } from "./react";
+        export default function () {
+          const [value] = useState("anonymous");
+          return value;
+        }
+      `,
+      "/async.tsx": /* tsx */ `
+        import { useState } from "./react";
+        export default async function Async() {
+          const [value] = useState("async");
+          return value;
+        }
+      `,
+      "/hook.tsx": /* tsx */ `
+        import { useState } from "./react";
+        export const typeBeforeDeclaration = typeof useDefault;
+        export default function useDefault() {
+          const [value] = useState("hook");
+          return value;
+        }
+        export function callDefault() {
+          return useDefault();
+        }
+      `,
+    };
+    // Only a component is registered. A hook is signed and not registered.
+    const functionsLog = /* ts */ `
+      console.log("named:", namedType, Named(), isSigned(Named), isRegistered(Named, "named.tsx:default"));
+      console.log("anonymous:", Anonymous(), isSigned(Anonymous), isRegistered(Anonymous, "anonymous.tsx:default"));
+      console.log("async:", Async.constructor.name, isSigned(Async), isRegistered(Async, "async.tsx:default"));
+      console.log("hook:", hookType, useDefault(), callDefault(), isSigned(useDefault), isRegistered(useDefault, "hook.tsx:default"));
+    `;
+    const functionsEntry = /* ts */ `
+      import { isRegistered, isSigned } from "./host";
+      import Named, { typeBeforeDeclaration as namedType } from "./named";
+      import Anonymous from "./anonymous";
+      import Async from "./async";
+      import useDefault, { callDefault, typeBeforeDeclaration as hookType } from "./hook";
+      ${functionsLog}
+    `;
+    const functionsStdout = [
+      "named: function named true true",
+      "anonymous: anonymous true true",
+      "async: AsyncFunction true true",
+      "hook: function hook hook true false",
+    ].join("\n");
+
+    const variants: [string, Partial<BundlerTestInput>][] = [
+      ["Esm", { format: "esm", backend: "api" }],
+      ["Cjs", { format: "cjs", backend: "api" }],
+      ["Iife", { format: "iife", backend: "api" }],
+      ["Cli", { format: "esm", backend: "cli" }],
+      ["MinifyIdentifiers", { format: "esm", backend: "api", minifyIdentifiers: true }],
+    ];
+    for (const [name, options] of variants) {
+      itBundled(`jsx/FastRefreshDefaultFunctionWithHook${name}`, {
+        files: { "/entry.ts": functionsEntry, ...functions },
+        reactFastRefresh: true,
+        ...options,
+        run: { stdout: functionsStdout },
+      });
+    }
+
+    itBundled("jsx/FastRefreshDefaultFunctionWithHookSplitting", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { isRegistered, isSigned } from "./host";
+          const { default: Named, typeBeforeDeclaration } = await import("./named");
+          console.log("named:", typeBeforeDeclaration, Named(), isSigned(Named), isRegistered(Named, "named.tsx:default"));
+        `,
+        ...functions,
+      },
+      reactFastRefresh: true,
+      splitting: true,
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "named: function named true true" },
+    });
+
+    // `require()` of an ES module wraps the module. A function declaration moves outside the wrapper.
+    itBundled("jsx/FastRefreshDefaultFunctionWithHookWrapped", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { isRegistered, isSigned } from "./host";
+          const { default: Named, typeBeforeDeclaration: namedType } = require("./named");
+          const { default: Anonymous } = require("./anonymous");
+          const { default: Async } = require("./async");
+          const { default: useDefault, callDefault, typeBeforeDeclaration: hookType } = require("./hook");
+          ${functionsLog}
+        `,
+        ...functions,
+      },
+      reactFastRefresh: true,
+      run: { stdout: functionsStdout },
+    });
+
+    // The bundler lowers a top-level `using` for the browser. It moves the module body into a `try` block.
+    // The default function has to stay exported with the flag and without it.
+    for (const reactFastRefresh of [true, false]) {
+      itBundled(`jsx/${reactFastRefresh ? "FastRefresh" : ""}DefaultFunctionWithTopLevelUsing`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import { isRegistered, isSigned } from "./host";
+            import WithHook, { typeBeforeDeclaration } from "./with-hook";
+            import Plain from "./plain";
+            console.log("with hook:", typeBeforeDeclaration, WithHook(), isSigned(WithHook), isRegistered(WithHook, "with-hook.tsx:default"));
+            console.log("plain:", Plain(), isRegistered(Plain, "plain.tsx:default"));
+          `,
+          ...host,
+          "/with-hook.tsx": /* tsx */ `
+            import { useState } from "./react";
+            export const typeBeforeDeclaration = typeof WithHook;
+            using resource = { [Symbol.dispose]() { console.log("disposed: with hook"); } };
+            export default function WithHook() {
+              const [value] = useState("with hook");
+              return value;
+            }
+          `,
+          "/plain.tsx": /* tsx */ `
+            using resource = { [Symbol.dispose]() { console.log("disposed: plain"); } };
+            export default function Plain() {
+              return "plain";
+            }
+          `,
+        },
+        reactFastRefresh,
+        run: {
+          stdout: [
+            "disposed: with hook",
+            "disposed: plain",
+            `with hook: function with hook ${reactFastRefresh} ${reactFastRefresh}`,
+            `plain: plain ${reactFastRefresh}`,
+          ].join("\n"),
+        },
+      });
+    }
+
+    const expressions = {
+      ...host,
+      "/a.tsx": /* tsx */ `export default () => "a";`,
+      "/b.tsx": /* tsx */ `export default () => "b";`,
+      "/c.tsx": /* tsx */ `
+        const default_export = "c";
+        export default () => default_export;
+      `,
+    };
+    const registeredExpressions = `isRegistered(A, "a.tsx:default"), isRegistered(B, "b.tsx:default"), isRegistered(C, "c.tsx:default")`;
+
+    itBundled("jsx/FastRefreshDefaultExpressionsInOneChunk", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { isRegistered } from "./host";
+          import A from "./a";
+          import B from "./b";
+          import C from "./c";
+          console.log(A(), B(), C(), ${registeredExpressions});
+        `,
+        ...expressions,
+      },
+      reactFastRefresh: true,
+      run: { stdout: "a b c true true true" },
+    });
+
+    // `require()` of an ES module wraps the module. Its top-level bindings move outside the wrapper.
+    itBundled("jsx/FastRefreshDefaultExpressionsInOneChunkWrapped", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { isRegistered } from "./host";
+          const A = require("./a").default;
+          const B = require("./b").default;
+          const C = require("./c").default;
+          console.log(A(), B(), C(), ${registeredExpressions});
+        `,
+        ...expressions,
+      },
+      reactFastRefresh: true,
+      run: { stdout: "a b c true true true" },
+    });
+  });
 });

@@ -1904,6 +1904,74 @@ devTest("inlined env var survives a runtime process.env write to a proxy variabl
   },
 });
 
+// The test client evaluates scripts with indirect eval (sloppy mode), which
+// accepts bindings that browsers reject in module code. So this parses the
+// page's chunk under the Module goal with node.
+async function expectClientBundleToParseAsModule(dev: Dev) {
+  await using check = Bun.spawn({
+    cmd: [process.env.BUN_DEV_SERVER_CLIENT_EXECUTABLE ?? Bun.which("node")!, "--check", "--input-type=module"],
+    stdin: new Blob([await clientBundle(dev)]),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([check.stderr.text(), check.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+}
+devTest("module with restricted-identifier basename (#34357)", {
+  // https://github.com/oven-sh/bun/issues/34357
+  // A module whose generated namespace symbol is named "arguments", "eval",
+  // or "await" must not produce `var [arguments, eval, await] = hmr.imports;`
+  // in the chunk; those names are invalid binding targets in module code
+  // (browsers load the chunk with <script type="module">).
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { Arguments, Eval, Await } from './lib';
+      console.log('PASS ' + Arguments + ' ' + Eval + ' ' + Await);
+    `,
+    "lib.ts": `
+      export * from './arguments/index.mjs';
+      export * from './eval/index.mjs';
+      export * from './await/index.mjs';
+    `,
+    "arguments/index.mjs": `export const Arguments = 1;`,
+    "eval/index.mjs": `export const Eval = 2;`,
+    "await/index.mjs": `export const Await = 3;`,
+  },
+  async test(dev) {
+    await expectClientBundleToParseAsModule(dev);
+    await using c = await dev.client();
+    await c.expectMessage("PASS 1 2 3");
+  },
+});
+devTest("export * as arguments, eval or await", {
+  // `export * as eval from` names its namespace symbol after the export, so
+  // the chunk must not get `var [eval] = hmr.imports;` either.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { arguments as a } from './star-arguments';
+      import { eval as e } from './star-eval';
+      import { await as w } from './star-await';
+      console.log('PASS ' + a.value + ' ' + e.value + ' ' + w.value);
+    `,
+    "star-arguments.ts": `export * as arguments from './a';`,
+    "star-eval.ts": `export * as eval from './b';`,
+    "star-await.ts": `export * as await from './c';`,
+    "a.ts": `export const value = 1;`,
+    "b.ts": `export const value = 2;`,
+    "c.ts": `export const value = 3;`,
+  },
+  async test(dev) {
+    await expectClientBundleToParseAsModule(dev);
+    await using c = await dev.client();
+    await c.expectMessage("PASS 1 2 3");
+  },
+});
+
 // An unresolved CSS url() is passed to the directory watcher. The HTML scanner joins a rooted src to the project root.
 devTest("recovers from an unresolved css url() and html script src longer than the path buffer", {
   files: {

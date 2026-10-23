@@ -1422,8 +1422,15 @@ pub fn compute_initial_reserved_names(
         0
     };
 
+    let restricted_names_len = if output_format.is_always_strict_mode() {
+        RESTRICTED_BINDING_NAMES.len()
+    } else {
+        0
+    };
+
     names.ensure_total_capacity(
         cjs_names_len as usize
+            + restricted_names_len
             + (Keywords.len() + StrictModeReservedWords.len() + 1 + EXTRAS.len()),
     )?;
 
@@ -1445,6 +1452,15 @@ pub fn compute_initial_reserved_names(
     if output_format == Format::Cjs {
         for name in CJS_NAMES {
             names.put_assume_capacity(name, 1);
+        }
+    }
+
+    // All of an ES module is strict code, so no binding in it can have one of
+    // these names, whoever declared it. Other formats can hold sloppy code that
+    // declares them: see `is_generated_restricted_binding`.
+    if output_format.is_always_strict_mode() {
+        for name in RESTRICTED_BINDING_NAMES {
+            names.put_static_key(name, 1)?;
         }
     }
 
@@ -1472,7 +1488,10 @@ pub fn compute_reserved_names_for_scope(
 
     for ref_ in scope.generated.slice() {
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
-        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
+        if symbol.kind == symbol::Kind::Unbound
+            || symbol.must_not_be_renamed()
+            || is_generated_restricted_binding(symbol)
+        {
             // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)
@@ -1489,4 +1508,20 @@ pub fn compute_reserved_names_for_scope(
             }
         }
     }
+}
+
+/// Not keywords, but strict code rejects a binding named `eval` or `arguments`
+/// and module code rejects one named `await`.
+const RESTRICTED_BINDING_NAMES: [&[u8]; 3] = [b"eval", b"arguments", b"await"];
+
+/// A bundler-made symbol (data file key, CSS module class, path basename,
+/// `export * as` name) that would print as a binding with one of those names.
+/// Sloppy code also misreads it: a function body reads its own `arguments`, an
+/// async function parses `await` as an operator. User declarations are in
+/// `Scope::members`, not here.
+fn is_generated_restricted_binding(symbol: &Symbol) -> bool {
+    RESTRICTED_BINDING_NAMES.contains(&symbol.original_name.slice())
+        // A linked symbol prints under its target's name, an aliased one as `ns.name`.
+        && !symbol.has_link()
+        && symbol.namespace_alias.is_none()
 }

@@ -233,6 +233,70 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("math functions with mixed length units", () => {
+    // round(), rem(), mod() and hypot() over two lengths in different units stay as written.
+    // The second length can have no px value (1rem). If it has one, its px value is rounded
+    // (1pt is 1.3333334px), and round(), rem() and mod() can then land a whole step away.
+    // From WPT css/css-values/round-mod-rem-computed.html:
+    minify_test(`a { width: round(100px, 1rem) }`, `a{width:round(100px,1rem)}`);
+    minify_test(`a { width: mod(100px, 1rem) }`, `a{width:mod(100px,1rem)}`);
+    minify_test(`a { width: rem(100px, 1rem) }`, `a{width:rem(100px,1rem)}`);
+    // From the lightningcss tests:
+    minify_test(`a { width: round(22px, 5vw) }`, `a{width:round(22px,5vw)}`);
+    minify_test(`a { width: rem(18px, 5vw) }`, `a{width:rem(18px,5vw)}`);
+    minify_test(`a { width: mod(18px, 5vw) }`, `a{width:mod(18px,5vw)}`);
+    minify_test(`a { width: hypot(1px, 2vw) }`, `a{width:hypot(1px,2vw)}`);
+    minify_test(`a { width: hypot(1px, 2px, 3vw) }`, `a{width:hypot(1px,2px,3vw)}`);
+    // From MDN:
+    minify_test(`a { margin: mod(1000px, 29rem) }`, `a{margin:mod(1000px,29rem)}`);
+    minify_test(`a { margin: rem(1000px, 29rem) }`, `a{margin:rem(1000px,29rem)}`);
+    minify_test(`a { width: round(1in, 1em) }`, `a{width:round(1in,1em)}`);
+    minify_test(`a { width: round(1em, 1in) }`, `a{width:round(1em,1in)}`);
+    // Two absolute units.
+    minify_test(`a { width: round(1in, 10px) }`, `a{width:round(1in,10px)}`);
+    minify_test(`a { width: round(down, 70mm, 1cm) }`, `a{width:round(down,70mm,1cm)}`);
+    minify_test(`a { width: rem(1in, 10px) }`, `a{width:rem(1in,10px)}`);
+    minify_test(`a { width: mod(4px, 1pt) }`, `a{width:mod(4px,1pt)}`);
+    minify_test(`a { width: hypot(1in, 10px) }`, `a{width:hypot(1in,10px)}`);
+    minify_test(`a { width: hypot(1in, 3px, 4px) }`, `a{width:hypot(1in,3px,4px)}`);
+    minify_test(`a { border-spacing: round(1in, 10px) }`, `a{border-spacing:round(1in,10px)}`);
+    // The function also stays inside an outer function and in a media query.
+    minify_test(`a { width: calc(round(1in, 10px) + 1px) }`, `a{width:calc(round(1in,10px) + 1px)}`);
+    minify_test(`a { width: min(round(down, 70mm, 1cm), 250px) }`, `a{width:min(round(down,70mm,1cm),250px)}`);
+    minify_test(
+      `@media (min-width: round(1in, 10px)) { a { color: red } }`,
+      `@media (width>=round(1in,10px)){a{color:red}}`,
+    );
+    // One unit still folds.
+    minify_test(`a { width: round(18px, 5px) }`, `a{width:20px}`);
+    minify_test(`a { width: mod(18px, 5px) }`, `a{width:3px}`);
+    minify_test(`a { width: hypot(3in, 4in) }`, `a{width:5in}`);
+    minify_test(`a { width: round(calc(1in + 1px), 10px) }`, `a{width:100px}`);
+    // atan2() has no step, so it reads both lengths in px. (The angle is printed in whichever
+    // of deg/rad is shorter: 1.467rad is 84.0531deg.)
+    minify_test(`a { transform: rotate(atan2(1in, 0px)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan2(1in, 10px)) }`, `a{transform:rotate(1.467rad)}`);
+    minify_test(`a { transform: rotate(atan2(10px, -1in)) }`, `a{transform:rotate(3.0378rad)}`);
+    minify_test(`a { rotate: atan2(1cm, 1mm) }`, `a{rotate:1.47113rad}`);
+    // A length with no px value leaves atan2() as written.
+    minify_test(`a { transform: rotate(atan2(1in, 1em)) }`, `a{transform:rotate(atan2(1in,1em))}`);
+    minify_test(`a { rotate: atan2(1px, -1vw) }`, `a{rotate:atan2(1px,-1vw)}`);
+    // An at-rule prelude cannot hold an atan2() that is left as written, so the rule is an error.
+    minify_test(
+      `@property --x { syntax: '<angle>'; inherits: false; initial-value: atan2(1in, 10px) }`,
+      `@property --x{syntax:"<angle>";inherits:false;initial-value:1.467rad}`,
+    );
+    test.each([
+      [`@media (min-width: calc(100px * tan(atan2(1in, 1em)))) { a { color: red } }`, "Invalid media query"],
+      [`@container (min-width: calc(100px * tan(atan2(1in, 1em)))) { a { color: red } }`, "Invalid media query"],
+      [
+        `@property --x { syntax: '<angle>'; inherits: false; initial-value: atan2(1in, 1em) }`,
+        "Unexpected token: atan2(",
+      ],
+    ])("ERROR: %s", (source, message) => {
+      expect(() => minify_test_with_options(source, "")).toThrow(message);
+    });
+  });
   describe("border_spacing", () => {
     minify_test(
       `

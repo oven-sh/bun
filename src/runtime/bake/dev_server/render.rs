@@ -492,7 +492,7 @@ impl DevServer {
         if any {
             w.extend_from_slice(b"  ");
         }
-        w.extend_from_slice(b"], [], [], () => {}, false],\n");
+        w.extend_from_slice(b"], [], [], () => {}, 0],\n");
 
         // Avoid-recloning if it is was moved to the heap
         Ok(array.into_boxed_slice())

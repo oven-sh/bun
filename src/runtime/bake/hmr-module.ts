@@ -47,7 +47,16 @@ const enum ESMProps {
   exports,
   stars,
   load,
-  isAsync,
+  flags,
+}
+/** Facts about the file of a tuple record, from `print_dev_server_module` in src/js_printer/lib.rs. */
+const enum RecordFlags {
+  /** The body has a top-level await. */
+  async = 1,
+  /** CommonJS: `load` takes `(hmr, module, exports)`, like a bare function. */
+  cjs = 2,
+  /** An ES module by type: ".mjs", ".mts", or "type": "module" in package.json. */
+  nodeMode = 4,
 }
 
 /** Given an Id, return the module namespace object.
@@ -71,7 +80,7 @@ export function staticExportNames(id: Id): string[] | null {
     if (visited.has(current)) continue;
     visited.add(current);
     const unloaded = unloadedModuleRegistry[current];
-    if (!Array.isArray(unloaded)) return null;
+    if (!Array.isArray(unloaded) || unloaded[ESMProps.flags] & RecordFlags.cjs) return null;
     for (const name of unloaded[ESMProps.exports]) names.add(name);
     queue.push(...unloaded[ESMProps.stars]);
   }
@@ -97,7 +106,7 @@ export class HMRModule {
   /** ES Modules have different semantics for `.exports` and `.cjs` */
   esm: boolean;
   state: State = State.Pending;
-  /** The ESM namespace object. `null` if not yet initialized. */
+  /** The ESM namespace object. `null` if not yet initialized. For CJS, see `getEsmExports`. */
   exports: any = null;
   /** For ESM, this is the converted CJS exports.
    *  For CJS, this is the `module` object. */
@@ -124,6 +133,14 @@ export class HMRModule {
   importers = new Set<HMRModule>();
   /** import.meta.hot.data rewrites to this */
   data: any = {};
+  /** `RecordFlags.nodeMode` of this file */
+  nodeMode = false;
+  /** Loaded by `lazyExport` (JSON, TOML, text): the default import is the whole value for every importer. */
+  lazy = false;
+  /** CJS only. The namespace for importers without `nodeMode`. `exports` is the one for importers with it. */
+  interop: any = null;
+  /** CJS only. The `module.exports` value that `exports` and `interop` were built from. */
+  viewOf: unknown = undefined;
 
   constructor(id: Id, isCommonJS: boolean) {
     this.id = id;
@@ -154,13 +171,17 @@ export class HMRModule {
     }
   }
 
+  /** Lowered from `.s_lazy_export` */
+  lazyExport(value: unknown) {
+    this.cjs.exports = value;
+    this.lazy = true;
+  }
+
   /** Lowered from `.e_import` (import(id)) */
   dynamicImport(id: Id, opts?: ImportCallOptions) {
     const found = loadModuleAsync(id, true, this);
-    if (found) {
-      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
-      return (found as Promise<HMRModule>).then(getEsmExports);
-    }
+    // The namespace is read one tick later, as `Promise.resolve().then(() => __toESM(require_x()))` does in a bundle.
+    if (found) return Promise.resolve(found).then(m => getEsmExports(m, this));
     return opts
       ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(id, opts)
       : import(id);
@@ -313,8 +334,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
   const loadOrEsmModule = unloadedModuleRegistry[id];
   if (!loadOrEsmModule) throwNotFound(id, isUserDynamic);
 
-  if (typeof loadOrEsmModule === "function") {
-    // CommonJS
+  if (typeof loadOrEsmModule === "function" || loadOrEsmModule[ESMProps.flags] & RecordFlags.cjs) {
+    // CommonJS: a bare function, or a tuple when its file has another flag
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
@@ -331,8 +352,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.importers.add(importer);
     }
     try {
-      const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
+      runCommonJS(mod, loadOrEsmModule);
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
@@ -347,14 +367,14 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.exports]));
         DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.stars]));
         DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.load] === "function");
-        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
+        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.flags] === "number");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
       }
     }
-    const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
-    if (isAsync) {
+    const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.flags]: flags } = loadOrEsmModule;
+    if (flags & RecordFlags.async) {
       throw new AsyncImportError(id);
     }
     if (!mod) {
@@ -365,6 +385,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = null;
       mod.exports = null;
     }
+    mod.nodeMode = (flags & RecordFlags.nodeMode) !== 0;
     if (importer) {
       mod.importers.add(importer);
     }
@@ -372,13 +393,13 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     let depsList: HMRModule[];
     try {
       depsList = parseEsmDependencies(mod, deps, loadModuleSync).list;
+      mod.imports = bindImports(depsList, mod);
     } catch (e) {
       // A dependency threw before this module's body ran, so the next load evaluates it again.
       mod.state = State.Stale;
       throw e;
     }
     const exportsBefore = mod.exports;
-    mod.imports = depsList.map(getEsmExports);
     try {
       load(mod);
     } catch (e) {
@@ -426,8 +447,8 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     throwNotFound(id, isUserDynamic);
   }
 
-  if (typeof loadOrEsmModule === "function") {
-    // CommonJS
+  if (typeof loadOrEsmModule === "function" || loadOrEsmModule[ESMProps.flags] & RecordFlags.cjs) {
+    // CommonJS: a bare function, or a tuple when its file has another flag
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
@@ -444,8 +465,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
     try {
-      const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
+      runCommonJS(mod, loadOrEsmModule);
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
@@ -461,13 +481,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         DEBUG.ASSERT(Array.isArray(loadOrEsmModule[1]));
         DEBUG.ASSERT(Array.isArray(loadOrEsmModule[2]));
         DEBUG.ASSERT(typeof loadOrEsmModule[3] === "function");
-        DEBUG.ASSERT(typeof loadOrEsmModule[4] === "boolean");
+        DEBUG.ASSERT(typeof loadOrEsmModule[4] === "number");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
       }
     }
-    const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
+    const [deps /* exports */ /* stars */, , , load, flags] = loadOrEsmModule;
 
     if (!mod) {
       mod = new HMRModule(id, false);
@@ -477,6 +497,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.exports = null;
       mod.cjs = null;
     }
+    mod.nodeMode = (flags & RecordFlags.nodeMode) !== 0;
     if (importer) {
       mod.importers.add(importer);
     }
@@ -515,8 +536,14 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
 function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
   try {
+    mod.imports = bindImports(modules, mod);
+  } catch (e) {
+    // A namespace threw before this module's body ran, so the next load evaluates it again.
+    mod.state = State.Stale;
+    throw e;
+  }
+  try {
     const exportsBefore = mod.exports;
-    mod.imports = modules.map(getEsmExports);
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     const p = load(mod);
     mod.imports = modules;
@@ -591,8 +618,33 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   return { list, isAsync };
 }
 
-function getEsmExports(m: HMRModule) {
-  return m.esm ? m.exports : (m.exports ??= toESM(m.cjs.exports));
+/** Runs the body of a CommonJS record: a bare function, or a tuple with `RecordFlags.cjs`. */
+function runCommonJS(mod: HMRModule, record: UnloadedModule) {
+  const isTuple = typeof record !== "function";
+  mod.nodeMode = isTuple && (record[ESMProps.flags] & RecordFlags.nodeMode) !== 0;
+  mod.lazy = false;
+  const cjs = mod.cjs;
+  (isTuple ? record[ESMProps.load] : record)(mod, cjs, cjs.exports);
+}
+
+function bindImports(list: HMRModule[], importer: HMRModule) {
+  const imports = new Array(list.length);
+  for (let i = 0; i < list.length; i++) imports[i] = getEsmExports(list[i], importer);
+  return imports;
+}
+
+/** What `importer` reads from `m`. For CommonJS it is `__toESM(x, 1)` when `importer.nodeMode`, else `__toESM(x)`. */
+function getEsmExports(m: HMRModule, importer: HMRModule) {
+  if (m.esm) return m.exports;
+  const mod = m.cjs.exports;
+  // Like the cache of `__toESM`, a namespace belongs to one `module.exports` value.
+  if (m.viewOf !== mod) {
+    m.viewOf = mod;
+    m.exports = m.interop = null;
+  }
+  // In a bundle a lazy export is an ES module: no `__toESM` rule and no inherited members.
+  if (m.lazy) return (m.exports ??= toESM(mod, true, Object.create(null)));
+  return importer.nodeMode ? (m.exports ??= toESM(mod, true)) : (m.interop ??= toESM(mod, false));
 }
 
 type HotAcceptFunction = (esmExports?: any | void) => void;
@@ -622,6 +674,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   type ToAccept = {
     cb: HotAccept;
     key: Id;
+    importer: HMRModule;
   };
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
@@ -682,7 +735,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       for (const importer of mod.importers) {
         const cb = importer.depAccepts?.[key];
         if (cb) {
-          toAccept.push({ cb, key });
+          toAccept.push({ cb, key, importer });
         } else if (hadSelfAccept) {
           if (visited.has(importer)) continue;
           visited.add(importer);
@@ -778,14 +831,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
     if (modOrPromise === mod) {
       if (selfAccept) {
-        selfAccept(getEsmExports(mod));
+        selfAccept(getEsmExports(mod, mod));
       }
     } else {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
       promises.push(
         (modOrPromise as Promise<HMRModule>).then(mod => {
           if (selfAccept) {
-            selfAccept(getEsmExports(mod));
+            selfAccept(getEsmExports(mod, mod));
           }
           return mod;
         }),
@@ -802,9 +855,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Call all accept callbacks
-  for (const { cb: cbEntry, key } of toAccept) {
+  for (const { cb: cbEntry, key, importer } of toAccept) {
     const { cb: cbFn, modules, single } = cbEntry;
-    cbFn(single ? getEsmExports(registry.get(key)!) : createAcceptArray(modules, key));
+    const exports = getEsmExports(registry.get(key)!, importer);
+    cbFn(single ? exports : createAcceptArray(modules, key, exports));
   }
 
   if (refreshRuntime) {
@@ -816,21 +870,20 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
 function patchImporters(mod: HMRModule) {
   const { importers } = mod;
-  const exports = getEsmExports(mod);
   for (const importer of importers) {
     if (!importer.esm || !importer.updateImport) continue;
     const index = importer.imports!.indexOf(mod);
     if (index === -1) continue; // require or dynamic import
-    importer.updateImport![index](exports);
+    importer.updateImport![index](getEsmExports(mod, importer));
   }
 }
 
-function createAcceptArray(modules: string[], key: Id) {
+function createAcceptArray(modules: string[], key: Id, exports: any) {
   const arr = new Array(modules.length);
   arr.fill(undefined);
   const i = modules.indexOf(key);
   DEBUG.ASSERT(i !== -1);
-  arr[i] = getEsmExports(registry.get(key)!);
+  arr[i] = exports;
   return arr;
 }
 
@@ -892,8 +945,11 @@ function toCommonJS(from: any) {
   return entry;
 }
 
-function toESM(mod: any) {
-  const to = Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true });
+/** See `runtime.js`'s `__toESM`. This omits the cache. Getters are closures: each read of a bound getter costs more. */
+function toESM(mod: any, isNodeMode: boolean, to?: object) {
+  to ??= mod != null ? Object.create(Object.getPrototypeOf(mod)) : {};
+  if (isNodeMode || !mod || !mod.__esModule || !Object.prototype.hasOwnProperty.call(mod, "default"))
+    Object.defineProperty(to, "default", { value: mod, enumerable: true });
   if ((mod && typeof mod === "object") || typeof mod === "function")
     for (let key of Object.getOwnPropertyNames(mod))
       if (!Object.prototype.hasOwnProperty.call(to, key))
@@ -912,7 +968,7 @@ function registerSynthetic(id: Id, esmExports) {
 }
 
 export function setRefreshRuntime(runtime: HMRModule) {
-  refreshRuntime = getEsmExports(runtime);
+  refreshRuntime = runtime.esm ? runtime.exports : runtime.cjs.exports;
 
   if (typeof refreshRuntime.injectIntoGlobalHook === "function") {
     refreshRuntime.injectIntoGlobalHook(window);

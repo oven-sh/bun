@@ -40,8 +40,7 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///   ┃   module.exports = {
 ///   ┃     default: module_3.something(module_2.div),
 ///   ┃   };
-///     }, false ],
-///        ----- "is the module async?"
+///     }, 0 ], // `RecordFlags` in hmr-module.ts
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,

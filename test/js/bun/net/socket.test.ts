@@ -6334,6 +6334,10 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
             while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
               Atomics.wait(cell, 0, 0, 5);
             }
+            // remotePort is getpeername(): on POSIX it fails once the kernel has applied the RST. See #46085.
+            while (process.platform !== "win32" && socket.remotePort !== undefined && Date.now() < deadline) {
+              Atomics.wait(cell, 0, 0, 1);
+            }
             writes.push(socket.write("ping"), socket.write("ping"));
           },
           error() {},

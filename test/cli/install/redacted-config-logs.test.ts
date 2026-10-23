@@ -141,6 +141,41 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
+// The invalid-escape message names the byte after the backslash for
+// Bun.TOML.parse. For bunfig.toml it omits the byte and the hex-digit clause
+// that would name it. The location points at the backslash.
+const fix = "; for a literal backslash, use a literal string (single quotes) or write \\\\";
+test.concurrent.each([
+  ["C:\\Users\\name", "U", 15],
+  ["\\d+", "d", 13],
+])(
+  "bunfig invalid escape %s: the error omits the escaped byte and points at the backslash",
+  async (value, escaped, column) => {
+    using dir = tempDir("redacted-bunfig-escape", {
+      "bunfig.toml": `[install]\npassword = "${value}"\n`,
+      "package.json": "{}",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain(`error: Invalid escape sequence in basic string${fix}`);
+    expect(err).not.toContain("hex digits");
+    expect(err).toContain(`bunfig.toml:2:${column}`);
+    expect(err).toContain(`password = "${Buffer.alloc(value.length, "*").toString()}"`);
+    expect(err).not.toContain(`'\\${escaped}'`);
+    expect(out).not.toContain(value);
+    expect(exitCode).toBe(1);
+  },
+);
+
 // The config loaders split user:password@ off a registry URL, but a token
 // written as a path segment stays part of it, and these messages echo that
 // URL (or the manifest / tarball URL built from it) when no request can be

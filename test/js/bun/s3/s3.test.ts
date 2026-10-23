@@ -2222,7 +2222,7 @@ describe.concurrent("s3 writer().end(error)", () => {
     const error = new Error("the source failed");
     const ended = writer.end(error);
     release();
-    await expect(ended).rejects.toBe(error);
+    expect(await Promise.allSettled([ended])).toEqual([{ status: "rejected", reason: error }]);
     await aborted;
     // The part does not go out. The upload that S3 created is aborted when its id arrives.
     expect(requests).toEqual(["CreateMultipartUpload", "AbortMultipartUpload"]);

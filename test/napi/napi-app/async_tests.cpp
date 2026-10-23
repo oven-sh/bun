@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
@@ -833,6 +834,7 @@ async_work_with_external_buffer(const Napi::CallbackInfo &info) {
 static napi_threadsafe_function queued_items_tsfn = nullptr;
 static bool queued_items_tsfn_print_finalize = false;
 static bool queued_items_tsfn_finalized = false;
+static int queued_items_tsfn_deliveries = 0;
 
 static void queued_items_call_js(napi_env env, napi_value js_callback,
                                  void *context, void *data) {
@@ -848,6 +850,7 @@ static void queued_items_call_js(napi_env env, napi_value js_callback,
   printf("call_js: item %d, env live, js_callback %s\n", item,
          js_callback == nullptr ? "null" : "set");
   fflush(stdout);
+  queued_items_tsfn_deliveries++;
   if (js_callback == nullptr) {
     return;
   }
@@ -903,6 +906,75 @@ napi_value queue_threadsafe_function_items(const Napi::CallbackInfo &info) {
   return info.Env().Undefined();
 }
 
+// queue_more_threadsafe_function_items(count): queues `count` more items on
+// the function queue_threadsafe_function_items created, from this thread.
+napi_value
+queue_more_threadsafe_function_items(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  int count = info[0].As<Napi::Number>().Int32Value();
+  for (intptr_t item = 1; item <= count; item++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           queued_items_tsfn, reinterpret_cast<void *>(item),
+                           napi_tsfn_nonblocking));
+  }
+  return info.Env().Undefined();
+}
+
+// threadsafe_function_with_queued_items_deliveries(): how many queued items
+// reached call_js with a live env.
+napi_value threadsafe_function_with_queued_items_deliveries(
+    const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), queued_items_tsfn_deliveries);
+}
+
+static std::mutex held_work_mutex;
+static std::condition_variable held_work_cv;
+static bool held_work_released = false;
+static std::atomic<bool> held_work_completed { false };
+
+// hold_async_work_on_pool(): queues async work whose execute() blocks on the
+// thread pool until release_held_async_work() is called.
+static napi_value hold_async_work_on_pool(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  {
+    std::lock_guard<std::mutex> lock(held_work_mutex);
+    held_work_released = false;
+  }
+  held_work_completed = false;
+  auto *work = new napi_async_work(nullptr);
+  napi_value name = Napi::String::New(env, "napitests__held_work");
+  NODE_API_CALL(
+      env, napi_create_async_work(
+               env, nullptr, name,
+               [](napi_env, void *) {
+                 std::unique_lock<std::mutex> lock(held_work_mutex);
+                 held_work_cv.wait(lock, [] { return held_work_released; });
+               },
+               [](napi_env env, napi_status, void *data) {
+                 auto *work = static_cast<napi_async_work *>(data);
+                 napi_delete_async_work(env, *work);
+                 delete work;
+                 held_work_completed = true;
+               },
+               work, work));
+  NODE_API_CALL(env, napi_queue_async_work(env, *work));
+  return info.Env().Undefined();
+}
+
+static napi_value release_held_async_work(const Napi::CallbackInfo &info) {
+  {
+    std::lock_guard<std::mutex> lock(held_work_mutex);
+    held_work_released = true;
+  }
+  held_work_cv.notify_all();
+  return info.Env().Undefined();
+}
+
+// held_async_work_completed(): whether the held work's complete callback ran.
+static napi_value held_async_work_completed(const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), held_work_completed.load());
+}
+
 napi_value
 abort_threadsafe_function_with_queued_items(const Napi::CallbackInfo &info) {
   napi_status status =
@@ -919,6 +991,12 @@ napi_value threadsafe_function_with_queued_items_finalized(
 void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, async_work_with_external_buffer);
   REGISTER_FUNCTION(env, exports, queue_threadsafe_function_items);
+  REGISTER_FUNCTION(env, exports, queue_more_threadsafe_function_items);
+  REGISTER_FUNCTION(env, exports,
+                    threadsafe_function_with_queued_items_deliveries);
+  REGISTER_FUNCTION(env, exports, hold_async_work_on_pool);
+  REGISTER_FUNCTION(env, exports, release_held_async_work);
+  REGISTER_FUNCTION(env, exports, held_async_work_completed);
   REGISTER_FUNCTION(env, exports, abort_threadsafe_function_with_queued_items);
   REGISTER_FUNCTION(env, exports,
                     threadsafe_function_with_queued_items_finalized);

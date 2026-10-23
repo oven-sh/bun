@@ -14,8 +14,8 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsResult, StrongOptional, Task,
+    self as jsc, CallFrame, Debugger, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
+    StrongOptional, Task,
 };
 use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
@@ -112,6 +112,8 @@ unsafe extern "C" {
     /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
     fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
     fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
+    /// JS thread, once `complete` has returned: the env may release what its refs pin.
+    fn NapiEnv__asyncWorkSettled(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -1908,8 +1910,6 @@ pub(crate) struct napi_async_work {
     /// back): how the pool thread delivers completion / cancellation, and what
     /// makes the VM wait for it.
     pub(crate) ticket: Option<bun_jsc::Ticket>,
-    /// JS thread only.
-    pub global: GlobalRef,
     pub(crate) env: NapiEnvRef,
     pub(crate) execute: napi_async_execute_callback,
     pub(crate) complete: Option<napi_async_complete_callback>,
@@ -1938,7 +1938,6 @@ impl napi_async_work {
                 callback: Self::run_from_thread_pool,
             },
             concurrent_task: ConcurrentTask::default(),
-            global: GlobalRef::from(global),
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
@@ -1958,12 +1957,18 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    /// Read through the env, which `bun test --isolate` retargets; never cached.
+    fn global(&self) -> &JSGlobalObject {
+        // SAFETY: the work holds a ref on its env.
+        unsafe { &*self.env.get() }.to_js()
+    }
+
     /// Returns false if the VM is closed. The addon still has to delete the work.
     pub(crate) fn schedule(&mut self) -> bool {
         if self.scheduled {
             return true;
         }
-        let vm = self.global.bun_vm();
+        let vm = self.global().bun_vm();
         // A finalizer can call this during the GC that destroys the heap.
         if vm.closed() {
             return false;
@@ -2050,12 +2055,18 @@ impl napi_async_work {
         // generically; this is a genuine one-off cleanup.
         scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
 
+        let env = self.env.get();
+        // The global's env list keeps the env alive past `complete`, which may free `self`.
+        scopeguard::defer! {
+            // SAFETY: as above.
+            unsafe { NapiEnv__asyncWorkSettled(env) };
+        }
+
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
             return Ok(());
         };
 
-        let env = self.env.get();
         // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
         let env_ref = unsafe { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
@@ -2327,7 +2338,7 @@ extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
+    debug_assert!(core::ptr::eq(env.to_js(), work.global()));
     napi_async_work::destroy(work_);
     env.ok()
 }
@@ -2340,7 +2351,7 @@ extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work)
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
+    debug_assert!(core::ptr::eq(env.to_js(), work.global()));
     if !work.schedule() {
         return env.cannot_run_js();
     }
@@ -2355,7 +2366,7 @@ extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
+    debug_assert!(core::ptr::eq(env.to_js(), work.global()));
     if work.cancel() {
         return env.ok();
     }

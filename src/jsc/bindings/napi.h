@@ -291,9 +291,15 @@ public:
     }
 
     // JS thread, when async work goes to the thread pool.
-    void asyncWorkEnteredThreadPool() { m_asyncWorkOnThreadPool++; }
+    void asyncWorkEnteredThreadPool()
+    {
+        m_asyncWorkOnThreadPool++;
+        m_asyncWorkInFlight++;
+    }
     // Pool thread, once execute() has returned or the work was cancelled.
     void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
+    // JS thread, once the work's complete() has returned.
+    void asyncWorkSettled() { m_asyncWorkInFlight--; }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
     // by the Rust side, added and removed on the JS thread only: at creation,
@@ -366,6 +372,17 @@ public:
     {
         m_pendingRefFinalizers.remove(ref);
     }
+
+    // Node's env->reflist: every live NapiRef of this env. The NapiRef keeps its slot.
+    uint32_t linkRef(Zig::NapiRef* ref)
+    {
+        m_refs.append(ref);
+        return m_refs.size() - 1;
+    }
+    void unlinkRef(uint32_t slot);
+
+    // Drop every strong root into the swapped-out realm. Waits for the next swap while async work is in flight.
+    void releaseRealmRoots();
 
     /// Will abort the process if a duplicate entry would be added.
     /// This matches Node.js behavior which always crashes on duplicates.
@@ -655,6 +672,7 @@ private:
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     static void drainOneRefFinalizer(napi_env, void*, void*);
     WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
+    WTF::Vector<Zig::NapiRef*> m_refs;
     // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
@@ -676,6 +694,8 @@ private:
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
     bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
     std::atomic<unsigned> m_asyncWorkOnThreadPool { 0 };
+    // Scheduled and not yet completed on the JS thread. Its execute() and complete() use what the env's refs pin.
+    unsigned m_asyncWorkInFlight = 0;
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined
@@ -842,20 +862,24 @@ class NapiRef {
     WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
-    void ref();
-    void unref();
-    void clear();
+    // Both return the count to report to the addon.
+    uint32_t ref();
+    uint32_t unref();
 
     NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
-        , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
         , finalizer(WTF::move(finalizer))
         , refCount(count)
+        , m_envSlot(this->env->linkRef(this))
     {
     }
 
+    // Empty once released (Node: an empty persistent handle).
     JSC::JSValue value() const
     {
+        if (m_released) {
+            return JSC::JSValue();
+        }
         if (refCount == 0 && !m_isEternal) {
             return weakValueRef.get();
         }
@@ -866,7 +890,7 @@ public:
     void setValueInitial(JSC::JSValue value, bool can_be_weak)
     {
         if (refCount > 0) {
-            strongRef.set(globalObject->vm(), value);
+            strongRef.set(env->vm(), value);
         }
 
         // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
@@ -882,10 +906,25 @@ public:
                 // even if garbage collection happens while the ref count is 0.
                 m_isEternal = true;
                 if (refCount == 0) {
-                    strongRef.set(globalObject->vm(), symbol);
+                    strongRef.set(env->vm(), symbol);
                 }
             }
         }
+    }
+
+    // Node's Reference with a reset persistent handle. A symbol or primitive (no weak handle) has no realm to root.
+    void releaseRealm()
+    {
+        if (m_released || m_isEternal) {
+            return;
+        }
+        // A collected weak value roots nothing.
+        JSC::JSValue held = value();
+        if (!held || held.isSymbol() || weakValueRef.isClear()) {
+            return;
+        }
+        m_released = true;
+        strongRef.clear();
     }
 
     // Queues a copy when in GC, which a later delete of this ref cannot cancel: only for runtime-owned refs and env cleanup.
@@ -904,6 +943,7 @@ public:
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
+        env->unlinkRef(m_envSlot);
         env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
@@ -920,7 +960,6 @@ public:
     }
 
     WTF::Ref<NapiEnv> env;
-    JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     Bun::NapiFinalizer finalizer;
@@ -930,7 +969,11 @@ public:
     bool releaseOnWeaken = false;
 
 private:
+    friend struct ::NapiEnv;
     bool m_isEternal = false;
+    bool m_released = false;
+    // Index in env->m_refs; moved by NapiEnv::unlinkRef when another ref leaves.
+    uint32_t m_envSlot;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

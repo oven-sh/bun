@@ -173,6 +173,49 @@ static napi_value unref_wrapped_value(const Napi::CallbackInfo &info) {
   return undefined;
 }
 
+static napi_ref retained_refs[8] = {};
+
+static napi_ref &retained_slot(const Napi::CallbackInfo &info, size_t arg) {
+  size_t slot = info.Length() > arg ? info[arg].As<Napi::Number>().Uint32Value() : 0;
+  return retained_refs[slot % 8];
+}
+
+// retain(value, slot = 0): undefined. Keeps value in a static ref with count 1.
+// An earlier ref in the slot is left in place (never deleted), so each call
+// roots on its own.
+static napi_value retain(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  NODE_API_CALL(env, napi_create_reference(env, info[0], 1, &retained_slot(info, 1)));
+  return info.Env().Undefined();
+}
+
+// retained(slot = 0): the retained value, or undefined once the ref reads empty.
+static napi_value retained(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value value;
+  NODE_API_CALL(env, napi_get_reference_value(env, retained_slot(info, 0), &value));
+  if (!value) {
+    NODE_API_CALL(env, napi_get_undefined(env, &value));
+  }
+  return value;
+}
+
+// ref_retained(slot = 0): number, the count napi_reference_ref reports.
+static napi_value ref_retained(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t count;
+  NODE_API_CALL(env, napi_reference_ref(env, retained_slot(info, 0), &count));
+  return Napi::Number::New(env, count);
+}
+
+// unref_retained(slot = 0): number, the count napi_reference_unref reports.
+static napi_value unref_retained(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t count;
+  NODE_API_CALL(env, napi_reference_unref(env, retained_slot(info, 0), &count));
+  return Napi::Number::New(env, count);
+}
+
 static napi_value was_wrap_finalize_called(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   return Napi::Boolean::New(env, wrap_finalize_called);
@@ -243,6 +286,10 @@ void register_wrap_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, get_wrap_data_from_ref);
   REGISTER_FUNCTION(env, exports, remove_wrap);
   REGISTER_FUNCTION(env, exports, unref_wrapped_value);
+  REGISTER_FUNCTION(env, exports, retain);
+  REGISTER_FUNCTION(env, exports, retained);
+  REGISTER_FUNCTION(env, exports, ref_retained);
+  REGISTER_FUNCTION(env, exports, unref_retained);
   REGISTER_FUNCTION(env, exports, was_wrap_finalize_called);
   REGISTER_FUNCTION(env, exports, try_wrap);
   REGISTER_FUNCTION(env, exports, try_unwrap);

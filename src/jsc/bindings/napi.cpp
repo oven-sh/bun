@@ -1122,17 +1122,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" void napi_set_ref(NapiRef* ref, JSC::EncodedJSValue val_)
-{
-    NAPI_LOG_CURRENT_FUNCTION;
-    JSC::JSValue val = JSC::JSValue::decode(val_);
-    if (val) {
-        ref->strongRef.set(JSC::getVM(&*ref->globalObject), val);
-    } else {
-        ref->strongRef.clear();
-    }
-}
-
 extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     void* native_object,
     napi_finalize finalize_cb,
@@ -1191,9 +1180,9 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
         return napi_set_last_error(env, napi_generic_failure);
     }
 
-    napiRef->unref();
+    uint32_t count = napiRef->unref();
     if (result) [[likely]] {
-        *result = napiRef->refCount;
+        *result = count;
     }
     NAPI_RETURN_SUCCESS(env);
 }
@@ -1221,9 +1210,9 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
     NapiRef* napiRef = toJS(ref);
-    napiRef->ref();
+    uint32_t count = napiRef->ref();
     if (result) [[likely]] {
-        *result = napiRef->refCount;
+        *result = count;
     }
     NAPI_RETURN_SUCCESS(env);
 }
@@ -3405,6 +3394,11 @@ extern "C" void NapiEnv__asyncWorkEnteredThreadPool(napi_env env)
 extern "C" void NapiEnv__asyncWorkLeftThreadPool(napi_env env)
 {
     env->asyncWorkLeftThreadPool();
+}
+
+extern "C" void NapiEnv__asyncWorkSettled(napi_env env)
+{
+    env->asyncWorkSettled();
 }
 
 extern "C" void NapiEnv__runFinalizers(void* env)

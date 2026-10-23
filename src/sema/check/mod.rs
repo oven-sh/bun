@@ -1939,7 +1939,8 @@ pub struct Checker<'p, 's> {
     /// (`checkVariableLikeDeclaration`). Such an expression is checked only if the type of a
     /// declaration is computed from it.
     unvisited_exprs: Vec<(u32, ExprId)>,
-    /// The import types with type arguments that `checkSourceFile` has visited. See `never_check_deferred_types`.
+    /// The import types with type arguments in `task.file` that `checkSourceFile` has visited. A query can get here with
+    /// a node of another file (`precheck_type_node`), whose own walk visits it again. See `never_check_deferred_types`.
     import_types_with_arguments: Vec<TypeNodeId>,
     /// The initializers in the parameters of functions without a body that `getTypeFromBindingElement`
     /// has checked. `checkExpressionWithContextualType` doesn't store a type, and with a type parameter in scope nothing

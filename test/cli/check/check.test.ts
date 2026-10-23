@@ -16712,6 +16712,34 @@ export declare const d1: Array<{ a: D1 }>;
       expect(exitCode).toBe(1);
     });
 
+    test("an import type with type arguments that's first reached from another file leaves that file's errors alone", async () => {
+      using dir = project({
+        // a.ts comes first in the program, and asks for the type of `x`.
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["b.ts"] }),
+        "w.ts": `export type W<T> = T;
+`,
+        "a.ts": `import { x } from "./b";
+export const z = x;
+export type A0 = { m0 };
+export type A1 = { m1 };
+export type A2 = { m2 };
+export type A3 = { m3 };
+`,
+        "b.ts": `import "./a";
+declare function g<T>(): T;
+export const x = g<import("./w").W<{ p }>>();
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,20): error TS7008: Member 'm0' implicitly has an 'any' type.
+        a.ts(4,20): error TS7008: Member 'm1' implicitly has an 'any' type.
+        a.ts(5,20): error TS7008: Member 'm2' implicitly has an 'any' type.
+        a.ts(6,20): error TS7008: Member 'm3' implicitly has an 'any' type."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

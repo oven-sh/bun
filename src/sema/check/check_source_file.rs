@@ -1244,7 +1244,7 @@ impl<'s> Checker<'_, 's> {
             TypeNodeKind::Import { spec, args, .. } => {
                 if spec.is_none() {
                     self.check_type_nodes(file, args);
-                } else if !args.is_empty() {
+                } else if !args.is_empty() && self.task.file == Some(file) {
                     self.import_types_with_arguments.push(node);
                 }
                 self.check_type_reference_or_import(file, node)

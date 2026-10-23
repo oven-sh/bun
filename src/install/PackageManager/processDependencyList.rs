@@ -169,6 +169,14 @@ impl PackageManager {
         {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
+            // A migration wrote the row without this package.json.
+            if self.lockfile.is_unread(existing_id) {
+                let has_install_script = package.meta.has_install_script();
+                existing.bin = package.bin;
+                existing.meta.set_has_install_script(has_install_script);
+                self.lockfile.packages.set(existing_id as usize, existing);
+                self.lockfile.unread.unset(existing_id as usize);
+            }
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
             let moved = match existing.resolution.tag {
                 // A nested git ref can move, so `bun update` resolves the dependencies again.

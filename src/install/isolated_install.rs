@@ -49,13 +49,14 @@ use crate::network_task::ForTarballError;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
+use crate::package_manager_real::unread_packages::DescribedPackages;
 use crate::package_manager_task as Task;
 use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
     invalid_dependency_id, invalid_package_id,
 };
-use installer::{CompleteState, PatchInfo, Step, TaskError, Which};
+use installer::{CompleteState, PackageJson, PatchInfo, Step, TaskError, Which};
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1784,6 +1785,7 @@ pub(crate) fn install_isolated_packages(
             let pkg_names = pkgs.items_name();
             let pkg_resolutions = pkgs.items_resolution();
             let pkg_metas = pkgs.items_meta();
+            let pkg_bins = pkgs.items_bin();
 
             let string_buf = &lockfile.buffers.string_bytes[..];
             let dependencies = &lockfile.buffers.dependencies[..];
@@ -1806,6 +1808,14 @@ pub(crate) fn install_isolated_packages(
                 write!(WyhashWriter { hasher: &mut h }, "{path}\0").expect("unreachable");
                 let pkg_id = store.ids(id).pkg_id as usize;
                 h.update(bun_core::bytes_of(&pkg_metas[pkg_id].integrity));
+                // Only the package.json of a git or tarball package says what its bins are. A
+                // lockfile that an older version migrated has the row without them, and the
+                // entries of such an install lack their links.
+                if pkg_resolutions[pkg_id].tag.is_self_described()
+                    && pkg_bins[pkg_id].tag != crate::bin::Tag::None
+                {
+                    h.update(b"bin");
+                }
                 h
             };
 
@@ -1850,6 +1860,10 @@ pub(crate) fn install_isolated_packages(
                         // A patch or a lifecycle script changes the package's own directory.
                         if is_trusted {
                             trusted_entries.push(entry_idx);
+                            break 'eligible false;
+                        }
+                        // The hash below has the bins of the row, which are not known yet.
+                        if lockfile.is_unread(pkg_id) {
                             break 'eligible false;
                         }
                         if lockfile.patched_dependencies.count() > 0 {
@@ -2259,6 +2273,8 @@ pub(crate) fn install_isolated_packages(
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
+            described: DescribedPackages::for_linker(lockfile_ro),
+            described_in_store: Vec::new(),
         };
         // From here on, no `&mut PackageManager` is held across a call on `installer`, because it
         // would alias.
@@ -2498,6 +2514,10 @@ pub(crate) fn install_isolated_packages(
                         {
                             installer.summary.offline_misses.in_place.push(pkg_id);
                         }
+                        if installer.described.is_some() {
+                            let patched = matches!(patch_info, PatchInfo::Patch(_));
+                            installer.describe(pkg_id, PackageJson::Stored { entry_id, patched });
+                        }
                         let mut state = CompleteState::Skipped;
                         if uses_global_store {
                             // Warm hit: the global virtual store already holds
@@ -2563,6 +2583,9 @@ pub(crate) fn install_isolated_packages(
                     };
 
                     if !missing_from_cache {
+                        if installer.described.is_some() {
+                            installer.describe(pkg_id, PackageJson::Cached(entry_id));
+                        }
                         match installer.apply_package_patch(entry_id, &patch_info) {
                             Ok(()) => installer.start_task(entry_id),
                             Err(err) => installer.on_task_fail(entry_id, &err),
@@ -2686,6 +2709,7 @@ pub(crate) fn install_isolated_packages(
         );
 
         installer.relink_bins_of_members_with_scripts();
+        installer.link_bins_of_described_in_store();
         installer.unlink_left_out_entries();
         installer.warn_left_out_links();
         installer.record_update_request_trust();
@@ -2701,6 +2725,7 @@ pub(crate) fn install_isolated_packages(
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
+        summary.described = installer.described.take();
 
         return Ok(summary);
     }

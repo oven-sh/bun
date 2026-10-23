@@ -69,6 +69,10 @@ pub struct Summary {
     pub(crate) places: Vec<(u64, PackageID)>,
 
     pub(crate) offline_misses: OfflineMisses,
+
+    /// What the linker read for the unread packages. `PackageManager::adopt_described` takes it.
+    pub(crate) described:
+        Option<Box<crate::package_manager_real::unread_packages::DescribedPackages>>,
 }
 
 /// Only used with `--offline`. Has one entry per folder. `report_offline_misses` decides which ones

@@ -42,6 +42,7 @@ use crate::bun_fs;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::{Do, Enable};
+use crate::package_manager_real::unread_packages::DescribedPackages;
 
 /// The enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
@@ -130,6 +131,12 @@ pub struct Installer<'a> {
 
     /// Main-thread only: entries that returned `Result::RunScripts`, in that order.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
+
+    /// `Some` if the lockfile has an unread package. The row of one has no `bin`.
+    pub(crate) described: Option<Box<DescribedPackages>>,
+
+    /// Main-thread only: the packages that `describe` read in the store.
+    pub(crate) described_in_store: Vec<PackageID>,
 }
 
 /// A task on the pool reads `self` and the store through `Task::installer`.
@@ -302,6 +309,9 @@ impl<'a> Installer<'a> {
             if data.integrity.tag.is_supported() {
                 self.record_extracted_integrity(pkg_id, &data.integrity);
             }
+            if self.described.is_some() {
+                self.describe(pkg_id, PackageJson::Extracted(data));
+            }
 
             let patched = self
                 .package_patch_info(pkg_id)
@@ -339,6 +349,131 @@ impl<'a> Installer<'a> {
             .options
             .enable
             .set(Enable::FORCE_SAVE_LOCKFILE, true);
+    }
+
+    /// Main thread, before a task of `pkg_id` starts. Reads the package.json of an unread package,
+    /// once.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn describe(&mut self, pkg_id: PackageID, package_json: PackageJson<'_>) {
+        let Some(described) = self.described.as_deref() else {
+            return;
+        };
+        let lockfile = self.lockfile();
+        if !described.wants(lockfile, pkg_id) {
+            return;
+        }
+        let pkgs = lockfile.packages.slice();
+        let resolution = &pkgs.items_resolution()[pkg_id as usize];
+        let integrity = &pkgs.items_meta()[pkg_id as usize].integrity;
+        let manager = self.manager_mut();
+        let package = match package_json {
+            PackageJson::Extracted(data) => data.json.as_ref().and_then(|json| {
+                let pinned = !manager.skips_verify(resolution.tag);
+                manager.describe(&json.path, &json.buf, pinned)
+            }),
+            PackageJson::Cached(entry_id) => {
+                // An owned copy, because the next name is printed into the same buffer.
+                let folder =
+                    bun_core::ZBox::from_bytes(self.cached_folder_name(entry_id, None).as_bytes());
+                let pinned = directories::cached_pinned_folder_name(manager, resolution, integrity);
+                manager.describe_cached(&folder, folder.as_bytes() == pinned.as_bytes())
+            }
+            PackageJson::Stored { entry_id, patched } => {
+                let mut placed = AutoAbsPath::init_top_level_dir();
+                self.append_real_store_path(&mut placed, entry_id, Which::Final)
+                    .ok()
+                    .and_then(|()| {
+                        manager.describe_placed(resolution, integrity, placed.slice(), !patched)
+                    })
+            }
+        };
+        if package.is_some() && matches!(package_json, PackageJson::Stored { .. }) {
+            self.described_in_store.push(pkg_id);
+        }
+        described.set(pkg_id, package);
+    }
+
+    /// The `bin` of a package, and the buffers of its strings.
+    fn bin_of(&self, pkg_id: PackageID) -> (bin_real::Bin, &[u8], &[bun_semver::ExternalString]) {
+        let lockfile = self.lockfile();
+        match &self.described {
+            Some(described) => described.bin_of(lockfile, pkg_id),
+            None => (
+                lockfile.packages.items_bin()[pkg_id as usize],
+                lockfile.buffers.string_bytes.as_slice(),
+                lockfile.buffers.extern_strings.as_slice(),
+            ),
+        }
+    }
+
+    #[inline]
+    fn has_bin(&self, pkg_id: PackageID) -> bool {
+        let lockfile = self.lockfile();
+        let tag = match &self.described {
+            Some(described) => described.bin_of(lockfile, pkg_id).0.tag,
+            None => lockfile.packages.items_bin()[pkg_id as usize].tag,
+        };
+        tag != bin::Tag::None
+    }
+
+    fn has_install_script(&self, pkg_id: PackageID) -> bool {
+        self.lockfile().packages.items_meta()[pkg_id as usize].has_install_script()
+            || (self.described.as_deref())
+                .and_then(|described| described.get(pkg_id))
+                .is_some_and(|package| package.has_install_script)
+    }
+
+    /// Main thread, once every task is done. An entry that was in the store before the
+    /// package.json of its package was read has the bins of the package in no `.bin`: not in its
+    /// own, and not in the one of an entry that depends on it.
+    pub(crate) fn link_bins_of_described_in_store(&mut self) {
+        let described: Vec<PackageID> = core::mem::take(&mut self.described_in_store)
+            .into_iter()
+            .filter(|&pkg_id| self.has_bin(pkg_id))
+            .collect();
+        if described.is_empty() {
+            return;
+        }
+        let store = self.store;
+        let is_described = |entry_id: StoreEntryId| described.contains(&store.ids(entry_id).pkg_id);
+        for index in 0..store.entries.len() {
+            let entry_id = StoreEntryId::from(index as u32);
+            let has_described_dependency = (store.entries.items_dependencies()[index].slice())
+                .iter()
+                .any(|dep| is_described(dep.entry_id));
+            if !(is_described(entry_id) || has_described_dependency)
+                || self.left_out_entries.contains(&entry_id)
+            {
+                continue;
+            }
+            // An unread package keeps itself and its dependents out of the global store, so
+            // `Which::Staging` is where the entry is.
+            debug_assert!(!self.entry_uses_global_store(entry_id));
+            let linked = (|| -> TaskResult<()> {
+                if is_described(entry_id)
+                    && let Some(own_name) = self
+                        .entry_store_node_modules_package_name(entry_id)
+                        .filter(|name| !name.is_empty())
+                {
+                    self.bin_links(entry_id)
+                        .map_err(crate::Error::from)
+                        .and_then(|mut links| {
+                            let pkg_id = store.ids(entry_id).pkg_id;
+                            self.link_bins(&mut links, pkg_id, own_name, false)
+                        })
+                        .map_err(TaskError::Binaries)?;
+                }
+                if has_described_dependency {
+                    self.link_dependency_bins(entry_id)?;
+                }
+                Ok(())
+            })();
+            if let Err(err) = linked {
+                self.manager_mut().increment_pending_tasks(1);
+                self.on_task_fail(entry_id, &err);
+            }
+        }
     }
 
     /// Called from main thread when a tarball download or extraction fails.
@@ -947,6 +1082,19 @@ impl<'a> Installer<'a> {
     }
 }
 
+/// Where `Installer::describe` reads the package.json of a package.
+pub(crate) enum PackageJson<'a> {
+    /// What the extraction of the package read.
+    Extracted(&'a install::ExtractData),
+    /// The folder of the entry in the cache, which its files are about to be linked from.
+    Cached(StoreEntryId),
+    /// An earlier install put the entry into the store. A patch changes the package.json there.
+    Stored {
+        entry_id: StoreEntryId,
+        patched: bool,
+    },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CompleteState {
     Success,
@@ -1221,7 +1369,7 @@ impl Task {
 
                 Step::Binaries => {
                     // A tarball without a package name has no folder and no bin.
-                    if pkgs.items_bin()[pkg_id as usize].tag != bin::Tag::None
+                    if installer.has_bin(pkg_id)
                         && let Some(own_name) = installer
                             .entry_store_node_modules_package_name(entry_id)
                             .filter(|name| !name.is_empty())
@@ -1360,7 +1508,7 @@ impl Task {
         let (manager, lockfile) = (installer.manager(), installer.lockfile());
         let store::Ids { dep_id, pkg_id } = installer.store.ids(entry_id);
         let pkgs = lockfile.packages.slice();
-        if !pkgs.items_meta()[pkg_id as usize].has_install_script() {
+        if !installer.has_install_script(pkg_id) {
             return 0;
         }
         let mut pkg_scripts: package::scripts::Scripts = pkgs.items_scripts()[pkg_id as usize];
@@ -2295,7 +2443,6 @@ impl<'a> Installer<'a> {
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let entry_deps = store.entries.items_dependencies();
         let pkgs = lockfile.packages.slice();
-        let pkg_bins = pkgs.items_bin();
 
         let mut links = self
             .bin_links(parent_entry_id)
@@ -2323,7 +2470,7 @@ impl<'a> Installer<'a> {
         let mut deps_with_bins: Vec<_> = entry_deps[parent_entry_id.get() as usize]
             .slice()
             .iter()
-            .filter(|dep| pkg_bins[store.ids(dep.entry_id).pkg_id as usize].tag != bin::Tag::None)
+            .filter(|dep| self.has_bin(store.ids(dep.entry_id).pkg_id))
             .collect();
         bun_collections::index_sort::sort_slice_by(&mut deps_with_bins, |a, b| {
             let [a, b] = [a, b].map(|dep| {
@@ -2395,7 +2542,6 @@ impl<'a> Installer<'a> {
         package_name: &[u8],
         global: bool,
     ) -> crate::Result<()> {
-        let lockfile = self.lockfile();
         let package_name = strings::StringOrTinyString::init(package_name);
 
         let replacement = self
@@ -2426,13 +2572,14 @@ impl<'a> Installer<'a> {
             Some((path, name)) => (core::ptr::from_ref(path), *name),
             None => (&raw const links.node_modules_path, package_name),
         };
+        let (bin, string_buf, extern_string_buf) = self.bin_of(pkg_id);
         let mut bin_linker = bin_real::Linker {
-            bin: lockfile.packages.items_bin()[pkg_id as usize],
+            bin,
             global_bin_path: self.manager().options.bin_path,
             package_name,
             target_package_name,
-            string_buf: lockfile.buffers.string_bytes.as_slice(),
-            extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
+            string_buf,
+            extern_string_buf,
             seen: Some(&mut links.seen),
             target_node_modules_path,
             node_modules_path: &mut links.node_modules_path,

@@ -808,6 +808,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
         this.packages.append(package)?;
         this.get_or_put_id(appended_id, name_hash)?;
+        // yarn.lock does not record install scripts either. The registry's manifest has both for
+        // an npm package (`fetch_necessary_package_metadata_after_yarn_or_pnpm_migration`).
+        if resolution.tag.is_self_described() {
+            this.mark_unread(appended_id);
+        }
     }
 
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();

@@ -991,6 +991,9 @@ pub fn install_with_manager(
                 None,
             )?
         };
+        if let Some(described) = summary.described.take() {
+            manager.adopt_described(&described);
+        }
         summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
         if !isolated && warn_incorrect_peers {
             let served = lockfile::tree::served_peers(&manager.lockfile);

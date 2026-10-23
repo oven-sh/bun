@@ -1054,6 +1054,12 @@ impl Tag {
         self == Tag::LocalTarball || self == Tag::RemoteTarball
     }
 
+    /// A package that is downloaded and that no registry manifest describes: only the
+    /// package.json inside the archive or the repository says what its `bin` and its scripts are.
+    pub(crate) fn is_self_described(self) -> bool {
+        self.is_git() || self.is_tarball()
+    }
+
     /// `Uninitialized` only exists before a package is appended, and nothing produces
     /// `SingleFileModule`.
     pub(crate) fn belongs_in_lockfile(self) -> bool {

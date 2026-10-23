@@ -37,6 +37,16 @@ impl CSSNumberFns {
         }
     }
 
+    /// `to_css` for a quotient that the printer computes. An integral one is not always the written number.
+    pub(crate) fn to_css_rounded(this: CSSNumber, dest: &mut Printer) -> Result<(), PrintErr> {
+        if this.abs() < 1.0 {
+            return Self::to_css(this, dest);
+        }
+        let mut buf = [0u8; 129];
+        let (str, _) = css::dtoa_short_rounded(&mut buf, this, 6);
+        dest.write_bytes(str)
+    }
+
     pub(crate) fn try_from_angle(_: Angle) -> Option<CSSNumber> {
         None
     }

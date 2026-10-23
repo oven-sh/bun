@@ -3579,6 +3579,25 @@ impl<'a> Parser<'a> {
         self.input.tokenizer.position
     }
 
+    /// The source text of the token `next*` returned last, if it is an integer of more than 6 digits.
+    #[inline]
+    pub(crate) fn long_integer_text(&self) -> Option<&'static [u8]> {
+        let cached = self.input.cached_token.as_ref()?;
+        let (int_value, unit): (Option<i32>, Option<&[u8]>) = match &cached.token {
+            Token::Number(num) => (num.int_value, None),
+            Token::Percentage { int_value, .. } => (*int_value, None),
+            Token::Dimension(dimension) => (dimension.num.int_value, Some(dimension.unit)),
+            _ => return None,
+        };
+        if int_value?.unsigned_abs() < 10u32.pow(f32::DIGITS) {
+            return None;
+        }
+        let text = self.slice_from_cloned(cached.start_position);
+        // A unit written with an escape is a copy. Its text holds the escape and is not kept.
+        unit.is_none_or(|unit| bun_alloc::is_slice_in_buffer(unit, text))
+            .then_some(text)
+    }
+
     fn parse_empty(_: &mut Parser) -> CssResult<()> {
         Ok(())
     }
@@ -5307,17 +5326,21 @@ impl Token {
                 debug_assert!(*x <= 0x7F);
                 writer.write_byte(*x as u8)
             }
-            Token::Number(n) => serializer::write_numeric(n.value, n.int_value, n.has_sign, writer),
+            Token::Number(n) => {
+                serializer::write_numeric(n.value, n.int_value, n.has_sign, false, writer)
+            }
             Token::Percentage {
                 unit_value,
                 int_value,
                 has_sign,
             } => {
-                serializer::write_numeric(*unit_value * 100.0, *int_value, *has_sign, writer)?;
+                let percent = *unit_value * 100.0;
+                serializer::write_numeric(percent, *int_value, *has_sign, true, writer)?;
                 writer.write_all(b"%")
             }
             Token::Dimension(d) => {
-                serializer::write_numeric(d.num.value, d.num.int_value, d.num.has_sign, writer)?;
+                let num = &d.num;
+                serializer::write_numeric(num.value, num.int_value, num.has_sign, false, writer)?;
                 // Disambiguate with scientific notation.
                 let unit = d.unit;
                 if (unit.len() == 1 && unit[0] == b'e')
@@ -5855,10 +5878,12 @@ pub mod serializer {
         writer.write_all(&value[chunk_start..])
     }
 
+    /// `is_product`: `value` is the `unit_value * 100.0` of a percentage, not always the written number.
     pub(crate) fn write_numeric<W: WriteAll + ?Sized>(
         value: f32,
         int_value: Option<i32>,
         has_sign: bool,
+        is_product: bool,
         writer: &mut W,
     ) -> bun_io::Result<()> {
         // `value >= 0` is true for negative 0.
@@ -5875,7 +5900,11 @@ pub mod serializer {
             }
         } else {
             let mut buf = [0u8; 129];
-            let (str, maybe_notation) = dtoa_short(&mut buf, value, 6);
+            let (str, maybe_notation) = if is_product {
+                dtoa_short_rounded(&mut buf, value, 6)
+            } else {
+                dtoa_short(&mut buf, value, 6)
+            };
             writer.write_all(str)?;
             match maybe_notation {
                 Some(n) => n,
@@ -6046,8 +6075,25 @@ impl Notation {
     }
 }
 
-/// Writes float with precision. Returns `None` notation if value was not finite.
+/// Writes float with precision, or an integer below 2^24 in full. Returns `None` notation if value was not finite.
 pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Option<Notation>) {
+    // An f32 holds every integer below 2^24. A caller that computes `value` uses `dtoa_short_rounded`.
+    let int = value as i32;
+    if int as f32 == value && int.unsigned_abs() < 1 << f32::MANTISSA_DIGITS {
+        let mut itoa_buf = bun_core::fmt::ItoaBuf::new();
+        let digits = bun_core::fmt::itoa(&mut itoa_buf, int);
+        buf[..digits.len()].copy_from_slice(digits);
+        return (&buf[..digits.len()], Some(Notation::integer()));
+    }
+    dtoa_short_rounded(buf, value, precision)
+}
+
+/// `dtoa_short` that cuts an integer to `precision` digits too.
+pub(crate) fn dtoa_short_rounded(
+    buf: &mut [u8; 129],
+    value: f32,
+    precision: u8,
+) -> (&[u8], Option<Notation>) {
     // Only calc() yields non-finite values. CSS Values 4 #calc-ieee: a NaN
     // escaping a top-level calculation is censored to zero; infinities clamp to
     // the largest finite value (https://github.com/oven-sh/bun/issues/18064).

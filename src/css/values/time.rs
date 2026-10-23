@@ -75,7 +75,7 @@ impl Time {
             }
             Time::Milliseconds(ms) => {
                 if ms == 0.0 || ms >= 100.0 {
-                    CSSNumberFns::to_css(ms / 1000.0, dest)?;
+                    CSSNumberFns::to_css_rounded(ms / 1000.0, dest)?;
                     dest.write_str("s")?;
                 } else {
                     CSSNumberFns::to_css(ms, dest)?;

@@ -1759,6 +1759,14 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     true
 }
 
+/// Says how a test file is named, for the messages that say no test file was found.
+fn print_test_file_rule() {
+    pretty_errorln!(
+        "Test files end in {} before the extension <d>(ex: \"MyApp.test.ts\")<r>",
+        scanner::TestFileRule::QuotedSuffixes
+    );
+}
+
 pub(crate) struct TestCommand;
 
 impl TestCommand {
@@ -2499,14 +2507,16 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     // Be very clear to ai.
                     Output::err_generic(
-                        "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir()),),
+                        "0 test files matching {} in --cwd={}",
+                        (
+                            scanner::TestFileRule::Glob(&vm.transpiler.options),
+                            bun_fmt::quote(FileSystem::instance().top_level_dir()),
+                        ),
                     );
                 } else {
                     // Be friendlier to humans.
-                    pretty_errorln!(
-                        "<yellow>No tests found!<r>\n\nTests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>\n"
-                    );
+                    pretty_error!("<yellow>No tests found!<r>\n\n");
+                    print_test_file_rule();
                 }
             } else {
                 if Output::is_ai_agent() {
@@ -2541,9 +2551,8 @@ impl TestCommand {
                     Output::print_start_end(ctx.start_time, bun::time::nano_timestamp());
                 }
 
-                pretty_errorln!(
-                    "\n\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
-                );
+                pretty_error!("\n\n<blue>note<r><d>:<r> ");
+                print_test_file_rule();
 
                 // print a helpful note
                 if let Some(i) = has_file_like {

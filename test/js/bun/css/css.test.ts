@@ -6042,6 +6042,70 @@ describe("css tests", () => {
       "@media (width>=6px){.foo{color:#7fff00}}",
     );
 
+    // After a media type, `or` is legal inside parentheses: <media-in-parens> = ( <media-condition> ).
+    // The expected strings are the output of lightningcss 1.32.0.
+    minify_test(
+      "@media screen and ((min-width: 600px) or (orientation: landscape)) { .foo { color: chartreuse }}",
+      "@media screen and ((width>=600px) or (orientation:landscape)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media only screen and ((color) or (hover)) { .foo { color: chartreuse }}",
+      "@media only screen and ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media not print and ((color) or (hover)) { .foo { color: chartreuse }}",
+      "@media not print and ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media all and ((color) or (hover)) { .foo { color: chartreuse }}",
+      "@media (color) or (hover){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media screen and ((color) or (hover)) and (grid) { .foo { color: chartreuse }}",
+      "@media screen and ((color) or (hover)) and (grid){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media screen and (grid) and ((color) or (hover)) { .foo { color: chartreuse }}",
+      "@media screen and (grid) and ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media screen and not ((color) or (hover)) { .foo { color: chartreuse }}",
+      "@media screen and not ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media screen and (not ((color) or (hover))) { .foo { color: chartreuse }}",
+      "@media screen and not ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media print, screen and ((color) or (hover)) { .foo { color: chartreuse }}",
+      "@media print,screen and ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media screen and (((color) or (hover))) { .foo { color: chartreuse }}",
+      "@media screen and ((color) or (hover)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media screen and ((color) or ((hover) or (grid))) { .foo { color: chartreuse }}",
+      "@media screen and ((color) or (hover) or (grid)){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      "@media screen and ((color) or (not (hover))) { .foo { color: chartreuse }}",
+      "@media screen and ((color) or (not (hover))){.foo{color:#7fff00}}",
+    );
+    minify_test(
+      '@import "foo.css" screen and ((color) or (hover));',
+      '@import "foo.css" screen and ((color) or (hover));',
+    );
+    test.each([
+      ["@media screen and (color) or (hover) { .foo { color: chartreuse }}", "Unexpected token: or"],
+      ["@media screen and (color) and (hover) or (grid) { .foo { color: chartreuse }}", "Unexpected token: or"],
+      ["@media screen and ((color) or (hover)) or (grid) { .foo { color: chartreuse }}", "Unexpected token: or"],
+      ["@media screen and ((color) and (hover) or (grid)) { .foo { color: chartreuse }}", "Unexpected token: or"],
+      ["@media screen and ((color) or (hover) and (grid)) { .foo { color: chartreuse }}", "Unexpected token: and"],
+    ])("ERROR: %s", (source, message) => {
+      expect(() => minify_test_with_options(source, "")).toThrow(new Error(`parsing failed: ${message}`));
+    });
+
     prefix_test(
       `
         @media (width >= 240px) {

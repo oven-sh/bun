@@ -138,15 +138,18 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * libuv's frame under this one still reads the handle, and the dispatch
    * still reads the socket. tick_depth is raised here, not only in
    * us_loop_run / us_loop_pump, so us_internal_loop_post frees closed sockets
-   * only once every dispatch frame has returned, whoever runs the loop. The
-   * frame under this one does not queue the endgame a second time
+   * only once every dispatch frame has returned, whoever runs the loop. A run
+   * that Bun did not start is at depth 0 here; it counts as the outermost
+   * tick, so the frame is at depth 2 or more either way. The frame under this
+   * one does not queue the endgame a second time
    * (win-poll-no-reendgame-after-close), so nothing here reads the poll after
    * the dispatch. */
   struct us_poll_t *wp = (struct us_poll_t *)p->data;
   struct us_loop_t *loop = us_internal_poll_loop(wp);
-  loop->data.tick_depth++;
+  int depth = loop->data.tick_depth;
+  loop->data.tick_depth = (depth > 0 ? depth : 1) + 1;
   us_internal_dispatch_ready_poll(wp, error, eof, events);
-  loop->data.tick_depth--;
+  loop->data.tick_depth = depth;
 }
 
 static void prepare_cb(uv_prepare_t *p) {

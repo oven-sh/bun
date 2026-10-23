@@ -218,9 +218,9 @@ describe("--print for cjs/esm", () => {
 describe.concurrent("--print with a result promise still pending when the event loop is done", () => {
   const exitListener = `process.on("exit", () => console.log("exit listener ran"));`;
 
-  async function print(script: string) {
+  async function print(script: string, ...flags: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--print", script],
+      cmd: [bunExe(), ...flags, "--print", script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -266,6 +266,23 @@ describe.concurrent("--print with a result promise still pending when the event 
       expect(exitCode).toBe(1);
     },
   );
+
+  // The error is reported before the entry is evaluated, so the loop never
+  // runs a turn of its own.
+  test.each([
+    ["uncaught exception", `queueMicrotask(() => { throw new Error("boom"); });`],
+    ["unhandled rejection", `Promise.reject(new Error("boom"));`],
+  ])("%s in a --preload stopped the loop: the timer does not run, exits 1 after 'exit' listeners", async (_, fail) => {
+    using dir = tempDir("print-pending-after-preload-error", { "preload.mjs": `${exitListener}\n${fail}\n` });
+    const { stdout, stderr, exitCode } = await print(
+      `const result = Bun.sleep(1).then(() => 5); Bun.sleepSync(10); result`,
+      "--preload",
+      join(String(dir), "preload.mjs"),
+    );
+    expect(stderr).toContain("error: boom");
+    expect(stdout).toBe("Promise { <pending> }\nexit listener ran\n");
+    expect(exitCode).toBe(1);
+  });
 
   test("uncaught exception from a timer stopped the loop: 'exit' listeners see code 1", async () => {
     // The settling timer is armed by the throwing callback itself. Whether the

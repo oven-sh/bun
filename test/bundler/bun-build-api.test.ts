@@ -1111,6 +1111,76 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
+  test.concurrent("two output files at one path fail the build before anything is written", async () => {
+    using dir = tempDir("build-api-output-path-collision", {
+      "entry.js": `import a from "./a/logo.png"; import b from "./b/logo.png"; console.log(a, b);`,
+      "a/logo.png": "the first logo",
+      "b/logo.png": "the second logo",
+      "build.ts": `
+        import { existsSync } from "node:fs";
+        const results = {};
+        for (const [name, options] of Object.entries({
+          assets: { outdir: "dist", naming: { asset: "[name].[ext]" } },
+          assetsInMemory: { naming: { asset: "[name].[ext]" } },
+          metafileAndEntryPoint: { outdir: "dist", metafile: { json: "entry.js" } },
+          twoMetafiles: { outdir: "dist", metafile: { json: "meta", markdown: "./meta" } },
+          distinctPaths: { outdir: "dist", naming: { asset: "[dir]/[name].[ext]" }, metafile: { json: "meta.json" } },
+        })) {
+          const build = await Bun.build({ entrypoints: ["./entry.js"], throw: false, ...options });
+          results[name] = {
+            success: build.success,
+            outputs: build.outputs.length,
+            logs: build.logs.map(log => log.message),
+            wrote: existsSync("dist"),
+          };
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const assets = {
+      success: false,
+      outputs: 0,
+      logs: [
+        "Multiple files share the same output path\n  ./logo.png:\n    from input a/logo.png\n    from input b/logo.png\n",
+        "asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique",
+      ],
+      wrote: false,
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      assets,
+      assetsInMemory: assets,
+      metafileAndEntryPoint: {
+        success: false,
+        outputs: 0,
+        logs: [
+          "Multiple files share the same output path\n  ./entry.js:\n    from input entry.js\n    from the metafile (metafile.json)\n",
+          "entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique",
+        ],
+        wrote: false,
+      },
+      twoMetafiles: {
+        success: false,
+        outputs: 0,
+        logs: [
+          "Multiple files share the same output path\n  meta:\n    from the metafile (metafile.json)\n    from the metafile (metafile.markdown)\n",
+        ],
+        wrote: false,
+      },
+      distinctPaths: { success: true, outputs: 4, logs: [], wrote: true },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
     // A TOML dotted header builds an object nested arbitrarily deep without
     // recursing in the parser, so the printer's recursion guard is the first

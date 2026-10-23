@@ -5,6 +5,7 @@ use std::io::Write as _;
 use bun_collections::AutoBitSet;
 use bun_collections::StringArrayHashMap;
 use bun_collections::StringHashMap;
+use bun_collections::hashbrown::hash_map::{Entry, HashMap};
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
@@ -388,16 +389,6 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
-
-        #[derive(Default)]
-        struct DuplicateEntry<'a> {
-            // `BackRef` (not `*mut`) — entries point at elements of the
-            // stack-owned `chunks: &mut [Chunk]` above, which outlives the
-            // `duplicates_map`; reads go through safe `Deref`.
-            sources: Vec<bun_ptr::BackRef<Chunk<'a>>>,
-        }
-        let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
         let mut has_unusable_output_path = false;
         // Without an output directory the paths are only returned, so they can have any length.
         let opens_output_paths =
@@ -442,24 +433,59 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 continue;
             }
 
-            let claimed = path_names_map.get_or_put(&rel_path)?;
-            if claimed.found_existing {
-                let first = *claimed.value_ptr as usize;
-                let dup = duplicates_map.get_or_put(&rel_path)?;
-                if !dup.found_existing {
-                    *dup.value_ptr = DuplicateEntry::default();
-                    dup.value_ptr
-                        .sources
-                        .push(bun_ptr::BackRef::new(&chunks[first]));
+            chunk.final_rel_path = rel_path.into_boxed_slice();
+        }
+
+        // Every chunk and every copied asset needs its own output path. An asset that no live code uses is copied
+        // too, so it also takes its path. Standalone HTML inlines the assets into the page instead.
+        #[derive(Clone, Copy)]
+        enum Output {
+            Chunk(u32),
+            /// An index into `Graph::additional_output_files`.
+            Asset(u32),
+        }
+        let mode = c.options.compile_mode;
+        let assets: &[options::OutputFile] = if mode.is_standalone_html() {
+            &[]
+        } else {
+            &c.parse_graph().additional_output_files
+        };
+        let outputs = chunks
+            .iter()
+            .enumerate()
+            // A chunk whose path is too long for the platform has none: that build fails below.
+            .filter(|(_, chunk)| !chunk.final_rel_path.is_empty())
+            .map(|(i, chunk)| (Output::Chunk(i as u32), &*chunk.final_rel_path))
+            .chain(
+                assets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, asset)| (Output::Asset(i as u32), &*asset.dest_path)),
+            );
+        // The first output at each path, with the path as that output spells it.
+        let mut path_names_map: HashMap<Cow<'_, [u8]>, (Output, &[u8]), bun_wyhash::BuildHasher> =
+            HashMap::with_capacity_and_hasher(chunks.len() + assets.len(), Default::default());
+        let mut duplicates_map: StringArrayHashMap<Vec<Output>> = StringArrayHashMap::default();
+        for (output, path) in outputs {
+            let (first, first_path) = match path_names_map.entry(output_path_key(mode, path)) {
+                Entry::Vacant(entry) => {
+                    entry.insert((output, path));
+                    continue;
                 }
-                dup.value_ptr
-                    .sources
-                    .push(bun_ptr::BackRef::new(&chunks[index]));
+                Entry::Occupied(entry) => *entry.get(),
+            };
+            // The same bytes under the same name, for example an image that a page and its server both import.
+            if let (Output::Asset(a), Output::Asset(b)) = (first, output)
+                && assets[a as usize].hash.value == assets[b as usize].hash.value
+                && assets[a as usize].value.as_slice() == assets[b as usize].value.as_slice()
+            {
                 continue;
             }
-            *claimed.value_ptr = index as u32;
-
-            chunks[index].final_rel_path = rel_path.into_boxed_slice();
+            let dup = duplicates_map.get_or_put(first_path)?.value_ptr;
+            if dup.is_empty() {
+                dup.push(first);
+            }
+            dup.push(output);
         }
 
         if duplicates_map.count() > 0 {
@@ -469,6 +495,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             let mut entry_naming: Option<&[u8]> = None;
             let mut chunk_naming: Option<&[u8]> = None;
             let mut asset_naming: Option<&[u8]> = None;
+            let mut only_chunks = true;
 
             writeln!(&mut msg, "Multiple files share the same output path")?;
 
@@ -480,20 +507,31 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 .zip(duplicates_map.values().iter())
             {
                 writeln!(&mut msg, "  {}:", bstr::BStr::new(key))?;
-                for chunk in dup.sources.iter() {
-                    if chunk.entry_point.is_entry_point() {
-                        if kinds[chunk.entry_point.source_index() as usize]
-                            == EntryPoint::Kind::UserSpecified
-                        {
-                            entry_naming = Some(&chunk.template.data);
-                        } else {
-                            chunk_naming = Some(&chunk.template.data);
+                for &output in dup.iter() {
+                    let source_index = match output {
+                        Output::Chunk(i) => {
+                            let chunk = &chunks[i as usize];
+                            let source_index = chunk.entry_point.source_index();
+                            if chunk.entry_point.is_entry_point()
+                                && kinds[source_index as usize] == EntryPoint::Kind::UserSpecified
+                            {
+                                entry_naming = Some(&chunk.template.data);
+                            } else {
+                                chunk_naming = Some(&chunk.template.data);
+                            }
+                            source_index
                         }
-                    } else {
-                        asset_naming = Some(&chunk.template.data);
-                    }
-
-                    let source_index = chunk.entry_point.source_index();
+                        Output::Asset(i) => {
+                            only_chunks = false;
+                            // The default template has `[hash]`: an asset with other bytes gets another name.
+                            asset_naming =
+                                Some(c.options.asset_naming).filter(|naming| !naming.is_empty());
+                            let Some(source_index) = assets[i as usize].source_index.get() else {
+                                continue;
+                            };
+                            source_index.get()
+                        }
+                    };
                     let file: &bun_ast::Source =
                         &c.parse_graph().input_files.items_source()[source_index as usize];
                     writeln!(
@@ -504,7 +542,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 }
             }
 
-            c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
+            c.log_disjoint().add_error(None, bun_ast::Loc::EMPTY, msg);
 
             for (name, template) in [
                 ("entry", entry_naming),
@@ -515,6 +553,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
                 let mut text: Vec<u8> = Vec::new();
                 if crate::options::path_template_hash_len(template).is_some() {
+                    // Only chunks that share a path under a `[hash]` template are known to have the same content.
+                    if !only_chunks {
+                        continue;
+                    }
                     write!(
                         &mut text,
                         "{} naming is '{}'; these inputs produce identical content",
@@ -529,7 +571,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         bstr::BStr::new(template),
                     )?;
                 }
-                c.log_mut().add_msg(bun_ast::Msg {
+                c.log_disjoint().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
                         text: Cow::Owned(text),
@@ -1996,6 +2038,57 @@ fn chunk_load_order(
         position[chunk_index as usize] = i as u32;
     }
     (position, startup_count.unwrap_or(0))
+}
+
+/// Two spellings of one output file have one key. An executable stores a file under its path less one leading `./`
+/// (`StandaloneModuleGraph::module_dest_path`) and resolves nothing else: `a/../x` and `x` are two files there. Every
+/// other path is joined to the output directory, where `a/../x`, `./x` and `.//x` are one file. `path` has `/`
+/// separators on every platform.
+fn output_path_key(mode: options::CompileMode, mut path: &[u8]) -> Cow<'_, [u8]> {
+    if mode.is_executable() {
+        return Cow::Borrowed(strings::remove_leading_dot_slash(path));
+    }
+    while let Some(rest) = path.strip_prefix(b"./") {
+        path = rest;
+    }
+    if strings::split(path, b"/").all(|segment| !matches!(segment, b"" | b"." | b"..")) {
+        return Cow::Borrowed(path);
+    }
+    let mut buf = vec![0u8; path.len() + 1];
+    let len = path::resolve_path::normalize_string_generic_t::<u8, true, false>(
+        path,
+        &mut buf,
+        b'/',
+        path::resolve_path::is_sep_posix_t::<u8>,
+    )
+    .len();
+    buf.truncate(len);
+    Cow::Owned(buf)
+}
+
+#[cfg(test)]
+#[test]
+fn output_path_key_is_one_per_file() {
+    use options::CompileMode;
+    for mode in [CompileMode::None, CompileMode::StandaloneHtml] {
+        let key = |path: &'static [u8]| output_path_key(mode, path);
+        assert_eq!(key(b"./sub/x.js"), key(b"sub/x.js"));
+        assert_eq!(key(b"././x.js"), key(b"x.js"));
+        assert_eq!(key(b".//x.js"), key(b"x.js"));
+        assert_eq!(key(b"sub/./x.js"), key(b"sub/x.js"));
+        assert_eq!(key(b"assets/../x.js"), key(b"x.js"));
+        assert_eq!(key(b"../x.js"), key(b"./../x.js"));
+        assert_ne!(key(b"../x.js"), key(b"x.js"));
+        assert_ne!(key(b"..x.js"), key(b"x.js"));
+        // `\` is a byte of a name.
+        assert_eq!(key(br"sub/../weird\dir/x.js"), key(br"weird\dir/x.js"));
+        assert_ne!(key(br"assets/./a\b.png"), key(b"assets/a/b.png"));
+        assert_ne!(key(br"sub\..\x.js"), key(b"x.js"));
+    }
+    let key = |path: &'static [u8]| output_path_key(CompileMode::Executable, path);
+    assert_eq!(key(b"./x.js"), key(b"x.js"));
+    assert_ne!(key(b"././x.js"), key(b"x.js"));
+    assert_ne!(key(b"assets/../x.js"), key(b"x.js"));
 }
 
 use crate::EntryPoint;

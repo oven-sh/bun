@@ -883,6 +883,158 @@ test.concurrent("bun build names every input that maps to a shared output path",
   expect(exitCode).toBe(1);
 });
 
+describe.concurrent("bun build refuses two output files at one path", () => {
+  /** Runs `bun build <args> --outdir=dist` in `dir`. `dist` lists what the build wrote, or is `null` if it wrote nothing. */
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args, "--outdir=dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const dist = path.join(dir, "dist");
+    return {
+      stdout,
+      stderr: normalizeBunSnapshot(stderr, dir),
+      exitCode,
+      dist: fs.existsSync(dist) ? (fs.readdirSync(dist, { recursive: true }) as string[]).sort() : null,
+    };
+  }
+
+  test("two assets with different bytes", async () => {
+    using dir = tempDir("bundle-asset-collision", {
+      "entry.js": `import a from "./a/logo.png"; import b from "./b/logo.png"; console.log(a, b);\n`,
+      "a/logo.png": "the first logo",
+      "b/logo.png": "the second logo",
+    });
+
+    const { stderr, ...rest } = await build(String(dir), "entry.js", "--asset-naming=[name].[ext]");
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./logo.png:
+          from input a/logo.png
+          from input b/logo.png
+
+
+      note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
+
+    // The rule is per build: a name that keeps the files apart builds, and builds again over its own output.
+    for (let i = 0; i < 2; i++) {
+      const { stdout, ...built } = await build(String(dir), "entry.js", "--asset-naming=[dir]/[name].[ext]");
+      expect(built).toEqual({
+        stderr: "",
+        exitCode: 0,
+        dist: ["a", path.join("a", "logo.png"), "b", path.join("b", "logo.png"), "entry.js"],
+      });
+    }
+    expect(await Bun.file(path.join(String(dir), "dist", "a", "logo.png")).text()).toBe("the first logo");
+    expect(await Bun.file(path.join(String(dir), "dist", "b", "logo.png")).text()).toBe("the second logo");
+  });
+
+  test("two images of an HTML entry point", async () => {
+    using dir = tempDir("bundle-html-asset-collision", {
+      "index.html": `<!doctype html><html><body><img src="./a/logo.png"><img src="./b/logo.png"></body></html>\n`,
+      "a/logo.png": "the first logo",
+      "b/logo.png": "the second logo",
+    });
+
+    const { stderr, ...rest } = await build(String(dir), "index.html", "--asset-naming=[name].[ext]");
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./logo.png:
+          from input a/logo.png
+          from input b/logo.png
+
+
+      note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
+  });
+
+  test("an asset and the source map of an entry point", async () => {
+    using dir = tempDir("bundle-asset-sourcemap-collision", {
+      "entry.js": `import map from "./assets/entry.js.map" with { type: "file" }; console.log(map);\n`,
+      "assets/entry.js.map": "not a source map",
+    });
+
+    const { stderr, ...rest } = await build(
+      String(dir),
+      "entry.js",
+      "--asset-naming=[name].[ext]",
+      "--sourcemap=external",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./entry.js.map:
+          from the source map of input entry.js
+          from input assets/entry.js.map
+
+
+      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique
+
+      note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
+  });
+
+  test("an entry point and the source map of another entry point", async () => {
+    using dir = tempDir("bundle-entry-sourcemap-collision", {
+      "entry.ts": `console.log("entry");\n`,
+      "entry.map.ts": `console.log("entry.map");\n`,
+    });
+
+    const { stderr, ...rest } = await build(
+      String(dir),
+      "entry.ts",
+      "entry.map.ts",
+      "--entry-naming=[name]",
+      "--sourcemap=external",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./entry.map:
+          from input entry.map.ts
+          from the source map of input entry.ts
+
+
+      note: entry naming is './[name]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
+  });
+
+  test("an asset and the bytecode of an entry point", async () => {
+    using dir = tempDir("bundle-asset-bytecode-collision", {
+      "entry.js": `import jsc from "./assets/entry.js.jsc" with { type: "file" }; console.log(jsc);\n`,
+      "assets/entry.js.jsc": "not bytecode",
+    });
+
+    const { stderr, ...rest } = await build(
+      String(dir),
+      "entry.js",
+      "--asset-naming=[name].[ext]",
+      "--target=bun",
+      "--format=cjs",
+      "--bytecode",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./entry.js.jsc:
+          from the bytecode of input entry.js
+          from input assets/entry.js.jsc
+
+
+      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique
+
+      note: asset naming is './[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(rest).toEqual({ stdout: "", exitCode: 1, dist: null });
+  });
+});
+
 test.concurrent("bun build widens [hash] names that would otherwise collide", async () => {
   // 40 entry points under `[hash1]` naming cannot all differ in one character
   // (the alphabet has 32), so some names widen to 2+; none collide. The

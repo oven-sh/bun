@@ -328,6 +328,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
+            // The unlinked code cache has no bound on its number of entries (oven-sh/WebKit: codeCacheWorkingSetMaxBytes).
+            // The last rung of the idle GC ladder (GarbageCollectionController.rs) drops the entries nothing has compiled
+            // again since the rung before it.
+            JSC::Options::releaseIdleCodeCacheEntriesWhenShrinkingFootprint() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
             // JSModuleLoader is now a JSCell (not a JSObject) so exposing it as
             // the global `Loader` would let user code dereference a non-object

@@ -1551,6 +1551,93 @@ test.concurrent("doesn't produce cachedData for a source with a 2^27-character s
   expect(exitCode).toBe(0);
 });
 
+describe("the compiled code of more than 2000 distinct sources stays cached", () => {
+  // JSC keeps the unlinked code of every program it compiled in a per-VM cache, so a source compiled again is not
+  // parsed again. Upstream bounds that cache at 2000 entries: a loader that cycles through more distinct sources than
+  // that misses on every one of them. Bun's engine bounds it by bytes instead (BUN_JSC_codeCacheWorkingSetMaxBytes, a
+  // window of new sources, each counting as its length plus 1 KB: the cache holds one to two windows of sources that
+  // never repeat), and the last rung of the idle GC ladder (BUN_IDLE_GC_SECONDS) drops the entries nothing has
+  // compiled again since the rung before it.
+  //
+  // The fixture compiles VM_FIXTURE_COUNT distinct sources through vm.Script and, with VM_FIXTURE_BOTH, as many
+  // through vm.compileFunction (both are programs to the engine), keeps none of them, and reports how many
+  // UnlinkedProgramCodeBlock cells (one per compiled program) survive a full collection: only the cache holds them.
+  // VM_FIXTURE_PASSES=2 compiles everything a second time: the engine also evicts on a 10 s clock, and a slow
+  // build can cross it in the first pass, but a second pass makes room for what it finds again (a hit on an entry
+  // older than the capacity grows the capacity) and only adds what went. With VM_FIXTURE_IDLE the fixture then waits
+  // for the idle rungs to run and reports the count after them.
+  const fixture = String.raw`
+    const { Script, compileFunction } = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    const programBlocks = () => heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
+    const count = Number(process.env.VM_FIXTURE_COUNT);
+    const passes = Number(process.env.VM_FIXTURE_PASSES ?? 1);
+    Bun.gc(true);
+    const before = programBlocks();
+    for (let pass = 0; pass < passes; pass++) {
+      for (let i = 0; i < count; i++) {
+        new Script(String(i));
+        if (process.env.VM_FIXTURE_BOTH) compileFunction("return " + i);
+      }
+    }
+    Bun.gc(true);
+    const cached = programBlocks() - before;
+    if (!process.env.VM_FIXTURE_IDLE) {
+      console.log(JSON.stringify({ cached }));
+    } else {
+      // No collection from here on: the idle rungs run their own, and the count is read after the one that follows
+      // the drop. The deadline only bounds a build in which the rungs never drop anything.
+      const deadline = Date.now() + 20_000;
+      const timer = setInterval(() => {
+        const afterIdle = programBlocks() - before;
+        if (afterIdle * 2 < cached || Date.now() > deadline) {
+          clearInterval(timer);
+          console.log(JSON.stringify({ cached, afterIdle }));
+        }
+      }, 200);
+    }
+  `;
+
+  async function runFixture(extraEnv: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, ...extraEnv },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test.concurrent("1100 Script and 1100 compileFunction sources", async () => {
+    const { cached } = await runFixture({ VM_FIXTURE_COUNT: "1100", VM_FIXTURE_BOTH: "1", VM_FIXTURE_PASSES: "2" });
+    expect(cached).toBeGreaterThanOrEqual(2200);
+  });
+
+  test.concurrent("sources that never repeat stay within two windows of the byte bound", async () => {
+    const window = 200_000;
+    const { cached } = await runFixture({
+      VM_FIXTURE_COUNT: "1000", // about five windows
+      BUN_JSC_codeCacheWorkingSetMaxBytes: String(window),
+    });
+    expect(cached).toBeLessThanOrEqual((2 * window) / 1024 + 2);
+    expect(cached).toBeGreaterThanOrEqual(window / 1028 - 2);
+  });
+
+  test.concurrent("the idle GC ladder drops what nothing compiled again", async () => {
+    const { cached, afterIdle } = await runFixture({
+      VM_FIXTURE_COUNT: "300",
+      VM_FIXTURE_IDLE: "1",
+      BUN_IDLE_GC_SECONDS: "1,1,1",
+      BUN_GC_TIMER_DISABLE: undefined,
+      BUN_GC_TIMER_INTERVAL: undefined,
+    });
+    expect(cached).toBeGreaterThanOrEqual(300);
+    expect(afterIdle * 2).toBeLessThan(cached);
+  });
+});
+
 describe("the file: URL origin made from a filename", () => {
   // The last filename made into a URL is kept per VM. The import() tests alternate two filenames, so every
   // compile finds the URL of the other filename in the cache.

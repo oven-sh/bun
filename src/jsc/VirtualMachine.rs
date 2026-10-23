@@ -352,6 +352,9 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception: Option<fn(*mut c_void, &ZigException)>,
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
+    /// Advances on each error `uncaught_exception` takes, handled or not. `on_exit` compares it
+    /// around the 'exit' listeners: an error they threw ends the event.
+    uncaught_exception_epoch: u32,
     pub(crate) exit_on_uncaught_exception: bool,
     /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
     hot_run_failed: bool,
@@ -500,6 +503,8 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Bun__Process__hasExitCode(global: &JSGlobalObject) -> bool;
+    safe fn Bun__Process__discardNextTicks(global: &JSGlobalObject);
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -776,6 +781,8 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
+    /// `on_before_exit()` returned with the loop dry and no unhandled error.
+    pub loop_ran_dry: bool,
 }
 
 impl ExitHandler {
@@ -823,14 +830,22 @@ impl ExitHandler {
     /// parent via `container_of` would escape the provenance of `&mut self`
     /// (which only covers the `ExitHandler` field). Callers pass the VM
     /// reference instead; the body re-enters JS so no `&mut` is held.
-    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
-        let exit_code = vm.exit_handler.exit_code;
+    ///
+    /// Returns whether the event was emitted and nothing stopped its listeners.
+    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) -> bool {
         // `process.on('exit')` handlers are user script (see `on_exit`).
-        if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
-            Process__dispatchOnExit(vm.global(), exit_code);
+        if !vm.script_allowed() || vm.exit_handler.skip_exit_listeners {
+            return false;
         }
-        if vm.worker.is_none() {
-            Bun__WebView__closeAllForTermination();
+        let exit_code = vm.exit_handler.exit_code;
+        let global = vm.global();
+        match jsc::from_js_host_call_generic(global, || Process__dispatchOnExit(global, exit_code))
+        {
+            Ok(()) => true,
+            Err(err) => {
+                let _ = crate::task::report_error_or_terminate(global, err);
+                false
+            }
         }
     }
 
@@ -2145,6 +2160,7 @@ impl VirtualMachine {
         if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
             return true;
         }
+        self.uncaught_exception_epoch = self.uncaught_exception_epoch.wrapping_add(1);
 
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
@@ -2227,6 +2243,7 @@ impl VirtualMachine {
     }
 
     pub fn on_before_exit(&mut self) {
+        self.exit_handler.loop_ran_dry = false;
         // Node only emits 'beforeExit' on a natural drain; a fatal uncaught
         // exception that brought us here is an implicit process.exit(1). Arm
         // the hard-exit flag ourselves since we're skipping the dispatch that
@@ -2269,6 +2286,7 @@ impl VirtualMachine {
 
             break;
         }
+        self.exit_handler.loop_ran_dry = self.unhandled_error_counter == 0;
     }
 
     /// Writes each configured profile once. The sampling report is written first because
@@ -2327,7 +2345,22 @@ impl VirtualMachine {
         // Write profiles before any shutdown begins.
         self.write_profiles();
 
-        ExitHandler::dispatch_on_exit(self);
+        // The loop ran dry: node emits this 'exit' through MakeCallback, which then runs the
+        // listeners' promise jobs and reports what they rejected, unless a listener threw.
+        // `process.exit()` and a fatal error emit it with a plain call. Not in a worker:
+        // `WebWorker::shutdown` has unpublished its VM, so `terminate()` could not stop a job.
+        let ran_dry =
+            self.is_main_thread() && self.exit_handler.loop_ran_dry && !self.exit_handler.requested;
+        let uncaught_exception_epoch = self.uncaught_exception_epoch;
+        {
+            let _entered = ran_dry.then(|| self.enter_event_loop_scope_without_checkpoint());
+            if ExitHandler::dispatch_on_exit(self) && ran_dry {
+                self.run_exit_listeners_jobs(uncaught_exception_epoch);
+            }
+        }
+        if self.is_main_thread() {
+            Bun__WebView__closeAllForTermination();
+        }
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
@@ -2357,6 +2390,34 @@ impl VirtualMachine {
         if self.is_main_thread() {
             crate::node_compile_cache::persist_at_exit();
             crate::bytecode_order_recorder::write_at_exit(self, standalone_module_graph());
+        }
+    }
+
+    /// What node's `InternalCallbackScope::Close` (src/api/callback.cc) runs after the 'exit'
+    /// listeners of a loop that ran dry, unless one threw: the microtask checkpoint, then the
+    /// rejection pass. `&self` and never inlined: the listeners and the jobs change the fields
+    /// it compares through other references.
+    #[cold]
+    #[inline(never)]
+    fn run_exit_listeners_jobs(&self, uncaught_exception_epoch: u32) {
+        if self.uncaught_exception_epoch != uncaught_exception_epoch {
+            return;
+        }
+        let global = self.global();
+        Bun__Process__discardNextTicks(global);
+        if self.event_loop_mut().drain_microtasks().is_err() {
+            return;
+        }
+        let unhandled_error_counter = self.unhandled_error_counter;
+        let _ = global.handle_rejected_promises();
+        if self.unhandled_error_counter != unhandled_error_counter {
+            // A fatal error in node: it exits with the assigned `process.exitCode` or with 1,
+            // and frees no environment.
+            let exit_handler = &mut self.as_mut().exit_handler;
+            exit_handler.requested = true;
+            if !Bun__Process__hasExitCode(global) {
+                exit_handler.exit_code = 1;
+            }
         }
     }
 

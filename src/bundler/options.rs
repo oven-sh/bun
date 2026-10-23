@@ -69,6 +69,14 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
+/// Whether the working directory replaces a default root that failed to open with `err`.
+pub fn default_root_can_be_missing(err: &bun_sys::Error) -> bool {
+    matches!(
+        err.get_errno(),
+        bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::ENAMETOOLONG | bun_sys::E::ELOOP
+    )
+}
+
 // `AllowUnresolved` is defined canonically in
 // `bun_js_parser::options` (lower tier) because the parser is the consumer
 // (`P::should_allow_unresolved_dynamic_specifier`). Re-export here so
@@ -1234,6 +1242,8 @@ pub struct BundleOptions<'a> {
 
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
+    /// The default root as typed, when it did not open and `root_dir` is the working directory.
+    pub missing_default_root_dir: Box<[u8]>,
 
     pub(crate) write: bool,
     pub(crate) preserve_symlinks: bool,
@@ -1490,6 +1500,7 @@ impl<'a> BundleOptions<'a> {
             output_dir_handle: None,
             output_dir: self.output_dir.clone(),
             root_dir: self.root_dir.clone(),
+            missing_default_root_dir: self.missing_default_root_dir.clone(),
             write: self.write,
             preserve_symlinks: self.preserve_symlinks,
             preserve_extensions: self.preserve_extensions,
@@ -1756,6 +1767,7 @@ impl<'a> BundleOptions<'a> {
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
             root_dir: Box::default(),
+            missing_default_root_dir: Box::default(),
             preserve_symlinks: false,
             preserve_extensions: false,
             production: false,

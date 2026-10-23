@@ -3625,6 +3625,58 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// Keeps the missing default root as the root when every output is named as typed.
+        fn root_entry_points_named_as_typed(&mut self, entry_point_count: usize) {
+            let typed: &[u8] = &self.transpiler.options.missing_default_root_dir;
+            if typed.is_empty() || bun_paths::is_absolute(typed) {
+                return;
+            }
+            // An HTML import is an entry point of the graph too. It has no name as typed.
+            let names = &self.graph.entry_point_original_names;
+            let named_as_typed = self
+                .graph
+                .entry_points
+                .iter()
+                .filter(|index| names.get(index.get()).is_some())
+                .count();
+            if named_as_typed != entry_point_count {
+                return;
+            }
+
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Auto,
+            >(top_level_dir, &mut buf.0, &[typed]) else {
+                return;
+            };
+            // A name with `..` can leave the working directory.
+            if bun_paths::resolve_path::is_parent_or_equal(top_level_dir, joined)
+                != bun_paths::resolve_path::ParentEqual::Parent
+            {
+                return;
+            }
+            // A plugin can create the directory: `compute_chunks` then has its real path.
+            let mut real_buf = bun_paths::path_buffer_pool::get();
+            let root_dir: Box<[u8]> = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), typed) {
+                Ok(fd) => {
+                    let dir = bun_sys::Dir { fd };
+                    let Ok(real) = bun_sys::get_fd_path(dir.fd, &mut real_buf) else {
+                        return;
+                    };
+                    (&*real).into()
+                }
+                Err(_) => joined.into(),
+            };
+            bun_core::scoped_log!(
+                Bundle,
+                "Entry points are named as typed: the root is '{}'",
+                bstr::BStr::new(&root_dir)
+            );
+            self.transpiler.resolver.opts.root_dir.clone_from(&root_dir);
+            self.transpiler.options.root_dir = root_dir;
+        }
+
         pub(crate) fn enqueue_entry_points_dev_server(
             &mut self,
             files: &bake_types::EntryPointList,
@@ -5716,6 +5768,7 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
+            self.root_entry_points_named_as_typed(entry_points.len());
             self.type_check()?;
 
             self.scan_for_secondary_paths();

@@ -86,7 +86,15 @@ esac
 
 case "$target" in
 'linux'*)
+    # Non-Alpine musl distros (Gentoo musl, Void, Chimera) have no
+    # /etc/alpine-release, so also probe for the musl dynamic loader and
+    # ask ldd. Checking for a glibc-style loader instead would misfire:
+    # gcompat provides one on musl systems too.
     if [ -f /etc/alpine-release ]; then
+        target="$target-musl"
+    elif ls /lib/ld-musl-*.so.1 >/dev/null 2>&1; then
+        target="$target-musl"
+    elif [[ $(ldd --version 2>&1 || true) == *musl* ]]; then
         target="$target-musl"
     fi
     ;;

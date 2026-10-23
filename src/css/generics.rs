@@ -645,7 +645,8 @@ mod inherent_bridge {
 
     // ── properties/font ──
     use crate::properties::font::{
-        FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight, LineHeight,
+        FamilyName, FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight,
+        LineHeight,
     };
     bridge_clone_partialeq!(
         FontWeight,
@@ -698,6 +699,7 @@ mod inherent_bridge {
         }
     }
     bridge_clone_partialeq!(FontFamily);
+    bridge_deep_clone_copy!(FamilyName);
     // `Font` DeepClone/CssEql now via `#[derive]` on the struct (properties/font.rs).
 
     // ── properties/size ──

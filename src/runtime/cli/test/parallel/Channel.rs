@@ -493,7 +493,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             if buf.len() - head < 5usize + len as usize {
                 break;
             }
-            let Ok(kind) = frame::Kind::try_from(buf[head + 4]) else {
+            let Some(kind) = frame::Kind::from_repr(buf[head + 4]) else {
                 head += 5usize + len as usize;
                 continue;
             };

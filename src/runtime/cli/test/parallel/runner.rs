@@ -674,7 +674,7 @@ pub(crate) fn run_as_worker(
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs / coverage_file.
+    // sees every frame that `worker_flush_aggregates` sent.
     vm_ref.run_with_api_lock(|| {
         while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
             // SAFETY: event_loop pointer is valid while vm lives.
@@ -711,13 +711,29 @@ fn worker_flush_aggregates(
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
-    if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-        let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
-        let _ = runner.snapshots.write_snapshot_file();
+    let snapshots = &mut reporter.jest.snapshots;
+    let mut snapshots_written = match snapshots.write_inline_snapshots() {
+        // `false`: each snapshot that was not written printed its own diagnostic.
+        Ok(written) => written,
+        Err(err) => {
+            Output::err(err, "Failed to write inline snapshots", ());
+            false
+        }
+    };
+    if snapshots.write_snapshot_file().is_err() {
+        bun_core::err_generic!("Failed to write snapshot file");
+        snapshots_written = false;
     }
 
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
     let wf = unsafe { &mut *WORKER_FRAME.get() };
+
+    // The coordinator does not read the exit status of a worker that is
+    // between files, so the failure reaches the exit code as a frame.
+    if !snapshots_written {
+        wf.begin(frame::Kind::SnapshotWriteFailed);
+        cmds.send(wf.finish());
+    }
 
     wf.begin(frame::Kind::RepeatBufs);
     wf.str(reporter.failures_to_repeat_buf.as_slice());

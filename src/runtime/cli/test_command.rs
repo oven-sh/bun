@@ -955,6 +955,8 @@ pub(crate) struct CommandLineReporter {
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub(crate) worker_ipc_file_idx: Option<u32>,
+    /// Set in the `--parallel` coordinator when a worker could not write its snapshots.
+    pub(crate) worker_snapshot_write_failed: bool,
     /// Errors thrown by the test now running, captured while a reporter
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
@@ -1905,6 +1907,7 @@ impl TestCommand {
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
+            worker_snapshot_write_failed: false,
             test_failure: None,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
@@ -2730,6 +2733,7 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || reporter.worker_snapshot_write_failed
             || !write_coverage_success
             || reporter.jest.unhandled_errors_between_tests > 0
         {

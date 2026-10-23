@@ -3,7 +3,7 @@
 //! Strings within a payload are [u32 LE len][bytes].
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, strum::FromRepr)]
 pub(crate) enum Kind {
     // worker → coordinator
     /// (empty)
@@ -30,24 +30,10 @@ pub(crate) enum Kind {
     /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
     /// every worker's per file and writes the one report.
     CoverageFile,
-}
-
-impl TryFrom<u8> for Kind {
-    type Error = ();
-    fn try_from(v: u8) -> Result<Self, ()> {
-        // Int → enum: valid only for declared discriminants.
-        Ok(match v {
-            0 => Kind::Ready,
-            1 => Kind::FileStart,
-            2 => Kind::TestDone,
-            3 => Kind::FileDone,
-            4 => Kind::RepeatBufs,
-            5 => Kind::Run,
-            6 => Kind::Shutdown,
-            7 => Kind::CoverageFile,
-            _ => return Err(()),
-        })
-    }
+    /// (empty). Sent at exit when this worker could not write its inline
+    /// snapshots or its last `.snap` file. The worker prints the error, and
+    /// the coordinator fails the run.
+    SnapshotWriteFailed,
 }
 
 /// Upper bound on a single IPC frame payload. The protocol is internal but

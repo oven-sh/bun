@@ -1,6 +1,18 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isWindows,
+  spawnWithNonBlockingStdin,
+  tempDir,
+  untilBunWaitsForInput,
+  withoutAggressiveGC,
+} from "harness";
+import { readFileSync } from "node:fs";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -441,6 +453,128 @@ test.concurrent.each([
     stdout: "Q? ",
     stderr: JSON.stringify(expected) + "\n",
     exitCode: 0,
+  });
+});
+
+// A read of a stdin in non-blocking mode fails with EAGAIN while there is no input. That is not the end of the input.
+describe.skipIf(isWindows).concurrent("dialogs on a non-blocking stdin", () => {
+  const exitOf = async child => {
+    const [stderr, exitCode] = await Promise.all([child.proc.stderr.text(), child.proc.exited]);
+    return { stderr, exitCode, signalCode: child.proc.signalCode };
+  };
+
+  test("alert, confirm and prompt wait for their input", async () => {
+    // `fs.readSync` does not wait, as in Node. Its error shows that stdin is in non-blocking mode and has no input.
+    const script = `
+      try {
+        require("fs").readSync(0, Buffer.alloc(1));
+      } catch (error) {
+        console.log("readSync: " + error.code);
+      }
+      alert("one");
+      const yes = confirm("two");
+      console.log(JSON.stringify({ yes, name: prompt("three") }));
+    `;
+    await using child = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" -e "$1" <&3', bunExe(), script]);
+    await child.waitFor("readSync: EAGAIN\n");
+    for (const [question, answer] of [
+      ["one [Enter] ", "\n"],
+      ["two [y/N] ", "y\n"],
+      ["three ", "bob\n"],
+    ]) {
+      await child.waitFor(question);
+      await untilBunWaitsForInput(child.proc);
+      child.write(answer);
+    }
+    await child.waitFor('{"yes":true,"name":"bob"}\n');
+    expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  // A line wakes both readers and one of them reads it. The other one finds no input after its wait. That is still
+  // not the end of the input.
+  test("prompt keeps waiting when another reader of the same stdin took the line", async () => {
+    const reader = `
+      for (;;) {
+        const line = prompt("q");
+        console.log("answer=" + line);
+        if (line === null || line === "quit") break;
+      }
+    `;
+    // One reader is the parent of the other one. With BUN_FEATURE_FLAG_NO_ORPHANS, which the test runner sets for a
+    // build with ASAN, it kills its child when it exits.
+    await using child = spawnWithNonBlockingStdin(
+      ["sh", "-c", '"$0" -e "$1" <&3 & exec "$0" -e "$1" <&3', bunExe(), reader],
+      { env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined } },
+    );
+    // prompt() writes "q" and " " with two writes, so the two questions can interleave. Count the spaces.
+    await child.waitFor(" ");
+    await child.waitFor(" ");
+    await untilBunWaitsForInput(child.proc);
+    for (let i = 0; i < 30; i++) {
+      child.write(`line${i}\n`);
+      await child.waitFor(`answer=line${i}\n`);
+      // The reader that answered asks again.
+      await child.waitFor(" ");
+    }
+    // A reader that took its empty read for the end has printed "answer=null" and left. Then nobody reads the second
+    // "quit".
+    for (let i = 0; i < 2; i++) {
+      child.write("quit\n");
+      await child.waitFor("answer=quit\n");
+    }
+    expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  // Linux poll(2) fails with EINVAL once the number of descriptors is above the soft RLIMIT_NOFILE.
+  test.skipIf(!isLinux)("prompt waits, and does not spin, when nothing can watch stdin", async () => {
+    const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
+    const script = `
+      console.log("first=" + prompt("one"));
+      const { dlopen, ptr } = require("bun:ffi");
+      const rlimit = { args: ["int", "ptr"], returns: "int" };
+      const lib = dlopen(${JSON.stringify(libc)}, { getrlimit: rlimit, setrlimit: rlimit });
+      const RLIMIT_NOFILE = 7;
+      // [soft, hard]
+      const limit = new BigUint64Array(2);
+      const setSoftLimit = soft => {
+        limit[0] = soft;
+        if (lib.symbols.setrlimit(RLIMIT_NOFILE, ptr(limit)) !== 0) throw new Error("setrlimit failed");
+      };
+      if (lib.symbols.getrlimit(RLIMIT_NOFILE, ptr(limit)) !== 0) throw new Error("getrlimit failed");
+      const soft = limit[0];
+      setSoftLimit(0n);
+      const second = prompt("two");
+      // When the process exits, LeakSanitizer opens files, and takes seconds to look at what an open library holds.
+      setSoftLimit(soft);
+      lib.close();
+      console.log("second=" + second);
+    `;
+    await using child = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" -e "$1" <&3', bunExe(), script]);
+    await child.waitFor("one ");
+    await untilBunWaitsForInput(child.proc);
+    child.write("x\n");
+    await child.waitFor("first=x\ntwo ");
+    await untilBunWaitsForInput(child.proc);
+
+    // The read sleeps between its tries. A loop that spins reads many times before the process sleeps once.
+    const count = (file, counter) =>
+      Number(
+        readFileSync(`/proc/${child.proc.pid}/${file}`, "utf8").match(new RegExp(`^${counter}:\\s+(\\d+)`, "m"))[1],
+      );
+    const counts = () => ({ reads: count("io", "syscr"), sleeps: count("status", "voluntary_ctxt_switches") });
+    const before = counts();
+    let reads, sleeps;
+    do {
+      await Bun.sleep(1);
+      const now = counts();
+      reads = now.reads - before.reads;
+      sleeps = now.sleeps - before.sleeps;
+    } while (sleeps < 50 && reads < 500);
+    expect(reads).toBeLessThan(10 * sleeps);
+
+    child.write("y\n");
+    await child.waitFor("second=y\n");
+    expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
   });
 });
 

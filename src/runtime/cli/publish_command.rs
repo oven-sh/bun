@@ -892,7 +892,7 @@ impl PublishCommand {
         // This runs on its own thread, and `Output::buffered_stdin()` is for the main thread only.
         let mut input = [0u8; 1024];
         loop {
-            match bun_sys::read(Fd::stdin(), &mut input) {
+            match bun_sys::read_stdin_blocking(&mut input) {
                 Ok(0) | Err(_) => return,
                 Ok(len) if strings::contains_char(&input[..len], b'\n') => break,
                 Ok(_) => continue,

@@ -831,6 +831,126 @@ export function bunRunAsScript(
   };
 }
 
+/** Collects what a child writes, for a test that waits for pieces of it. */
+export function collectOutput() {
+  let output = "";
+  let matched = 0;
+  let ended = false;
+  let wake = () => {};
+  return {
+    push(chunk: string) {
+      output += chunk;
+      wake();
+    },
+    end() {
+      ended = true;
+      wake();
+    },
+    /** Resolves once `text` has arrived after everything an earlier call matched. Rejects if the output ends first. */
+    async waitFor(text: string) {
+      for (;;) {
+        const at = output.indexOf(text, matched);
+        if (at !== -1) {
+          matched = at + text.length;
+          return;
+        }
+        if (ended) {
+          throw new Error(`The output ended before ${JSON.stringify(text)}. Received: ${JSON.stringify(output)}`);
+        }
+        await new Promise<void>(resolve => (wake = resolve));
+      }
+    },
+  };
+}
+
+/**
+ * Spawns `cmd` with its fd 3 on the read end of a FIFO that is in non-blocking mode, and writes to that FIFO. Stdout
+ * and stderr are pipes. POSIX only.
+ *
+ * `sh -c 'exec "$0" <&3'` makes the FIFO the stdin of a command: a read of it fails with EAGAIN while no input is
+ * there. Bun.spawn clears O_NONBLOCK on what becomes fd 0, 1 and 2 of a child, and leaves fd 3 as it is.
+ */
+export function spawnWithNonBlockingStdin(
+  cmd: string[],
+  options: { env?: Record<string, string | undefined>; cwd?: string } = {},
+) {
+  const dir = tempDir("non-blocking-stdin", {});
+  const fifo = join(String(dir), "stdin");
+  const made = spawnSync({ cmd: ["mkfifo", fifo], stderr: "pipe" });
+  if (made.exitCode !== 0) throw new Error(`mkfifo failed: ${made.stderr}`);
+  const reader = openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  let writer: number | undefined = openSync(fifo, fs.constants.O_WRONLY);
+  const proc = Bun.spawn({
+    cmd,
+    env: options.env ?? bunEnv,
+    cwd: options.cwd,
+    stdio: ["ignore", "pipe", "pipe", reader],
+  });
+  closeSync(reader);
+  const output = collectOutput();
+  (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) output.push(decoder.decode(chunk, { stream: true }));
+  })().then(output.end, output.end);
+  /** Ends the input of the child: the FIFO has no writer left. */
+  const end = () => {
+    if (writer !== undefined) closeSync(writer);
+    writer = undefined;
+  };
+  return {
+    proc,
+    write: (text: string) => void fs.writeSync(writer!, text),
+    end,
+    waitFor: output.waitFor,
+    async [Symbol.asyncDispose]() {
+      end();
+      proc.kill();
+      await proc.exited;
+      dir[Symbol.dispose]();
+    },
+  };
+}
+
+/**
+ * Resolves once the bun process `proc` sleeps in a system call while its stdin is in non-blocking mode: it waits for
+ * input that is not there. Send input after this, so that the read before it found none.
+ *
+ * Rejects if the process is gone. On Linux it also rejects if stdin is in blocking mode: the test then does not test
+ * what it is for. Elsewhere `ps` tells the state, and if it does not after 50 tries, this resolves anyway.
+ */
+export async function untilBunWaitsForInput(proc: { pid: number; exitCode: number | null; signalCode: unknown }) {
+  const bun = basename(bunExe());
+  const gone = () => new Error("The process does not wait for input. It is gone.");
+  for (let polls = 0; ; polls++) {
+    if (proc.exitCode !== null || proc.signalCode !== null) throw gone();
+    // The state letter of the process, its name, and on Linux the flags of its stdin.
+    let state: string[] = [];
+    if (isLinux) {
+      try {
+        // "<pid> (<name>) <state> ..."
+        const stat = fs.readFileSync(`/proc/${proc.pid}/stat`, "utf8");
+        const flags = fs.readFileSync(`/proc/${proc.pid}/fdinfo/0`, "utf8").match(/^flags:\s*([0-7]+)/m)![1];
+        state = [stat[stat.lastIndexOf(")") + 2], stat.slice(stat.indexOf("(") + 1, stat.lastIndexOf(")")), flags];
+      } catch {
+        throw gone();
+      }
+    } else {
+      if (polls === 50) return;
+      const ps = spawnSync({ cmd: ["ps", "-ww", "-o", "stat=", "-o", "ucomm=", "-p", String(proc.pid)] });
+      if (ps.exitCode === 0) state = ps.stdout.toString().trim().split(/\s+/);
+    }
+    if (state[0]?.[0] === "Z") throw gone();
+    // A process that `sh` replaces itself with is `sh` at first.
+    if (state[0] && "SI".includes(state[0][0]) && state[1] && bun.startsWith(state[1])) {
+      if (isLinux && !(parseInt(state[2], 8) & fs.constants.O_NONBLOCK)) {
+        throw new Error("The stdin of the process is not in non-blocking mode.");
+      }
+      return;
+    }
+    await Bun.sleep(isLinux ? 1 : 20);
+  }
+}
+
 export function randomLoneSurrogate() {
   const n = numeric.random.between(0, 2, { domain: "integral" });
   if (n === 0) return randomLoneHighSurrogate();

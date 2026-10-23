@@ -1145,12 +1145,13 @@ function f() {
 function g() {}
 f();
 `,
+      // Node has no count for the condition.
       "do while": `
 function f() {
   let n = 0;
   do «3:{
     n++;
-  }» while (n < 3);
+  }»«3: while (n < 3);»
   g();
 }
 function g() {}

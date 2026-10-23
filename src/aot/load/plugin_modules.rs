@@ -10,6 +10,7 @@ use bun_core::fmt::hex_byte_lower;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::{CodeImportForm, CodeImportKind, CodeRequest, Host, to_path};
+use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
 use bun_threading::Guarded;
@@ -169,7 +170,7 @@ impl<'a> PluginModules<'a> {
             return reads;
         }
         let answers = (self.messages).with_log(|log| self.provider.finish_deferred_loads(log));
-        pending.sort_unstable_by(|a, b| a.compare_name(&b.namespace, &b.path));
+        pending.shared_sort_unstable_by(|a, b| a.compare_name(&b.namespace, &b.path));
         for load in answers {
             let DeferredLoad {
                 namespace,
@@ -184,8 +185,8 @@ impl<'a> PluginModules<'a> {
         for entry in &pending {
             self.fail_unanswered_read(entry);
         }
-        reads.texts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        reads.missing.sort_unstable();
+        reads.texts.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        reads.missing.shared_sort_unstable();
         reads
     }
 

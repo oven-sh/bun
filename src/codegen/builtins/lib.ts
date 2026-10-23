@@ -5,6 +5,7 @@ import {
   type Declaration,
   type HostReadUse,
   type LayoutFieldDeclaration,
+  type LeftOutDeclaration,
   type MemberDeclaration,
   type ParameterDeclaration,
   type SignatureDeclaration,
@@ -1300,6 +1301,9 @@ export const hostClassRoles = (...names: readonly ClassName[]): Declaration[] =>
   names.map(className => ({ declares: "HostClassRole", name: className }));
 export const unfilledHostRoles = (path: BuiltinPath, className: ClassName): Declaration[] => [
   { declares: "UnfilledHostRoles", path, class: className },
+];
+export const leftOut = (parts: Partial<Omit<LeftOutDeclaration, "declares">>): Declaration[] => [
+  { declares: "LeftOut", schemas: [], paths: [], definedNames: [], modules: [], mayBeNamed: false, ...parts },
 ];
 export const frontEndFunctions = (file: string, ...functions: readonly string[]): Declaration[] =>
   functions.map(functionName => ({ declares: "FrontEndFunction", function: { file, name: functionName } }));

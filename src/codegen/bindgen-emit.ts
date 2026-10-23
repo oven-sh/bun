@@ -860,7 +860,7 @@ const classSymbols = (type: ClassType) => [
 ];
 
 const isStaticFunction = (fn: FunctionDefinition) => (fn.signatures[0] as Method).receiver === "static";
-const methodHostFunctionName = (type: ClassType, fn: FunctionDefinition) =>
+export const methodHostFunctionName = (type: ClassType, fn: FunctionDefinition) =>
   fn === type.call
     ? `call${type.name}`
     : `js${type.name}${isStaticFunction(fn) ? "Constructor" : "Prototype"}Function_${memberIdentifier(fn.name)}`;
@@ -1027,12 +1027,16 @@ ${type.internalFields.map(field => `    Bun::Bindgen::analyzeInternalField(thisO
 const cppCastThisValue = (type: ClassType, value: string) =>
   `${type.forBind ? "Bun::Bindgen::boundThisAs" : "dynamicDowncast"}<${type.cpp}>(${value})`;
 
+/** Code compiled ahead of time enters the method of an instance by its address. */
+const cppMethodLinkage = (type: ClassType, fn: FunctionDefinition) =>
+  type.forBind || isStaticFunction(fn) ? "static " : "";
+
 function cppMethod(type: ClassType, fn: FunctionDefinition): string {
   const host = methodHostFunctionName(type, fn);
   const symbol = (method: Signature) => methodSymbolName(type, method as Method);
   return `
 ${fn.signatures.map(method => cppExtern(symbol(method), method, isStaticFunction(fn) ? [] : ["JSC::JSCell*"])).join("\n")}
-static JSC_DECLARE_HOST_FUNCTION(${host});
+${cppMethodLinkage(type, fn)}JSC_DECLARE_HOST_FUNCTION(${host});
 ${cppHostFunction(
   host,
   fn,

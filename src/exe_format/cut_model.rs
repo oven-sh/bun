@@ -44,6 +44,8 @@ pub struct CutModel {
     pub alignment: u64,
     pub capacity: CutCapacity,
     pub cuttable_spans: Vec<AddressRange>,
+    /// What is left of each stays one piece: a cut inside it reaches its end.
+    pub spans_cut_only_at_end: Vec<AddressRange>,
 }
 
 impl CutModel {
@@ -57,6 +59,7 @@ impl CutModel {
             alignment,
             capacity: CutCapacity::NoCuts(reason),
             cuttable_spans: Vec::new(),
+            spans_cut_only_at_end: Vec::new(),
         }
     }
 

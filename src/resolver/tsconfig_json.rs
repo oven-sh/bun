@@ -307,11 +307,13 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
+    #[inline(never)]
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
+        bun_removable_features::removable_definition!(PackageFiles, Self::parse);
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.

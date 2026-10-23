@@ -16,17 +16,17 @@
 # unverified BunTestSpyOn/0: it is not called: it reaches outside JavaScript
 # unverified BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
 # unverified BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
-# unverified CompilerHelpersDefinePropertiesFrom/0: the process ended or did not come back
-# unverified CompilerHelpersEncodeIntoRangeOfBytes/0: the process ended or did not come back
-# unverified CompilerHelpersEncodeIntoRangeOfBytes/1: the process ended or did not come back
+# unverified CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
+# unverified CompilerHelpersEncodeIntoRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+# unverified CompilerHelpersEncodeIntoRangeOfBytes/1: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 # unverified CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it
 # unverified CompilerHelpersGetDisposeMethod/0: it is not called: this realm does not have it
-# unverified CompilerHelpersOwnEntriesFlat/0: the process ended or did not come back
-# unverified CompilerHelpersPlainQueryEntries/0: the process ended or did not come back
-# unverified CompilerHelpersPlainQueryKeys/0: the process ended or did not come back
-# unverified CompilerHelpersPlainQueryValues/0: the process ended or did not come back
-# unverified CompilerHelpersRangeOfBytes/0: the process ended or did not come back
-# unverified CompilerHelpersViewOrRangeOfBytes/0: the process ended or did not come back
+# unverified CompilerHelpersOwnEntriesFlat/0: it is not called: it works on the instance of a compiled program, and this process has none
+# unverified CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+# unverified CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+# unverified CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+# unverified CompilerHelpersRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
+# unverified CompilerHelpersViewOrRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 # unverified ImportMetaResolve/0: it is not called: this realm does not have it
 # unverified ImportMetaResolveSync/0: it is not called: this realm does not have it
 # unverified NativeCppNodeURLCppBunCreateNodeICUBinding/0: it is not called: this realm does not have it
@@ -437,7 +437,7 @@ a0f1b76e1a7c26db BunStdin/0
 fcdf092a3b8c732f BunStringWidth/0
 7c7c94cc8965f226 BunStringWidth/1
 2e426cd4d39efe5d BunStripANSI/0
-767cbd5d6fa9107a BunTTYFunctionsGetWindowSize/0
+b91bca92aa142752 BunTTYFunctionsGetWindowSize/0
 0bcd318c39456904 BunTTYFunctionsIsatty/0
 2ff2c1305855cc62 BunTTYFunctionsRawModeStateSize/0
 675a320cf8e609c5 BunTTYFunctionsSetRawMode/0
@@ -475,8 +475,7 @@ b570f37a67ec5bc3 CompilerHelpersApplyFieldDecorators/0
 8548a7f49f856074 CompilerHelpersApplyPrivateAccessorDecorators/0
 c61023bbd2acd2cb CompilerHelpersApplyPrivateFieldDecorators/0
 a1edc238b412aa4b CompilerHelpersApplyPrivateMethodDecorators/0
-b1a4b2aadfb14e88 CompilerHelpersArrayFromLength/0
-28796e4e9bbbd18d CompilerHelpersArrayFromLength/1
+19be58b774664626 CompilerHelpersArrayFromLength/0
 43a848f2bc46f16a CompilerHelpersArrayOfIndexes/0
 d1148f698497ef2d CompilerHelpersArrayOfUndefined/0
 ab821c09058fe0e0 CompilerHelpersCheckedArrayLength/0
@@ -1068,7 +1067,7 @@ c77f566b2d874fd0 NativeFunctionsRuntimeDns_jscDnsRsResolverNewResolver/0
 ce006eb11c977a19 NativeFunctionsRuntimeSocketSocketRsJsUpgradeDuplexToTLS/0
 f1e9bb405f6fba94 NativeFunctionsStreamsBunStreamConsumersCppJsFunctionTransferToNativeReadableStream/0
 5bcaa2b450b3959e NativeFunctionsStringWidthCppJsFunctionBunStringWidth/0
-9a4cb9274315dc95 NativeFunctionsUtilInspectCppJsFunctionGetOwnNonIndexProperties/0
+32eb3f055b2878cb NativeFunctionsUtilInspectCppJsFunctionGetOwnNonIndexProperties/0
 6916c6000cca2d50 NativeNewCppFunctionBunDebuggerCppJsFunction_closeNodeInspector/1
 726a7789a3a3585d NativeNewCppFunctionBunDebuggerCppJsFunction_openNodeInspector/1
 b2fa7ac6ed728ad3 NativeNewCppFunctionBunDebuggerCppJsFunction_postNodeInspectorControl/1
@@ -1164,7 +1163,7 @@ f1ac5dafc1a69a9c NativeNewCppFunctionStreamsBunStreamConsumersCppJsFunctionTrans
 8622197bc46dcefd NativeNewCppFunctionStringWidthCppJsFunctionBunStringWidth/0
 c5897e209d87ea73 NativeNewCppFunctionStringWidthCppJsFunctionBunStringWidth/2
 56807376d3b43cc2 NativeNewCppFunctionStructuredCloneCppJsFunctionStructuredCloneAdvanced/1
-1b06727113858e17 NativeNewCppFunctionUtilInspectCppJsFunctionGetOwnNonIndexProperties/0
+99778f0d43579e8f NativeNewCppFunctionUtilInspectCppJsFunctionGetOwnNonIndexProperties/0
 3d1487c517e053b7 NativeNewCppFunctionUtilInspectCppJsFunctionGetOwnNonIndexProperties/1
 6e01128e41b688b7 NativeNewCppFunctionWorkerCppJsFunctionPostMessage/1
 6f865aef5cfe64ab NativeNewCppFunctionXxhash3_testingCppBun__xxhash3_64_forTesting/1

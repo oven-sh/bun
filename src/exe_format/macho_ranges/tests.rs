@@ -1,6 +1,7 @@
 use bun_core::slice_to_nul;
 
 use super::*;
+use crate::cut_model::RemovableBytes;
 use crate::image::{ImageEditor, KnownSection, SectionLocation};
 use crate::macho::MachoFile;
 use crate::macho_types::dyld_chained_fixups_header;
@@ -320,6 +321,28 @@ fn cuttable_spans_leave_out_headers_and_unsplittable_sections() {
         cut(106, 107),
     ];
     assert_eq!(cut_model(&toy()).cuttable_spans, expected);
+}
+
+#[test]
+fn chosen_cuts_leave_one_read_only_segment() {
+    let removable =
+        [cut(2, 4), cut(97, 98), cut(99, 101), cut(102, 104)].map(|range| RemovableBytes {
+            range,
+            is_code: false,
+            can_be_cut: true,
+            can_be_filled: true,
+        });
+    for architecture in [Architecture::X86_64, Architecture::Aarch64] {
+        let original = toy_macho(architecture);
+        let model = cut_model(&original);
+        assert_eq!(model.spans_cut_only_at_end, [cut(95, 104)]);
+        let plan = model.choose(&removable);
+        assert_eq!(plan.cuts, [cut(2, 4), cut(102, 104)]);
+        let trimmed = remove_and_verify(&original, &plan.cuts);
+        let segments = parse(&trimmed).unwrap().segments;
+        let is_read_only = |segment: &&Segment| segment.command.flags & SG_READ_ONLY != 0;
+        assert_eq!(segments.iter().filter(is_read_only).count(), 1);
+    }
 }
 
 #[test]

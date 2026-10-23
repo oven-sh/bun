@@ -46,6 +46,8 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
   [/^ShadowRealm\.prototype\.importValue$/, "it loads whatever its operand names"],
+  [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
+  [/^%CompilerHelpers%\.(plainQuery(Entries|Keys|Values)|rangeOfBytes|viewOrRangeOfBytes|encodeIntoRangeOfBytes)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
   [/^%PrivateGlobals%\.(makeErrorWithCode|inherits)$/, "a call spells out a number, and by it native code takes the other operands on trust: the table does not say which"],
 ]);
 
@@ -445,7 +447,13 @@ function isNumberThatIsSpelledOut({ overloads }: Call, set: OperandSet, position
   return Number.isInteger(value) && !Object.is(value, -0) && isInRange({ minimum: least, maximum: most });
 }
 
+// The front end asks whether the mapper is undefined in front of the call, and writes another helper where it is.
+function isMapperThatIsNeverPassed({ entry }: Call, set: OperandSet): boolean {
+  return entry.path === "%CompilerHelpers%.arrayFromLength" && (set.arguments.length < 2 || set.arguments[1] === undefinedCandidate);
+}
+
 export function isCallThatExists(realm: Realm, call: Call, set: OperandSet): boolean {
+  if (isMapperThatIsNeverPassed(call, set)) return false;
   if (allocatesByLength.test(call.entry.path) && set.arguments.some(isHugeLength)) return false;
   if (!takesOperandsOnTrust.test(call.entry.path)) return true;
   const widest = Math.max(...call.overloads.map(({ parameters }) => parameters.length));

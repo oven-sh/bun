@@ -17,6 +17,7 @@ use bun_sema::hir::{
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::FxHashMap;
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
@@ -272,7 +273,7 @@ impl Finder<'_, '_> {
 
     fn sorted_matches(&self) -> Vec<FnId> {
         let mut functions: Vec<FnId> = self.matched.keys().copied().collect();
-        functions.sort_unstable();
+        functions.shared_sort_unstable();
         functions
     }
 
@@ -908,11 +909,11 @@ impl Finder<'_, '_> {
             })
         });
         let mut functions: Vec<(FnId, KnownFunction)> = accepted.collect();
-        functions.sort_unstable_by_key(|entry| entry.0);
+        functions.shared_sort_unstable_by_key(|entry| entry.0);
         let held = self.bindings.into_iter();
         let mut bindings: Vec<(SymbolId, BindingValues)> =
             held.filter(|entry| !entry.1.functions.is_empty()).collect();
-        bindings.sort_unstable_by_key(|entry| entry.0);
+        bindings.shared_sort_unstable_by_key(|entry| entry.0);
         FileHelpers {
             functions: functions.into_boxed_slice(),
             bindings: bindings.into_boxed_slice(),

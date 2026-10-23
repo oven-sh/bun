@@ -248,12 +248,11 @@ export interface RustBuildInputs {
  * and every other crate for none.
  */
 const generatedBuiltinTables = ["aot_builtin_ids.rs", "aot_builtin_syntax.rs", "aot_builtin_table.rs"];
-const generatedSchemaFiles = ["aot-schema-is-current.stamp", "src/aot/ir/generated/"];
 
 const generatedFilesReadBy: Record<string, string[] | "all"> = {
-  bun_aot: [...generatedBuiltinTables, ...generatedSchemaFiles],
-  bun_aot_builtins: [...generatedBuiltinTables, ...generatedSchemaFiles],
-  bun_aot_interface: generatedSchemaFiles,
+  bun_aot: [...generatedBuiltinTables, "aot_schema.rs"],
+  bun_aot_builtins: [...generatedBuiltinTables, "aot_schema_builtins.rs"],
+  bun_aot_interface: ["aot_schema_interface.rs"],
   bun_ast: ["runtime.out.js"],
   bun_bundler: ["bake.server.js", "compressed/codegen/bake.client.js.zst"],
   bun_core: ["build_options.rs"],

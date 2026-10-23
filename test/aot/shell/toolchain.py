@@ -1,6 +1,6 @@
 """The command lines of the three tools that compile and run a program without Bun: the front end, `testaot` and the `jsc` shell.
 
-    $FRONT_END compile <entry> --no-builtin-modules --aot-out=<program> [<flag>...]
+    $FRONT_END compile <entry> --no-builtin-modules --aot-out=<program> --aot-threads=1 [<flag>...]
     $TESTAOT compile <program> --output=<image> [--<JSC option>=<value>...] references=narrow [<option word>...]
     $TESTAOT print <program> [--until=<PassID>] references=narrow [<option word>...]
     $JSC --aotImagePath=<image> [--<JSC option>=<value>...] -e <text of prelude.js> -e "runCompiledEntryPoint(<id>)"
@@ -91,7 +91,7 @@ def front_end(source, out, flags=(), *, cwd=None, seconds=120, env=None):
 
     Only the file counts, not the exit code: a Bun goes on to its own engine, which has host built-ins and rejects this program."""
     _remove_file(out)
-    command = [tool("FRONT_END"), "compile", source, "--no-builtin-modules", "--aot-out=" + out, *flags]
+    command = [tool("FRONT_END"), "compile", source, "--no-builtin-modules", "--aot-out=" + out, "--aot-threads=1", *flags]
     is_bun = not os.path.basename(command[0]).startswith("bun-aot")
     if is_bun:
         command += ["--outfile", out + ".executable"]

@@ -12,8 +12,8 @@ use crate::macho_types::{
     CPU_TYPE_ARM64, CPU_TYPE_X86_64, CommandKind, LC, LoadCommandIterator, MH_EXECUTE, MH_MAGIC_64,
     N_SECT, N_STAB, N_TYPE, S_4BYTE_LITERALS, S_8BYTE_LITERALS, S_16BYTE_LITERALS,
     S_CSTRING_LITERALS, S_GB_ZEROFILL, S_REGULAR, S_THREAD_LOCAL_ZEROFILL, S_ZEROFILL,
-    SECTION_TYPE, command_kind, dysymtab_command, linkedit_data_command, load_command,
-    mach_header_64, nlist_64, section_64, segment_command_64, symtab_command,
+    SECTION_TYPE, SG_READ_ONLY, command_kind, dysymtab_command, linkedit_data_command,
+    load_command, mach_header_64, nlist_64, section_64, segment_command_64, symtab_command,
 };
 use crate::{align_up, read_struct, write_struct};
 
@@ -98,6 +98,7 @@ pub(crate) fn cut_model(macho: &[u8]) -> CutModel {
             alignment: CUT_ALIGNMENT,
             capacity,
             cuttable_spans: find_cuttable_spans(&parsed),
+            spans_cut_only_at_end: find_read_only_segments(&parsed),
         },
         Ok(CutCapacity::NoCuts(reason)) => without_cuts(reason),
         Err(_) => without_cuts(NoCutReason::HeadersUnreadable),
@@ -136,6 +137,16 @@ fn find_cuttable_spans(parsed: &Parsed) -> Vec<AddressRange> {
     segments
         .iter()
         .flat_map(|segment| subtract_cuts(file_backed_addresses(&segment.command), &required))
+        .collect()
+}
+
+/// The kernel refuses an executable that has two segments with this flag.
+fn find_read_only_segments(parsed: &Parsed) -> Vec<AddressRange> {
+    parsed.segments[..parsed.linkedit]
+        .iter()
+        .map(|segment| &segment.command)
+        .filter(|command| command.flags & SG_READ_ONLY != 0)
+        .map(file_backed_addresses)
         .collect()
 }
 

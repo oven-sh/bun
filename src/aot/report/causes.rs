@@ -2,6 +2,7 @@ use core::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 use bun_options_types::aot_options::ExplainSet;
+use bun_sema::util::SharedSort;
 
 use super::format::{code_of, write_count, write_counted};
 use super::json::JsonWriter;
@@ -153,7 +154,7 @@ pub(super) fn collect_causes(
             accesses: group.accesses,
         })
         .collect();
-    causes.sort_unstable_by_key(rank_order);
+    causes.shared_sort_unstable_by_key(rank_order);
     causes
 }
 
@@ -427,7 +428,7 @@ fn collect_ranked_entries(
     mut entry_of: impl FnMut(&Cause, usize) -> ReportEntry,
 ) {
     let mut by_position: Vec<usize> = (0..causes.len()).collect();
-    by_position.sort_unstable_by_key(|&index| causes[index].position);
+    by_position.shared_sort_unstable_by_key(|&index| causes[index].position);
     let mut entries: Vec<Option<ReportEntry>> = vec![None; causes.len()];
     // Ascending, so the locator scans the text of each module once.
     for index in by_position {

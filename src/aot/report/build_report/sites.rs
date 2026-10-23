@@ -1,3 +1,5 @@
+use bun_sema::util::SharedSort;
+
 use super::write_position_members;
 use crate::diagnostics::SourcePosition;
 use crate::engine::{
@@ -26,7 +28,7 @@ pub(super) fn index_functions(records: &[FunctionReportRecord]) -> FunctionIndex
         .zip(0..)
         .filter_map(|(record, index)| Some((record.source_id()?, index)))
         .collect();
-    by_source.sort_unstable();
+    by_source.shared_sort_unstable();
     by_source.dedup_by_key(|&mut (source, _)| source);
     FunctionIndex { by_source }
 }
@@ -285,7 +287,7 @@ mod tests {
     #[test]
     fn outcomes_map_to_five_names() {
         let mut names = AllocationOutcome::ALL.map(outcome_name).to_vec();
-        names.sort_unstable();
+        names.shared_sort_unstable();
         names.dedup();
         assert_eq!(names, ["deferred", "frame", "heap", "removed", "slim"]);
         assert_eq!(outcome_name(AllocationOutcome::Unknown), "heap");

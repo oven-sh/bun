@@ -6,6 +6,7 @@ use bun_exe_format::elf::{self as bun_elf, ElfFile};
 use bun_exe_format::elf_payload::Piece;
 use bun_exe_format::elf_ranges::reserve_payload_segments;
 use bun_exe_format::elf_symbols::symbols_tail;
+pub(crate) use bun_exe_format::mapped_file::MappedFile;
 use bun_exe_format::payload_references::{PayloadReferenceError, check_payload_references};
 use bun_sys::Fd;
 
@@ -34,174 +35,6 @@ pub(crate) enum ElfWriteError {
 
 pub(crate) struct ElfWritten {
     pub(crate) has_symbols: bool,
-}
-
-pub(crate) struct MappedFile {
-    file: bun_sys::File,
-    pointer: *mut u8,
-    length: usize,
-    mapped_length: usize,
-}
-
-impl MappedFile {
-    #[cfg(not(windows))]
-    pub(crate) fn open(path: &ZStr) -> Option<MappedFile> {
-        let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok()?;
-        let length = file.get_end_pos().ok().filter(|length| *length > 0)?;
-        let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE);
-        let pointer = bun_sys::mmap(
-            core::ptr::null_mut(),
-            length,
-            access,
-            flags,
-            file.handle(),
-            0,
-        )
-        .ok()?;
-        Some(MappedFile {
-            file,
-            pointer,
-            length,
-            mapped_length: length,
-        })
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn open(_path: &ZStr) -> Option<MappedFile> {
-        None
-    }
-
-    pub(crate) fn addresses(&self) -> core::ops::Range<usize> {
-        self.pointer as usize..self.pointer as usize + self.length
-    }
-
-    pub(crate) fn bytes_and_file(&mut self) -> (&mut [u8], &bun_sys::File) {
-        // SAFETY: the mapping holds `length` writable bytes until `drop`, and nothing else refers to them.
-        (
-            unsafe { core::slice::from_raw_parts_mut(self.pointer, self.length) },
-            &self.file,
-        )
-    }
-}
-
-impl Drop for MappedFile {
-    fn drop(&mut self) {
-        let _ = bun_sys::munmap(self.pointer, self.mapped_length);
-    }
-}
-
-impl core::ops::Deref for MappedFile {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        // SAFETY: the mapping holds `length` readable bytes until `drop`.
-        unsafe { core::slice::from_raw_parts(self.pointer, self.length) }
-    }
-}
-
-impl core::ops::DerefMut for MappedFile {
-    fn deref_mut(&mut self) -> &mut [u8] {
-        self.bytes_and_file().0
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl MappedFile {
-    fn page_size() -> usize {
-        // SAFETY: sysconf has no precondition.
-        unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
-    }
-
-    /// Fresh zero pages at `start..end`, which lies in the addresses that `open` reserved.
-    fn map_zero_pages(&mut self, start: usize, end: usize) {
-        assert!(start < end && end <= self.mapped_length.next_multiple_of(MappedFile::page_size()));
-        let (access, flags) = (
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
-        );
-        // SAFETY: the addresses belong to this mapping, and no reference to its bytes is alive.
-        let pages = unsafe {
-            libc::mmap(
-                self.pointer.add(start).cast(),
-                end - start,
-                access,
-                flags,
-                -1,
-                0,
-            )
-        };
-        assert!(
-            pages != libc::MAP_FAILED,
-            "no memory for the pages of an executable"
-        );
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl bun_exe_format::image::ImageBytes for MappedFile {
-    // Whole pages change their address and are not read: those that nothing wrote stay pages of the file.
-    fn move_down(&mut self, source: core::ops::Range<usize>, target: usize) {
-        let page = MappedFile::page_size();
-        let distance = source.start - target;
-        if distance == 0 || source.is_empty() {
-            return;
-        }
-        if !source.start.is_multiple_of(page) || !target.is_multiple_of(page) {
-            // An earlier move of whole pages may have left none between the two.
-            let (start, end) = (target.next_multiple_of(page), source.start / page * page);
-            if start < end {
-                self.map_zero_pages(start, end);
-            }
-            self.copy_within(source, target);
-            return;
-        }
-        let length = source
-            .len()
-            .next_multiple_of(page)
-            .min(self.mapped_length - source.start);
-        let mut moved = 0;
-        // mremap() refuses ranges that overlap.
-        while moved < length {
-            let size = distance.min(length - moved);
-            // SAFETY: both ranges lie in this mapping, and no reference to its bytes is alive.
-            let (from, to) = unsafe {
-                (
-                    self.pointer.add(source.start + moved),
-                    self.pointer.add(target + moved),
-                )
-            };
-            let flags = libc::MREMAP_MAYMOVE | libc::MREMAP_FIXED;
-            // SAFETY: as above. What was mapped at `to` is dropped, which the caller allows.
-            let result =
-                unsafe { libc::mremap(from.cast(), size, size, flags, to.cast::<libc::c_void>()) };
-            if result == libc::MAP_FAILED {
-                self.map_zero_pages(target + moved, target + moved + size);
-                // SAFETY: `size` is at most the distance between the two, so they don't overlap.
-                unsafe { core::ptr::copy_nonoverlapping(from, to, size) };
-            }
-            moved += size;
-        }
-    }
-
-    fn truncate(&mut self, len: usize) {
-        self.length = self.length.min(len);
-    }
-
-    fn grow(&mut self, len: usize) {
-        let first_new_page = self.length.next_multiple_of(MappedFile::page_size());
-        if len > first_new_page {
-            self.map_zero_pages(
-                first_new_page,
-                len.next_multiple_of(MappedFile::page_size()),
-            );
-        }
-        let old_length = core::mem::replace(&mut self.length, len);
-        self[old_length..first_new_page.min(len)].fill(0);
-    }
-
-    fn as_vec(&mut self) -> Option<&mut Vec<u8>> {
-        None
-    }
 }
 
 /// The pages of a private mapping of a whole file that nothing has written to. They hold what the file holds.
@@ -581,45 +414,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn mapping_is_edited_like_a_vector() {
-        use bun_exe_format::image::ImageBytes;
-
-        let page = MappedFile::page_size();
-        let folder = TemporaryFolder::create("mapping");
-        let original: Vec<u8> = (0..page * 12 + 100)
-            .map(|index| (index / 13) as u8)
-            .collect();
-        let path = folder.write("file", &original);
-        let edit = |bytes: &mut dyn ImageBytes| {
-            // A page that was written moves with what was written, and a range longer than the distance moves in pieces.
-            bytes[page * 5 + 7] = 0xEE;
-            bytes.move_down(page * 2..page * 3, page);
-            bytes.move_down(page * 5..page * 12 + 100, page * 2);
-            bytes.truncate(page * 9 + 100);
-            bytes.grow(page * 10 + 50);
-            bytes[page * 10 + 1] = 1;
-        };
-        let edit_parts_of_pages = |bytes: &mut dyn ImageBytes| {
-            bytes.move_down(page * 5..page * 7, page * 2);
-            bytes.move_down(page * 8 + 16..page * 12 + 100, page * 4);
-            bytes.truncate(page * 8 + 84);
-            bytes.grow(page * 8 + 90);
-        };
-        let mut mapped = MappedFile::open(&path).unwrap();
-        let mut vector = original.clone();
-        edit(&mut mapped);
-        edit(&mut vector);
-        assert!(*mapped == *vector);
-        let mut mapped = MappedFile::open(&path).unwrap();
-        let mut vector = original.clone();
-        edit_parts_of_pages(&mut mapped);
-        edit_parts_of_pages(&mut vector);
-        assert!(*mapped == *vector);
-        assert!(read_file(&path) == original);
-    }
-
     #[test]
     fn held_blocks_are_kept() {
         let folder = TemporaryFolder::create("held");
@@ -682,17 +476,6 @@ mod tests {
         assert_eq!(size, expected.len() as u64);
         assert_eq!(bytes_written, 2 * BLOCK as u64);
         assert!(read_file(&path) == expected);
-    }
-
-    #[test]
-    fn mapped_file_keeps_writes_in_memory() {
-        let folder = TemporaryFolder::create("mapped");
-        let path = folder.write("file", b"0123456789");
-        let mut mapped = MappedFile::open(&path).unwrap();
-        mapped.bytes_and_file().0[3] = b'x';
-        assert_eq!(mapped.bytes_and_file().0, b"012x456789");
-        assert!(read_file(&path) == b"0123456789");
-        assert!(MappedFile::open(&ZBox::from_vec(folder.join("missing"))).is_none());
     }
 
     #[test]

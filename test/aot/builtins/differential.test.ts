@@ -54,7 +54,7 @@ const packedEngineList = join(dirname(bunExe()), "verified-overloads.txt");
 const engineList = isUpdate || existsSync(listPaths.engine) ? listPaths.engine : packedEngineList;
 const pathOfList = (origin: Origin) => (origin === "Engine" ? engineList : listPaths.host);
 // The lists say what the calls do where they are written.
-const callsListedOverloads = isGlibc && process.arch === "x64" && !isASAN && !isDebug;
+const callsListedOverloads = isGlibc && !isASAN && !isDebug;
 
 function readList(origin: Origin): string {
   const path = pathOfList(origin);
@@ -221,6 +221,55 @@ const wrongEntries: WrongEntry[] = [
   {
     title: "Array.prototype.indexOf that reads no memory",
     path: "Array.prototype.indexOf",
+    mode: "Call",
+    column: "reads",
+    applyTo: overload => ({ ...overload, reads: [] }),
+  },
+  {
+    title: "Array.prototype.at that reads no memory",
+    path: "Array.prototype.at",
+    mode: "Call",
+    column: "reads",
+    applyTo: overload => ({ ...overload, reads: [] }),
+  },
+  {
+    title: "Array.prototype.pop that reads no memory",
+    path: "Array.prototype.pop",
+    mode: "Call",
+    column: "reads",
+    applyTo: overload => ({ ...overload, reads: [] }),
+  },
+  {
+    title: "%TypedArray%.prototype.forEach that reads no memory",
+    path: "%TypedArray%.prototype.forEach",
+    mode: "Call",
+    column: "reads",
+    applyTo: overload => ({ ...overload, reads: [] }),
+  },
+  {
+    title: "Array.prototype.reverse that reads no memory",
+    path: "Array.prototype.reverse",
+    mode: "Call",
+    column: "reads",
+    applyTo: overload => ({ ...overload, reads: [] }),
+  },
+  {
+    title: "Buffer.prototype.copy that reads no memory",
+    path: "Buffer.prototype.copy",
+    mode: "Call",
+    column: "reads",
+    applyTo: overload => ({ ...overload, reads: [] }),
+  },
+  {
+    title: "Map.prototype.get that reads no memory",
+    path: "Map.prototype.get",
+    mode: "Call",
+    column: "reads",
+    applyTo: overload => ({ ...overload, reads: [] }),
+  },
+  {
+    title: "DataView.prototype.getInt8 that reads no memory",
+    path: "DataView.prototype.getInt8",
     mode: "Call",
     column: "reads",
     applyTo: overload => ({ ...overload, reads: [] }),

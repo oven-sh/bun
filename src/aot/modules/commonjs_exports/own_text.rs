@@ -14,6 +14,7 @@ use bun_sema::hir::{
     StmtId, StmtKind, UnOp, VarDeclId,
 };
 use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::util::SharedSort;
 
 /// How the text names the exports of its module.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1223,7 +1224,7 @@ impl Scan<'_, '_, '_> {
         let found = &mut draft.found;
         found
             .creations
-            .sort_by_key(|it| (!it.is_in_order, it.end, core::cmp::Reverse(it.start)));
+            .shared_sort_by_key(|it| (!it.is_in_order, it.end, core::cmp::Reverse(it.start)));
         if found.form == Form::Value {
             found.aliases.clear();
             found.erased.clear();

@@ -2369,11 +2369,13 @@ where
         this_value
     }
 
+    #[inline(never)]
     pub(crate) fn on_bun_info_request(
         &self,
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
+        bun_removable_features::removable_definition!(BunInfo, Self::on_bun_info_request);
         jsc::mark_binding!();
         if !self.config.get().address.is_unix()
             && (!bake::is_allowed_host_header(req, Some(&self.config.get().address))

@@ -43,6 +43,7 @@ function copyOfEngine(): { root: ReturnType<typeof tempDir>; generatedCopy: stri
   for (const path of [
     "aot/ir/AOTSchema.def",
     "aot/ir/schema",
+    "aot/ir/generator",
     "aot/builtins/generated",
     "aot/builtins/verified-overloads.txt",
   ]) {

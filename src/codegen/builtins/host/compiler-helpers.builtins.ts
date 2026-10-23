@@ -28,7 +28,12 @@ const helpersIn = (
 const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
-  b.called({ times: "Repeatedly", args: [element, b.length, ...others], result: "Stored", resultTo: b.resultSlot("element") }),
+  b.called({
+    times: "Repeatedly",
+    args: [element, b.length, ...others],
+    result: "Stored",
+    resultTo: b.resultSlot("element"),
+  }),
 ];
 const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =>
   ({
@@ -41,8 +46,6 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     uses,
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
-
-const mappedFromLength = { length: lengthOfNewArray, mapper: calledForEachIndex(b.undefined) };
 
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
@@ -367,17 +370,11 @@ export default b.declarations(
       runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
     }),
     checkedArrayLength: arrayMaker("checkedArrayLength", b.operand("length"), { length: [b.returned] }),
-    arrayFromLength: [
-      {
-        ...arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), mappedFromLength),
-        args: { length: b.any, mapper: b.callable },
-      },
-      // Without a mapper the list holds what lies at each index of { length }.
-      {
-        ...arrayMaker("arrayFromLength", newArrayOf(b.union(b.callbackResult("mapper"), b.undefined)), mappedFromLength),
-        runsUnseenCode: undefined,
-      },
-    ],
+    // The front end writes arrayOfUndefined where the mapper is undefined, so this one never gets that.
+    arrayFromLength: arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), {
+      length: lengthOfNewArray,
+      mapper: calledForEachIndex(b.undefined),
+    }),
     arrayOfUndefined: arrayMaker("arrayOfUndefined", newArrayOf(b.undefined), { length: lengthOfNewArray }),
     filledArray: arrayMaker("filledArray", newArrayOf(b.operand("value")), {
       length: b.inspected,

@@ -1,4 +1,5 @@
 use bun_sema::bind::Parent;
+use bun_sema::util::SharedSort;
 
 use super::*;
 
@@ -49,7 +50,7 @@ impl Removable<'_, '_> {
                 }
             }
         }
-        simplified.sort_unstable();
+        simplified.shared_sort_unstable();
         simplified.dedup();
         simplified
     }

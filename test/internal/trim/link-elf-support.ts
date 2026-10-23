@@ -80,7 +80,7 @@ export interface Program {
   minimums?: Record<FeatureName, number>;
   builtins?: BuiltinEntry[];
   libraries?: Library[];
-  validatesRelocations?: boolean;
+  validatesRelocations?: boolean | "report";
   removed?: FeatureName[];
 }
 

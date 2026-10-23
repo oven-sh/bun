@@ -48,6 +48,7 @@ use crate::modules::{ModuleGraph, Shape};
 use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
 use bun_sema::atom::Interner;
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::LoadedProgram;
 use definitions::{
     MergeInput, choose_definitions, forget_library_layouts_without_definition,
@@ -498,7 +499,7 @@ fn order_units(
     mut units: Vec<LinkUnit>,
     projects: &PerProject<LinkProject<'_, '_>>,
 ) -> Result<Vec<LinkUnit>, Vec<LinkError>> {
-    units.sort_unstable_by_key(|unit| unit.file);
+    units.shared_sort_unstable_by_key(|unit| unit.file);
     let mut errors = Vec::new();
     let has_unit = |file: ProgramFile| units.binary_search_by_key(&file, |unit| unit.file).is_ok();
     let expected_files = compiled_files(projects).into_iter();

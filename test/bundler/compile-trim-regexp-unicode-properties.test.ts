@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
-import { canTrim, featureNamed, withoutFeatures } from "./compile-trim-features";
+import { canTrim, featureNamed, textOf, withoutFeatures } from "./compile-trim-features";
 
 async function run(cmd: string[], cwd: string) {
   await using child = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -55,6 +55,29 @@ describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and Unicode p
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("a literal doesn't count as a use of the RegExp constructor", async () => {
+    using dir = tempDir("compile-trim-regexp-unicode-properties", files);
+    const { stderr, exitCode } = await run(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--trim",
+        "--explain=trim",
+        "--disallow-code-generation-from-strings",
+        "no-property.ts",
+        "--outfile",
+        "program",
+      ],
+      String(dir),
+    );
+    expect(stderr).toContain(`trim: kept ${textOf(featureNamed("RegExp"))}: used`);
+    expect(stderr).toContain(`trim: removed ${textOf(featureNamed("RegExpFromString"))}: unused`);
+    expect(stderr).toContain(`trim: removed ${textOf(featureNamed("RegExpUnicodeProperties"))}: unused`);
+    expect(exitCode).toBe(0);
   });
 
   test("one literal that names a property retains the tables", async () => {

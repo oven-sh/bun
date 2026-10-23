@@ -534,6 +534,11 @@ function lookupsOf(model: FeatureModel): FeatureLookups {
   return lookups;
 }
 
+// `Feature::all_outside_compiled_programs` in src/trim/removable_features/lib.rs.
+export function isOutsideCompiledPrograms({ name, enteredFrom }: Pick<Feature, "name" | "enteredFrom">): boolean {
+  return enteredFrom === "command-line" || name === "JIT";
+}
+
 export function featureNamed(model: FeatureModel, name: FeatureName): Feature {
   const feature = lookupsOf(model).features.get(name);
   if (!feature) throw new BuildError(`unknown feature: ${name}`);

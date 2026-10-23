@@ -63,12 +63,12 @@ export default b.declarations(
       writes: externalState,
       implementation: b.generic,
     },
-    // It defines the columns and the rows as the first two elements of the array. Given a descriptor it reads the array without asking whether one was passed.
+    // It defines the columns and the rows as the first two elements of the array, which it refuses if it is shorter. Given a descriptor it reads the array without asking whether one was passed.
     getWindowSize: {
       ...operandCodeOnly,
       args: { fd: b.any, size: b.any },
       returns: b.bool,
-      uses: { fd: converted, size: [b.writesContents(), b.storedByKey(b.indexKeys, b.f64)] },
+      uses: { fd: converted, size: [b.readsContents(), b.writesContents(), b.storedByKey(b.indexKeys, b.f64)] },
       reads: externalState,
       implementation: b.generic,
     },

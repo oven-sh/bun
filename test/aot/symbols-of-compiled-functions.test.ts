@@ -126,4 +126,35 @@ describe.skipIf(!isLinux)("--aot-symbols", () => {
       { stdout: "55 row 1\n", stderr: "", exitCode: 0 },
     );
   });
+
+  // The name of the output file goes into the executable, so both are built under one name.
+  test("nothing that is loaded into memory changes", async () => {
+    using dir = tempDir("aot-symbols-are-not-loaded", { "without/main.ts": main, "with/main.ts": main });
+    const [without, withThem] = [
+      readFileSync(await build(join(String(dir), "without"), "app")),
+      readFileSync(await build(join(String(dir), "with"), "app", "--aot-symbols")),
+    ];
+    expect(withThem.length).toBeGreaterThan(without.length);
+
+    const [sectionHeadersOffset, numberOfSections] = [
+      { at: 40, size: 8 },
+      { at: 60, size: 2 },
+    ];
+    const start = Buffer.from(withThem.subarray(0, without.length));
+    for (const { at, size } of [sectionHeadersOffset, numberOfSections]) without.copy(start, at, at, at + size);
+    expect(start.equals(without)).toBe(true);
+
+    const [segments, segmentSize, count] = [
+      Number(withThem.readBigUInt64LE(32)),
+      withThem.readUInt16LE(54),
+      withThem.readUInt16LE(56),
+    ];
+    const endOfSegments = Math.max(
+      ...Array.from({ length: count }, (_, index) => {
+        const at = segments + index * segmentSize;
+        return Number(withThem.readBigUInt64LE(at + 8)) + Number(withThem.readBigUInt64LE(at + 32));
+      }),
+    );
+    expect(endOfSegments).toBeLessThanOrEqual(without.length);
+  });
 });

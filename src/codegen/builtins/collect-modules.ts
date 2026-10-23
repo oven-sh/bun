@@ -4,6 +4,7 @@ import { helperModules, moduleList, nativeStartIndex, specifierOf } from "../bui
 import { idToEnumName } from "../internal-module-registry-scanner.ts";
 import {
   GeneratorError,
+  leftOutOf,
   type Declaration,
   type MemberDeclaration,
   type ModuleExportDeclaration,
@@ -166,8 +167,13 @@ function lineNumbersOf(list: ReadonlyMap<string, ListedModule>): Map<string, num
   return new Map([...list.keys()].map((specifier, index) => [specifier, index + 1]));
 }
 
-function checkExportLists(sources: readonly RuntimeModuleSource[], lists: ExportLists, problems: Problems): void {
-  const specifiers = new Set(sources.map(source => source.specifier));
+function checkExportLists(
+  sources: readonly RuntimeModuleSource[],
+  leftOut: readonly string[],
+  lists: ExportLists,
+  problems: Problems,
+): void {
+  const specifiers = new Set([...sources.map(source => source.specifier), ...leftOut]);
   for (const [file, list] of [
     [exportsFile, lists.listed],
     [absentOnWindowsFile, lists.absentOnWindows],
@@ -294,11 +300,20 @@ function declareModule(
   ];
 }
 
-export function collectModules(bunRoot: string, problems: Problems): SourcedDeclaration[] {
+export function collectModules(
+  bunRoot: string,
+  written: readonly SourcedDeclaration[],
+  problems: Problems,
+): SourcedDeclaration[] {
   const lists = parseOrReport(problems, () => readExportLists(bunRoot));
   if (lists === null) return [];
   const sources = runtimeModuleSources().sort((left, right) => left.registryId - right.registryId);
-  checkExportLists(sources, lists, problems);
+  checkExportLists(
+    sources,
+    leftOutOf(written).flatMap(leftOut => leftOut.modules),
+    lists,
+    problems,
+  );
   const lines = lineNumbersOf(lists.listed);
   const importableSpecifiers = readImportableSpecifiers(bunRoot);
   return sources.flatMap(source => {

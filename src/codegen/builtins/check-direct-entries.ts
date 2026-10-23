@@ -44,8 +44,10 @@ function holdsOnlyInstances({
   );
 }
 
-const takesReceiver = ({ value }: DirectParameterSpec) => value === "NativeObjectOfReceiver" || value === "Receiver";
-const takesArgument = (parameter: DirectParameterSpec) => parameter.value !== "Realm" && !takesReceiver(parameter);
+const takesReceiver = ({ value }: DirectParameterSpec) =>
+  value === "NativeObjectOfReceiver" || value === "Receiver" || value === "FrameOfValues";
+const takesArgument = (parameter: DirectParameterSpec) =>
+  parameter.value === "FrameOfValues" || (parameter.value !== "Realm" && !takesReceiver(parameter));
 
 // The address of a cell is handed over where the function declares a pointer, so nothing else may come.
 function fitsPointer(cppType: string, accepted: ModelType): boolean {

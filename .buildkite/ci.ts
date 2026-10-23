@@ -917,7 +917,7 @@ const aotSources = [
 // A git pathspec that names no directory or file matches nothing, so a file name prefix becomes a glob.
 const aotPathspecs = aotSources.map(source => (source.endsWith("/") || source.includes(".") ? source : `${source}*`));
 const linuxX64AotGroups = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
-const fullRunAotGroups = [...linuxX64AotGroups, "aot/startup-scaling/", "aot/variant-"];
+const fullRunAotGroups = [...linuxX64AotGroups, "aot/heat/", "aot/startup-scaling/", "aot/variant-"];
 
 // The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
 function git(...args: string[]): string | undefined {
@@ -947,6 +947,13 @@ function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): str
   return arch === "x64" && distro === "debian" && !profile ? [] : linuxX64AotGroups;
 }
 
+// Debian runs every file. Any other lane runs one file in this many, others for each commit.
+function getAotFileDraw({ os, distro, profile }: Platform, aot: AotTests): number {
+  if (aot === "a tenth") return 10;
+  if (distro === "debian" && !profile) return 1;
+  return os === "darwin" ? 2 : 8;
+}
+
 let expectedDurations: Record<string, Record<string, unknown>> | undefined;
 function getExpectedDurations(): Record<string, Record<string, unknown>> {
   try {
@@ -966,8 +973,8 @@ function getAotParallelism(platform: Platform, aot: AotTests): number {
     if (!path.startsWith("aot/") || excludes.some(group => path.includes(group))) continue;
     milliseconds += Number(durations?.[lane] ?? durations?.["default"]) || 0;
   }
-  const shards = Math.ceil(milliseconds / (aot === "all" ? 1 : 4) / (12 * 60_000)) || (aot === "all" ? 20 : 3);
-  return Math.min(shards, os === "darwin" ? 8 : 40);
+  const shards = Math.ceil(milliseconds / getAotFileDraw(platform, aot) / (12 * 60_000)) || (aot === "all" ? 20 : 3);
+  return Math.min(shards, os === "darwin" ? 8 : arch === "x64" ? 24 : 13);
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
@@ -980,7 +987,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   }
 
   if (aot) {
-    args.push("--include=aot/", "--retries=1");
+    args.push("--include=aot/", "--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
@@ -1030,7 +1037,6 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      ...(aot === "a tenth" ? { AOT_PROGRAMS: "quick" } : {}),
       // Platform smoke check: runner.node.ts asserts the agent matches what
       // this step targets before running any test (see assertExpectedPlatform).
       // `release` is only asserted where the lane pins an exact version:

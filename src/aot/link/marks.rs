@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests;
 
+use bun_sema::util::SharedSort;
+
 use super::keys::MergedKeys;
 use super::program_keys::{KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey};
 use super::state::{
@@ -100,7 +102,7 @@ struct Undefined {
 }
 
 fn keep_first_referrers(undefined: &mut Vec<(u32, ProgramFile)>) {
-    undefined.sort_unstable();
+    undefined.shared_sort_unstable();
     undefined.dedup_by_key(|&mut (index, _)| index);
 }
 
@@ -180,7 +182,7 @@ fn report_undefined(
     keep_first_referrers(&mut undefined.functions);
     undefined
         .functions
-        .sort_unstable_by_key(|&(index, _)| context.functions.keys[index as usize]);
+        .shared_sort_unstable_by_key(|&(index, _)| context.functions.keys[index as usize]);
     for (index, referenced_in) in undefined.functions {
         errors.push(LinkError::UndefinedFunction {
             key: context.functions.keys[index as usize],
@@ -545,7 +547,7 @@ fn check_undefined_layouts(context: &MarkContext<'_>, errors: &mut Vec<LinkError
             UndefinedLayout::Error { referrer } => undefined.push((key, referrer)),
         }
     }
-    undefined.sort_unstable_by_key(|&(key, _)| key);
+    undefined.shared_sort_unstable_by_key(|&(key, _)| key);
     for (key, referrer) in undefined {
         errors.push(LinkError::UndefinedLayout {
             key,

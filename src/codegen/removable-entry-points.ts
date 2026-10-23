@@ -59,14 +59,14 @@ export function guardedCall(
   return `JSC::callRemovable<${guardTemplateArguments(model, feature, stub, symbol)}>(${args.join(", ")})`;
 }
 
-export function guardedBuiltinCall(
+export function guardedBindingCreation(
   model: FeatureModel,
   feature: FeatureName,
   symbol: string,
   builtin: number,
   args: string[],
 ): string {
-  return `JSC::callRemovableBuiltin<Bun::Feature::${featureConstantName(model, feature)}, ${symbol}, ${builtin}>(${args.join(", ")})`;
+  return `Bun::createRemovableBinding<Bun::Feature::${featureConstantName(model, feature)}, ${symbol}, ${builtin}>(${args.join(", ")})`;
 }
 
 export function beginGuardedBody(

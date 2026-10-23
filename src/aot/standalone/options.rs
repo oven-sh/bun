@@ -7,6 +7,7 @@ use bun_options_types::aot_options::AotOptions;
 use bun_sema::resolve::{
     CodeOptions, ancestors, contains_path, displayed_path, get_relative_path_from_directory,
 };
+use bun_sema::util::SharedSort;
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native};
 
@@ -95,7 +96,7 @@ impl StandaloneBuild {
             }
         }
         load.externals.packages.clone_from(&self.external_packages);
-        load.externals.packages.sort_unstable();
+        load.externals.packages.shared_sort_unstable();
         load.externals.packages.dedup();
         load.externals.are_all_packages = self.are_all_packages_external;
         load.runs_macros = self.runs_macros;

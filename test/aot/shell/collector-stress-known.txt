@@ -56,3 +56,4 @@ untyped-code/later-store-by-name-grows-extension    counts calls into the runtim
 typed-objects/arrow-fields-of-open-classes-that-only-untyped-code-extends    counts calls into the runtime
 typed-objects/arrow-fields-that-lie-in-the-plain-this-from-its-creation    counts calls into the runtime
 typed-objects/open-classes-with-many-fields-that-only-untyped-code-extends    counts calls into the runtime
+data-from-outside/json-parse-recursive-union-retry    says so when a parse takes over a second

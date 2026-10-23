@@ -17,6 +17,7 @@ use crate::ir::{
     StringTable, TypeSiteId, VariableId, for_each_mut,
 };
 use bun_sema::atom::{Atom, Interner};
+use bun_sema::util::SharedSort;
 use core::mem::{MaybeUninit, take};
 use std::sync::Arc;
 
@@ -282,7 +283,7 @@ fn collect_synthetic_exports(input: &MoveInput<'_, '_>) -> Vec<RetainedSynthetic
             Some(VariableDefinition::Unit(_)) | None => None,
         })
         .collect();
-    exports.sort_unstable_by_key(|export| export.id);
+    exports.shared_sort_unstable_by_key(|export| export.id);
     exports
 }
 

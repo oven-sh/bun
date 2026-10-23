@@ -1,11 +1,12 @@
 import { deriveFeatureEdges } from "./edges.ts";
 import { onlyReturns, sortedUnique } from "./entry-points.ts";
+import { isOutsideCompiledPrograms } from "./features.ts";
 import { findEdge, propagateFeatureSets, reach, type SectionGraph } from "./graph.ts";
 import {
   EdgeKind,
   featureIndexLimit,
-  type EnteredFrom,
   type EntryPoint,
+  type Feature,
   type FeatureEdge,
   type FeatureModel,
   type Group,
@@ -230,12 +231,9 @@ function countDependents(model: FeatureModel, edges: FeatureEdge[]): Uint32Array
 
 function rankFeatures(model: FeatureModel, edges: FeatureEdge[]): Uint16Array {
   const dependents = countDependents(model, edges);
-  const decisionRank = (enteredFrom: EnteredFrom) => (enteredFrom === "command-line" ? 0 : 1);
+  const decisionRank = (feature: Feature) => (isOutsideCompiledPrograms(feature) ? 0 : 1);
   const ordered = [...model.features].sort(
-    (a, b) =>
-      decisionRank(a.enteredFrom) - decisionRank(b.enteredFrom) ||
-      dependents[a.index]! - dependents[b.index]! ||
-      a.index - b.index,
+    (a, b) => decisionRank(a) - decisionRank(b) || dependents[a.index]! - dependents[b.index]! || a.index - b.index,
   );
   const layoutRank = new Uint16Array(featureIndexLimit);
   ordered.forEach((feature, position) => {

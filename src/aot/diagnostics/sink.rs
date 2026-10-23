@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use bun_ast::{Data, Kind, Log, Msg};
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::program::Files;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::{self as driver, log_message};
 use rustc_hash::FxHashMap;
 
@@ -157,7 +158,7 @@ impl Diagnostics {
     }
 
     pub(crate) fn write_to(mut self, log: &mut Log) {
-        self.entries.sort_by(|a, b| a.key.cmp(&b.key));
+        self.entries.shared_sort_by(|a, b| a.key.cmp(&b.key));
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);
         for entry in self.entries {
@@ -188,7 +189,8 @@ pub(super) fn write_message(log: &mut Log, message: Msg) {
 }
 
 fn write_internal_errors(log: &mut Log, mut errors: Vec<InternalError>) {
-    errors.sort_by(|a, b| (a.stage as usize, &a.message).cmp(&(b.stage as usize, &b.message)));
+    errors
+        .shared_sort_by(|a, b| (a.stage as usize, &a.message).cmp(&(b.stage as usize, &b.message)));
     errors.dedup_by(|next, previous| {
         next.stage == previous.stage && next.message == previous.message
     });

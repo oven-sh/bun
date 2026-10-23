@@ -1,6 +1,6 @@
-import { cap } from "./support.ts";
 import { GeneratorError } from "./declarations.ts";
 import type { NameKind } from "./model.ts";
+import { cap } from "./support.ts";
 import type { BuiltinPath, NativeCallKind } from "./vocabulary.ts";
 
 export const symbolPrefix = "@@";

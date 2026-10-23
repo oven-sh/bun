@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { BuildError } from "../error.ts";
+import { isOutsideCompiledPrograms } from "./features.ts";
 import {
   builtinKinds,
   type BuiltinEntry,
@@ -87,12 +88,8 @@ const isNamedByPrograms = ({ kind, hasHiddenRoot }: BuiltinEntry) =>
 
 export function checkBuiltinUses(uses: BuiltinUses, model: FeatureModel, path: string): void {
   const known = new Set(model.features.map(feature => feature.name));
-  // `Feature::all_outside_compiled_programs`: an executable that lacks only these does not look up the native code of its built-ins in the removed ranges.
-  const outsidePrograms = new Set(
-    model.features
-      .filter(({ name, enteredFrom }) => enteredFrom === "command-line" || name === "JIT")
-      .map(({ name }) => name),
-  );
+  // An executable that lacks only these does not look up the native code of its built-ins in the removed ranges.
+  const outsidePrograms = new Set(model.features.filter(isOutsideCompiledPrograms).map(({ name }) => name));
   let previousId = -1;
   for (const entry of uses.entries) {
     if (entry.id <= previousId) fail(`the id of ${entry.path} does not ascend`, path);

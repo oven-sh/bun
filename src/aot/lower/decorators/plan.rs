@@ -1,5 +1,6 @@
 use bun_sema::bind::Bound;
 use bun_sema::hir::{self, ClassId, Flags, MemberId, MemberKind, PropKey};
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
 
 use super::{DecoratedKind, Decoration, DecorationGroup, ValueInitializers};
@@ -19,7 +20,7 @@ pub(in crate::lower) fn plan_standard_elements(
     let mut decorations: Vec<Decoration> = runtime_members(hir, class)
         .filter_map(|member| create_decoration(hir, member))
         .collect();
-    decorations.sort_by_key(|decoration| decoration.group());
+    decorations.shared_sort_by_key(|decoration| decoration.group());
     let lists = number_initializer_lists(&mut decorations, plan);
     plan.decorations = decorations;
     plan.instance_elements = plan_instance_elements(hir, bound, class, plan, &lists);

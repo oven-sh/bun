@@ -1,4 +1,5 @@
 use bun_options_types::aot_options::ExplainSet;
+use bun_sema::util::SharedSort;
 use bun_trim::{Decision, Feature, RetainReason, Retained, UsedLocales, WitnessIndex};
 
 use super::positions::{PathStyle, Positions, write_shown_position};
@@ -115,7 +116,7 @@ fn item_lines(records: &[BuiltinUseRecord]) -> Vec<Vec<u8>> {
             ]));
         }
     }
-    items.sort_unstable();
+    items.shared_sort_unstable();
     items.dedup();
     items
 }

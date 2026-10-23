@@ -445,7 +445,7 @@ pub(crate) fn which<'a>(
         .transpose()
 }
 
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = ConsoleTable)]
 fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let mut args_buf = callframe.arguments_undef::<5>();
     let all_arguments = args_buf.mut_();

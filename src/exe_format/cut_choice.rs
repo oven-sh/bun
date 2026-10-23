@@ -26,6 +26,7 @@ pub(crate) fn choose_cuts(model: &CutModel, removable: &[RemovableBytes]) -> Cut
     let mut cuts: Vec<AddressRange> = clip_to_spans(&runs, &model.cuttable_spans)
         .into_iter()
         .filter_map(|piece| align_inward(piece, alignment))
+        .filter(|candidate| leaves_one_piece(*candidate, &model.spans_cut_only_at_end))
         .collect();
     cuts.sort_by_key(|candidate| (Reverse(candidate.len()), candidate.start));
     let over_budget = cuts.split_off(max_cuts.min(cuts.len()));
@@ -94,6 +95,12 @@ fn clip_to_spans(runs: &[AddressRange], spans: &[AddressRange]) -> Vec<AddressRa
         }
     }
     pieces
+}
+
+fn leaves_one_piece(candidate: AddressRange, spans_cut_only_at_end: &[AddressRange]) -> bool {
+    spans_cut_only_at_end
+        .iter()
+        .all(|span| !span.contains(candidate) || candidate.end == span.end)
 }
 
 fn align_inward(run: AddressRange, alignment: u64) -> Option<AddressRange> {
@@ -213,6 +220,7 @@ mod tests {
             alignment: limits.alignment,
             capacity: CutCapacity::from_free_slots(limits.max_cuts),
             cuttable_spans,
+            spans_cut_only_at_end: Vec::new(),
         };
         choose_cuts(&model, removable)
     }
@@ -575,6 +583,39 @@ mod tests {
             [fill(0, 4 * PAGE, true), fill(40 * PAGE, 44 * PAGE, true)]
         );
         assert_eq!(plan.uncut, None);
+    }
+
+    #[test]
+    fn span_cut_only_at_end_stays_one_piece() {
+        let removable = [
+            cuttable(2 * PAGE, 4 * PAGE, true),
+            cuttable(9 * PAGE, 12 * PAGE, false),
+            cuttable(14 * PAGE, 16 * PAGE, false),
+            cuttable(16 * PAGE, 18 * PAGE, false),
+        ];
+        let model = CutModel {
+            format: ExecutableFormat::MachO,
+            alignment: PAGE,
+            capacity: CutCapacity::from_free_slots(LIMITS.max_cuts),
+            cuttable_spans: vec![
+                range(0, 8 * PAGE),
+                range(8 * PAGE, 16 * PAGE),
+                range(16 * PAGE, 20 * PAGE),
+            ],
+            spans_cut_only_at_end: vec![range(8 * PAGE, 16 * PAGE)],
+        };
+        let plan = choose_cuts(&model, &removable);
+        assert_eq!(
+            plan.cuts,
+            [
+                range(2 * PAGE, 4 * PAGE),
+                range(14 * PAGE, 16 * PAGE),
+                range(16 * PAGE, 18 * PAGE)
+            ]
+        );
+        assert_eq!(plan.fills, [fill(9 * PAGE, 12 * PAGE, false)]);
+        assert_eq!(plan.uncut, None);
+        assert_tiles_input(&removable, &plan);
     }
 
     #[test]

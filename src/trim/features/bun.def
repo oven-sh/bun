@@ -92,10 +92,14 @@ feature ReactCompiler "the React Compiler"
   minimum 600000
 
 feature Libarchive "tar archive support"
+  cxx-function archive_ ^_{0,2}archive_\w+$
 
 feature ServeHttp2 "HTTP/2 and HTTP/3 in Bun.serve"
 
 feature LibdeflateCompressor "gzip and deflate compression with libdeflate"
+  c-function libdeflate_alloc_compressor libdeflate_alloc_compressor_ex libdeflate_free_compressor
+  c-function libdeflate_deflate_compress libdeflate_deflate_compress_bound libdeflate_gzip_compress libdeflate_gzip_compress_bound
+  c-function libdeflate_zlib_compress libdeflate_zlib_compress_bound
 
 feature BrotliEncoder "Brotli compression"
   c-function BrotliEncoderCreateInstance BrotliEncoderDestroyInstance BrotliEncoderSetParameter
@@ -103,6 +107,8 @@ feature BrotliEncoder "Brotli compression"
   c-function BrotliEncoderPrepareDictionary BrotliEncoderDestroyPreparedDictionary BrotliEncoderAttachPreparedDictionary
 
 feature ZstdCompressor "zstd compression"
+  c-function ZSTD_compress ZSTD_compressBound ZSTD_compressStream2 ZSTD_createCCtx ZSTD_freeCCtx
+  c-function ZSTD_CCtx_loadDictionary ZSTD_CCtx_reset ZSTD_CCtx_setParameter ZSTD_CCtx_setPledgedSrcSize
 
 feature NativeAddons "native addons, process.dlopen and N-API"
   exports

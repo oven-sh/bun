@@ -1,6 +1,7 @@
 use bun_sema::bind::ScopeId;
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{ClassId, Flags, FnId, MemberId, MemberKind, PropKey};
+use bun_sema::util::SharedSort;
 
 use super::walker::{bindings_of, entries_of};
 use super::{Context, Task, WalkedFunctionId, Walker};
@@ -32,7 +33,7 @@ impl Walker<'_, '_> {
         let scope = bound.class_scope[class.idx()];
         let inner_name = bound.inner_class_symbol(class);
         let mut slots = class::class_slots(hir, bound, self.input.compiled.settings, class);
-        slots.sort_unstable();
+        slots.shared_sort_unstable();
         let source_constructor = self.find_source_constructor(class);
         let functions = self.add_class_functions(class, source_constructor, context.function);
         self.enter_scope(bound.symbol_scope(inner_name), context);

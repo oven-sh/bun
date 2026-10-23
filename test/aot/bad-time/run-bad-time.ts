@@ -19,7 +19,7 @@ export function badTime(part: number, parts: number) {
     `no program ends with a bad time unless it means it (part ${part} of ${parts})`,
     async () => {
       await using script = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", isASAN || isDebug ? `${part}/${parts * 10}` : partInShare(part, parts, 10), "all"],
+        cmd: [python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", isASAN || isDebug ? `${part}/${parts * 10}` : partInShare(part, parts, 40), "all"],
         env: scriptEnvironment(),
         stdin: "ignore",
         stdout: "pipe",

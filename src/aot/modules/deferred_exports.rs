@@ -6,6 +6,7 @@ use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, SymbolId};
 use bun_sema::hir::{self, ExprId, ExprKind, PropId, PropKey, PropKind, Span, StmtKind};
 use bun_sema::program::Files;
+use bun_sema::util::SharedSort;
 
 /// A getter of the object that one of Bun's own modules exports: `get WriteStream() { .. }` in the literal, or `Object.defineProperty(assert, "AssertionError", { get() { .. } })`.
 #[derive(Default)]
@@ -42,7 +43,7 @@ impl DeferredExports {
                 names.push((module.registry_id(), runtime_files.atoms.bytes(name).into()));
             }
         }
-        names.sort_unstable();
+        names.shared_sort_unstable();
         names.dedup();
         DeferredExports { names }
     }

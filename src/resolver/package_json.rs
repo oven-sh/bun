@@ -386,6 +386,7 @@ impl PackageJSON {
         macro_map
     }
 
+    #[inline(never)]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
         input_path: &[u8],
@@ -393,6 +394,10 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
+        bun_removable_features::removable_definition!(
+            PackageFiles,
+            Self::parse::<INCLUDE_DEPENDENCIES>
+        );
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`

@@ -22,7 +22,7 @@ import { checkNativeCalls, collectBufferAccessors, collectNativeLoads } from "./
 import { collectRuntimeFunctions } from "./collect-runtime-functions.ts";
 import { collectStaticTables } from "./collect-static-tables.ts";
 import { collectSyntaxUses } from "./collect-syntax-uses.ts";
-import { GeneratorError, Problems, symbolsNaming, type SourcedDeclaration } from "./declarations.ts";
+import { GeneratorError, leftOutOf, Problems, symbolsNaming, type SourcedDeclaration } from "./declarations.ts";
 import { verifiedListPaths, type TableDump } from "./dump.ts";
 import { emitHostBindings } from "./emit-cpp-bindings.ts";
 import { dumpOf } from "./emit-dump.ts";
@@ -115,28 +115,25 @@ function findPlacements(staticTableMembers: readonly SourcedDeclaration[]): Map<
 const schemaFileNameOf = (bindgenSource: string): string =>
   basename(bindgenSource.slice(bindgenSource.indexOf("=") + 1));
 
-// Only some builds of Bun compile such a schema: isCompiled() in scripts/build/codegen.ts.
-const bindsWhatExistsForTests = (schemaFileName: string): boolean => schemaFileName.endsWith("_test.bind.ts");
-
 export async function collectHost(options: GenerateOptions, problems: Problems): Promise<SourcedDeclaration[]> {
   const { bunRoot } = options;
   const typesOnly = new Set(options.typesOnly);
-  const sourcesOfEveryBuild = options.bindgenSources.filter(
-    source => !bindsWhatExistsForTests(schemaFileNameOf(source)),
-  );
   const written = await loadDeclarationFiles(hostDeclarationFiles(bunRoot), "Host", bunRoot);
+  const schemasLeftOut = new Set(leftOutOf(written).flatMap(leftOut => leftOut.schemas));
+  const isLeftOut = (schemaFileName: string): boolean => schemasLeftOut.has(schemaFileName);
+  const sources = options.bindgenSources.filter(source => !isLeftOut(schemaFileNameOf(source)));
   const staticTableMembers = collectStaticTables(written, singleRoot(bunRoot), problems);
   const { nativeModuleLoadSites, nativeCallSites } = globAllSources();
   checkNativeCalls(bunRoot, [...nativeModuleLoadSites, ...nativeCallSites], written, problems);
   // collectBindgen() asks which bindings src/js names, which this registers.
   const calls = nativeCalls(typesOnly);
-  const schemas = await collectBindgen(bunRoot, sourcesOfEveryBuild, findPlacements(staticTableMembers), problems);
+  const schemas = await collectBindgen(bunRoot, sources, findPlacements(staticTableMembers), problems);
   return [
     ...written,
     ...staticTableMembers,
-    ...collectModules(bunRoot, problems),
+    ...collectModules(bunRoot, written, problems),
     ...collectOwnProperties(bunRoot, ownPropertiesFile, problems),
-    ...collectNativeBindings(calls, bindsWhatExistsForTests, schemas.constructorBindings, problems),
+    ...collectNativeBindings(calls, isLeftOut, schemas.constructorBindings, problems),
     ...collectBufferAccessors(bunRoot, problems),
     ...collectNativeLoads(bunRoot, nativeModuleLoadSites, problems),
     ...schemas.declarations,

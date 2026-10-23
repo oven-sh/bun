@@ -291,6 +291,21 @@ export interface UnfilledHostRolesDeclaration {
   class: ClassName;
 }
 
+/** What the table leaves out of a host, because the host is built without some of its parts or because not every build of it has them. */
+export interface LeftOutDeclaration {
+  declares: "LeftOut";
+  /** Schemas that are not read, by file name. `$bindgen` of one has no entry. */
+  schemas: readonly string[];
+  /** Nothing is declared at one of these or under it. */
+  paths: readonly BuiltinPath[];
+  /** What `#if defined(NAME)` in a static table finds defined. */
+  definedNames: readonly string[];
+  /** Runtime modules that the lists of exports may name all the same. */
+  modules: readonly string[];
+  /** Whether other declarations may name what is left out. Then one that names what nothing declares says nothing. Otherwise it stops the build. */
+  mayBeNamed: boolean;
+}
+
 /** A function that the front end of the host compiles, declared by a host that has no front end. */
 export interface FrontEndFunctionDeclaration {
   declares: "FrontEndFunction";
@@ -376,6 +391,7 @@ export type Declaration =
   | HandwrittenFileDeclaration
   | HostRoleDeclaration
   | UnfilledHostRolesDeclaration
+  | LeftOutDeclaration
   | FrontEndFunctionDeclaration
   | EngineFeaturesDeclaration
   | HostClassRoleDeclaration
@@ -390,6 +406,9 @@ export interface SourcedDeclaration {
   declaration: Declaration;
   source: Source;
 }
+
+export const leftOutOf = (declarations: readonly SourcedDeclaration[]): LeftOutDeclaration[] =>
+  declarations.flatMap(({ declaration }) => (declaration.declares === "LeftOut" ? [declaration] : []));
 
 export class DeclarationFile {
   readonly declarations: readonly Declaration[];

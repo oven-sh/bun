@@ -1,4 +1,3 @@
-import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { crateOf, debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
 import type { CodegenFields, Config } from "./config.ts";
@@ -12,8 +11,12 @@ export interface EngineSources {
   /** `Source/JavaScriptCore` of the checkout this graph compiles. Undefined when it links a prebuilt WebKit. */
   javaScriptCore: string | undefined;
   schema: string;
+  /** `aot/ir/generator/index.ts`. The engine has it, so that its own cmake build and this one run the same. */
+  schemaGenerator: string;
+  /** The schema's files and the generator's. */
   schemaInputs: string[];
-  schemaGeneratedDirectory: string;
+  /** Where the C++ half goes. Undefined when the graph links a prebuilt WebKit, which was compiled with its own. */
+  schemaGeneratedDirectory: string | undefined;
   schemaOutputs: string[];
   schemaUsers: string[];
   builtinsGeneratedDirectory: string;
@@ -58,16 +61,15 @@ export function engineFunctionsJson(cfg: CodegenDirectory): string {
   return resolve(cfg.codegenDir, "aot_engine_functions.json");
 }
 
-export function schemaRustDirectory(cfg: Pick<CodegenFields, "cwd">): string {
-  return resolve(cfg.cwd, "src", "aot", "ir", "generated");
+/** One file for each crate that includes generated code. No change to the schema moves a name: a prebuilt engine is fetched after this graph is written. */
+export function schemaRustFiles(cfg: CodegenDirectory): string[] {
+  return ["aot_schema.rs", "aot_schema_builtins.rs", "aot_schema_interface.rs"].map(name =>
+    resolve(cfg.codegenDir, name),
+  );
 }
 
-/** Every file of that folder: the schema's generator writes all of them and nothing else is there. */
-export function schemaRustFiles(cfg: Pick<CodegenFields, "cwd">): string[] {
-  const directory = schemaRustDirectory(cfg);
-  return readdirSync(directory)
-    .sort()
-    .map(name => resolve(directory, name));
+export function schemaHashHeader(cfg: CodegenDirectory): string {
+  return resolve(cfg.codegenDir, "AOTSchemaHash.h");
 }
 
 export function schemaUseCheckStamp(cfg: CodegenDirectory): string {
@@ -151,48 +153,38 @@ export function emitRemovableFeatures({ n, cfg, sources, o, dirStamp }: Ctx): vo
   o.cppHeaders.push(header);
 }
 
-export function emitAotSchema({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
+export function emitAotSchema({ n, cfg, o, dirStamp, engine }: Ctx): void {
   assert(engine !== undefined, "emitAotSchema needs an engine");
-  const script = resolve(cfg.cwd, "src", "codegen", "aot-schema", "index.ts");
-  const inputs = [script, ...sources.aotSchemaCodegen.filter(path => path !== script), ...engine.schemaInputs];
   const rust = schemaRustFiles(cfg);
-  const common = ["run", script, "--schema", engine.schema, "--rust-out", schemaRustDirectory(cfg)];
-
-  if (engine.javaScriptCore === undefined) {
-    const stamp = resolve(cfg.codegenDir, "aot-schema-is-current.stamp");
-    n.build({
-      outputs: [stamp],
-      rule: "aot_check",
-      inputs: [...inputs, ...rust],
-      orderOnlyInputs: [dirStamp],
-      vars: { cwd: cfg.cwd, desc: "src/aot/ir/generated", args: shJoin(cfg, [...common, "--check"]) },
-    });
-    o.all.push(stamp);
-    o.rustInputs.push(stamp);
-    return;
-  }
-
-  const outputs = [...engine.schemaOutputs, ...rust];
+  const header = schemaHashHeader(cfg);
+  const outputs = [...engine.schemaOutputs, ...rust, header];
   n.build({
     outputs,
     rule: "codegen_bun",
-    inputs,
+    inputs: engine.schemaInputs,
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "AOTSchema.def",
-      args: shJoin(cfg, [...common, "--engine-out", engine.schemaGeneratedDirectory]),
+      args: shJoin(cfg, [
+        "run",
+        engine.schemaGenerator,
+        "--schema",
+        engine.schema,
+        "--rust-out",
+        cfg.codegenDir,
+        ...(engine.schemaGeneratedDirectory === undefined ? [] : ["--engine-out", engine.schemaGeneratedDirectory]),
+      ]),
     },
   });
   o.all.push(...outputs);
   o.rustInputs.push(...rust);
-  o.cppHeaders.push(...rust.filter(path => path.endsWith(".h")));
+  o.cppHeaders.push(header);
 }
 
 export function emitAotSchemaUseCheck({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   assert(engine !== undefined, "emitAotSchemaUseCheck needs an engine");
   if (engine.javaScriptCore === undefined || !isCI(cfg)) return;
-  const script = resolve(cfg.cwd, "src", "codegen", "aot-schema", "index.ts");
   const stamp = schemaUseCheckStamp(cfg);
   const usersOutsideAot = [
     resolve(engine.javaScriptCore, "b3", "B3Limits.h"),
@@ -204,21 +196,14 @@ export function emitAotSchemaUseCheck({ n, cfg, sources, o, dirStamp, engine }: 
   n.build({
     outputs: [stamp],
     rule: "aot_check",
-    inputs: [
-      script,
-      ...sources.aotSchemaCodegen.filter(path => path !== script),
-      ...engine.schemaInputs,
-      ...engine.schemaUsers,
-      ...usersOutsideAot,
-      ...sources.aotRust,
-    ],
+    inputs: [...engine.schemaInputs, ...engine.schemaUsers, ...usersOutsideAot, ...sources.aotRust],
     orderOnlyInputs: [dirStamp, ...engine.schemaOutputs],
     vars: {
       cwd: cfg.cwd,
       desc: "uses of AOTSchema.def",
       args: shJoin(cfg, [
         "run",
-        script,
+        engine.schemaGenerator,
         "--schema",
         engine.schema,
         "--check-uses",
@@ -285,7 +270,6 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
     ],
     implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
-    // Not on the schema's step: build.ninja depends on its AOTSchemaFiles.cmake, so ninja would run the check before it starts the build.
     validations: engine.javaScriptCore === undefined || !isCI(cfg) ? [] : [schemaUseCheckStamp(cfg)],
     vars: {
       cwd: cfg.cwd,

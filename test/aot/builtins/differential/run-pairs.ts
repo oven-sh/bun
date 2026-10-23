@@ -5,10 +5,10 @@ import { selectFor, type Difference } from "./compare";
 import { changeState, contentOrigin, createCallback, findCandidate, type Candidate } from "./instances";
 import { Log } from "./log";
 import type { Invocation, Realm } from "./members";
-import { perform, runSet } from "./observe";
+import { runSet } from "./observe";
 import { readsOfOperandCode } from "./operand-code";
 import { admitsValue, baseSetOf, isCallThatExists, withArgument, withReceiver, type Call } from "./operands";
-import { candidateOf, valueOf, type Completion, type OperandSet, type Run } from "./runs";
+import { candidateOf, isReentrant, valueOf, type Completion, type OperandSet, type Run } from "./runs";
 import {
   conversionProtocols,
   describeOperand,
@@ -50,9 +50,23 @@ const isNew = (symbol: symbol) =>
 
 // Two calls that make a symbol make two. deepEquals takes two invalid dates and two URLSearchParams with a repeated name for different values, and two regular expressions
 // that differ in lastIndex for the same one. A view of a detached buffer cannot be walked.
+const timeOf = Date.prototype.getTime;
+const parametersToString = URLSearchParams.prototype.toString;
+
+// An object that inherits from an instance is none, and a built-in may have given an instance another prototype.
+function textOfParameters(value: unknown): string | undefined {
+  try {
+    return Reflect.apply(parametersToString, value, []);
+  } catch {
+    return undefined;
+  }
+}
+
 function isSameValue(left: unknown, right: unknown): boolean {
-  if (types.isDate(left) && types.isDate(right)) return Object.is(left.getTime(), right.getTime());
-  if (left instanceof URLSearchParams && right instanceof URLSearchParams) return left.toString() === right.toString();
+  if (types.isDate(left) && types.isDate(right))
+    return Object.is(Reflect.apply(timeOf, left, []), Reflect.apply(timeOf, right, []));
+  const leftText = textOfParameters(left);
+  if (leftText !== undefined) return leftText === textOfParameters(right);
   if (types.isRegExp(left) && types.isRegExp(right) && left.lastIndex !== right.lastIndex) return false;
   if (typeof left === "symbol" && typeof right === "symbol")
     return left === right || (isNew(left) && isNew(right) && left.description === right.description);
@@ -323,54 +337,101 @@ async function checkConversionOrder(
 
 type Change = { heaps: string[]; apply(value: any): void };
 
+const otherNumber = (value: number) => value + 90;
+const otherValue = (value: unknown) => (typeof value === "number" ? otherNumber(value) : `${String(value)}z`);
+
+function changeBytes(buffer: ArrayBufferLike): void {
+  const bytes = new Uint8Array(buffer);
+  for (let index = 0; index < bytes.length; index++) bytes[index] = otherNumber(bytes[index]);
+}
+
+// Each store changes every place of its kind, so that a call that reads one of them reads another value, whichever it is.
 function changesOf(value: unknown): Change[] {
   if (!isObject(value)) return [];
   if (Array.isArray(value)) {
     return [
-      { heaps: ["Elements"], apply: array => (array[0] = typeof array[0] === "string" ? "z" : 99) },
+      {
+        heaps: ["Elements"],
+        apply: array => array.forEach((element: unknown, index: number) => (array[index] = otherValue(element))),
+      },
       { heaps: ["ArrayStorage", "Elements"], apply: array => array.push(array[0]) },
+      { heaps: ["ArrayStorage", "Elements"], apply: array => (array.length = 1) },
     ];
   }
-  if (types.isTypedArray(value)) return [{ heaps: ["TypedArrayElements"], apply: view => (view[0] = 99) }];
-  if (types.isArrayBuffer(value)) {
-    const store: Change = { heaps: ["TypedArrayElements"], apply: buffer => (new Uint8Array(buffer)[0] = 99) };
-    return value.resizable ? [store, { heaps: ["TypedArrayStorage"], apply: buffer => buffer.resize(4) }] : [store];
+  if (types.isTypedArray(value)) {
+    const store: Change = { heaps: ["TypedArrayElements"], apply: view => changeBytes(view.buffer) };
+    const isResizable = types.isArrayBuffer(value.buffer) && value.buffer.resizable;
+    return isResizable ? [store, { heaps: ["TypedArrayStorage"], apply: view => view.buffer.resize(2) }] : [store];
   }
-  if (types.isDataView(value)) return [{ heaps: ["TypedArrayElements"], apply: view => view.setUint8(0, 99) }];
+  if (types.isAnyArrayBuffer(value)) {
+    const store: Change = { heaps: ["TypedArrayElements"], apply: changeBytes };
+    if (types.isArrayBuffer(value) && value.resizable)
+      return [store, { heaps: ["TypedArrayStorage"], apply: buffer => buffer.resize(4) }];
+    if (types.isSharedArrayBuffer(value) && value.growable)
+      return [store, { heaps: ["TypedArrayStorage"], apply: buffer => buffer.grow(12) }];
+    return [store];
+  }
+  if (types.isDataView(value)) return [{ heaps: ["TypedArrayElements"], apply: view => changeBytes(view.buffer) }];
   if (types.isMap(value)) {
     return [
-      { heaps: ["CollectionEntries", "CollectionStorage"], apply: map => map.set(1, "changed") },
+      {
+        heaps: ["CollectionEntries", "CollectionStorage"],
+        apply: map => [...map.keys()].forEach(key => map.set(key, "changed")),
+      },
       { heaps: ["CollectionEntries", "CollectionStorage"], apply: map => map.set("added", 1) },
+      { heaps: ["CollectionEntries", "CollectionStorage"], apply: map => map.clear() },
     ];
   }
-  if (types.isSet(value))
-    return [{ heaps: ["CollectionEntries", "CollectionStorage"], apply: set => set.add("added") }];
+  if (types.isSet(value)) {
+    return [
+      { heaps: ["CollectionEntries", "CollectionStorage"], apply: set => set.add("added") },
+      { heaps: ["CollectionEntries", "CollectionStorage"], apply: set => set.clear() },
+    ];
+  }
   if (types.isDate(value)) return [{ heaps: ["InternalFields"], apply: date => date.setTime(1e12) }];
   if (types.isRegExp(value)) return [{ heaps: ["RegExpState"], apply: expression => (expression.lastIndex = 1) }];
-  if (value instanceof Headers) return [{ heaps: ["ExternalState"], apply: headers => headers.set("a", "changed") }];
-  if (value instanceof URL) return [{ heaps: ["ExternalState"], apply: url => (url.pathname = "/changed") }];
-  if (value instanceof URLSearchParams)
-    return [{ heaps: ["ExternalState"], apply: parameters => parameters.set("a", "changed") }];
+  if (value instanceof Headers) {
+    return [
+      { heaps: ["ExternalState"], apply: headers => [...headers.keys()].forEach(name => headers.set(name, "changed")) },
+      { heaps: ["ExternalState"], apply: headers => [...headers.keys()].forEach(name => headers.delete(name)) },
+    ];
+  }
+  if (value instanceof URL)
+    return [{ heaps: ["ExternalState"], apply: url => (url.href = "https://other:82/changed?f=g#h") }];
+  if (value instanceof URLSearchParams) {
+    return [
+      {
+        heaps: ["ExternalState"],
+        apply: parameters => [...parameters.keys()].forEach(name => parameters.set(name, "changed")),
+      },
+      {
+        heaps: ["ExternalState"],
+        apply: parameters => [...parameters.keys()].forEach(name => parameters.delete(name)),
+      },
+    ];
+  }
   if (Reflect.getPrototypeOf(value) !== Object.prototype) return [];
   return [
-    { heaps: ["NamedProperties", "ObjectFields"], apply: object => (object.a = 99) },
+    {
+      heaps: ["NamedProperties", "ObjectFields"],
+      apply: object => Object.keys(object).forEach(key => (object[key] = otherValue(object[key]))),
+    },
     { heaps: ["NamedProperties", "ObjectFields", "ShapeWords", "OrderWords"], apply: object => (object.added = 1) },
+    { heaps: ["NamedProperties", "ObjectFields", "ShapeWords", "OrderWords"], apply: object => delete object.a },
   ];
 }
 
-function complete(invocation: Invocation, receiver: unknown, args: unknown[]): Completion {
-  try {
-    return { kind: "Returned", value: perform(invocation, receiver, args) };
-  } catch (error) {
-    return { kind: "Threw", error };
-  }
-}
+// The built-in may have given the collection another prototype.
+const mapEntries = Map.prototype.entries;
+const setValues = Set.prototype.values;
+const entriesOf = (method: Function, collection: object): unknown[] =>
+  Array.from(Reflect.apply(method, collection, []));
 
 // Its own values, and what the getters of its class answer for it: an object of the host keeps what it holds in native memory, and the formatter prints it from there.
 function valuesHeldBy(value: object): unknown[] {
   const held = Reflect.ownKeys(value).map(key => Reflect.getOwnPropertyDescriptor(value, key)!.value);
-  if (types.isMap(value)) held.push(...value.keys(), ...value.values());
-  if (types.isSet(value)) held.push(...value);
+  if (types.isMap(value)) held.push(...entriesOf(mapEntries, value).flat());
+  if (types.isSet(value)) held.push(...entriesOf(setValues, value));
   for (
     let holder = Object.getPrototypeOf(value);
     holder !== null && Object.getPrototypeOf(holder) !== null;
@@ -387,31 +448,88 @@ function valuesHeldBy(value: object): unknown[] {
   return held;
 }
 
-function reaches(value: unknown, wanted: object, depth: number): boolean {
-  if (value === wanted) return true;
-  if (!isObject(value) || depth === 0 || types.isProxy(value)) return false;
-  return valuesHeldBy(value).some(held => reaches(held, wanted, depth - 1));
+function inheritsFrom(value: object, wanted: object): boolean {
+  try {
+    return Reflect.getPrototypeOf(value) === wanted;
+  } catch {
+    return false;
+  }
 }
 
-// A copy, so that a result that shares memory with an operand is compared as it was.
-function freeze(completion: Completion): Completion {
-  if (completion.kind === "Threw" || !isObject(completion.value)) return completion;
-  try {
-    return { kind: "Returned", value: structuredClone(completion.value) };
-  } catch {}
-  // The formatter calls the method of the class that describes an instance, and a prototype object is none.
-  try {
-    return { kind: "Returned", value: Bun.inspect(completion.value, { depth: 3 }) };
-  } catch {
-    return completion;
-  }
+function reaches(value: unknown, wanted: object, depth: number): boolean {
+  if (value === wanted) return true;
+  if (!isObject(value) || depth === 0) return false;
+  if (inheritsFrom(value, wanted)) return true;
+  if (types.isProxy(value)) return false;
+  return valuesHeldBy(value).some(held => reaches(held, wanted, depth - 1));
 }
 
 type StoreDifference = { message: string; before: Completion; after: Completion };
 type StoreOutcome = "NoVerdict" | "Explained" | StoreDifference;
 
-// The call, a store to memory of the operand, and the call again, on operands that are made anew.
-async function callAroundStore(
+// The result is the operand, holds it, is held by it or holds what it holds, as a view of the same buffer does.
+function isBoundTo(result: Completion, value: unknown): boolean {
+  if (result.kind !== "Returned" || !isObject(value)) return false;
+  if (reaches(result.value, value, 3) || (isObject(result.value) && reaches(value, result.value, 1))) return true;
+  return valuesHeldBy(value).some(held => isObject(held) && reaches(result.value, held, 3));
+}
+
+// What the built-in handed to code of its operands: a callback that is given another number shows a read as a result does.
+function valuesHandedOut(run: Run): unknown[] {
+  return run.log.events.map(({ origin, trap, key, passedValues }) => [
+    origin.operand,
+    trap,
+    String(key),
+    passedValues.map(value => (isObject(value) ? "object" : value)),
+  ]);
+}
+
+// The places of an operand that a store of changesOf changes one by one.
+function placesOf(value: unknown): unknown[] | undefined {
+  try {
+    // An object that lies there may be the operand that was stored to.
+    if (Array.isArray(value)) return Array.from(value, element => (isObject(element) ? "object" : element));
+    if (types.isTypedArray(value)) return Array.from(new Uint8Array(value.buffer));
+    if (types.isDataView(value)) return Array.from(new Uint8Array(value.buffer));
+    if (types.isAnyArrayBuffer(value)) return Array.from(new Uint8Array(value));
+  } catch {}
+  return undefined;
+}
+
+type States = { before: unknown[] | undefined; after: unknown[] | undefined };
+
+// A built-in that reads none of the places leaves each as it was or puts the same value there, whatever was there. One that moves
+// them about, as a sort does, has read them.
+function writesWithoutReading(plain: States, stored: States): boolean {
+  if (!plain.before || !plain.after || !stored.before || !stored.after) return true;
+  if (plain.after.length !== stored.after.length) return plain.before.length !== stored.before.length;
+  return plain.after.every((value, index) => {
+    if (Object.is(value, stored.after![index])) return true;
+    return Object.is(value, plain.before![index]) && Object.is(stored.after![index], stored.before![index]);
+  });
+}
+
+function othersEndTheSame(left: Run, right: Run, operand: OperandName): boolean {
+  const operands: OperandName[] = ["this", ...left.args.keys()];
+  return operands.every(other => {
+    if (
+      other === operand ||
+      !isObject(valueOf(left, other)) ||
+      left.log.originOf(valueOf(left, other) as object)?.kind !== "Operand"
+    )
+      return true;
+    const states = [placesOf(valueOf(left, other)), placesOf(valueOf(right, other))];
+    return states[0] === undefined || states[1] === undefined || isSameValue(states[0], states[1]);
+  });
+}
+
+const handsOutTheSame = (left: Run, right: Run) => isSameValue(valuesHandedOut(left), valuesHandedOut(right));
+const showsTheSame = (left: Run, right: Run) =>
+  hasSameOutcome(left.completion, right.completion) && handsOutTheSame(left, right);
+
+// The call on operands that are made anew, and the call on such operands behind a store to memory of one of them. A call that writes
+// what it reads answers otherwise the second time on the same operands, and is judged so all the same.
+async function callBehindStore(
   realm: Realm,
   call: Call,
   invocation: Invocation,
@@ -420,34 +538,55 @@ async function callAroundStore(
   operand: OperandName,
   index: number,
 ): Promise<StoreOutcome> {
+  // Code of an operand that reaches into another one may read what the built-in does not.
+  if (isReentrant(set)) return "NoVerdict";
   const run = await runIfCallExists(realm, call, invocation, set);
-  if (!isAcceptedReceiver(realm, call, overload, run) || run.log.events.length > 0) return "NoVerdict";
+  if (!isAcceptedReceiver(realm, call, overload, run)) return "NoVerdict";
   const parameter = parameterOf(overload, operand);
-  const value = valueOf(run, operand);
-  if (!parameter || !admitsValue(realm, parameter.accepted, value, true)) return "NoVerdict";
-  const first = freeze(complete(invocation, run.receiver, run.args));
-  const second = freeze(complete(invocation, run.receiver, run.args));
-  if (!hasSameOutcome(first, second)) return "NoVerdict";
-  // A result that is the operand, holds it or is held by it changes with it, whatever the call read.
-  const plain = complete(invocation, run.receiver, run.args);
-  if (plain.kind === "Returned" && isObject(value) && reaches(plain.value, value, 3)) return "NoVerdict";
-  if (plain.kind === "Returned" && isObject(plain.value) && reaches(value, plain.value, 1)) return "NoVerdict";
-  const change = changesOf(value)[index];
-  if (!change) return "NoVerdict";
-  const { heaps, apply } = change;
-  try {
-    apply(value);
-  } catch {
+  if (!parameter || !admitsValue(realm, parameter.accepted, valueOf(run, operand), true)) return "NoVerdict";
+  const again = await runIfCallExists(realm, call, invocation, set);
+  if (!again || !showsTheSame(run, again)) return "NoVerdict";
+  // Such a result changes with the operand, whatever the call read: it says nothing, and what the call leaves behind does.
+  const isBound = isBoundTo(run.completion, valueOf(run, operand));
+
+  const candidate = candidateOf(set, operand)!;
+  let heaps: string[] | undefined;
+  const stored: Candidate = {
+    ...candidate,
+    create(...inputs) {
+      const value = candidate.create(...inputs);
+      const change = changesOf(value)[index];
+      try {
+        change?.apply(value);
+        heaps = change?.heaps;
+      } catch {}
+      return value;
+    },
+  };
+  const behind = await runIfCallExists(realm, call, invocation, withOperand(set, operand, stored));
+  if (!heaps || !isAcceptedReceiver(realm, call, overload, behind)) return "NoVerdict";
+  const value = valueOf(behind, operand);
+  if (!admitsValue(realm, parameter.accepted, value, true) || isBoundTo(behind.completion, value) !== isBound)
     return "NoVerdict";
-  }
-  const third = freeze(complete(invocation, run.receiver, run.args));
-  if (hasSameOutcome(second, third) || heaps.some(heap => overload.reads.includes(heap))) return "Explained";
+  const created = (index?: number) => {
+    const fresh = candidate.create(new Log(), operand, { receiver: undefined });
+    if (index !== undefined) changesOf(fresh)[index].apply(fresh);
+    return placesOf(fresh);
+  };
+  const leavesNoTrace =
+    (isBound ? handsOutTheSame(run, behind) : showsTheSame(run, behind)) &&
+    othersEndTheSame(run, behind, operand) &&
+    writesWithoutReading(
+      { before: created(), after: placesOf(valueOf(run, operand)) },
+      { before: created(index), after: placesOf(value) },
+    );
+  if (leavesNoTrace || heaps.some(heap => overload.reads.includes(heap))) return "Explained";
   const ofOperandCode = readsOfOperandCode(realm, parameter, value);
   if (ofOperandCode === "Everything" || heaps.some(heap => ofOperandCode.includes(heap))) return "Explained";
   const message =
-    `the call ${describeOutcome(second)}, and after a store to ${heaps.join(" or ")} of ${describeOperand(operand)} ` +
-    `it ${describeOutcome(third)}`;
-  return { message, before: second, after: third };
+    `the call ${describeOutcome(run.completion)}, and behind a store to ${heaps.join(" or ")} of ${describeOperand(operand)} ` +
+    `it ${describeOutcome(behind.completion)}`;
+  return { message, before: run.completion, after: behind.completion };
 }
 
 // A clock or a meter answers otherwise on its own, and now and then just behind the store. What a call reads of an operand, it reads
@@ -455,6 +594,27 @@ async function callAroundStore(
 const timesToShow = 3;
 const isSameDifference = (left: StoreDifference, right: StoreDifference) =>
   hasSameOutcome(left.before, right.before) && hasSameOutcome(left.after, right.after);
+
+// Indexes and keys of what the instances hold, so that a call that reads one place reads one that is there.
+const placesInInstances = [0, 1, "a", "b"].map((place): Candidate => ({
+  name: `primitive:${Bun.inspect(place)}`,
+  kind: "Primitive",
+  create: () => place,
+}));
+
+// A callback whose answer follows what it is given, so that the result follows it too.
+const answeringCallbacks = ["callback:firstArgument", "callback:number"].map(findCandidate);
+
+function setsNamingPlaces(overload: DumpedOverload, set: OperandSet, operand: OperandName): OperandSet[] {
+  const others = [...set.arguments.keys()].filter(position => position !== operand);
+  return [
+    set,
+    ...others.flatMap(position => {
+      const isCalled = parameterOf(overload, position)?.uses.includes("Calls");
+      return (isCalled ? answeringCallbacks : placesInInstances).map(other => withArgument(set, position, other));
+    }),
+  ];
+}
 
 // A call that reads nothing that a store in between writes may be merged with an earlier call or moved across the store.
 async function checkReads(
@@ -465,21 +625,24 @@ async function checkReads(
   base: OperandSet,
 ): Promise<Difference[]> {
   if (overload.capability === "js" && !overload.runsOnlyOperandCode) return [];
+  // What a function of the library reads the compiler takes from the function, not from the entry.
+  if (overload.implementation.how === "Compiled") return [];
   const operands: OperandName[] = [...(overload.receiver ? ["this" as const] : []), ...base.arguments.keys()];
   for (const operand of operands) {
     // A read of the name from any other value is not a use of the entry.
     if (operand === "this" && call.entry.kind === "DataProperty") continue;
     for (const candidate of comparableInstances) {
-      const set = withOperand(base, operand, candidate);
       const count = changesOf(candidate.create(new Log(), operand, { receiver: undefined })).length;
-      for (let index = 0; index < count; index++) {
-        let outcome = await callAroundStore(realm, call, invocation, overload, set, operand, index);
-        for (let time = 1; time < timesToShow && typeof outcome === "object"; time++) {
-          const again = await callAroundStore(realm, call, invocation, overload, set, operand, index);
-          outcome = typeof again === "object" && !isSameDifference(outcome, again) ? "NoVerdict" : again;
+      for (const set of setsNamingPlaces(overload, withOperand(base, operand, candidate), operand)) {
+        for (let index = 0; index < count; index++) {
+          let outcome = await callBehindStore(realm, call, invocation, overload, set, operand, index);
+          for (let time = 1; time < timesToShow && typeof outcome === "object"; time++) {
+            const again = await callBehindStore(realm, call, invocation, overload, set, operand, index);
+            outcome = typeof again === "object" && !isSameDifference(outcome, again) ? "NoVerdict" : again;
+          }
+          if (outcome === "NoVerdict") break;
+          if (typeof outcome === "object") return [{ column: "reads", message: outcome.message, set: set.name }];
         }
-        if (outcome === "NoVerdict") break;
-        if (typeof outcome === "object") return [{ column: "reads", message: outcome.message, set: set.name }];
       }
     }
   }

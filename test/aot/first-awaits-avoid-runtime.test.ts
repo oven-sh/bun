@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { test } from "./supported";
 
 const calls = 2000;
-// Fractions take a whole word of the frame each, so this many of them are more than the allocator of small objects has a size for.
-const fractionsInLargeFrame = Array.from({ length: 1500 }, (_, i) => "f" + i);
+// Fractions take a whole word of the frame each, so this many of them are more than the allocator of small objects has a size for, also where its blocks are 64 KB.
+const fractionsInLargeFrame = Array.from({ length: 5000 }, (_, i) => "f" + i);
 const files = {
   "main.mjs": `
     const calls = ${calls};

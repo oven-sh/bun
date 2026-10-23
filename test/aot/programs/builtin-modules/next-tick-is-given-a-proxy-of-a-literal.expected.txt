@@ -1,1 +1,0 @@
-The "callback" argument must be of type function. Received an instance of Object

@@ -23,6 +23,8 @@ pub(crate) const MH_MAGIC_64: u32 = 0xfeed_facf;
 pub(crate) const MH_EXECUTE: u32 = 0x2;
 pub(crate) const CPU_TYPE_X86_64: cpu_type_t = 0x0100_0007;
 
+pub(crate) const SG_READ_ONLY: u32 = 0x10;
+
 pub(crate) const S_REGULAR: u32 = 0x0;
 pub(crate) const SECTION_TYPE: u32 = 0x0000_00ff;
 pub(crate) const S_ZEROFILL: u32 = 0x1;

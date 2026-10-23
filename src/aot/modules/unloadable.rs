@@ -4,6 +4,7 @@ use super::interop::ModuleKind;
 use super::plan::ModuleRef;
 use super::requests::{ScannedSite, Scans};
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 
 /// A module whose load fails, and where the import that names nothing stands.
 #[derive(Copy, Clone, Debug)]
@@ -121,7 +122,7 @@ pub(super) fn find_unloadable_modules(
             }
         }
     }
-    found.sort_unstable_by_key(|module| module.file);
+    found.shared_sort_unstable_by_key(|module| module.file);
     found
 }
 

@@ -16,1273 +16,3242 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-callback-type-does-not-hold-eval.test.ts": {
+    "default": 7597,
+    "asan": 29779,
+    "musl": 9228
+  },
+  "aot/a-declaration-file-as-the-entry-point.test.ts": {
+    "default": 1143,
+    "asan": 30521,
+    "musl": 1445
+  },
+  "aot/a-definition-by-key-files-only-what-comes-back.test.ts": {
+    "default": 379,
+    "asan": 10832,
+    "musl": 654
+  },
+  "aot/a-little-of-everything.test.ts": {
+    "default": 3927,
+    "asan": 13307,
+    "musl": 4991
+  },
+  "aot/a-long-chain-of-texts-ends-in-the-source-of-a-regexp.test.ts": {
+    "default": 8522,
+    "asan": 32277,
+    "musl": 7780
+  },
+  "aot/a-matcher-asks-a-compiled-object-for-a-name-nothing-else-has.test.ts": {
+    "default": 274,
+    "asan": 9959,
+    "musl": 545
+  },
+  "aot/a-method-read-only-to-be-called-makes-no-closure.test.ts": {
+    "default": 2416,
+    "asan": 13504,
+    "musl": 4062
+  },
+  "aot/a-prototype-object-is-no-instance.test.ts": {
+    "default": 58,
+    "asan": 248,
+    "musl": 56
+  },
+  "aot/a-proxy-above-a-prototype.test.ts": {
+    "default": 3703,
+    "asan": 332,
+    "musl": 4510
+  },
+  "aot/a-server-holds-what-it-reaches-of-buns-library.test.ts": {
+    "default": 28706,
+    "asan": 109140,
+    "musl": 31964
+  },
+  "aot/a-table-of-new-objects-in-hot-code-builds.test.ts": {
+    "default": 15833,
+    "asan": 346,
+    "musl": 53083
+  },
   "aot/abort-is-reported.test.ts": {
-    "default": 33,
-    "asan": 217,
-    "musl": 185,
+    "default": 31,
+    "asan": 226,
+    "musl": 237,
     "windows": 80
   },
   "aot/absent-fields-under-another-prototype-avoid-runtime.test.ts": {
-    "default": 1098,
-    "asan": 2067,
-    "musl": 773,
+    "default": 387,
+    "asan": 9772,
+    "musl": 496,
     "windows": 1578
   },
+  "aot/absent-names-avoid-runtime.test.ts": {
+    "default": 2741,
+    "asan": 17478,
+    "musl": 3027
+  },
   "aot/accessor-fields.test.ts": {
-    "default": 781,
-    "asan": 2806,
-    "musl": 822,
+    "default": 607,
+    "asan": 11409,
+    "musl": 672,
     "windows": 2514
   },
   "aot/adjacent-strings-in-executables.test.ts": {
-    "default": 702,
-    "asan": 2736,
-    "musl": 750,
+    "default": 32,
+    "asan": 365,
+    "musl": 258,
     "windows": 1567
   },
+  "aot/allocation-counts-by-site.test.ts": {
+    "default": 755,
+    "asan": 11130,
+    "musl": 1117
+  },
+  "aot/always-throws-with-several-possible-callees.test.ts": {
+    "default": 608,
+    "asan": 9495,
+    "musl": 768
+  },
+  "aot/an-executable-does-not-tell-where-it-was-built.test.ts": {
+    "default": 1084,
+    "asan": 4105,
+    "musl": 1431
+  },
   "aot/analysis-scaling/analysis-scaling.test.ts": {
-    "default": 13466,
-    "asan": 342,
-    "musl": 13662,
+    "default": 32591,
+    "asan": 347,
+    "musl": 36361,
     "windows": 70
   },
   "aot/annotated-variable-mismatch.test.ts": {
-    "default": 5108,
-    "asan": 12268,
-    "musl": 7524,
+    "default": 11491,
+    "asan": 59982,
+    "musl": 17740,
     "windows": 4621
   },
+  "aot/answer-alike.test.ts": {
+    "default": 11024,
+    "asan": 54064,
+    "musl": 12669
+  },
+  "aot/aot-flag-runs-from-source.test.ts": {
+    "default": 17249,
+    "asan": 92695,
+    "musl": 17968
+  },
   "aot/aot-recursive-untyped-functions-build-time.test.ts": {
-    "default": 2589,
-    "asan": 1506,
-    "musl": 3063,
+    "default": 22020,
+    "asan": 24183,
+    "musl": 26400,
     "windows": 2074
   },
+  "aot/array-element-keys.test.ts": {
+    "default": 34292,
+    "asan": 74747,
+    "musl": 40980
+  },
   "aot/arrays.test.ts": {
-    "default": 63245,
-    "asan": 13907,
-    "musl": 80297,
+    "default": 27407,
+    "asan": 32788,
+    "musl": 32996,
     "windows": 99160
   },
+  "aot/arrivals-report.test.ts": {
+    "default": 716,
+    "asan": 9459,
+    "musl": 785
+  },
   "aot/assembled-patterns-in-code.test.ts": {
-    "default": 722,
-    "asan": 2717,
-    "musl": 753,
+    "default": 32,
+    "asan": 372,
+    "musl": 39,
     "windows": 1554
   },
   "aot/assembled-patterns-in-executables.test.ts": {
-    "default": 1199,
-    "asan": 4622,
-    "musl": 1244,
+    "default": 955,
+    "asan": 10502,
+    "musl": 890,
     "windows": 2712
   },
   "aot/async-and-generators.test.ts": {
-    "default": 52381,
-    "asan": 23042,
-    "musl": 61556,
+    "default": 15760,
+    "asan": 27074,
+    "musl": 19066,
     "windows": 76646
   },
+  "aot/async-results-with-extra-properties-avoid-runtime.test.ts": {
+    "default": 422,
+    "asan": 9477,
+    "musl": 461
+  },
   "aot/audit-agrees-with-the-executable.test.ts": {
-    "default": 6433,
-    "asan": 16113,
-    "musl": 10292,
+    "default": 11175,
+    "asan": 88904,
+    "musl": 10000,
     "windows": 9896
   },
   "aot/audit-arguments-passed-via-any.test.ts": {
-    "default": 466,
-    "asan": 1836,
-    "musl": 510,
+    "default": 546,
+    "asan": 9434,
+    "musl": 439,
     "windows": 1520
   },
   "aot/audit-reports-only-throwing-cases.test.ts": {
-    "default": 650,
-    "asan": 2832,
-    "musl": 760,
+    "default": 1091,
+    "asan": 25123,
+    "musl": 1172,
     "windows": 734
   },
+  "aot/awaited-objects.test.ts": {
+    "default": 75425,
+    "asan": 79207,
+    "musl": 86913
+  },
+  "aot/awaits-of-objects-avoid-runtime.test.ts": {
+    "default": 453,
+    "asan": 8803,
+    "musl": 451
+  },
+  "aot/back-end-options-from-environment.test.ts": {
+    "default": 2999,
+    "asan": 5150,
+    "musl": 1138
+  },
   "aot/backend-packages/more-programs.test.ts": {
-    "default": 26792,
-    "asan": 155283,
-    "musl": 68399,
+    "default": 84391,
+    "asan": 182254,
+    "musl": 125148,
     "windows": 48544
   },
   "aot/backend-packages/programs-1.test.ts": {
-    "default": 50857,
-    "asan": 201256,
-    "musl": 150838,
+    "default": 119104,
+    "asan": 303612,
+    "musl": 248252,
     "windows": 83712
   },
   "aot/backend-packages/programs-2.test.ts": {
-    "default": 53314,
-    "asan": 124417,
-    "musl": 158008,
+    "default": 158699,
+    "asan": 314419,
+    "musl": 276088,
     "windows": 92236
   },
   "aot/backend-packages/programs-3.test.ts": {
-    "default": 45307,
-    "asan": 273555,
-    "musl": 152741,
+    "default": 115615,
+    "asan": 312635,
+    "musl": 233233,
     "windows": 81979
   },
   "aot/backend-packages/programs-4.test.ts": {
-    "default": 47840,
-    "asan": 126655,
-    "musl": 164708,
+    "default": 107198,
+    "asan": 150577,
+    "musl": 240581,
     "windows": 89935
   },
+  "aot/backend-packages/programs-one-file.test.ts": {
+    "default": 129291,
+    "asan": 342788,
+    "musl": 257922
+  },
   "aot/backend/backend.test.ts": {
-    "default": 44,
-    "asan": 396,
-    "musl": 55,
+    "default": 39,
+    "asan": 399,
+    "musl": 42,
     "windows": 76
   },
   "aot/backend/memory.test.ts": {
-    "default": 84,
-    "asan": 326,
-    "musl": 120,
+    "default": 90,
+    "asan": 276,
+    "musl": 106,
     "windows": 1824
   },
   "aot/backend/tracker/tracker.test.ts": {
-    "default": 40,
-    "asan": 398,
-    "musl": 45,
+    "default": 34,
+    "asan": 375,
+    "musl": 43,
     "windows": 62
   },
   "aot/bad-time/bad-time-1.test.ts": {
-    "default": 106347,
-    "musl": 110
+    "default": 141189
   },
   "aot/bad-time/bad-time-2.test.ts": {
-    "default": 80300,
-    "asan": 55709,
-    "musl": 60
+    "default": 141771,
+    "asan": 55709
   },
   "aot/bad-time/bad-time-3.test.ts": {
-    "default": 73912,
-    "asan": 145260,
-    "musl": 95
+    "default": 146196,
+    "asan": 145260
   },
   "aot/bad-time/bad-time-4.test.ts": {
-    "default": 78047,
-    "asan": 24881,
-    "musl": 95
+    "default": 143350,
+    "asan": 24881
   },
   "aot/bad-time/bad-time-5.test.ts": {
-    "default": 65955,
-    "asan": 24497,
-    "musl": 190
+    "default": 149708,
+    "asan": 24497
   },
   "aot/bad-time/bad-time-6.test.ts": {
-    "default": 67068,
-    "asan": 164889,
-    "musl": 66
+    "default": 140087,
+    "asan": 164889
   },
   "aot/bad-time/bad-time-7.test.ts": {
-    "default": 68890,
-    "asan": 163443,
-    "musl": 205
+    "default": 150019,
+    "asan": 163443
   },
   "aot/bad-time/bad-time-8.test.ts": {
-    "default": 105637,
-    "asan": 79442,
-    "musl": 45
+    "default": 173826,
+    "asan": 79442
+  },
+  "aot/base-call-this.test.ts": {
+    "default": 6910,
+    "asan": 22489,
+    "musl": 2522
+  },
+  "aot/branch-hints.test.ts": {
+    "default": 8279,
+    "asan": 41374,
+    "musl": 9386
   },
   "aot/buffer-accessors-relookup.test.ts": {
-    "default": 529,
-    "asan": 7862,
-    "musl": 600,
+    "default": 411,
+    "asan": 9128,
+    "musl": 453,
     "windows": 1343
   },
+  "aot/build-cli-plugins-and-flags.test.ts": {
+    "default": 15908,
+    "asan": 34829,
+    "musl": 9172
+  },
   "aot/build-errors-name-real-paths.test.ts": {
-    "default": 239,
-    "asan": 943,
-    "musl": 260,
+    "default": 105,
+    "asan": 652,
+    "musl": 106,
     "windows": 270
   },
   "aot/build-flags.test.ts": {
-    "default": 29749,
-    "asan": 27200,
-    "musl": 10751,
+    "default": 24983,
+    "asan": 51066,
+    "musl": 11798,
     "windows": 23836
   },
+  "aot/build-id.test.ts": {
+    "default": 8723,
+    "asan": 30771,
+    "musl": 66296
+  },
+  "aot/build-options.test.ts": {
+    "default": 50298,
+    "asan": 122324,
+    "musl": 24942
+  },
+  "aot/build-plugins-aliases-and-odd-names.test.ts": {
+    "default": 15076,
+    "asan": 45089,
+    "musl": 9049
+  },
+  "aot/build-plugins-are-told-the-same.test.ts": {
+    "default": 23903,
+    "asan": 44920,
+    "musl": 5250
+  },
+  "aot/build-plugins-assets.test.ts": {
+    "default": 56661,
+    "asan": 44186,
+    "musl": 43769
+  },
+  "aot/build-plugins-chains-and-crowds.test.ts": {
+    "default": 33580,
+    "asan": 55583,
+    "musl": 23860
+  },
+  "aot/build-plugins-commonjs.test.ts": {
+    "default": 51221,
+    "asan": 107813,
+    "musl": 17479
+  },
+  "aot/build-plugins-external-code.test.ts": {
+    "default": 10398,
+    "asan": 24059,
+    "musl": 11957
+  },
+  "aot/build-plugins-fail.test.ts": {
+    "default": 2760,
+    "asan": 5018,
+    "musl": 1933
+  },
+  "aot/build-plugins-load.test.ts": {
+    "default": 28550,
+    "asan": 64073,
+    "musl": 18024
+  },
+  "aot/build-plugins-native.test.ts": {
+    "default": 9377,
+    "asan": 47322,
+    "musl": 4902
+  },
+  "aot/build-plugins-pages.test.ts": {
+    "default": 14986,
+    "asan": 39618,
+    "musl": 7143
+  },
+  "aot/build-plugins-rewrite-declaration-files.test.ts": {
+    "default": 1569,
+    "asan": 21955,
+    "musl": 1586
+  },
   "aot/build-plugins.test.ts": {
-    "default": 14981,
-    "asan": 16535,
-    "musl": 4231,
+    "default": 9282,
+    "asan": 22632,
+    "musl": 2573,
     "windows": 10583
   },
+  "aot/build-scaling/build-scaling.test.ts": {
+    "default": 36670,
+    "asan": 351,
+    "musl": 42028
+  },
+  "aot/built-in-functions-by-use.test.ts": {
+    "default": 137994,
+    "asan": 211811,
+    "musl": 154668
+  },
+  "aot/built-in-one-environment-run-in-another.test.ts": {
+    "default": 21634,
+    "asan": 98244,
+    "musl": 23715
+  },
+  "aot/built-in-tables-by-use.test.ts": {
+    "default": 126350,
+    "asan": 189382,
+    "musl": 141896
+  },
+  "aot/built-ins-alone-1.test.ts": {
+    "default": 2716,
+    "asan": 38632,
+    "musl": 2501
+  },
+  "aot/built-ins-alone-10.test.ts": {
+    "default": 5706,
+    "asan": 35254,
+    "musl": 4151
+  },
+  "aot/built-ins-alone-100.test.ts": {
+    "default": 6099,
+    "asan": 42583,
+    "musl": 3628
+  },
+  "aot/built-ins-alone-101.test.ts": {
+    "default": 4426,
+    "asan": 47653,
+    "musl": 2249
+  },
+  "aot/built-ins-alone-102.test.ts": {
+    "default": 7597,
+    "asan": 15024,
+    "musl": 6746
+  },
+  "aot/built-ins-alone-103.test.ts": {
+    "default": 6849,
+    "asan": 31429,
+    "musl": 5909
+  },
+  "aot/built-ins-alone-104.test.ts": {
+    "default": 7836,
+    "asan": 34753,
+    "musl": 7308
+  },
+  "aot/built-ins-alone-105.test.ts": {
+    "default": 4323,
+    "asan": 45217,
+    "musl": 5767
+  },
+  "aot/built-ins-alone-106.test.ts": {
+    "default": 5853,
+    "asan": 35288,
+    "musl": 5770
+  },
+  "aot/built-ins-alone-107.test.ts": {
+    "default": 3120,
+    "asan": 38957,
+    "musl": 2996
+  },
+  "aot/built-ins-alone-108.test.ts": {
+    "default": 5548,
+    "asan": 42186,
+    "musl": 6870
+  },
+  "aot/built-ins-alone-11.test.ts": {
+    "default": 3135,
+    "asan": 36617,
+    "musl": 3676
+  },
+  "aot/built-ins-alone-12.test.ts": {
+    "default": 3756,
+    "asan": 26733,
+    "musl": 4136
+  },
+  "aot/built-ins-alone-13.test.ts": {
+    "default": 5713,
+    "asan": 27083,
+    "musl": 5494
+  },
+  "aot/built-ins-alone-14.test.ts": {
+    "default": 5460,
+    "asan": 49256,
+    "musl": 5295
+  },
+  "aot/built-ins-alone-15.test.ts": {
+    "default": 6885,
+    "asan": 36599,
+    "musl": 6097
+  },
+  "aot/built-ins-alone-16.test.ts": {
+    "default": 7183,
+    "asan": 39848,
+    "musl": 5995
+  },
+  "aot/built-ins-alone-17.test.ts": {
+    "default": 2720,
+    "asan": 24358,
+    "musl": 2952
+  },
+  "aot/built-ins-alone-18.test.ts": {
+    "default": 7457,
+    "asan": 35419,
+    "musl": 5908
+  },
+  "aot/built-ins-alone-19.test.ts": {
+    "default": 7494,
+    "asan": 40483,
+    "musl": 5974
+  },
+  "aot/built-ins-alone-2.test.ts": {
+    "default": 8080,
+    "asan": 33320,
+    "musl": 9401
+  },
+  "aot/built-ins-alone-20.test.ts": {
+    "default": 4785,
+    "asan": 30563,
+    "musl": 5585
+  },
+  "aot/built-ins-alone-21.test.ts": {
+    "default": 6773,
+    "asan": 45432,
+    "musl": 6343
+  },
+  "aot/built-ins-alone-22.test.ts": {
+    "default": 4031,
+    "asan": 26708,
+    "musl": 3930
+  },
+  "aot/built-ins-alone-23.test.ts": {
+    "default": 5365,
+    "asan": 22874,
+    "musl": 21091
+  },
+  "aot/built-ins-alone-24.test.ts": {
+    "default": 7186,
+    "asan": 43318,
+    "musl": 21038
+  },
+  "aot/built-ins-alone-25.test.ts": {
+    "default": 5993,
+    "asan": 36340,
+    "musl": 6526
+  },
+  "aot/built-ins-alone-26.test.ts": {
+    "default": 5729,
+    "asan": 50539,
+    "musl": 6160
+  },
+  "aot/built-ins-alone-27.test.ts": {
+    "default": 4321,
+    "asan": 45175,
+    "musl": 4958
+  },
+  "aot/built-ins-alone-28.test.ts": {
+    "default": 4099,
+    "asan": 15580,
+    "musl": 4532
+  },
+  "aot/built-ins-alone-29.test.ts": {
+    "default": 3244,
+    "asan": 33493,
+    "musl": 2795
+  },
+  "aot/built-ins-alone-3.test.ts": {
+    "default": 3749,
+    "asan": 46063,
+    "musl": 3731
+  },
+  "aot/built-ins-alone-30.test.ts": {
+    "default": 7239,
+    "asan": 42845,
+    "musl": 7571
+  },
+  "aot/built-ins-alone-31.test.ts": {
+    "default": 6423,
+    "asan": 40486,
+    "musl": 7304
+  },
+  "aot/built-ins-alone-32.test.ts": {
+    "default": 6367,
+    "asan": 33979,
+    "musl": 7210
+  },
+  "aot/built-ins-alone-33.test.ts": {
+    "default": 4129,
+    "asan": 40378,
+    "musl": 4363
+  },
+  "aot/built-ins-alone-34.test.ts": {
+    "default": 4085,
+    "asan": 35466,
+    "musl": 3910
+  },
+  "aot/built-ins-alone-35.test.ts": {
+    "default": 5193,
+    "asan": 22412,
+    "musl": 4811
+  },
+  "aot/built-ins-alone-36.test.ts": {
+    "default": 7480,
+    "asan": 42249,
+    "musl": 7874
+  },
+  "aot/built-ins-alone-37.test.ts": {
+    "default": 5048,
+    "asan": 30631,
+    "musl": 5647
+  },
+  "aot/built-ins-alone-38.test.ts": {
+    "default": 4943,
+    "asan": 49843,
+    "musl": 5703
+  },
+  "aot/built-ins-alone-39.test.ts": {
+    "default": 2092,
+    "asan": 44133,
+    "musl": 2233
+  },
+  "aot/built-ins-alone-4.test.ts": {
+    "default": 4878,
+    "asan": 28618,
+    "musl": 4720
+  },
+  "aot/built-ins-alone-40.test.ts": {
+    "default": 9840,
+    "asan": 46520,
+    "musl": 10935
+  },
+  "aot/built-ins-alone-41.test.ts": {
+    "default": 4239,
+    "asan": 32760,
+    "musl": 4260
+  },
+  "aot/built-ins-alone-42.test.ts": {
+    "default": 4214,
+    "asan": 44006,
+    "musl": 4439
+  },
+  "aot/built-ins-alone-43.test.ts": {
+    "default": 6073,
+    "asan": 32674,
+    "musl": 6034
+  },
+  "aot/built-ins-alone-44.test.ts": {
+    "default": 3508,
+    "asan": 40451,
+    "musl": 2420
+  },
+  "aot/built-ins-alone-45.test.ts": {
+    "default": 7263,
+    "asan": 13613,
+    "musl": 8882
+  },
+  "aot/built-ins-alone-46.test.ts": {
+    "default": 7459,
+    "asan": 43440,
+    "musl": 7504
+  },
+  "aot/built-ins-alone-47.test.ts": {
+    "default": 7776,
+    "asan": 33318,
+    "musl": 8338
+  },
+  "aot/built-ins-alone-48.test.ts": {
+    "default": 5036,
+    "asan": 37908,
+    "musl": 4609
+  },
+  "aot/built-ins-alone-49.test.ts": {
+    "default": 5491,
+    "asan": 45433,
+    "musl": 6407
+  },
+  "aot/built-ins-alone-5.test.ts": {
+    "default": 5884,
+    "asan": 31903,
+    "musl": 7222
+  },
+  "aot/built-ins-alone-50.test.ts": {
+    "default": 5220,
+    "asan": 34802,
+    "musl": 5204
+  },
+  "aot/built-ins-alone-51.test.ts": {
+    "default": 4439,
+    "asan": 36182,
+    "musl": 4817
+  },
+  "aot/built-ins-alone-52.test.ts": {
+    "default": 7982,
+    "asan": 47146,
+    "musl": 8564
+  },
+  "aot/built-ins-alone-53.test.ts": {
+    "default": 3355,
+    "asan": 37113,
+    "musl": 3706
+  },
+  "aot/built-ins-alone-54.test.ts": {
+    "default": 5969,
+    "asan": 31580,
+    "musl": 5717
+  },
+  "aot/built-ins-alone-55.test.ts": {
+    "default": 4092,
+    "asan": 15508,
+    "musl": 3846
+  },
+  "aot/built-ins-alone-56.test.ts": {
+    "default": 6512,
+    "asan": 35643,
+    "musl": 7011
+  },
+  "aot/built-ins-alone-57.test.ts": {
+    "default": 5261,
+    "asan": 24425,
+    "musl": 5062
+  },
+  "aot/built-ins-alone-58.test.ts": {
+    "default": 6093,
+    "asan": 20673,
+    "musl": 6927
+  },
+  "aot/built-ins-alone-59.test.ts": {
+    "default": 6818,
+    "asan": 31381,
+    "musl": 7267
+  },
+  "aot/built-ins-alone-6.test.ts": {
+    "default": 4896,
+    "asan": 33469,
+    "musl": 5458
+  },
+  "aot/built-ins-alone-60.test.ts": {
+    "default": 6842,
+    "asan": 36621,
+    "musl": 6835
+  },
+  "aot/built-ins-alone-61.test.ts": {
+    "default": 4434,
+    "asan": 31886,
+    "musl": 4624
+  },
+  "aot/built-ins-alone-62.test.ts": {
+    "default": 3737,
+    "asan": 42811,
+    "musl": 4422
+  },
+  "aot/built-ins-alone-63.test.ts": {
+    "default": 5670,
+    "asan": 36843,
+    "musl": 5867
+  },
+  "aot/built-ins-alone-64.test.ts": {
+    "default": 4588,
+    "asan": 48215,
+    "musl": 4908
+  },
+  "aot/built-ins-alone-65.test.ts": {
+    "default": 2976,
+    "asan": 38537,
+    "musl": 2930
+  },
+  "aot/built-ins-alone-66.test.ts": {
+    "default": 5595,
+    "asan": 36756,
+    "musl": 6441
+  },
+  "aot/built-ins-alone-67.test.ts": {
+    "default": 3757,
+    "asan": 31175,
+    "musl": 4058
+  },
+  "aot/built-ins-alone-68.test.ts": {
+    "default": 4810,
+    "asan": 35419,
+    "musl": 4687
+  },
+  "aot/built-ins-alone-69.test.ts": {
+    "default": 6334,
+    "asan": 44506,
+    "musl": 7179
+  },
+  "aot/built-ins-alone-7.test.ts": {
+    "default": 5119,
+    "asan": 29972,
+    "musl": 3578
+  },
+  "aot/built-ins-alone-70.test.ts": {
+    "default": 4752,
+    "asan": 16068,
+    "musl": 3086
+  },
+  "aot/built-ins-alone-71.test.ts": {
+    "default": 4874,
+    "asan": 41922,
+    "musl": 5220
+  },
+  "aot/built-ins-alone-72.test.ts": {
+    "default": 4473,
+    "asan": 49779,
+    "musl": 4715
+  },
+  "aot/built-ins-alone-73.test.ts": {
+    "default": 6088,
+    "asan": 52643,
+    "musl": 5946
+  },
+  "aot/built-ins-alone-74.test.ts": {
+    "default": 5238,
+    "asan": 42638,
+    "musl": 5518
+  },
+  "aot/built-ins-alone-75.test.ts": {
+    "default": 4774,
+    "asan": 31394,
+    "musl": 5813
+  },
+  "aot/built-ins-alone-76.test.ts": {
+    "default": 4267,
+    "asan": 37391,
+    "musl": 4349
+  },
+  "aot/built-ins-alone-77.test.ts": {
+    "default": 7942,
+    "asan": 46422,
+    "musl": 6611
+  },
+  "aot/built-ins-alone-78.test.ts": {
+    "default": 3758,
+    "asan": 28551,
+    "musl": 3959
+  },
+  "aot/built-ins-alone-79.test.ts": {
+    "default": 7154,
+    "asan": 45716,
+    "musl": 5423
+  },
+  "aot/built-ins-alone-8.test.ts": {
+    "default": 5901,
+    "asan": 16054,
+    "musl": 5919
+  },
+  "aot/built-ins-alone-80.test.ts": {
+    "default": 5852,
+    "asan": 33939,
+    "musl": 6435
+  },
+  "aot/built-ins-alone-81.test.ts": {
+    "default": 4401,
+    "asan": 14945,
+    "musl": 4770
+  },
+  "aot/built-ins-alone-82.test.ts": {
+    "default": 3161,
+    "asan": 41990,
+    "musl": 3275
+  },
+  "aot/built-ins-alone-83.test.ts": {
+    "default": 4896,
+    "asan": 30055,
+    "musl": 5215
+  },
+  "aot/built-ins-alone-84.test.ts": {
+    "default": 4457,
+    "asan": 42726,
+    "musl": 3921
+  },
+  "aot/built-ins-alone-85.test.ts": {
+    "default": 4091,
+    "asan": 45269,
+    "musl": 3910
+  },
+  "aot/built-ins-alone-86.test.ts": {
+    "default": 5537,
+    "asan": 36427,
+    "musl": 5768
+  },
+  "aot/built-ins-alone-87.test.ts": {
+    "default": 7005,
+    "asan": 33763,
+    "musl": 7683
+  },
+  "aot/built-ins-alone-88.test.ts": {
+    "default": 4794,
+    "asan": 32218,
+    "musl": 5310
+  },
+  "aot/built-ins-alone-89.test.ts": {
+    "default": 6046,
+    "asan": 35597,
+    "musl": 6944
+  },
+  "aot/built-ins-alone-9.test.ts": {
+    "default": 5787,
+    "asan": 26003,
+    "musl": 5438
+  },
+  "aot/built-ins-alone-90.test.ts": {
+    "default": 5714,
+    "asan": 27066,
+    "musl": 6347
+  },
+  "aot/built-ins-alone-91.test.ts": {
+    "default": 6336,
+    "asan": 35014,
+    "musl": 6027
+  },
+  "aot/built-ins-alone-92.test.ts": {
+    "default": 6841,
+    "asan": 48289,
+    "musl": 5938
+  },
+  "aot/built-ins-alone-93.test.ts": {
+    "default": 4865,
+    "asan": 32140,
+    "musl": 5443
+  },
+  "aot/built-ins-alone-94.test.ts": {
+    "default": 4936,
+    "asan": 47478,
+    "musl": 4586
+  },
+  "aot/built-ins-alone-95.test.ts": {
+    "default": 6066,
+    "asan": 13680,
+    "musl": 5200
+  },
+  "aot/built-ins-alone-96.test.ts": {
+    "default": 5850,
+    "asan": 31469,
+    "musl": 6439
+  },
+  "aot/built-ins-alone-97.test.ts": {
+    "default": 6402,
+    "asan": 43519,
+    "musl": 7324
+  },
+  "aot/built-ins-alone-98.test.ts": {
+    "default": 4969,
+    "asan": 21207,
+    "musl": 4808
+  },
+  "aot/built-ins-alone-99.test.ts": {
+    "default": 6094,
+    "asan": 34499,
+    "musl": 4942
+  },
+  "aot/built-ins-asked-in-place-validated.test.ts": {
+    "default": 28271,
+    "asan": 82054,
+    "musl": 33823
+  },
+  "aot/built-ins-asked-in-place.test.ts": {
+    "default": 9550,
+    "asan": 26959,
+    "musl": 10622
+  },
+  "aot/built-ins-created-late-are-locked.test.ts": {
+    "default": 3308,
+    "asan": 15160,
+    "musl": 3928
+  },
+  "aot/built-ins-on-written-structure.test.ts": {
+    "default": 2320,
+    "asan": 11547,
+    "musl": 2565
+  },
   "aot/builtin-module-constructors-avoid-runtime.test.ts": {
-    "default": 1064,
-    "asan": 3757,
-    "musl": 1183,
+    "default": 1788,
+    "asan": 11848,
+    "musl": 1908,
     "windows": 1905
   },
   "aot/builtin-module-symbols-are-names.test.ts": {
-    "default": 1784,
-    "asan": 11419,
-    "musl": 2045,
+    "default": 4618,
+    "asan": 20642,
+    "musl": 5624,
     "windows": 2892
   },
   "aot/builtin-modules-keep-layouts.test.ts": {
-    "default": 1639,
-    "asan": 5145,
-    "musl": 1637,
+    "default": 880,
+    "asan": 4258,
+    "musl": 904,
     "windows": 2888
   },
   "aot/builtin-modules.test.ts": {
-    "default": 24079,
-    "asan": 8237,
-    "musl": 27275,
+    "default": 46063,
+    "asan": 74564,
+    "musl": 46544,
     "windows": 34421
   },
+  "aot/builtins/differential.test.ts": {
+    "default": 5063,
+    "asan": 2413,
+    "musl": 6527
+  },
+  "aot/builtins/differential/operands.test.ts": {
+    "default": 993,
+    "asan": 16217,
+    "musl": 1133
+  },
+  "aot/builtins/differential/wrong-columns.test.ts": {
+    "default": 7208,
+    "asan": 1892,
+    "musl": 11947
+  },
+  "aot/builtins/family-regressions.test.ts": {
+    "default": 50201,
+    "asan": 24904,
+    "musl": 55868
+  },
+  "aot/builtins/module-exports.test.ts": {
+    "default": 172,
+    "asan": 1456,
+    "musl": 215
+  },
+  "aot/builtins/name-classes.test.ts": {
+    "default": 35,
+    "asan": 382,
+    "musl": 42
+  },
+  "aot/builtins/native-contract.test.ts": {
+    "default": 121752,
+    "asan": 4604,
+    "musl": 134257
+  },
+  "aot/builtins/native-contract/noticed-changes.test.ts": {
+    "default": 585,
+    "asan": 2007,
+    "musl": 732
+  },
+  "aot/builtins/own-properties.test.ts": {
+    "default": 228,
+    "asan": 8943,
+    "musl": 217
+  },
+  "aot/builtins/proven-returns.test.ts": {
+    "default": 572,
+    "asan": 12226,
+    "musl": 418
+  },
+  "aot/builtins/realm-agreement.test.ts": {
+    "default": 2953,
+    "asan": 18449,
+    "musl": 3574
+  },
+  "aot/builtins/table-regressions.test.ts": {
+    "default": 10950,
+    "asan": 10678,
+    "musl": 12909
+  },
+  "aot/builtins/unused-calls.test.ts": {
+    "default": 170337,
+    "asan": 451420,
+    "musl": 200723
+  },
   "aot/bun-intrinsics-any-installed-types.test.ts": {
-    "default": 6981,
-    "asan": 22821,
-    "musl": 7686,
+    "default": 7819,
+    "asan": 76600,
+    "musl": 9141,
     "windows": 14230
   },
+  "aot/bun-plugin-in-a-trimmed-executable.test.ts": {
+    "default": 5441,
+    "asan": 681,
+    "musl": 5903
+  },
   "aot/bun-wrap-computed-name.test.ts": {
-    "default": 6083,
-    "asan": 16030,
-    "musl": 7798,
+    "default": 2273,
+    "asan": 12044,
+    "musl": 2581,
     "windows": 6910
   },
+  "aot/bundled-output-compiles.test.ts": {
+    "default": 2334,
+    "asan": 15622,
+    "musl": 3095
+  },
   "aot/bundler-features.test.ts": {
-    "default": 23093,
-    "asan": 8545,
-    "musl": 12519,
+    "default": 1058,
+    "asan": 12168,
+    "musl": 1168,
     "windows": 25628
   },
+  "aot/bundler-in-a-trimmed-executable.test.ts": {
+    "default": 14014,
+    "asan": 666,
+    "musl": 13941
+  },
   "aot/call-return-balance/call-return-balance.test.ts": {
-    "default": 92809,
-    "asan": 6807,
-    "musl": 81776,
+    "default": 48431,
+    "asan": 7404,
+    "musl": 39932,
     "windows": 62
   },
   "aot/calls-1.test.ts": {
-    "default": 60017,
-    "asan": 16435,
-    "musl": 67319,
+    "default": 11358,
+    "asan": 48677,
+    "musl": 11214,
     "windows": 91006
   },
   "aot/calls-2.test.ts": {
-    "default": 52100,
-    "asan": 15168,
-    "musl": 58864,
+    "default": 11585,
+    "asan": 37410,
+    "musl": 11916,
     "windows": 80130
   },
   "aot/calls-fast-paths.test.ts": {
-    "default": 93162,
-    "asan": 22823,
-    "musl": 101757,
+    "default": 12647,
+    "asan": 36142,
+    "musl": 13845,
     "windows": 147766
   },
+  "aot/calls-made-at-build-time.test.ts": {
+    "default": 1854,
+    "asan": 11572,
+    "musl": 1431
+  },
+  "aot/calls-of-proxies.test.ts": {
+    "default": 4275,
+    "asan": 54991,
+    "musl": 4625
+  },
   "aot/carrier-executable.test.ts": {
-    "default": 1166,
-    "asan": 4925,
-    "musl": 1199,
+    "default": 794,
+    "asan": 17605,
+    "musl": 805,
     "windows": 1674
   },
+  "aot/cell-cage-messages.test.ts": {
+    "default": 1446,
+    "asan": 23642,
+    "musl": 14921
+  },
+  "aot/channel-of-process-by-use.test.ts": {
+    "default": 9904,
+    "asan": 28320,
+    "musl": 12416
+  },
   "aot/check-flags-with-check-script.test.ts": {
-    "default": 322,
-    "asan": 1567,
-    "musl": 310,
+    "default": 309,
+    "asan": 1619,
+    "musl": 334,
     "windows": 368
   },
+  "aot/checker-queries.test.ts": {
+    "default": 17499,
+    "asan": 61345,
+    "musl": 16469
+  },
+  "aot/class-members-created-at-the-definition-make-no-structures.test.ts": {
+    "default": 1870,
+    "asan": 19295,
+    "musl": 2012
+  },
   "aot/classes-and-closures.test.ts": {
-    "default": 54816,
-    "asan": 9966,
-    "musl": 57465,
+    "default": 17897,
+    "asan": 32953,
+    "musl": 22993,
     "windows": 77641
   },
+  "aot/classes-below-built-in-classes-1.test.ts": {
+    "default": 4563,
+    "asan": 32571,
+    "musl": 4659
+  },
+  "aot/classes-below-built-in-classes-2.test.ts": {
+    "default": 5395,
+    "asan": 21264,
+    "musl": 6401
+  },
+  "aot/classes-below-built-in-classes-3.test.ts": {
+    "default": 5706,
+    "asan": 28203,
+    "musl": 6656
+  },
+  "aot/classes-below-built-in-classes-4.test.ts": {
+    "default": 7028,
+    "asan": 20349,
+    "musl": 7074
+  },
+  "aot/classes-below-built-in-classes-5.test.ts": {
+    "default": 5022,
+    "asan": 21284,
+    "musl": 5303
+  },
+  "aot/classes-below-built-in-classes-6.test.ts": {
+    "default": 8257,
+    "asan": 30035,
+    "musl": 8851
+  },
+  "aot/classes-below-built-in-classes-7.test.ts": {
+    "default": 3980,
+    "asan": 38062,
+    "musl": 4287
+  },
+  "aot/classes-below-built-in-classes-8.test.ts": {
+    "default": 6484,
+    "asan": 38006,
+    "musl": 6599
+  },
+  "aot/classes-below-functions.test.ts": {
+    "default": 3299,
+    "asan": 15008,
+    "musl": 3739
+  },
   "aot/classes-use-enclosing-tsconfig.test.ts": {
-    "default": 802,
-    "asan": 3053,
-    "musl": 767,
+    "default": 1036,
+    "asan": 11380,
+    "musl": 1213,
     "windows": 2289
   },
+  "aot/classes.test.ts": {
+    "default": 3957,
+    "asan": 11633,
+    "musl": 4389
+  },
+  "aot/cli/admitted-code.test.ts": {
+    "default": 20861,
+    "asan": 143508,
+    "musl": 22542
+  },
+  "aot/cli/carrier-identity.test.ts": {
+    "default": 2959,
+    "asan": 33135,
+    "musl": 3100
+  },
+  "aot/cli/compile-command.test.ts": {
+    "default": 11090,
+    "asan": 48619,
+    "musl": 10638
+  },
+  "aot/cli/executable-record.test.ts": {
+    "default": 2304,
+    "asan": 14474,
+    "musl": 2331
+  },
+  "aot/cli/image-rejection.test.ts": {
+    "default": 872,
+    "asan": 5941,
+    "musl": 797
+  },
+  "aot/cli/library-types.test.ts": {
+    "default": 2550,
+    "asan": 20484,
+    "musl": 2885
+  },
+  "aot/cli/obfuscate.test.ts": {
+    "default": 1105,
+    "asan": 18128,
+    "musl": 1338
+  },
+  "aot/cli/option-words.test.ts": {
+    "default": 2818,
+    "asan": 13067,
+    "musl": 3441
+  },
+  "aot/closed-world.test.ts": {
+    "default": 43977,
+    "asan": 71225,
+    "musl": 54653
+  },
+  "aot/code-size-map.test.ts": {
+    "default": 1631,
+    "asan": 5158,
+    "musl": 1644
+  },
+  "aot/code-that-runs-once-files-nothing.test.ts": {
+    "default": 4204,
+    "asan": 9355,
+    "musl": 2401
+  },
+  "aot/code-the-compiler-never-saw.test.ts": {
+    "default": 181052,
+    "asan": 557979,
+    "musl": 211268
+  },
+  "aot/cold-functions-of-a-large-program.test.ts": {
+    "default": 9763,
+    "asan": 39426,
+    "musl": 11009
+  },
+  "aot/collector-beside-the-program.test.ts": {
+    "default": 6760,
+    "asan": 11576,
+    "musl": 7535
+  },
   "aot/collector-stress/full-1.test.ts": {
-    "default": 159863,
-    "asan": 232650,
-    "musl": 44
+    "default": 195515,
+    "asan": 232650
   },
   "aot/collector-stress/full-10.test.ts": {
-    "default": 201352,
-    "asan": 222248,
-    "musl": 33
+    "default": 98530,
+    "asan": 222248
   },
   "aot/collector-stress/full-11.test.ts": {
-    "default": 168764,
-    "asan": 92114,
-    "musl": 39
+    "default": 89591,
+    "asan": 92114
   },
   "aot/collector-stress/full-12.test.ts": {
-    "default": 168882,
-    "asan": 204280,
-    "musl": 174
+    "default": 72249,
+    "asan": 204280
   },
   "aot/collector-stress/full-13.test.ts": {
-    "default": 104201,
-    "asan": 81728,
-    "musl": 41
+    "default": 72795,
+    "asan": 81728
   },
   "aot/collector-stress/full-14.test.ts": {
-    "default": 121470,
-    "asan": 92109,
-    "musl": 42
+    "default": 78213,
+    "asan": 92109
   },
   "aot/collector-stress/full-15.test.ts": {
-    "default": 243660,
-    "asan": 134673,
-    "musl": 41
+    "default": 128952,
+    "asan": 134673
   },
   "aot/collector-stress/full-16.test.ts": {
-    "default": 167798,
-    "asan": 154068,
-    "musl": 60
+    "default": 76891,
+    "asan": 154068
   },
   "aot/collector-stress/full-17.test.ts": {
-    "default": 193458,
-    "musl": 39
+    "default": 75308
   },
   "aot/collector-stress/full-18.test.ts": {
-    "default": 179047,
-    "asan": 156218,
-    "musl": 42
+    "default": 85756,
+    "asan": 156218
   },
   "aot/collector-stress/full-19.test.ts": {
-    "default": 130412,
-    "asan": 283138,
-    "musl": 44
+    "default": 78535,
+    "asan": 283138
   },
   "aot/collector-stress/full-2.test.ts": {
-    "default": 290744,
-    "asan": 261736,
-    "musl": 37
+    "default": 89147,
+    "asan": 261736
   },
   "aot/collector-stress/full-20.test.ts": {
-    "default": 139999,
-    "asan": 246894,
-    "musl": 36
+    "default": 84868,
+    "asan": 246894
   },
   "aot/collector-stress/full-21.test.ts": {
-    "default": 186684,
-    "asan": 229953,
-    "musl": 39
+    "default": 82559,
+    "asan": 229953
   },
   "aot/collector-stress/full-22.test.ts": {
-    "default": 220847,
-    "asan": 308658,
-    "musl": 36
+    "default": 95775,
+    "asan": 308658
   },
   "aot/collector-stress/full-23.test.ts": {
-    "default": 162919,
-    "musl": 37
+    "default": 89345
   },
   "aot/collector-stress/full-24.test.ts": {
-    "default": 188583,
-    "asan": 246458,
-    "musl": 38
+    "default": 80753,
+    "asan": 246458
   },
   "aot/collector-stress/full-25.test.ts": {
-    "default": 50979,
-    "asan": 71302,
-    "musl": 38
+    "default": 182741,
+    "asan": 71302
   },
   "aot/collector-stress/full-26.test.ts": {
-    "default": 154758,
-    "asan": 180527,
-    "musl": 37
+    "default": 81289,
+    "asan": 180527
   },
   "aot/collector-stress/full-27.test.ts": {
-    "default": 152363,
-    "asan": 246137,
-    "musl": 39
+    "default": 75003,
+    "asan": 246137
   },
   "aot/collector-stress/full-28.test.ts": {
-    "default": 59737,
-    "asan": 272003,
-    "musl": 43
+    "default": 89341,
+    "asan": 272003
   },
   "aot/collector-stress/full-29.test.ts": {
-    "default": 59757,
-    "asan": 271547,
-    "musl": 34
+    "default": 80453,
+    "asan": 271547
   },
   "aot/collector-stress/full-3.test.ts": {
-    "default": 197586,
-    "asan": 341398,
-    "musl": 39
+    "default": 219970,
+    "asan": 341398
   },
   "aot/collector-stress/full-30.test.ts": {
-    "default": 77807,
-    "asan": 141662,
-    "musl": 41
+    "default": 78692,
+    "asan": 141662
   },
   "aot/collector-stress/full-4.test.ts": {
-    "default": 247107,
-    "asan": 227299,
-    "musl": 40
+    "default": 104926,
+    "asan": 227299
   },
   "aot/collector-stress/full-5.test.ts": {
-    "default": 143750,
-    "asan": 89452,
-    "musl": 36
+    "default": 76680,
+    "asan": 89452
   },
   "aot/collector-stress/full-6.test.ts": {
-    "default": 202174,
-    "asan": 209682,
-    "musl": 43
+    "default": 76379,
+    "asan": 209682
   },
   "aot/collector-stress/full-7.test.ts": {
-    "default": 140019,
-    "asan": 92578,
-    "musl": 42
+    "default": 84663,
+    "asan": 92578
   },
   "aot/collector-stress/full-8.test.ts": {
-    "default": 146612,
-    "musl": 38
+    "default": 80666
   },
   "aot/collector-stress/full-9.test.ts": {
-    "default": 160341,
-    "asan": 241022,
-    "musl": 39
+    "default": 81023,
+    "asan": 241022
+  },
+  "aot/collector-stress/json-parse-full-at-every-allocation.test.ts": {
+    "default": 118978
+  },
+  "aot/collector-stress/json-parse-full-at-every-second-allocation.test.ts": {
+    "default": 73103
+  },
+  "aot/collector-stress/json-parse-young-at-every-allocation.test.ts": {
+    "default": 124462
+  },
+  "aot/collector-stress/json-parse-young-at-every-second-allocation.test.ts": {
+    "default": 121042
   },
   "aot/collector-stress/young-1.test.ts": {
-    "default": 158544,
-    "asan": 254804,
-    "musl": 43
+    "default": 125088,
+    "asan": 254804
   },
   "aot/collector-stress/young-10.test.ts": {
-    "default": 54620,
-    "asan": 241634,
-    "musl": 34
+    "default": 107044,
+    "asan": 241634
   },
   "aot/collector-stress/young-11.test.ts": {
-    "default": 176772,
-    "asan": 239936,
-    "musl": 35
+    "default": 112056,
+    "asan": 239936
   },
   "aot/collector-stress/young-12.test.ts": {
-    "default": 204199,
-    "asan": 245775,
-    "musl": 39
+    "default": 177340,
+    "asan": 245775
   },
   "aot/collector-stress/young-13.test.ts": {
-    "default": 167854,
-    "asan": 225564,
-    "musl": 33
+    "default": 102947,
+    "asan": 225564
   },
   "aot/collector-stress/young-14.test.ts": {
-    "default": 97747,
-    "musl": 36
+    "default": 104545
   },
   "aot/collector-stress/young-15.test.ts": {
-    "default": 66634,
-    "asan": 248952,
-    "musl": 37
+    "default": 104992,
+    "asan": 248952
   },
   "aot/collector-stress/young-16.test.ts": {
-    "default": 94778,
-    "asan": 168526,
-    "musl": 58
+    "default": 172923,
+    "asan": 168526
   },
   "aot/collector-stress/young-17.test.ts": {
-    "default": 139701,
-    "asan": 281616,
-    "musl": 35
+    "default": 116934,
+    "asan": 281616
   },
   "aot/collector-stress/young-18.test.ts": {
-    "default": 96189,
-    "asan": 267079,
-    "musl": 38
+    "default": 108410,
+    "asan": 267079
   },
   "aot/collector-stress/young-19.test.ts": {
-    "default": 165310,
-    "asan": 294482,
-    "musl": 44
+    "default": 109697,
+    "asan": 294482
   },
   "aot/collector-stress/young-2.test.ts": {
-    "default": 152508,
-    "asan": 436399,
-    "musl": 34
+    "default": 290863,
+    "asan": 436399
   },
   "aot/collector-stress/young-20.test.ts": {
-    "default": 65047,
-    "asan": 266444,
-    "musl": 40
+    "default": 123152,
+    "asan": 266444
   },
   "aot/collector-stress/young-3.test.ts": {
-    "default": 110663,
-    "asan": 373000,
-    "musl": 40
+    "default": 290936,
+    "asan": 373000
   },
   "aot/collector-stress/young-4.test.ts": {
-    "default": 231623,
-    "asan": 226082,
-    "musl": 41
+    "default": 290973,
+    "asan": 226082
   },
   "aot/collector-stress/young-5.test.ts": {
-    "default": 187622,
-    "asan": 231568,
-    "musl": 37
+    "default": 105882,
+    "asan": 231568
   },
   "aot/collector-stress/young-6.test.ts": {
-    "default": 88686,
-    "asan": 241286,
-    "musl": 40
+    "default": 111560,
+    "asan": 241286
   },
   "aot/collector-stress/young-7.test.ts": {
-    "default": 76350,
-    "asan": 252482,
-    "musl": 43
+    "default": 115230,
+    "asan": 252482
   },
   "aot/collector-stress/young-8.test.ts": {
-    "default": 152320,
-    "musl": 37
+    "default": 106347
   },
   "aot/collector-stress/young-9.test.ts": {
-    "default": 40388,
-    "asan": 246622,
-    "musl": 39
+    "default": 121670,
+    "asan": 246622
+  },
+  "aot/collector.test.ts": {
+    "default": 2977,
+    "asan": 9769,
+    "musl": 3326
   },
   "aot/commonjs-cycle-in-place.test.ts": {
-    "default": 2372,
-    "asan": 6279,
-    "musl": 2871,
+    "default": 3959,
+    "asan": 17219,
+    "musl": 4390,
     "windows": 2728
   },
   "aot/commonjs-first-require-near-stack-limit.test.ts": {
-    "default": 6091,
-    "asan": 8963,
-    "musl": 3093,
+    "default": 1398,
+    "asan": 13868,
+    "musl": 1279,
     "windows": 6374
   },
   "aot/commonjs-module-children.test.ts": {
-    "default": 9462,
-    "asan": 25741,
-    "musl": 11159,
+    "default": 2247,
+    "asan": 4860,
+    "musl": 2744,
     "windows": 10293
   },
   "aot/commonjs-single-module-object-in-place.test.ts": {
-    "default": 11112,
-    "asan": 28848,
-    "musl": 12037,
+    "default": 5192,
+    "asan": 15345,
+    "musl": 6345,
     "windows": 15338
   },
   "aot/commonjs.test.ts": {
-    "default": 24120,
-    "asan": 9191,
-    "musl": 26357,
+    "default": 7500,
+    "asan": 27142,
+    "musl": 8267,
     "windows": 39398
   },
+  "aot/compact-code-avoids-runtime.test.ts": {
+    "default": 71201,
+    "asan": 52994,
+    "musl": 50894
+  },
+  "aot/compiled-code-mapping.test.ts": {
+    "default": 34043,
+    "asan": 135465,
+    "musl": 37079
+  },
   "aot/compiled-files-by-path.test.ts": {
-    "default": 1034,
-    "asan": 3336,
-    "musl": 1195,
+    "default": 1122,
+    "asan": 12653,
+    "musl": 1312,
     "windows": 1854
   },
+  "aot/compiled-modules-by-name.test.ts": {
+    "default": 8823,
+    "asan": 37967,
+    "musl": 8042
+  },
   "aot/const-and-dead-zones.test.ts": {
-    "default": 3939,
-    "asan": 488,
-    "musl": 7082,
+    "default": 3083,
+    "asan": 10469,
+    "musl": 3848,
     "windows": 7323
   },
+  "aot/constant-containers.test.ts": {
+    "default": 1368,
+    "asan": 11722,
+    "musl": 1335
+  },
+  "aot/constructor-functions-created-again-avoid-runtime.test.ts": {
+    "default": 403,
+    "asan": 8605,
+    "musl": 472
+  },
+  "aot/constructor-functions-first-constructed-in-a-loop-avoid-runtime.test.ts": {
+    "default": 437,
+    "asan": 9153,
+    "musl": 479
+  },
+  "aot/copied-properties.test.ts": {
+    "default": 5167,
+    "asan": 30389,
+    "musl": 5777
+  },
+  "aot/copies-born-in-their-holders.test.ts": {
+    "default": 13957,
+    "asan": 46278,
+    "musl": 14707
+  },
+  "aot/copies-of-heirs.test.ts": {
+    "default": 7194,
+    "asan": 49311,
+    "musl": 7722
+  },
   "aot/counterexamples-1.test.ts": {
-    "default": 59155,
-    "asan": 22209,
-    "musl": 66889,
+    "default": 6527,
+    "asan": 44326,
+    "musl": 6697,
     "windows": 102730
   },
   "aot/counterexamples-2.test.ts": {
-    "default": 68613,
-    "asan": 25572,
-    "musl": 81345,
+    "default": 13310,
+    "asan": 12694,
+    "musl": 11650,
     "windows": 107108
   },
   "aot/counterexamples-3.test.ts": {
-    "default": 59943,
-    "asan": 25713,
-    "musl": 69162,
+    "default": 9597,
+    "asan": 41017,
+    "musl": 7314,
     "windows": 102299
   },
+  "aot/cpu-profile-urls.test.ts": {
+    "default": 1020,
+    "asan": 2694,
+    "musl": 1060
+  },
   "aot/create-require-in-var.test.ts": {
-    "default": 6159,
-    "asan": 16328,
-    "musl": 6304,
+    "default": 2999,
+    "asan": 19828,
+    "musl": 3447,
     "windows": 5809
   },
   "aot/create-require-literal-names.test.ts": {
-    "default": 28567,
-    "asan": 75417,
-    "musl": 32417,
+    "default": 9637,
+    "asan": 67905,
+    "musl": 11508,
     "windows": 31505
   },
   "aot/data-from-outside-1.test.ts": {
-    "default": 72980,
+    "default": 16024,
     "asan": 17427,
-    "musl": 87182,
+    "musl": 16594,
     "windows": 119183
   },
   "aot/data-from-outside-2.test.ts": {
-    "default": 61745,
-    "asan": 24078,
-    "musl": 69154,
+    "default": 20020,
+    "asan": 61699,
+    "musl": 21666,
     "windows": 91790
   },
   "aot/debug-aot.test.ts": {
-    "default": 804,
-    "asan": 3587,
-    "musl": 929,
+    "default": 547,
+    "asan": 18561,
+    "musl": 626,
     "windows": 1060
   },
+  "aot/declarations-of-one-entry-point-asked-from-another.test.ts": {
+    "default": 9639,
+    "musl": 11718
+  },
   "aot/declarations.test.ts": {
-    "default": 9959,
-    "asan": 322,
-    "musl": 11052,
+    "default": 2814,
+    "asan": 369,
+    "musl": 3153,
     "windows": 20241
   },
+  "aot/defaults-on-prototypes.test.ts": {
+    "default": 3558,
+    "asan": 11193,
+    "musl": 16037
+  },
+  "aot/definitions-by-descriptor.test.ts": {
+    "default": 1651,
+    "asan": 11050,
+    "musl": 1765
+  },
   "aot/dependency-class-fields.test.ts": {
-    "default": 1282,
-    "asan": 4637,
-    "musl": 1358,
+    "default": 952,
+    "asan": 18705,
+    "musl": 1063,
     "windows": 3639
   },
   "aot/dependency-detection.test.ts": {
-    "default": 5235,
-    "asan": 48109,
-    "musl": 5603,
+    "default": 10828,
+    "asan": 161062,
+    "musl": 11707,
     "windows": 11599
   },
+  "aot/dependency-global-diagnostics.test.ts": {
+    "default": 716,
+    "asan": 18874,
+    "musl": 811
+  },
+  "aot/dependency-missing-global-type.test.ts": {
+    "default": 433,
+    "asan": 9211,
+    "musl": 502
+  },
+  "aot/dependency-that-imports-the-applications-own-file.test.ts": {
+    "default": 509,
+    "asan": 2214,
+    "musl": 595
+  },
+  "aot/dependency-under-an-older-target.test.ts": {
+    "default": 400,
+    "asan": 8732,
+    "musl": 422
+  },
+  "aot/descriptions-of-own-properties.test.ts": {
+    "default": 3723,
+    "asan": 16426,
+    "musl": 3735
+  },
   "aot/destructuring-defaults.test.ts": {
-    "default": 9033,
-    "asan": 3933,
-    "musl": 8055,
+    "default": 33,
+    "asan": 12071,
+    "musl": 37,
     "windows": 18102
   },
+  "aot/development-server-in-a-trimmed-executable.test.ts": {
+    "default": 2129,
+    "asan": 500,
+    "musl": 2417
+  },
+  "aot/development-server.test.ts": {
+    "default": 3031,
+    "asan": 12379,
+    "musl": 3363
+  },
+  "aot/diagnostics-do-not-depend-on-neighbors.test.ts": {
+    "default": 2456,
+    "asan": 22978,
+    "musl": 2905
+  },
+  "aot/diagnostics-end-in-lf.test.ts": {
+    "default": 499,
+    "asan": 16053,
+    "musl": 565
+  },
+  "aot/dictionaries-avoid-runtime.test.ts": {
+    "default": 807,
+    "asan": 18628,
+    "musl": 832
+  },
   "aot/direct-eval-sloppy-top-level-declarations.test.ts": {
-    "default": 54974,
-    "asan": 131321,
-    "musl": 69821,
+    "default": 23142,
+    "asan": 47062,
+    "musl": 28391,
     "windows": 62280
   },
+  "aot/dropped-protections.test.ts": {
+    "default": 80906,
+    "asan": 442,
+    "musl": 60348
+  },
   "aot/dual-package-import-and-require.test.ts": {
-    "default": 8633,
-    "asan": 21597,
-    "musl": 8945,
+    "default": 5014,
+    "asan": 41818,
+    "musl": 4635,
     "windows": 12377
   },
+  "aot/each-case-alone-1.test.ts": {
+    "default": 9303,
+    "asan": 423358,
+    "musl": 9528
+  },
+  "aot/each-case-alone-10.test.ts": {
+    "default": 3265,
+    "musl": 3648
+  },
+  "aot/each-case-alone-11.test.ts": {
+    "default": 7707,
+    "asan": 445395,
+    "musl": 6944
+  },
+  "aot/each-case-alone-12.test.ts": {
+    "default": 6635,
+    "musl": 7172
+  },
+  "aot/each-case-alone-13.test.ts": {
+    "default": 8975,
+    "asan": 452020,
+    "musl": 11093
+  },
+  "aot/each-case-alone-14.test.ts": {
+    "default": 6124,
+    "asan": 456877,
+    "musl": 6247
+  },
+  "aot/each-case-alone-15.test.ts": {
+    "default": 8990,
+    "asan": 446220,
+    "musl": 9383
+  },
+  "aot/each-case-alone-16.test.ts": {
+    "default": 6366,
+    "musl": 6067
+  },
+  "aot/each-case-alone-17.test.ts": {
+    "default": 6255,
+    "asan": 481449,
+    "musl": 7159
+  },
+  "aot/each-case-alone-18.test.ts": {
+    "default": 7810,
+    "asan": 453228,
+    "musl": 9203
+  },
+  "aot/each-case-alone-19.test.ts": {
+    "default": 10313,
+    "asan": 426730,
+    "musl": 12543
+  },
+  "aot/each-case-alone-2.test.ts": {
+    "default": 12985,
+    "asan": 380503,
+    "musl": 13382
+  },
+  "aot/each-case-alone-20.test.ts": {
+    "default": 6979,
+    "musl": 7108
+  },
+  "aot/each-case-alone-3.test.ts": {
+    "default": 5609,
+    "asan": 452486,
+    "musl": 6360
+  },
+  "aot/each-case-alone-4.test.ts": {
+    "default": 3766,
+    "asan": 450028,
+    "musl": 3769
+  },
+  "aot/each-case-alone-5.test.ts": {
+    "default": 12060,
+    "asan": 429904,
+    "musl": 11720
+  },
+  "aot/each-case-alone-6.test.ts": {
+    "default": 7301,
+    "musl": 7747
+  },
+  "aot/each-case-alone-7.test.ts": {
+    "default": 9069,
+    "musl": 9000
+  },
+  "aot/each-case-alone-8.test.ts": {
+    "default": 14243,
+    "musl": 17130
+  },
+  "aot/each-case-alone-9.test.ts": {
+    "default": 5433,
+    "musl": 6394
+  },
   "aot/early-errors.test.ts": {
-    "default": 12211,
-    "asan": 26269,
-    "musl": 12413,
+    "default": 7643,
+    "asan": 39409,
+    "musl": 8380,
     "windows": 14949
   },
   "aot/effects.test.ts": {
-    "default": 2351,
+    "default": 8143,
     "asan": 330,
-    "musl": 2760,
+    "musl": 8640,
     "windows": 5930
   },
+  "aot/embedded-assets.test.ts": {
+    "default": 7249,
+    "asan": 75995,
+    "musl": 8458
+  },
+  "aot/engine-functions-by-use.test.ts": {
+    "default": 48404,
+    "musl": 46433
+  },
   "aot/engine-private-names-avoid-runtime.test.ts": {
-    "default": 1021,
-    "asan": 3397,
-    "musl": 1109,
+    "default": 945,
+    "asan": 10427,
+    "musl": 970,
     "windows": 3720
   },
+  "aot/engine-tests.test.ts": {
+    "default": 204149,
+    "musl": 268565
+  },
+  "aot/engine-types-are-defined-once.test.ts": {
+    "default": 24,
+    "asan": 223,
+    "musl": 28
+  },
+  "aot/entry-point-names.test.ts": {
+    "default": 3330,
+    "asan": 27393,
+    "musl": 3550
+  },
   "aot/enums.test.ts": {
-    "default": 5630,
+    "default": 34,
     "asan": 5174,
-    "musl": 5616,
+    "musl": 35,
     "windows": 13325
   },
+  "aot/error-own-properties.test.ts": {
+    "default": 58901,
+    "asan": 83949,
+    "musl": 66346
+  },
   "aot/error-prototypes-unlocked.test.ts": {
-    "default": 9003,
-    "asan": 23597,
-    "musl": 9250,
+    "default": 7081,
+    "asan": 31801,
+    "musl": 7664,
     "windows": 14102
   },
+  "aot/errors.test.ts": {
+    "default": 1784,
+    "asan": 337,
+    "musl": 1571
+  },
   "aot/escape-analysis.test.ts": {
-    "default": 41766,
-    "asan": 11399,
-    "musl": 46576,
+    "default": 18909,
+    "asan": 20106,
+    "musl": 18597,
     "windows": 68478
   },
+  "aot/evaluated-code-in-a-trimmed-executable.test.ts": {
+    "default": 3660,
+    "musl": 4253
+  },
+  "aot/evaluated-text-reaches-the-global-scope.test.ts": {
+    "default": 902,
+    "asan": 9764,
+    "musl": 430
+  },
+  "aot/evaluated-text-uses-property-caches.test.ts": {
+    "default": 1116,
+    "musl": 1204
+  },
+  "aot/every-member-of-a-host-object.test.ts": {
+    "default": 32,
+    "asan": 19457,
+    "musl": 34
+  },
   "aot/every-platform.test.ts": {
-    "default": 1550,
+    "default": 945,
     "asan": 5346,
-    "musl": 1525,
+    "musl": 1222,
     "windows": 2571
   },
-  "aot/exports-used-by-unseen-files-in-place.test.ts": {
-    "default": 35766,
-    "asan": 95245,
-    "musl": 39199,
-    "windows": 35572
+  "aot/every-program-folder-has-a-runner.test.ts": {
+    "default": 842,
+    "musl": 104
+  },
+  "aot/every-store-to-a-variable-of-a-context-shows-on-the-sandbox-object.test.ts": {
+    "default": 892,
+    "musl": 1111
+  },
+  "aot/executable-memory-filter.test.ts": {
+    "default": 624,
+    "musl": 594
+  },
+  "aot/executables-leave-out-the-command-line.test.ts": {
+    "default": 7568,
+    "musl": 8480
+  },
+  "aot/exit-hooks-of-an-executable.test.ts": {
+    "default": 494,
+    "asan": 9226,
+    "musl": 434
+  },
+  "aot/explain-counts-and-causes-of-parsed-data.test.ts": {
+    "default": 1196,
+    "musl": 1391
+  },
+  "aot/explain-reasons.test.ts": {
+    "default": 680,
+    "musl": 856
+  },
+  "aot/explain.test.ts": {
+    "default": 2213,
+    "asan": 4719,
+    "musl": 2435
+  },
+  "aot/explain/missed-optimizations.test.ts": {
+    "default": 1533,
+    "asan": 10929,
+    "musl": 1516
   },
   "aot/extensionless-entry-points.test.ts": {
-    "default": 3279,
-    "asan": 9409,
-    "musl": 3703,
+    "default": 1346,
+    "asan": 9350,
+    "musl": 1542,
     "windows": 6501
   },
   "aot/external-sources-of-typed-objects.test.ts": {
-    "default": 11606,
-    "asan": 4134,
-    "musl": 10440,
+    "default": 15528,
+    "asan": 12696,
+    "musl": 19859,
     "windows": 13822
   },
   "aot/extra-entry-points-by-path.test.ts": {
-    "default": 10088,
+    "default": 12845,
     "asan": 31075,
-    "musl": 11640,
+    "musl": 15234,
     "windows": 15502
   },
   "aot/extra-entry-points.test.ts": {
-    "default": 11703,
-    "asan": 34410,
-    "musl": 14894,
+    "default": 4994,
+    "asan": 56904,
+    "musl": 5476,
     "windows": 17663
   },
+  "aot/failed-build-waits-for-early-analysis.test.ts": {
+    "default": 14020,
+    "asan": 30415,
+    "musl": 13827
+  },
+  "aot/fast-visit-validation.test.ts": {
+    "default": 468,
+    "asan": 9305,
+    "musl": 487
+  },
+  "aot/fields-under-symbols-have-slots.test.ts": {
+    "default": 422,
+    "musl": 440
+  },
   "aot/file-by-literal-and-computed-name.test.ts": {
-    "default": 8059,
+    "default": 5296,
     "asan": 23458,
-    "musl": 9440,
+    "musl": 5791,
     "windows": 11761
   },
   "aot/file-ending-like-compiler-output.test.ts": {
-    "default": 7384,
-    "asan": 23824,
-    "musl": 8571,
+    "default": 3888,
+    "asan": 57217,
+    "musl": 4385,
     "windows": 13150
   },
   "aot/file-kind-matches-bun.test.ts": {
-    "default": 43083,
+    "default": 31211,
     "asan": 116460,
-    "musl": 45811,
+    "musl": 33656,
     "windows": 52523
   },
   "aot/file-kinds.test.ts": {
-    "default": 25809,
+    "default": 20089,
     "asan": 28895,
-    "musl": 25459,
+    "musl": 24491,
     "windows": 38486
   },
+  "aot/file-names-in-another-letter-case.test.ts": {
+    "default": 2490,
+    "asan": 11473,
+    "musl": 3063
+  },
+  "aot/file-that-nobody-imports-hands-on-three-modules.test.ts": {
+    "default": 372,
+    "musl": 432
+  },
   "aot/file-under-other-tsconfig.test.ts": {
-    "default": 5487,
+    "default": 6401,
     "asan": 19966,
-    "musl": 6278,
+    "musl": 7282,
     "windows": 12802
   },
+  "aot/files-of-the-project-that-are-not-compiled.test.ts": {
+    "default": 1090,
+    "asan": 26595,
+    "musl": 1207
+  },
   "aot/files-referenced-in-unreachable-code.test.ts": {
-    "default": 2536,
+    "default": 886,
     "asan": 9431,
-    "musl": 2595,
+    "musl": 821,
     "windows": 3264
   },
+  "aot/first-awaits-avoid-runtime.test.ts": {
+    "default": 1085,
+    "musl": 1275
+  },
+  "aot/first-misses-are-forgotten-at-a-full-collection.test.ts": {
+    "default": 570,
+    "musl": 790
+  },
+  "aot/first-questions-avoid-runtime.test.ts": {
+    "default": 5825,
+    "musl": 6321
+  },
+  "aot/flags-of-process-are-own-properties.test.ts": {
+    "default": 5387,
+    "musl": 5978
+  },
+  "aot/flattened-objects-under-collections.test.ts": {
+    "default": 6748,
+    "asan": 37322,
+    "musl": 6079
+  },
+  "aot/flattened-objects.test.ts": {
+    "default": 7073,
+    "musl": 22457
+  },
+  "aot/flow-schedules.test.ts": {
+    "default": 169075,
+    "musl": 209282
+  },
+  "aot/fold/fold-matches-transpiler.test.ts": {
+    "default": 18260,
+    "asan": 121356,
+    "musl": 43119
+  },
+  "aot/for-in-over-objects-with-extra-properties-avoids-runtime.test.ts": {
+    "default": 420,
+    "asan": 9634,
+    "musl": 470
+  },
+  "aot/frameworks/angular-one-file.test.ts": {
+    "default": 20929,
+    "musl": 42872
+  },
   "aot/frameworks/angular.test.ts": {
-    "default": 9416,
+    "default": 20694,
     "asan": 22424,
-    "musl": 26850,
+    "musl": 48465,
     "windows": 19191
   },
+  "aot/frameworks/astro-one-file.test.ts": {
+    "default": 12010,
+    "asan": 11565,
+    "musl": 20696
+  },
   "aot/frameworks/astro.test.ts": {
-    "default": 5372,
+    "default": 13444,
     "asan": 15685,
-    "musl": 12975,
+    "musl": 24246,
     "windows": 9217
   },
+  "aot/frameworks/next-one-file.test.ts": {
+    "default": 77873,
+    "musl": 100849
+  },
   "aot/frameworks/next.test.ts": {
-    "default": 36413,
-    "asan": 600844,
-    "musl": 48947,
+    "default": 71299,
+    "asan": 141844,
+    "musl": 106295,
     "windows": 40151
   },
+  "aot/frameworks/nuxt-one-file.test.ts": {
+    "default": 20639,
+    "asan": 39594,
+    "musl": 41757
+  },
   "aot/frameworks/nuxt.test.ts": {
-    "default": 9598,
+    "default": 21994,
     "asan": 47358,
-    "musl": 25959,
+    "musl": 45254,
     "windows": 19826
   },
+  "aot/frameworks/react-router-one-file.test.ts": {
+    "default": 7119,
+    "musl": 9713
+  },
   "aot/frameworks/react-router.test.ts": {
-    "default": 5040,
+    "default": 6245,
     "asan": 12979,
-    "musl": 6984,
+    "musl": 8391,
     "windows": 8898
   },
+  "aot/frameworks/sveltekit-one-file.test.ts": {
+    "default": 10253,
+    "asan": 9670,
+    "musl": 12364
+  },
   "aot/frameworks/sveltekit.test.ts": {
-    "default": 4781,
+    "default": 9284,
     "asan": 16322,
-    "musl": 5896,
+    "musl": 11887,
     "windows": 7802
   },
+  "aot/freeze-object-create-result.test.ts": {
+    "default": 1597,
+    "musl": 1866
+  },
+  "aot/freezing-a-function-makes-no-object.test.ts": {
+    "default": 429,
+    "musl": 421
+  },
   "aot/function-declarations-in-switch-cases.test.ts": {
-    "default": 31937,
+    "default": 14460,
     "asan": 30454,
-    "musl": 14347,
+    "musl": 8148,
     "windows": 21284
   },
+  "aot/function-fields.test.ts": {
+    "default": 1420,
+    "musl": 1392
+  },
+  "aot/function-members.test.ts": {
+    "default": 60268,
+    "musl": 66981
+  },
+  "aot/function-prototypes.test.ts": {
+    "default": 3951,
+    "asan": 35427,
+    "musl": 3935
+  },
+  "aot/functions-entered-again.test.ts": {
+    "default": 2814,
+    "musl": 2840
+  },
+  "aot/functions-get-past-entry.test.ts": {
+    "default": 2564,
+    "musl": 2762
+  },
+  "aot/fuzzer-fixed-seeds.test.ts": {
+    "default": 259767,
+    "musl": 300126
+  },
+  "aot/fuzzer-seeds-that-found-faults.test.ts": {
+    "default": 61005,
+    "musl": 69133
+  },
+  "aot/generated-births-and-uses-of-arrays-whose-storage-is-proven.test.ts": {
+    "default": 20532,
+    "musl": 20141
+  },
+  "aot/generated-births-and-uses-of-arrays.test.ts": {
+    "default": 10165,
+    "asan": 40440,
+    "musl": 10917
+  },
+  "aot/generated-births-and-uses-of-awaited-values.test.ts": {
+    "default": 10147,
+    "musl": 10464
+  },
+  "aot/generated-births-and-uses-of-callables.test.ts": {
+    "default": 23040,
+    "musl": 29863
+  },
+  "aot/generated-births-and-uses-of-classes-whose-parent-is-replaced-1.test.ts": {
+    "default": 27012,
+    "musl": 24165
+  },
+  "aot/generated-births-and-uses-of-classes-whose-parent-is-replaced-2.test.ts": {
+    "default": 22389,
+    "asan": 74327,
+    "musl": 21833
+  },
+  "aot/generated-births-and-uses-of-classes-whose-parent-is-replaced-3.test.ts": {
+    "default": 18930,
+    "musl": 19136
+  },
+  "aot/generated-births-and-uses-of-collections-filled-from-what-a-hot-function-is-given.test.ts": {
+    "default": 9999,
+    "musl": 10884
+  },
+  "aot/generated-births-and-uses-of-host-functions.test.ts": {
+    "default": 3641,
+    "musl": 4239
+  },
+  "aot/generated-births-and-uses-of-maps-and-sets.test.ts": {
+    "default": 9654,
+    "musl": 10509
+  },
+  "aot/generated-births-and-uses-of-objects-constructed-below-another-prototype.test.ts": {
+    "default": 7007,
+    "asan": 30271,
+    "musl": 7275
+  },
+  "aot/generated-births-and-uses-of-objects-held-as-a-class-1.test.ts": {
+    "default": 30317,
+    "musl": 45403
+  },
+  "aot/generated-births-and-uses-of-objects-held-as-a-class-2.test.ts": {
+    "default": 24606,
+    "musl": 28780
+  },
+  "aot/generated-births-and-uses-of-objects.test.ts": {
+    "default": 19259,
+    "musl": 19322
+  },
+  "aot/generated-births-and-uses-of-one-walk-of-two-kinds-of-collection.test.ts": {
+    "default": 9754,
+    "musl": 9717
+  },
+  "aot/generated-births-and-uses-of-promises-of-natives-that-reject.test.ts": {
+    "default": 76759,
+    "musl": 96977
+  },
+  "aot/generated-births-and-uses-of-stores-of-two-takers-of-one-source-1.test.ts": {
+    "default": 33483,
+    "asan": 57213,
+    "musl": 58078
+  },
+  "aot/generated-births-and-uses-of-stores-of-two-takers-of-one-source-2.test.ts": {
+    "default": 25259,
+    "musl": 27372
+  },
+  "aot/generated-births-and-uses-of-stores-of-two-takers-of-one-source-3.test.ts": {
+    "default": 30793,
+    "musl": 60111
+  },
+  "aot/generated-births-and-uses-of-stores-of-two-takers-of-one-source-4.test.ts": {
+    "default": 30757,
+    "musl": 28633
+  },
+  "aot/generated-births-and-uses-of-stores-of-two-takers-of-one-source-5.test.ts": {
+    "default": 32300,
+    "asan": 60281,
+    "musl": 44394
+  },
+  "aot/generated-births-and-uses-of-stretches-that-differ-in-one-thing.test.ts": {
+    "default": 14946,
+    "musl": 16266
+  },
+  "aot/generated-births-and-uses-of-strings.test.ts": {
+    "default": 14621,
+    "musl": 17182
+  },
+  "aot/generated-births-and-uses-of-typed-arrays.test.ts": {
+    "default": 19698,
+    "musl": 22030
+  },
+  "aot/generated-births-and-uses-of-typed-objects.test.ts": {
+    "default": 17211,
+    "musl": 16810
+  },
+  "aot/generated-births-and-uses-of-typed-promises-of-natives-that-reject.test.ts": {
+    "default": 19950,
+    "asan": 37866,
+    "musl": 23990
+  },
+  "aot/generated-births-and-uses-of-typed-strings.test.ts": {
+    "default": 19263,
+    "musl": 20596
+  },
+  "aot/generated-births-and-uses-of-values-handed-out-by-iterators-1.test.ts": {
+    "default": 28817,
+    "musl": 33186
+  },
+  "aot/generated-births-and-uses-of-values-handed-out-by-iterators-2.test.ts": {
+    "default": 55670,
+    "musl": 56673
+  },
+  "aot/generated-births-and-uses-of-values-handed-out-by-iterators-3.test.ts": {
+    "default": 41733,
+    "musl": 46657
+  },
   "aot/generated-builtins-vs-running-bun.test.ts": {
-    "default": 5201,
+    "default": 1364,
     "asan": 4009,
-    "musl": 5401,
+    "musl": 1650,
     "windows": 6362
   },
   "aot/generated-by-python.test.ts": {
-    "default": 148660,
+    "default": 36604,
     "asan": 205213,
-    "musl": 159180,
+    "musl": 41261,
     "windows": 191918
   },
+  "aot/generated-bytes-whoever-holds-them.test.ts": {
+    "default": 6981,
+    "musl": 7963
+  },
   "aot/generated-cases-three-ways-1.test.ts": {
-    "default": 93125,
+    "default": 100326,
     "asan": 50886,
-    "musl": 92031,
+    "musl": 119444,
     "windows": 150645
   },
   "aot/generated-cases-three-ways-2.test.ts": {
-    "default": 67375,
+    "default": 37392,
     "asan": 54079,
-    "musl": 79250,
+    "musl": 37921,
     "windows": 91601
   },
   "aot/generated-cases-three-ways-3.test.ts": {
-    "default": 74836,
+    "default": 41661,
     "asan": 54213,
-    "musl": 77825,
+    "musl": 45901,
     "windows": 110423
   },
   "aot/generated-cases-three-ways-4.test.ts": {
-    "default": 8129,
+    "default": 4244,
     "asan": 5133,
-    "musl": 6892,
+    "musl": 4077,
     "windows": 22605
   },
   "aot/generated-cases-three-ways-5.test.ts": {
-    "default": 23937,
+    "default": 15356,
     "asan": 18540,
-    "musl": 21777,
+    "musl": 14888,
     "windows": 49004
   },
   "aot/generated-cases-three-ways-6.test.ts": {
-    "default": 48952,
+    "default": 18807,
     "asan": 19459,
-    "musl": 43360,
+    "musl": 16348,
     "windows": 101088
   },
   "aot/generated-cases-three-ways-7.test.ts": {
-    "default": 49357,
-    "asan": 19954,
-    "musl": 45749,
+    "default": 20602,
+    "asan": 36517,
+    "musl": 19422,
     "windows": 110043
   },
   "aot/generated-cases-three-ways-8.test.ts": {
-    "default": 21434,
+    "default": 10157,
     "asan": 18837,
-    "musl": 19872,
+    "musl": 11194,
     "windows": 42555
   },
   "aot/generated-code.test.ts": {
-    "default": 24879,
+    "default": 166072,
     "asan": 593,
-    "musl": 43,
+    "musl": 185923,
     "windows": 63
   },
   "aot/generated-constant-expressions.test.ts": {
-    "default": 11582,
+    "default": 4277,
     "asan": 10299,
-    "musl": 12386,
+    "musl": 4650,
     "windows": 17890
   },
   "aot/generated-element-key-kinds.test.ts": {
-    "default": 1452,
-    "asan": 4117,
-    "musl": 1613,
+    "default": 36,
+    "asan": 4419,
+    "musl": 35,
     "windows": 2792
   },
   "aot/generated-escaping-objects.test.ts": {
-    "default": 13620,
+    "default": 3437,
     "asan": 5448,
-    "musl": 15004,
+    "musl": 3787,
     "windows": 17697
   },
   "aot/generated-fresh-seeds-1.test.ts": {
-    "default": 32,
-    "asan": 344,
-    "musl": 41,
+    "default": 31,
+    "asan": 358,
+    "musl": 40,
     "windows": 67
   },
   "aot/generated-fresh-seeds-2.test.ts": {
-    "default": 39,
+    "default": 30,
     "asan": 345,
-    "musl": 43,
+    "musl": 35,
     "windows": 61
   },
   "aot/generated-fresh-seeds-3.test.ts": {
-    "default": 36,
+    "default": 28,
     "asan": 341,
-    "musl": 43,
+    "musl": 39,
     "windows": 67
   },
   "aot/generated-host-object-named-reads.test.ts": {
-    "default": 4663,
+    "default": 5740,
     "asan": 8872,
-    "musl": 5485,
+    "musl": 6755,
     "windows": 6238
   },
   "aot/generated-joined-literals.test.ts": {
-    "default": 26855,
+    "default": 5146,
     "asan": 7446,
-    "musl": 28052,
+    "musl": 19190,
     "windows": 35054
   },
   "aot/generated-joined-values.test.ts": {
-    "default": 7035,
+    "default": 860,
     "asan": 3737,
-    "musl": 7080,
+    "musl": 1068,
     "windows": 11527
   },
   "aot/generated-key-order.test.ts": {
-    "default": 2185,
+    "default": 1793,
     "asan": 8738,
-    "musl": 2587,
+    "musl": 1993,
     "windows": 4292
   },
   "aot/generated-module-graphs.test.ts": {
-    "default": 14861,
+    "default": 2475,
     "asan": 5220,
-    "musl": 14029,
+    "musl": 2920,
     "windows": 19701
   },
+  "aot/generated-new-targets.test.ts": {
+    "default": 12253,
+    "asan": 55623,
+    "musl": 14162
+  },
+  "aot/generated-numbers-whose-bits-are-chosen.test.ts": {
+    "default": 22751,
+    "musl": 26376
+  },
+  "aot/generated-object-mutations.test.ts": {
+    "default": 3413,
+    "musl": 3696
+  },
+  "aot/generated-objects-born-in-every-place.test.ts": {
+    "default": 9144,
+    "musl": 10399
+  },
   "aot/generated-operand-kinds.test.ts": {
-    "default": 10619,
+    "default": 10259,
     "asan": 9040,
-    "musl": 11560,
+    "musl": 11799,
     "windows": 12286
   },
   "aot/generated-operands.test.ts": {
-    "default": 23237,
+    "default": 9686,
     "asan": 11762,
-    "musl": 27150,
+    "musl": 11446,
     "windows": 32404
   },
   "aot/generated-optional-numbers-in-loops.test.ts": {
-    "default": 11283,
+    "default": 3029,
     "asan": 19233,
-    "musl": 14026,
+    "musl": 3847,
     "windows": 14799
   },
   "aot/generated-reads-through-proxies.test.ts": {
-    "default": 9360,
-    "asan": 22458,
-    "musl": 10692,
+    "default": 63,
+    "asan": 38564,
+    "musl": 36,
     "windows": 11854
   },
   "aot/generated-regular-expressions.test.ts": {
-    "default": 14112,
+    "default": 33,
     "asan": 29726,
-    "musl": 17573,
+    "musl": 35,
     "windows": 22246
   },
   "aot/generated-replaced-globals.test.ts": {
-    "default": 106826,
+    "default": 18466,
     "asan": 31003,
-    "musl": 136047,
+    "musl": 19438,
     "windows": 126733
   },
+  "aot/generated-site-record-attacks.test.ts": {
+    "default": 7681,
+    "musl": 8975
+  },
   "aot/generated-small-functions.test.ts": {
-    "default": 3289,
+    "default": 733,
     "asan": 3648,
-    "musl": 2936,
+    "musl": 901,
     "windows": 5187
   },
   "aot/generated-sound-typescript.test.ts": {
-    "default": 775,
+    "default": 33,
     "asan": 3855,
-    "musl": 886,
+    "musl": 34,
     "windows": 1623
   },
   "aot/generated-sql-typed-rows.test.ts": {
-    "default": 12611,
+    "default": 6419,
     "asan": 6146,
-    "musl": 13477,
+    "musl": 7428,
     "windows": 14846
   },
+  "aot/generated-table-altered-by-typed-and-untyped-code.test.ts": {
+    "default": 112294,
+    "musl": 140472
+  },
+  "aot/generated-table-changes-while-serializing.test.ts": {
+    "default": 15965,
+    "musl": 18183
+  },
+  "aot/generated-table-functions-as-objects.test.ts": {
+    "default": 20866,
+    "musl": 20601
+  },
+  "aot/generated-table-objects-altered-mid-function.test.ts": {
+    "default": 30495,
+    "musl": 36877
+  },
+  "aot/generated-table-reads-before-the-declaration.test.ts": {
+    "default": 15040,
+    "asan": 54398,
+    "musl": 15704
+  },
+  "aot/generated-table-repeated-reads.test.ts": {
+    "default": 19132,
+    "musl": 19076
+  },
+  "aot/generated-table-strangers-mid-function.test.ts": {
+    "default": 21314,
+    "musl": 16890
+  },
   "aot/generated-type-mismatches.test.ts": {
-    "default": 1855,
+    "default": 1107,
     "asan": 2964,
-    "musl": 2144,
+    "musl": 1239,
     "windows": 3458
   },
+  "aot/generated-typed-object-mutations.test.ts": {
+    "default": 1232,
+    "musl": 1313
+  },
+  "aot/generated-unsound-types.test.ts": {
+    "default": 7379,
+    "musl": 7814
+  },
   "aot/generated-visible-typed-array-allocations.test.ts": {
-    "default": 3010,
+    "default": 30,
     "asan": 9250,
-    "musl": 3428,
+    "musl": 36,
     "windows": 5622
   },
+  "aot/global-names-1.test.ts": {
+    "default": 78772,
+    "musl": 103854
+  },
+  "aot/global-names-2.test.ts": {
+    "default": 78952,
+    "asan": 40393,
+    "musl": 98370
+  },
+  "aot/global-names-3.test.ts": {
+    "default": 71803,
+    "musl": 80882
+  },
+  "aot/globals-of-a-project-without-include.test.ts": {
+    "default": 983,
+    "musl": 980
+  },
+  "aot/globals-of-every-project-in-the-run.test.ts": {
+    "default": 1058,
+    "musl": 1311
+  },
+  "aot/globals-of-packages-that-project-files-import.test.ts": {
+    "default": 960,
+    "musl": 1097
+  },
+  "aot/hardened-executable.test.ts": {
+    "default": 844,
+    "musl": 956
+  },
+  "aot/hardened-layout.test.ts": {
+    "default": 33,
+    "musl": 35
+  },
+  "aot/harness/build-report.test.ts": {
+    "default": 3149,
+    "musl": 2791
+  },
   "aot/heap-limit-too-small.test.ts": {
-    "default": 1002,
+    "default": 582,
     "asan": 3070,
-    "musl": 1052,
+    "musl": 605,
     "windows": 79
   },
   "aot/heap-limit.test.ts": {
-    "default": 9454,
+    "default": 28671,
     "asan": 14884,
-    "musl": 11835,
+    "musl": 28523,
     "windows": 60
   },
-  "aot/host-classes-match-bun-types.test.ts": {
-    "default": 106,
-    "asan": 629,
-    "musl": 113,
-    "windows": 162
+  "aot/heat/cold-1.test.ts": {
+    "default": 283177,
+    "musl": 642566
+  },
+  "aot/heat/cold-2.test.ts": {
+    "default": 291200,
+    "asan": 292671,
+    "musl": 945831
+  },
+  "aot/heat/cold-3.test.ts": {
+    "default": 273338,
+    "musl": 1396126
+  },
+  "aot/heat/cold-4.test.ts": {
+    "default": 283404,
+    "musl": 1149647
+  },
+  "aot/heat/cold-5.test.ts": {
+    "default": 261920,
+    "musl": 1418289
+  },
+  "aot/heat/cold-6.test.ts": {
+    "default": 283927,
+    "musl": 872469
+  },
+  "aot/heat/cold-7.test.ts": {
+    "default": 260579,
+    "musl": 877432
+  },
+  "aot/heat/cold-8.test.ts": {
+    "default": 284254,
+    "musl": 1416170
+  },
+  "aot/heat/hot-1.test.ts": {
+    "default": 291208,
+    "musl": 1232984
+  },
+  "aot/heat/hot-2.test.ts": {
+    "default": 278054,
+    "musl": 1104254
+  },
+  "aot/heat/hot-3.test.ts": {
+    "default": 291141,
+    "musl": 722943
+  },
+  "aot/heat/hot-4.test.ts": {
+    "default": 291079,
+    "musl": 1226971
+  },
+  "aot/heat/hot-5.test.ts": {
+    "default": 291183,
+    "musl": 1022869
+  },
+  "aot/heat/hot-6.test.ts": {
+    "default": 291264,
+    "musl": 1162867
+  },
+  "aot/heat/hot-7.test.ts": {
+    "default": 291108
+  },
+  "aot/heat/hot-8.test.ts": {
+    "default": 291168
+  },
+  "aot/heat/neither-1.test.ts": {
+    "default": 272933
+  },
+  "aot/heat/neither-2.test.ts": {
+    "default": 274240
+  },
+  "aot/heat/neither-3.test.ts": {
+    "default": 291235
+  },
+  "aot/heat/neither-4.test.ts": {
+    "default": 270878
+  },
+  "aot/heat/neither-5.test.ts": {
+    "default": 291161
+  },
+  "aot/heat/neither-6.test.ts": {
+    "default": 275229
+  },
+  "aot/heat/neither-7.test.ts": {
+    "default": 291122
+  },
+  "aot/heat/neither-8.test.ts": {
+    "default": 291209
   },
   "aot/host-classes.test.ts": {
-    "default": 14101,
+    "default": 19022,
     "asan": 17055,
-    "musl": 16828,
     "windows": 20276
   },
   "aot/host-object-accessors.test.ts": {
-    "default": 28,
+    "default": 55,
     "asan": 224,
-    "musl": 34,
     "windows": 56
   },
+  "aot/hot-names-made-at-run-time-stop-evicting-each-other.test.ts": {
+    "default": 444
+  },
+  "aot/hottest-functions-and-the-inliner.test.ts": {
+    "default": 38
+  },
+  "aot/hottest-functions-without-accesses.test.ts": {
+    "default": 33
+  },
+  "aot/hottest-functions.test.ts": {
+    "default": 33
+  },
   "aot/http-shared-symbols-are-names.test.ts": {
-    "default": 1608,
+    "default": 4009,
     "asan": 10278,
-    "musl": 2076,
     "windows": 2614
   },
   "aot/import-defer.test.ts": {
-    "default": 44445,
+    "default": 19850,
     "asan": 55220,
-    "musl": 23636,
     "windows": 24767
   },
+  "aot/import-paths-that-end-in-ts.test.ts": {
+    "default": 668
+  },
+  "aot/imports-typed-by-their-loader.test.ts": {
+    "default": 910
+  },
+  "aot/imports-without-an-extension-under-node16.test.ts": {
+    "default": 2812
+  },
+  "aot/impostors-1.test.ts": {
+    "default": 3577
+  },
+  "aot/impostors-10.test.ts": {
+    "default": 7961
+  },
+  "aot/impostors-11.test.ts": {
+    "default": 4989
+  },
+  "aot/impostors-12.test.ts": {
+    "default": 6684
+  },
+  "aot/impostors-13.test.ts": {
+    "default": 9799
+  },
+  "aot/impostors-14.test.ts": {
+    "default": 5151
+  },
+  "aot/impostors-15.test.ts": {
+    "default": 6624
+  },
+  "aot/impostors-16.test.ts": {
+    "default": 5290
+  },
+  "aot/impostors-17.test.ts": {
+    "default": 7541
+  },
+  "aot/impostors-18.test.ts": {
+    "default": 6648
+  },
+  "aot/impostors-19.test.ts": {
+    "default": 6316
+  },
+  "aot/impostors-2.test.ts": {
+    "default": 5824
+  },
+  "aot/impostors-20.test.ts": {
+    "default": 6143
+  },
+  "aot/impostors-3.test.ts": {
+    "default": 7719
+  },
+  "aot/impostors-4.test.ts": {
+    "default": 8020
+  },
+  "aot/impostors-5.test.ts": {
+    "default": 5561
+  },
+  "aot/impostors-6.test.ts": {
+    "default": 8031
+  },
+  "aot/impostors-7.test.ts": {
+    "default": 9932
+  },
+  "aot/impostors-8.test.ts": {
+    "default": 8226
+  },
+  "aot/impostors-9.test.ts": {
+    "default": 10505
+  },
+  "aot/impostors-in-projects-without-types.test.ts": {
+    "default": 37037
+  },
+  "aot/impostors-keep-their-fast-paths.test.ts": {
+    "default": 21297
+  },
+  "aot/impostors-typed.test.ts": {
+    "default": 17231
+  },
+  "aot/in-on-objects-built-key-by-key-avoids-runtime.test.ts": {
+    "default": 368
+  },
   "aot/in-place-executables.test.ts": {
-    "default": 37455,
+    "default": 59976,
     "asan": 92304,
-    "musl": 47654,
     "windows": 54348
   },
   "aot/indirect-jumps/indirect-jumps.test.ts": {
-    "default": 1387,
+    "default": 33,
     "asan": 6440,
-    "musl": 905,
     "windows": 62
   },
+  "aot/initializers-run-at-the-first-read.test.ts": {
+    "default": 3952
+  },
+  "aot/inner-objects-under-collections.test.ts": {
+    "default": 7914
+  },
+  "aot/inner-objects.test.ts": {
+    "default": 3378
+  },
+  "aot/inserted-library.test.ts": {
+    "default": 34
+  },
+  "aot/instanceof-on-a-constructor-function-asks-the-run-time-for-nothing.test.ts": {
+    "default": 427
+  },
   "aot/int32-is-proven-at-build-time.test.ts": {
-    "default": 4475,
+    "default": 4946,
     "asan": 15319,
-    "musl": 4236,
     "windows": 6925
   },
   "aot/int32-without-strict-null-checks.test.ts": {
-    "default": 1227,
+    "default": 787,
     "asan": 4340,
-    "musl": 1342,
     "windows": 2813
   },
+  "aot/interpreter-tripwire.test.ts": {
+    "default": 1392
+  },
   "aot/intl-fuzz/intl-fuzz.test.ts": {
-    "default": 17285,
+    "default": 33,
     "asan": 54496,
-    "musl": 21211,
     "windows": 22601
   },
-  "aot/intl-patterns-log.test.ts": {
-    "default": 539,
-    "asan": 2225,
-    "musl": 561,
-    "windows": 1369
-  },
   "aot/intl-patterns-of-another-icu.test.ts": {
-    "default": 5566,
+    "default": 31,
     "asan": 24211,
-    "musl": 7892,
     "windows": 8688
   },
   "aot/invalid-programs-no-crash.test.ts": {
-    "default": 991,
+    "default": 7683,
     "asan": 4245,
-    "musl": 1076,
     "windows": 1730
   },
   "aot/invalid-regexp-literals.test.ts": {
-    "default": 24222,
+    "default": 23918,
     "asan": 104530,
-    "musl": 27173,
     "windows": 34083
   },
   "aot/jit-mode-eager-tier-up-1.test.ts": {
-    "default": 83467,
+    "default": 103681,
     "asan": 36481,
-    "musl": 84834,
     "windows": 100224
   },
   "aot/jit-mode-eager-tier-up-2.test.ts": {
-    "default": 85206,
+    "default": 64837,
     "asan": 22376,
-    "musl": 88963,
     "windows": 97302
   },
+  "aot/joined-programs-all-code-direct-1.test.ts": {
+    "default": 44987
+  },
+  "aot/joined-programs-all-code-direct-2.test.ts": {
+    "default": 20150
+  },
+  "aot/joined-programs-all-code-direct-3.test.ts": {
+    "default": 13553
+  },
+  "aot/joined-programs-direct-code-by-linear-scan-1.test.ts": {
+    "default": 41899
+  },
+  "aot/joined-programs-direct-code-by-linear-scan-2.test.ts": {
+    "default": 21097
+  },
+  "aot/joined-programs-direct-code-by-linear-scan-3.test.ts": {
+    "default": 13952
+  },
   "aot/jsdoc-import-tags.test.ts": {
-    "default": 21369,
+    "default": 15050,
     "asan": 33301,
-    "musl": 14787,
     "windows": 18061
   },
+  "aot/jsdoc-types.test.ts": {
+    "default": 3776
+  },
   "aot/json-dates-written-in-place.test.ts": {
-    "default": 556,
+    "default": 484,
     "asan": 2261,
-    "musl": 626,
     "windows": 1353
   },
   "aot/json-module-members.test.ts": {
-    "default": 17171,
+    "default": 5335,
     "asan": 22136,
-    "musl": 10285,
     "windows": 13635
   },
   "aot/json-namespace-keys.test.ts": {
-    "default": 18983,
+    "default": 3772,
     "asan": 18838,
-    "musl": 9324,
     "windows": 12299
   },
+  "aot/json-parse-closes-texts-in-compiled-code.test.ts": {
+    "default": 847
+  },
   "aot/json-stringify-buffer-release.test.ts": {
-    "default": 945,
+    "default": 821,
     "asan": 3280,
-    "musl": 970,
     "windows": 1782
   },
+  "aot/json-stringify-of-a-primitive-calls-no-host-function.test.ts": {
+    "default": 1005
+  },
   "aot/json-stringify-wide-output-memory.test.ts": {
-    "default": 556,
+    "default": 944,
     "asan": 356,
-    "musl": 608,
     "windows": 1367
   },
+  "aot/json-text-of-records.test.ts": {
+    "default": 90
+  },
   "aot/jsx.test.ts": {
-    "default": 11755,
+    "default": 1597,
     "asan": 4232,
-    "musl": 13772,
     "windows": 25213
   },
+  "aot/kept-attacks-1.test.ts": {
+    "default": 7239
+  },
+  "aot/kept-attacks-2.test.ts": {
+    "default": 24031
+  },
+  "aot/kept-attacks-3.test.ts": {
+    "default": 14684
+  },
+  "aot/kept-attacks-4.test.ts": {
+    "default": 15447
+  },
+  "aot/kept-attacks-5.test.ts": {
+    "default": 22900
+  },
+  "aot/kept-attacks-6.test.ts": {
+    "default": 19917
+  },
+  "aot/kept-attacks-validated-1.test.ts": {
+    "default": 55082
+  },
+  "aot/kept-attacks-validated-2.test.ts": {
+    "default": 41308
+  },
+  "aot/kept-attacks-validated-3.test.ts": {
+    "default": 85829
+  },
+  "aot/kept-attacks-validated-4.test.ts": {
+    "default": 71523
+  },
   "aot/key-names-in-executables.test.ts": {
-    "default": 1211,
+    "default": 29,
     "asan": 4879,
-    "musl": 1246,
     "windows": 3693
   },
-  "aot/language.test.ts": {
-    "default": 82076,
-    "asan": 13700,
-    "musl": 94103,
-    "windows": 123743
+  "aot/keys-passed-as-constants.test.ts": {
+    "default": 33
+  },
+  "aot/knowing-more-adds-no-code.test.ts": {
+    "default": 6115
+  },
+  "aot/known-helpers.test.ts": {
+    "default": 1500
+  },
+  "aot/language-1.test.ts": {
+    "default": 10124
+  },
+  "aot/language-2.test.ts": {
+    "default": 11040
+  },
+  "aot/large-dictionary-literals-are-not-defined-name-by-name.test.ts": {
+    "default": 399
+  },
+  "aot/later-awaits-avoid-runtime.test.ts": {
+    "default": 468
   },
   "aot/leaf-commonjs-symbols-in-place.test.ts": {
-    "default": 2373,
+    "default": 314,
     "asan": 8595,
-    "musl": 2874,
     "windows": 3161
   },
+  "aot/learned-shapes-outlive-collections.test.ts": {
+    "default": 400
+  },
+  "aot/library-modules-by-computed-name.test.ts": {
+    "default": 6390
+  },
+  "aot/library-modules.test.ts": {
+    "default": 28040
+  },
+  "aot/library-ticks.test.ts": {
+    "default": 3403
+  },
+  "aot/literal-strings-of-the-image-are-not-looked-up.test.ts": {
+    "default": 455
+  },
   "aot/literal-strings.test.ts": {
-    "default": 9135,
+    "default": 3440,
     "asan": 6507,
-    "musl": 9454,
     "windows": 17460
   },
   "aot/literal-types-in-executables.test.ts": {
-    "default": 1464,
+    "default": 31,
     "asan": 5974,
-    "musl": 1416,
     "windows": 2409
   },
   "aot/literal-with-index-key-structures.test.ts": {
-    "default": 527,
+    "default": 390,
     "asan": 2012,
-    "musl": 580,
     "windows": 1365
   },
+  "aot/load/build-gate.test.ts": {
+    "default": 2206
+  },
+  "aot/load/deferred-plugin-loads.test.ts": {
+    "default": 13037
+  },
+  "aot/load/determinism.test.ts": {
+    "default": 6835
+  },
+  "aot/load/every-runtime-module-compiles.test.ts": {
+    "default": 32735
+  },
+  "aot/load/implied-runtime-modules.test.ts": {
+    "default": 14763
+  },
+  "aot/load/macros.test.ts": {
+    "default": 15117
+  },
+  "aot/load/native-plugins.test.ts": {
+    "default": 4658
+  },
+  "aot/load/pages.test.ts": {
+    "default": 3467
+  },
+  "aot/load/runtime-modules-and-user-flags.test.ts": {
+    "default": 4674
+  },
+  "aot/load/typed-packages.test.ts": {
+    "default": 6391
+  },
+  "aot/load/unsupported-options.test.ts": {
+    "default": 2918
+  },
   "aot/loader-access-in-unreachable-code.test.ts": {
-    "default": 35670,
+    "default": 31636,
     "asan": 110017,
-    "musl": 38534,
     "windows": 56626
   },
+  "aot/loader/code-and-types-answers.test.ts": {
+    "default": 191
+  },
+  "aot/loader/file-roles.test.ts": {
+    "default": 145
+  },
+  "aot/loader/folded-imports.test.ts": {
+    "default": 361
+  },
+  "aot/loader/governing-tsconfig.test.ts": {
+    "default": 129
+  },
+  "aot/loader/javascript-with-type-task.test.ts": {
+    "default": 368
+  },
+  "aot/loader/jsx-imports.test.ts": {
+    "default": 242
+  },
+  "aot/loader/library-roots.test.ts": {
+    "default": 41
+  },
+  "aot/loader/numbering.test.ts": {
+    "default": 1703
+  },
+  "aot/loader/package-copies.test.ts": {
+    "default": 97
+  },
+  "aot/loader/project-roots.test.ts": {
+    "default": 90
+  },
+  "aot/loader/typed-versions.test.ts": {
+    "default": 98
+  },
   "aot/lock-error-names-object-and-property.test.ts": {
-    "default": 635,
+    "default": 1115,
     "asan": 1987,
-    "musl": 599,
     "windows": 1401
   },
   "aot/locked-builtins.test.ts": {
-    "default": 4337,
+    "default": 78842,
     "asan": 13927,
-    "musl": 5091,
     "windows": 4696
   },
   "aot/locked-host-prototypes.test.ts": {
-    "default": 1307,
+    "default": 1186,
     "asan": 4660,
-    "musl": 1268,
     "windows": 2173
   },
   "aot/log-mode-reports-class-prototype-writes.test.ts": {
-    "default": 354,
+    "default": 342,
     "asan": 1856,
-    "musl": 358,
     "windows": 479
   },
   "aot/long-generated-functions.test.ts": {
-    "default": 9593,
+    "default": 29,
     "asan": 14369,
-    "musl": 9225,
     "windows": 10654
   },
+  "aot/lookups-by-key-parts-avoid-strings.test.ts": {
+    "default": 72
+  },
+  "aot/loops-over-own-entries.test.ts": {
+    "default": 2832
+  },
   "aot/main-file-exports-then.test.ts": {
-    "default": 1967,
+    "default": 2837,
     "asan": 7571,
-    "musl": 2194,
     "windows": 5254
   },
+  "aot/many-callees-at-many-sites-build-time.test.ts": {
+    "default": 7613
+  },
   "aot/many-closures-build-time.test.ts": {
-    "default": 4253,
+    "default": 32,
     "asan": 1295,
-    "musl": 4320,
     "windows": 4562
   },
   "aot/many-constants-build-time.test.ts": {
-    "default": 3531,
+    "default": 6794,
     "asan": 1478,
-    "musl": 5434,
     "windows": 4212
   },
   "aot/many-modules-in-place.test.ts": {
-    "default": 1376,
+    "default": 3602,
     "asan": 203,
-    "musl": 1414,
     "windows": 2139
   },
-  "aot/matcher-wait-ends-with-the-test.test.ts": {
-    "default": 2889,
-    "asan": 5978,
-    "musl": 3218,
-    "windows": 3133
+  "aot/many-simple-modules.test.ts": {
+    "default": 1744
+  },
+  "aot/many-site-caches/many-site-caches.test.ts": {
+    "default": 8259
   },
   "aot/member-names-in-executables.test.ts": {
-    "default": 1582,
+    "default": 32,
     "asan": 4690,
-    "musl": 1073,
     "windows": 2463
   },
+  "aot/members-of-globals.test.ts": {
+    "default": 24515
+  },
+  "aot/members-of-host-objects.test.ts": {
+    "default": 1201
+  },
+  "aot/members-that-walks-pass-by.test.ts": {
+    "default": 3217
+  },
+  "aot/memory-deny-write-execute-is-inherited.test.ts": {
+    "default": 10262
+  },
+  "aot/memory-deny-write-execute.test.ts": {
+    "default": 3117
+  },
+  "aot/memory-of-many-objects.test.ts": {
+    "default": 29
+  },
+  "aot/method-table-1.test.ts": {
+    "default": 8613
+  },
+  "aot/method-table-2.test.ts": {
+    "default": 849
+  },
+  "aot/method-table-3.test.ts": {
+    "default": 1584
+  },
+  "aot/method-table-4.test.ts": {
+    "default": 2341
+  },
+  "aot/methods-of-host-classes-are-entered-without-their-function-objects.test.ts": {
+    "default": 821
+  },
   "aot/minify-map.test.ts": {
-    "default": 3993,
+    "default": 2179,
     "asan": 16067,
-    "musl": 4145,
     "windows": 9749
+  },
+  "aot/mismatch-log.test.ts": {
+    "default": 3271
   },
   "aot/missing-builtin-export.test.ts": {
     "default": 53591,
@@ -1290,209 +3259,265 @@
     "musl": 16971,
     "windows": 19772
   },
+  "aot/missing-bun-types.test.ts": {
+    "default": 8384
+  },
+  "aot/missing-file-export.test.ts": {
+    "default": 104
+  },
   "aot/mockable-function-arguments.test.ts": {
-    "default": 167,
+    "default": 317,
     "asan": 919,
-    "musl": 188,
     "windows": 243
   },
   "aot/mocked-barrels.test.ts": {
-    "default": 1520,
+    "default": 1819,
     "asan": 4023,
-    "musl": 1423,
     "windows": 1620
   },
   "aot/mocked-classes-enums-constants.test.ts": {
-    "default": 685,
+    "default": 900,
     "asan": 2456,
-    "musl": 723,
     "windows": 767
   },
   "aot/mocked-commonjs-modules.test.ts": {
-    "default": 563,
+    "default": 477,
     "asan": 1674,
-    "musl": 522,
     "windows": 656
   },
   "aot/mocked-exports.test.ts": {
-    "default": 39487,
+    "default": 66465,
     "asan": 102831,
-    "musl": 47419,
     "windows": 53024
   },
   "aot/mocked-json-modules.test.ts": {
-    "default": 468,
+    "default": 409,
     "asan": 1314,
-    "musl": 417,
     "windows": 458
   },
   "aot/mocked-numbers.test.ts": {
-    "default": 250,
+    "default": 449,
     "asan": 1185,
-    "musl": 292,
     "windows": 314
   },
   "aot/mocked-reassigned-bindings.test.ts": {
-    "default": 152,
+    "default": 310,
     "asan": 956,
-    "musl": 165,
     "windows": 212
   },
   "aot/mocks-named-by-tests.test.ts": {
-    "default": 733,
+    "default": 1154,
     "asan": 2472,
-    "musl": 827,
     "windows": 932
   },
   "aot/mocks-with-test-runner-lookalikes.test.ts": {
-    "default": 344,
+    "default": 541,
     "asan": 1372,
-    "musl": 371,
     "windows": 444
   },
   "aot/module-exports-with-import-meta.test.ts": {
-    "default": 6959,
+    "default": 3349,
     "asan": 22720,
-    "musl": 6647,
     "windows": 8875
   },
+  "aot/module-graph-globals.test.ts": {
+    "default": 34
+  },
   "aot/module-not-found-names-importer.test.ts": {
-    "default": 6626,
+    "default": 7183,
     "asan": 17708,
-    "musl": 7022,
     "windows": 8360
   },
   "aot/modules-three-ways-1.test.ts": {
-    "default": 15089,
+    "default": 13936,
     "asan": 4114,
-    "musl": 12602,
     "windows": 29858
   },
   "aot/modules-three-ways-2.test.ts": {
-    "default": 15123,
+    "default": 8531,
     "asan": 4396,
-    "musl": 12493,
     "windows": 24546
   },
   "aot/modules-three-ways-3.test.ts": {
-    "default": 11507,
+    "default": 8552,
     "asan": 5307,
-    "musl": 11691,
     "windows": 28793
   },
   "aot/modules-three-ways-4.test.ts": {
-    "default": 15765,
+    "default": 9751,
     "asan": 5294,
-    "musl": 12609,
     "windows": 32110
   },
   "aot/modules.test.ts": {
-    "default": 56688,
+    "default": 11490,
     "asan": 22577,
-    "musl": 64443,
     "windows": 78072
   },
   "aot/mutated-programs-no-crash.test.ts": {
-    "default": 21579,
+    "default": 42279,
     "asan": 55023,
-    "musl": 32797,
     "windows": 24268
   },
   "aot/mutated-programs-same-output.test.ts": {
-    "default": 23455,
+    "default": 37895,
     "asan": 70835,
-    "musl": 21675,
     "windows": 20432
   },
   "aot/name-ids-adjacent-within-code-region.test.ts": {
-    "default": 1077,
+    "default": 1062,
     "asan": 4380,
-    "musl": 1070,
     "windows": 1056
   },
   "aot/name-ids-ordered-by-table-sites.test.ts": {
-    "default": 484,
+    "default": 267,
     "asan": 2511,
-    "musl": 605,
     "windows": 583
   },
+  "aot/name-reads-on-arrays-and-strings-avoid-runtime.test.ts": {
+    "default": 387
+  },
   "aot/names-longer-than-file-name-max.test.ts": {
-    "default": 3215,
+    "default": 1436,
     "asan": 10892,
-    "musl": 3509,
     "windows": 3594
   },
   "aot/names-longer-than-path-max.test.ts": {
-    "default": 5469,
+    "default": 9628,
     "asan": 15764,
-    "musl": 5885,
     "windows": 852
   },
+  "aot/names-of-literals.test.ts": {
+    "default": 412
+  },
+  "aot/names-out-of-enumerations.test.ts": {
+    "default": 829
+  },
+  "aot/names-read-from-a-loaded-barrel.test.ts": {
+    "default": 93
+  },
   "aot/namespace-awaited-in-loop.test.ts": {
-    "default": 1324,
+    "default": 924,
     "asan": 3904,
-    "musl": 1454,
     "windows": 3110
   },
   "aot/napi-addon.test.ts": {
-    "default": 11437,
+    "default": 6718,
     "asan": 29175,
-    "musl": 14265,
     "windows": 75
   },
+  "aot/narrow-reference-guards.test.ts": {
+    "default": 880
+  },
   "aot/narrowing.test.ts": {
-    "default": 10344,
+    "default": 836,
     "asan": 5511,
-    "musl": 11166,
     "windows": 20326
   },
+  "aot/native-addons.test.ts": {
+    "default": 17255
+  },
+  "aot/native-callbacks.test.ts": {
+    "default": 42748
+  },
+  "aot/native-fault-still-crashes.test.ts": {
+    "default": 805
+  },
   "aot/native-getters-alternating.test.ts": {
-    "default": 558,
+    "default": 1529,
     "asan": 2187,
-    "musl": 593,
     "windows": 1384
   },
   "aot/native-setter-stores-call-directly.test.ts": {
-    "default": 1032,
+    "default": 1086,
     "asan": 4153,
-    "musl": 1191,
     "windows": 2859
   },
   "aot/no-function-ends-in-call.test.ts": {
-    "default": 769,
+    "default": 505,
     "asan": 4063,
-    "musl": 931,
     "windows": 2124
   },
   "aot/no-new-executable-memory.test.ts": {
-    "default": 2070,
+    "default": 838,
     "asan": 6280,
-    "musl": 2310,
     "windows": 79
   },
   "aot/no-tsconfig-no-verbatim-module-syntax.test.ts": {
-    "default": 792,
+    "default": 536,
     "asan": 2905,
-    "musl": 777,
     "windows": 1435
   },
   "aot/node-http-overrides.test.ts": {
-    "default": 2080,
+    "default": 5440,
     "asan": 18096,
-    "musl": 2341,
     "windows": 3013
   },
+  "aot/node-http-probes.test.ts": {
+    "default": 8774
+  },
   "aot/non-fatal-reports.test.ts": {
-    "default": 1871,
+    "default": 639,
     "asan": 6830,
-    "musl": 1982,
     "windows": 1980
   },
+  "aot/nothing-that-is-thrown-in-a-shadow-realm-leaves-it-as-it-is.test.ts": {
+    "default": 1203
+  },
+  "aot/nothing-throws-because-of-a-type.test.ts": {
+    "default": 16419
+  },
+  "aot/null-where-the-type-says-none.test.ts": {
+    "default": 2259
+  },
+  "aot/object-census.test.ts": {
+    "default": 3247
+  },
+  "aot/objects-born-by-object-create.test.ts": {
+    "default": 1461
+  },
+  "aot/objects-finished-by-built-ins.test.ts": {
+    "default": 1130
+  },
+  "aot/objects-made-where-the-constructor-is-not-inlined-are-read-by-slot.test.ts": {
+    "default": 942
+  },
+  "aot/objects-that-are-not-what-their-layout-says.test.ts": {
+    "default": 5464
+  },
   "aot/objects.test.ts": {
-    "default": 35577,
+    "default": 24618,
     "asan": 39633,
-    "musl": 39530,
     "windows": 59225
+  },
+  "aot/one-line-changes-little-1.test.ts": {
+    "default": 39051
+  },
+  "aot/one-line-changes-little-2.test.ts": {
+    "default": 95355
+  },
+  "aot/one-line-changes-little-3.test.ts": {
+    "default": 66024
+  },
+  "aot/one-line-changes-little-4.test.ts": {
+    "default": 7446
+  },
+  "aot/one-line-changes-little-5.test.ts": {
+    "default": 61761
+  },
+  "aot/one-line-changes-little-6.test.ts": {
+    "default": 93700
+  },
+  "aot/one-line-changes-little-7.test.ts": {
+    "default": 92645
+  },
+  "aot/one-line-changes-little-8.test.ts": {
+    "default": 76310
+  },
+  "aot/one-odd-value.test.ts": {
+    "default": 475
+  },
+  "aot/one-test-made-twice-on-values-of-two-types.test.ts": {
+    "default": 683
   },
   "aot/open-layouts.test.ts": {
     "default": 20570,
@@ -1500,322 +3525,374 @@
     "musl": 11939,
     "windows": 16381
   },
+  "aot/options-about-what-tsc-writes.test.ts": {
+    "default": 3675
+  },
+  "aot/options-that-a-library-module-carries-out.test.ts": {
+    "default": 12834
+  },
+  "aot/order-of-entry-points.test.ts": {
+    "default": 1782
+  },
   "aot/other-realm-in-place.test.ts": {
-    "default": 4083,
+    "default": 1647,
     "asan": 11274,
-    "musl": 4435,
     "windows": 4874
   },
+  "aot/own-containers.test.ts": {
+    "default": 34
+  },
   "aot/own-paths.test.ts": {
-    "default": 3235,
+    "default": 638,
     "asan": 9592,
-    "musl": 3659,
     "windows": 5495
   },
+  "aot/own-properties-copied-by-descriptors.test.ts": {
+    "default": 3044
+  },
   "aot/packages-arithmetic.test.ts": {
-    "default": 4184,
+    "default": 2346,
     "asan": 10136,
-    "musl": 4102,
     "windows": 8662
   },
   "aot/packages-builtin-names.test.ts": {
-    "default": 1078,
+    "default": 1076,
     "asan": 3601,
-    "musl": 1186,
     "windows": 2035
   },
   "aot/packages-class-idioms.test.ts": {
-    "default": 33689,
+    "default": 28589,
     "asan": 92821,
-    "musl": 35931,
     "windows": 48461
   },
   "aot/packages-commonjs-interop-1.test.ts": {
-    "default": 5100,
+    "default": 2764,
     "asan": 12858,
-    "musl": 4617,
     "windows": 9593
   },
   "aot/packages-commonjs-interop-2.test.ts": {
-    "default": 4789,
+    "default": 3251,
     "asan": 11909,
-    "musl": 4941,
     "windows": 10018
   },
   "aot/packages-commonjs-interop-3.test.ts": {
-    "default": 5072,
+    "default": 2650,
     "asan": 13943,
-    "musl": 4902,
     "windows": 10623
   },
   "aot/packages-computed-specifiers.test.ts": {
-    "default": 2169,
+    "default": 1085,
     "asan": 6294,
-    "musl": 2287,
     "windows": 4383
   },
   "aot/packages-create-require.test.ts": {
-    "default": 2390,
+    "default": 443,
     "asan": 6753,
-    "musl": 2279,
     "windows": 3292
   },
   "aot/packages-cycles-and-order.test.ts": {
-    "default": 3180,
+    "default": 1430,
     "asan": 6436,
-    "musl": 2594,
     "windows": 5500
   },
   "aot/packages-data-files.test.ts": {
-    "default": 1533,
+    "default": 888,
     "asan": 4481,
-    "musl": 1625,
     "windows": 3206
   },
   "aot/packages-export-styles-1.test.ts": {
-    "default": 5572,
+    "default": 3148,
     "asan": 13537,
-    "musl": 5511,
     "windows": 11636
   },
   "aot/packages-export-styles-2.test.ts": {
-    "default": 3612,
+    "default": 3159,
     "asan": 9986,
-    "musl": 3660,
     "windows": 8075
   },
   "aot/packages-export-styles-3.test.ts": {
-    "default": 5538,
+    "default": 3241,
     "asan": 15892,
-    "musl": 6283,
     "windows": 12842
   },
   "aot/packages-export-styles-4.test.ts": {
-    "default": 4259,
+    "default": 2427,
     "asan": 9986,
-    "musl": 3810,
     "windows": 8138
   },
   "aot/packages-exports-conditions-1.test.ts": {
-    "default": 4360,
+    "default": 1957,
     "asan": 9403,
-    "musl": 3593,
     "windows": 7893
   },
   "aot/packages-exports-conditions-2.test.ts": {
-    "default": 4657,
+    "default": 1999,
     "asan": 11255,
-    "musl": 4259,
     "windows": 9479
   },
   "aot/packages-exports-conditions-3.test.ts": {
-    "default": 7699,
+    "default": 2563,
     "asan": 13644,
-    "musl": 5317,
     "windows": 10037
   },
   "aot/packages-import-aliases.test.ts": {
-    "default": 3039,
+    "default": 1486,
     "asan": 8802,
-    "musl": 3092,
     "windows": 6737
   },
   "aot/packages-import-meta.test.ts": {
-    "default": 2548,
+    "default": 696,
     "asan": 8316,
-    "musl": 3116,
     "windows": 3506
   },
   "aot/packages-library-idioms.test.ts": {
-    "default": 3744,
+    "default": 3447,
     "asan": 12406,
-    "musl": 3490,
     "windows": 6774
   },
   "aot/packages-main-field-1.test.ts": {
-    "default": 7239,
+    "default": 4105,
     "asan": 17811,
-    "musl": 7102,
     "windows": 10258
   },
   "aot/packages-main-field-2.test.ts": {
-    "default": 6321,
+    "default": 4352,
     "asan": 16111,
-    "musl": 6522,
     "windows": 12325
   },
   "aot/packages-namespace-keys.test.ts": {
-    "default": 29800,
+    "default": 4726,
     "asan": 24662,
-    "musl": 12435,
     "windows": 26112
   },
   "aot/packages-package-versions.test.ts": {
-    "default": 638,
+    "default": 437,
     "asan": 2398,
-    "musl": 581,
     "windows": 1366
   },
   "aot/packages-patching-globals-1.test.ts": {
-    "default": 20931,
+    "default": 16388,
     "asan": 58604,
-    "musl": 24202,
     "windows": 38640
   },
   "aot/packages-patching-globals-2.test.ts": {
-    "default": 31738,
+    "default": 17510,
     "asan": 83840,
-    "musl": 36763,
     "windows": 43025
   },
   "aot/packages-patching-node.test.ts": {
-    "default": 55638,
+    "default": 53570,
     "asan": 122387,
-    "musl": 55875,
     "windows": 63410
   },
   "aot/packages-require-esm.test.ts": {
-    "default": 1993,
+    "default": 1690,
     "asan": 5059,
-    "musl": 1967,
     "windows": 3502
   },
   "aot/packages-shared-state.test.ts": {
-    "default": 1439,
+    "default": 827,
     "asan": 4236,
-    "musl": 1663,
     "windows": 3423
   },
   "aot/packages-star-exports.test.ts": {
-    "default": 2558,
+    "default": 1469,
     "asan": 6426,
-    "musl": 2317,
     "windows": 4860
   },
   "aot/packages-subpaths.test.ts": {
-    "default": 7185,
+    "default": 3196,
     "asan": 17805,
-    "musl": 7109,
     "windows": 9459
   },
   "aot/packages-symlinks.test.ts": {
-    "default": 673,
+    "default": 414,
     "asan": 2276,
-    "musl": 600,
     "windows": 1548
   },
   "aot/packages-throwing-modules.test.ts": {
-    "default": 568,
+    "default": 434,
     "asan": 2474,
-    "musl": 631,
     "windows": 1583
   },
   "aot/packages-top-level-await.test.ts": {
-    "default": 1000,
+    "default": 662,
     "asan": 3291,
-    "musl": 1117,
     "windows": 2256
   },
   "aot/packages-unused-imports.test.ts": {
-    "default": 2208,
+    "default": 1133,
     "asan": 5280,
-    "musl": 2115,
     "windows": 4289
   },
   "aot/packages-wrong-declarations-1.test.ts": {
-    "default": 3203,
+    "default": 1838,
     "asan": 8207,
-    "musl": 2865,
     "windows": 6420
   },
   "aot/packages-wrong-declarations-2.test.ts": {
-    "default": 5919,
+    "default": 3409,
     "asan": 14655,
-    "musl": 5705,
     "windows": 10089
   },
+  "aot/packed-relocations.test.ts": {
+    "default": 92
+  },
+  "aot/paired-returns.test.ts": {
+    "default": 34
+  },
+  "aot/parsed-records.test.ts": {
+    "default": 33
+  },
+  "aot/paths-of-the-tsconfigs-above-a-file.test.ts": {
+    "default": 1716
+  },
+  "aot/perf/copies-in-cold-code.test.ts": {
+    "default": 697
+  },
+  "aot/perf/equivalent-forms.test.ts": {
+    "default": 660
+  },
   "aot/perf/front-end.test.ts": {
-    "default": 28,
+    "default": 23,
     "asan": 228,
-    "musl": 33,
     "windows": 71
   },
   "aot/perf/idioms.test.ts": {
-    "default": 29,
+    "default": 177928,
     "asan": 209,
-    "musl": 37,
     "windows": 49
   },
+  "aot/perf/lone-reads-in-cold-code.test.ts": {
+    "default": 837
+  },
+  "aot/perf/operations.test.ts": {
+    "default": 130300
+  },
   "aot/perf/serial-time.test.ts": {
-    "default": 18180,
+    "default": 11940,
     "asan": 66044,
-    "musl": 19289,
     "windows": 24520
   },
+  "aot/perf/small-benchmarks.test.ts": {
+    "default": 25068
+  },
+  "aot/perf/start.test.ts": {
+    "default": 12171
+  },
+  "aot/perf/threads-of-a-build.test.ts": {
+    "default": 990
+  },
+  "aot/plain-bun-is-unchanged.test.ts": {
+    "default": 70
+  },
   "aot/plain-bun.test.ts": {
-    "default": 600,
+    "default": 29,
     "asan": 9960,
-    "musl": 647,
     "windows": 784
   },
+  "aot/plain-english.test.ts": {
+    "default": 1492
+  },
   "aot/plugin-answer-timing.test.ts": {
-    "default": 28684,
+    "default": 44821,
     "asan": 27139,
-    "musl": 24618,
     "windows": 30296
   },
   "aot/preload-under-other-tsconfig.test.ts": {
-    "default": 1570,
+    "default": 763,
     "asan": 4564,
-    "musl": 1855,
     "windows": 1782
   },
+  "aot/primordials-are-bound-by-name.test.ts": {
+    "default": 10718
+  },
+  "aot/printed-errors-hold-host-objects.test.ts": {
+    "default": 25319
+  },
+  "aot/printed-host-objects-that-rows-name.test.ts": {
+    "default": 13445
+  },
   "aot/private-class-members.test.ts": {
-    "default": 41966,
+    "default": 11784,
     "asan": 15183,
-    "musl": 50338,
     "windows": 70697
   },
   "aot/private-field-stores-after-full-gcs.test.ts": {
-    "default": 1935,
+    "default": 517,
     "asan": 4090,
-    "musl": 1211,
     "windows": 1760
   },
+  "aot/private-fields-stay-out-of-the-run-time.test.ts": {
+    "default": 2275
+  },
+  "aot/process-platform-folds-1.test.ts": {
+    "default": 25936
+  },
+  "aot/process-platform-folds-2.test.ts": {
+    "default": 94165
+  },
+  "aot/process-platform-folds-3.test.ts": {
+    "default": 125206
+  },
+  "aot/process-platform-folds-4.test.ts": {
+    "default": 18896
+  },
   "aot/process-platform-run-and-compile.test.ts": {
-    "default": 6128,
+    "default": 6196,
     "asan": 17604,
-    "musl": 7289,
     "windows": 8528
   },
+  "aot/program-files-imported-by-alias.test.ts": {
+    "default": 859
+  },
+  "aot/programs-that-stopped-a-validating-build-2.test.ts": {
+    "default": 57639
+  },
+  "aot/programs-that-stopped-a-validating-build-3.test.ts": {
+    "default": 49362
+  },
   "aot/project-files-outside-bundle.test.ts": {
-    "default": 10622,
+    "default": 6429,
     "asan": 31713,
-    "musl": 10649,
     "windows": 14085
   },
+  "aot/proofs-checked-at-run-time.test.ts": {
+    "default": 2133
+  },
+  "aot/property-run-site-cache.test.ts": {
+    "default": 759
+  },
+  "aot/prototype-reads-on-functions-with-properties-avoid-runtime.test.ts": {
+    "default": 32
+  },
   "aot/react-compiler.test.ts": {
-    "default": 7774,
+    "default": 8466,
     "asan": 11637,
-    "musl": 4398,
     "windows": 7704
   },
+  "aot/reads-through-class-objects-avoid-runtime.test.ts": {
+    "default": 412
+  },
+  "aot/reads-through-functions-with-properties-avoid-runtime.test.ts": {
+    "default": 411
+  },
+  "aot/real-apps/class-reexported-as-a-type.test.ts": {
+    "default": 1674
+  },
   "aot/real-apps/programs.test.ts": {
-    "default": 7176,
+    "default": 8543,
     "asan": 27950,
-    "musl": 8180,
     "windows": 15424
   },
   "aot/real-apps/real-apps.test.ts": {
-    "default": 64,
+    "default": 68,
     "asan": 377,
-    "musl": 67,
     "windows": 83
   },
   "aot/real-apps/test-runs.test.ts": {
-    "default": 1421,
+    "default": 1364,
     "asan": 5159,
-    "musl": 1274,
     "windows": 1479
   },
   "aot/real-apps/untyped-company.test.ts": {
@@ -1825,309 +3902,406 @@
     "windows": 11472
   },
   "aot/record-type-order.test.ts": {
-    "default": 1084,
+    "default": 762,
     "asan": 4422,
-    "musl": 1219,
     "windows": 2701
   },
+  "aot/records-are-ratchets.test.ts": {
+    "default": 33
+  },
   "aot/recursive-typed-functions-build-time.test.ts": {
-    "default": 1451,
+    "default": 2508,
     "asan": 1547,
-    "musl": 1088,
     "windows": 1041
   },
   "aot/reexport-only-modules-in-place.test.ts": {
-    "default": 3376,
+    "default": 3160,
     "asan": 10033,
-    "musl": 4044,
     "windows": 3690
   },
+  "aot/references-of-a-tsconfig-above.test.ts": {
+    "default": 190
+  },
   "aot/regexp-jit-memory.test.ts": {
-    "default": 1070,
+    "default": 1071,
     "asan": 3647,
-    "musl": 1082,
     "windows": 68
   },
   "aot/regexp-literals-and-interpreter.test.ts": {
-    "default": 1539,
+    "default": 741,
     "asan": 5649,
-    "musl": 1640,
     "windows": 3845
   },
+  "aot/relational-summaries-collector-verifies.test.ts": {
+    "default": 5968
+  },
+  "aot/relational-summaries-under-collections.test.ts": {
+    "default": 6317
+  },
+  "aot/relational-summaries-validated.test.ts": {
+    "default": 10799
+  },
+  "aot/relational-summaries-without-inlining.test.ts": {
+    "default": 5403
+  },
+  "aot/relational-summaries.test.ts": {
+    "default": 4092
+  },
+  "aot/relations-at-random-under-collections.test.ts": {
+    "default": 4503
+  },
+  "aot/relations-at-random-without-inlining.test.ts": {
+    "default": 3116
+  },
+  "aot/relations-at-random.test.ts": {
+    "default": 2279
+  },
+  "aot/relations-who-keeps.test.ts": {
+    "default": 41311
+  },
+  "aot/removable-statements.test.ts": {
+    "default": 116
+  },
+  "aot/removed-built-in-inside-try.test.ts": {
+    "default": 601
+  },
   "aot/repeated-builds.test.ts": {
-    "default": 38809,
+    "default": 116337,
     "asan": 14548,
-    "musl": 34640,
     "windows": 54886
   },
   "aot/request-socket-detached.test.ts": {
-    "default": 1404,
+    "default": 3847,
     "asan": 18404,
-    "musl": 1496,
     "windows": 2283
   },
   "aot/request-with-body.test.ts": {
-    "default": 3332,
+    "default": 4849,
     "asan": 21029,
-    "musl": 3593,
     "windows": 4246
   },
   "aot/request-without-body.test.ts": {
-    "default": 8994,
+    "default": 9551,
     "asan": 41053,
-    "musl": 10210,
     "windows": 11668
   },
-  "aot/require-cache-alias.test.ts": {
-    "default": 20938,
-    "asan": 48173,
-    "musl": 22555,
-    "windows": 21243
+  "aot/requests-after-eden-collections-learn-nothing-again.test.ts": {
+    "default": 3748
   },
   "aot/require-dirname-plus-literal.test.ts": {
-    "default": 7900,
+    "default": 4835,
     "asan": 27505,
-    "musl": 8321,
     "windows": 19418
   },
   "aot/require-identity.test.ts": {
-    "default": 1911,
+    "default": 660,
     "asan": 6572,
-    "musl": 2349,
     "windows": 2552
   },
   "aot/require-spellings.test.ts": {
-    "default": 51089,
+    "default": 37808,
     "asan": 62409,
-    "musl": 29066,
     "windows": 43481
   },
   "aot/required-modules-in-single-store-variables.test.ts": {
-    "default": 10996,
+    "default": 6221,
     "asan": 25086,
-    "musl": 9492,
     "windows": 14934
   },
-  "aot/resolve-filename-replaced.test.ts": {
-    "default": 9194,
-    "asan": 24359,
-    "musl": 11636,
-    "windows": 11058
+  "aot/resolver/exports-conditions.test.ts": {
+    "default": 51
+  },
+  "aot/resolver/exports-patterns.test.ts": {
+    "default": 42
+  },
+  "aot/resolver/extension-order.test.ts": {
+    "default": 70
+  },
+  "aot/resolver/file-name-case.test.ts": {
+    "default": 37
+  },
+  "aot/resolver/installed-packages.test.ts": {
+    "default": 26274
+  },
+  "aot/resolver/main-fields.test.ts": {
+    "default": 40
+  },
+  "aot/resolver/malformed-manifests.test.ts": {
+    "default": 44
+  },
+  "aot/resolver/package-imports.test.ts": {
+    "default": 40
+  },
+  "aot/resolver/self-reference-and-node-path.test.ts": {
+    "default": 70
+  },
+  "aot/resolver/symlinks.test.ts": {
+    "default": 48
+  },
+  "aot/resolver/tsconfig-paths.test.ts": {
+    "default": 84
+  },
+  "aot/resolver/typescript-extensions.test.ts": {
+    "default": 39
+  },
+  "aot/roads-to-members-of-the-runtime-1.test.ts": {
+    "default": 31178
+  },
+  "aot/roads-to-members-of-the-runtime-2.test.ts": {
+    "default": 66898
+  },
+  "aot/roads-to-members-of-the-runtime-3.test.ts": {
+    "default": 42946
+  },
+  "aot/roads-to-members-of-the-runtime-4.test.ts": {
+    "default": 119497
+  },
+  "aot/root-dir-has-no-say.test.ts": {
+    "default": 746
+  },
+  "aot/rules-about-the-module-format-that-tsc-emits.test.ts": {
+    "default": 9776
   },
   "aot/run-aot-accepts-matching-arguments.test.ts": {
-    "default": 1145,
+    "default": 3637,
     "asan": 3478,
-    "musl": 1254,
     "windows": 1239
   },
   "aot/run-aot-accepts-matching-stores.test.ts": {
-    "default": 325,
+    "default": 521,
     "asan": 1275,
-    "musl": 1044,
     "windows": 432
   },
   "aot/run-aot-analyzes-preloads.test.ts": {
-    "default": 697,
+    "default": 649,
     "asan": 3407,
-    "musl": 758,
     "windows": 953
   },
   "aot/run-aot-array-subclass-constructor-inlined.test.ts": {
-    "default": 545,
+    "default": 1440,
     "asan": 3370,
-    "musl": 590,
     "windows": 673
   },
   "aot/run-aot-checks-field-stores.test.ts": {
-    "default": 712,
+    "default": 1741,
     "asan": 2502,
-    "musl": 843,
     "windows": 899
   },
   "aot/run-aot-fails-file-with-type-error.test.ts": {
-    "default": 1653,
+    "default": 1022,
     "asan": 6380,
-    "musl": 1868,
     "windows": 1896
   },
   "aot/run-aot-fixed-class-layouts.test.ts": {
-    "default": 4704,
+    "default": 9065,
     "asan": 10348,
-    "musl": 4860,
     "windows": 4756
   },
-  "aot/run-aot-frozen-arrays-jit-2.test.ts": {
-    "default": 16574,
-    "asan": 282742,
-    "musl": 19861,
-    "windows": 16792
+  "aot/run-aot-frozen-arrays-2.test.ts": {
+    "default": 15575
   },
-  "aot/run-aot-frozen-arrays-jit-3.test.ts": {
-    "default": 19570,
-    "asan": 282844,
-    "musl": 21989,
-    "windows": 19579
+  "aot/run-aot-frozen-arrays-3.test.ts": {
+    "default": 16343
   },
-  "aot/run-aot-frozen-arrays-jit.test.ts": {
-    "default": 16589,
-    "asan": 287963,
-    "musl": 18684,
-    "windows": 18210
-  },
-  "aot/run-aot-jit.test.ts": {
-    "default": 11656,
-    "asan": 52383,
-    "musl": 12061,
-    "windows": 12000
+  "aot/run-aot-frozen-arrays.test.ts": {
+    "default": 15654
   },
   "aot/run-aot-keeps-parentheses.test.ts": {
-    "default": 1091,
+    "default": 2225,
     "asan": 3586,
-    "musl": 1099,
     "windows": 1073
   },
-  "aot/run-aot-logs-thrown-errors.test.ts": {
-    "default": 584,
-    "asan": 3042,
-    "musl": 625,
-    "windows": 815
-  },
   "aot/run-aot-matches-executable.test.ts": {
-    "default": 1538,
+    "default": 3372,
     "asan": 4681,
-    "musl": 2203,
     "windows": 1914
   },
-  "aot/run-aot-modified-arrays-every-tier.test.ts": {
-    "default": 782,
-    "asan": 8150,
-    "musl": 929,
-    "windows": 1123
+  "aot/run-aot-modified-arrays.test.ts": {
+    "default": 2440
   },
-  "aot/run-aot-reads-elements.test.ts": {
-    "default": 575,
-    "asan": 3335,
-    "musl": 658,
-    "windows": 774
-  },
-  "aot/run-aot-same-messages-every-tier.test.ts": {
-    "default": 7061,
-    "asan": 97738,
-    "musl": 8614,
-    "windows": 8334
+  "aot/run-aot-same-messages-every-iteration.test.ts": {
+    "default": 4655
   },
   "aot/run-aot-tail-calls.test.ts": {
-    "default": 855,
+    "default": 1091,
     "asan": 4558,
-    "musl": 880,
     "windows": 1038
   },
   "aot/run-aot-test-runner-globals.test.ts": {
-    "default": 182,
+    "default": 258,
     "asan": 1025,
-    "musl": 202,
     "windows": 233
   },
   "aot/run-aot-unused-parameter.test.ts": {
-    "default": 218,
+    "default": 1022,
     "asan": 1241,
-    "musl": 233,
     "windows": 307
   },
+  "aot/run-aot.test.ts": {
+    "default": 13015
+  },
+  "aot/run-time-plugins-and-compiled-modules.test.ts": {
+    "default": 4826
+  },
+  "aot/runtime-caches.test.ts": {
+    "default": 6016
+  },
+  "aot/runtime-counts-file.test.ts": {
+    "default": 748
+  },
   "aot/runtime-evaluated-functions.test.ts": {
-    "default": 10454,
+    "default": 3268,
     "asan": 33513,
-    "musl": 12328,
     "windows": 19401
   },
+  "aot/runtime-use-1.test.ts": {
+    "default": 97135
+  },
+  "aot/runtime-use-2.test.ts": {
+    "default": 31388
+  },
+  "aot/runtime-use-3.test.ts": {
+    "default": 46711
+  },
+  "aot/runtime-use-4.test.ts": {
+    "default": 62013
+  },
+  "aot/runtime-use-hosts-1.test.ts": {
+    "default": 112830
+  },
+  "aot/runtime-use-hosts-2.test.ts": {
+    "default": 20855
+  },
+  "aot/runtime-use-hosts-3.test.ts": {
+    "default": 30523
+  },
+  "aot/runtime-use-of-built-in-code.test.ts": {
+    "default": 35176
+  },
+  "aot/runtime-use-of-engine-functions.test.ts": {
+    "default": 1214
+  },
+  "aot/runtime-use-prototypes.test.ts": {
+    "default": 22161
+  },
+  "aot/runtime-use-world.test.ts": {
+    "default": 201362
+  },
+  "aot/sabotages.test.ts": {
+    "default": 49413
+  },
+  "aot/same-program-at-a-limit-at-any-thread-count.test.ts": {
+    "default": 21890
+  },
+  "aot/same-program-at-any-thread-count.test.ts": {
+    "default": 8158
+  },
+  "aot/same-program-whoever-names-a-type-first.test.ts": {
+    "default": 16525
+  },
+  "aot/sampling-profiler-tier-breakdown.test.ts": {
+    "default": 1012
+  },
+  "aot/server-handler-bodies-parsed-by-type.test.ts": {
+    "default": 1146
+  },
   "aot/server-response-own-properties.test.ts": {
-    "default": 1414,
+    "default": 4145,
     "asan": 16806,
-    "musl": 1641,
     "windows": 2800
   },
   "aot/servers/api.test.ts": {
-    "default": 32,
+    "default": 122,
     "asan": 356,
-    "musl": 42,
     "windows": 60
   },
+  "aot/servers/budgets.test.ts": {
+    "default": 33
+  },
   "aot/servers/effect.test.ts": {
-    "default": 37,
+    "default": 32,
     "asan": 363,
-    "musl": 37,
     "windows": 68
   },
   "aot/servers/features.test.ts": {
-    "default": 37,
+    "default": 33,
     "asan": 364,
-    "musl": 39,
     "windows": 69
   },
   "aot/servers/layers.test.ts": {
-    "default": 268,
+    "default": 204,
     "asan": 387,
-    "musl": 261,
     "windows": 2362
   },
+  "aot/servers/schedules.test.ts": {
+    "default": 30
+  },
   "aot/servers/servers.test.ts": {
-    "default": 33,
+    "default": 611,
     "asan": 384,
-    "musl": 41,
     "windows": 60
   },
   "aot/shell-completions-list-flags.test.ts": {
-    "default": 34,
+    "default": 25,
     "asan": 317,
-    "musl": 36,
     "windows": 63
   },
+  "aot/site-records-every-function-cold.test.ts": {
+    "default": 8133
+  },
+  "aot/site-records.test.ts": {
+    "default": 3910
+  },
   "aot/small-benchmarks.test.ts": {
-    "default": 9061,
+    "default": 32,
     "asan": 4797,
-    "musl": 7867,
     "windows": 11884
   },
   "aot/small-program-memory.test.ts": {
-    "default": 446,
+    "default": 249,
     "asan": 1837,
-    "musl": 492,
     "windows": 65
   },
+  "aot/small-programs-stay-closed.test.ts": {
+    "default": 4883
+  },
+  "aot/sort-comparators-are-inlined.test.ts": {
+    "default": 1086
+  },
+  "aot/source-lines-under-an-error.test.ts": {
+    "default": 453
+  },
   "aot/specifiers-with-query.test.ts": {
-    "default": 5492,
+    "default": 31,
     "asan": 14683,
-    "musl": 5805,
     "windows": 5713
   },
   "aot/spies-on-builtin-prototypes.test.ts": {
-    "default": 1052,
+    "default": 771,
     "asan": 3261,
-    "musl": 1167,
     "windows": 1369
   },
   "aot/spies-on-builtins.test.ts": {
-    "default": 765,
+    "default": 1306,
     "asan": 2723,
-    "musl": 894,
     "windows": 989
   },
+  "aot/sql-refused-connection.test.ts": {
+    "default": 1738
+  },
   "aot/sql-typed-rows.test.ts": {
-    "default": 3158,
+    "default": 1735,
     "asan": 8265,
-    "musl": 2541,
     "windows": 4476
   },
   "aot/stack-frame-paths.test.ts": {
-    "default": 5954,
+    "default": 4113,
     "asan": 14354,
-    "musl": 5817,
     "windows": 8027
   },
   "aot/startup-scaling/startup-scaling-1.test.ts": {
-    "default": 115013,
+    "default": 84724,
     "asan": 356,
-    "musl": 37658,
     "windows": 65
   },
   "aot/startup-scaling/startup-scaling-2.test.ts": {
@@ -2143,112 +4317,313 @@
     "windows": 70
   },
   "aot/startup-scaling/startup-scaling-4.test.ts": {
-    "default": 99159,
+    "default": 63860,
     "asan": 328,
-    "musl": 10792,
     "windows": 56
   },
   "aot/startup-scaling/startup-scaling-in-place.test.ts": {
-    "default": 102865,
+    "default": 54106,
     "asan": 330,
-    "musl": 8208,
     "windows": 65
   },
+  "aot/static-modules-1.test.ts": {
+    "default": 10365
+  },
+  "aot/static-modules-generated.test.ts": {
+    "default": 78244
+  },
+  "aot/static-modules-one-odd-file.test.ts": {
+    "default": 17174
+  },
+  "aot/static-modules-slope.test.ts": {
+    "default": 30098
+  },
   "aot/static-tls-size.test.ts": {
-    "default": 154,
+    "default": 77,
     "asan": 780,
-    "musl": 156,
     "windows": 50
   },
+  "aot/stored-outputs-say-something.test.ts": {
+    "default": 5551
+  },
+  "aot/stores-nobody-can-place.test.ts": {
+    "default": 1313
+  },
+  "aot/stores-to-class-objects-avoid-runtime.test.ts": {
+    "default": 409
+  },
   "aot/strings-1.test.ts": {
-    "default": 94332,
+    "default": 10704,
     "asan": 21213,
-    "musl": 104284,
     "windows": 128031
   },
   "aot/strings-2.test.ts": {
-    "default": 98487,
+    "default": 12382,
     "asan": 55083,
-    "musl": 98724,
     "windows": 122519
   },
+  "aot/structural-types-1.test.ts": {
+    "default": 7572
+  },
+  "aot/structural-types-10.test.ts": {
+    "default": 3288
+  },
+  "aot/structural-types-12.test.ts": {
+    "default": 4528
+  },
+  "aot/structural-types-13.test.ts": {
+    "default": 9195
+  },
+  "aot/structural-types-14.test.ts": {
+    "default": 5910
+  },
+  "aot/structural-types-15.test.ts": {
+    "default": 4424
+  },
+  "aot/structural-types-17.test.ts": {
+    "default": 3381
+  },
+  "aot/structural-types-18.test.ts": {
+    "default": 4788
+  },
+  "aot/structural-types-19.test.ts": {
+    "default": 4178
+  },
+  "aot/structural-types-2.test.ts": {
+    "default": 3688
+  },
+  "aot/structural-types-20.test.ts": {
+    "default": 5352
+  },
+  "aot/structural-types-21.test.ts": {
+    "default": 3020
+  },
+  "aot/structural-types-22.test.ts": {
+    "default": 7702
+  },
+  "aot/structural-types-23.test.ts": {
+    "default": 4655
+  },
+  "aot/structural-types-24.test.ts": {
+    "default": 4995
+  },
+  "aot/structural-types-25.test.ts": {
+    "default": 5187
+  },
+  "aot/structural-types-26.test.ts": {
+    "default": 6898
+  },
+  "aot/structural-types-27.test.ts": {
+    "default": 7013
+  },
+  "aot/structural-types-28.test.ts": {
+    "default": 7124
+  },
+  "aot/structural-types-29.test.ts": {
+    "default": 3137
+  },
+  "aot/structural-types-3.test.ts": {
+    "default": 4479
+  },
+  "aot/structural-types-30.test.ts": {
+    "default": 4026
+  },
+  "aot/structural-types-31.test.ts": {
+    "default": 4448
+  },
+  "aot/structural-types-32.test.ts": {
+    "default": 4972
+  },
+  "aot/structural-types-4.test.ts": {
+    "default": 5990
+  },
+  "aot/structural-types-5.test.ts": {
+    "default": 5348
+  },
+  "aot/structural-types-6.test.ts": {
+    "default": 8998
+  },
+  "aot/structural-types-7.test.ts": {
+    "default": 4013
+  },
+  "aot/structural-types-8.test.ts": {
+    "default": 6067
+  },
+  "aot/structural-types-9.test.ts": {
+    "default": 8892
+  },
+  "aot/summaries-at-call-sites.test.ts": {
+    "default": 786
+  },
+  "aot/summary-line.test.ts": {
+    "default": 11362
+  },
+  "aot/symbol-fields.test.ts": {
+    "default": 4840
+  },
+  "aot/symbol-reads-through-class-prototypes-avoid-runtime.test.ts": {
+    "default": 396
+  },
+  "aot/symbols-of-a-module-loaded-late-name-fields.test.ts": {
+    "default": 1166
+  },
+  "aot/symbols-of-compiled-functions.test.ts": {
+    "default": 1145
+  },
+  "aot/tail-calls-of-library-built-ins-are-tested.test.ts": {
+    "default": 674
+  },
   "aot/test-files-self-skip.test.ts": {
-    "default": 147,
+    "default": 16641,
     "asan": 641,
-    "musl": 159,
     "windows": 261
   },
   "aot/test-globals-beside-a-type-import.test.ts": {
-    "default": 1674,
+    "default": 1436,
     "asan": 6654,
-    "musl": 1787,
     "windows": 1917
   },
   "aot/test-runner-globals.test.ts": {
-    "default": 853,
+    "default": 663,
     "asan": 3646,
-    "musl": 883,
     "windows": 1208
   },
+  "aot/test-runner-names-without-an-import.test.ts": {
+    "default": 5556
+  },
+  "aot/the-atoms-a-worker-makes-of-the-programs-texts-end-with-the-worker.test.ts": {
+    "default": 3796
+  },
+  "aot/the-first-miss-of-a-name-files-nothing.test.ts": {
+    "default": 413
+  },
+  "aot/the-typescript-compiler-under-checking-flags.test.ts": {
+    "default": 37551
+  },
+  "aot/thread-sanitizer.test.ts": {
+    "default": 29
+  },
+  "aot/transpiler-parity.test.ts": {
+    "default": 90156
+  },
+  "aot/tree-shaking.test.ts": {
+    "default": 11558
+  },
+  "aot/trim-report-first-pages.test.ts": {
+    "default": 6400
+  },
+  "aot/trim-report-from-every-command.test.ts": {
+    "default": 1459
+  },
+  "aot/trim-report-locales.test.ts": {
+    "default": 4578
+  },
+  "aot/trim-report-places.test.ts": {
+    "default": 21683
+  },
+  "aot/trimmed-against-whole-1.test.ts": {
+    "default": 144716
+  },
+  "aot/trimmed-against-whole-2.test.ts": {
+    "default": 111254
+  },
+  "aot/trimmed-against-whole-3.test.ts": {
+    "default": 48359
+  },
+  "aot/trimmed-against-whole-4.test.ts": {
+    "default": 109869
+  },
+  "aot/trimmed-is-whole/environment.test.ts": {
+    "default": 231605
+  },
+  "aot/trimmed-matches-untrimmed-1.test.ts": {
+    "default": 63437
+  },
+  "aot/trimmed-matches-untrimmed-2.test.ts": {
+    "default": 96911
+  },
+  "aot/trimmed-matches-untrimmed-3.test.ts": {
+    "default": 94132
+  },
   "aot/tsconfig-governs-each-file.test.ts": {
-    "default": 7067,
+    "default": 11920,
     "asan": 37901,
-    "musl": 7440,
     "windows": 11678
   },
+  "aot/two-builds-give-the-same-bytes.test.ts": {
+    "default": 2793
+  },
   "aot/type-error-positions.test.ts": {
-    "default": 31195,
+    "default": 24329,
     "asan": 78404,
-    "musl": 34647,
     "windows": 31065
   },
   "aot/type-errors-in-reached-code.test.ts": {
-    "default": 38276,
+    "default": 5400,
     "asan": 49434,
-    "musl": 38516,
     "windows": 5632
   },
+  "aot/type-errors-on-every-thread-count.test.ts": {
+    "default": 5130
+  },
+  "aot/type-library-that-is-not-installed.test.ts": {
+    "default": 623
+  },
+  "aot/type-parameters.test.ts": {
+    "default": 32
+  },
+  "aot/type-predicates.test.ts": {
+    "default": 18089
+  },
   "aot/type-rules.test.ts": {
-    "default": 113462,
+    "default": 14511,
     "asan": 31285,
-    "musl": 136683,
     "windows": 166120
   },
   "aot/typed-builtin-modules.test.ts": {
-    "default": 2308,
+    "default": 31,
     "asan": 11508,
-    "musl": 2853,
     "windows": 3636
   },
   "aot/typed-objects-1.test.ts": {
-    "default": 91525,
+    "default": 13301,
     "asan": 32627,
-    "musl": 106917,
     "windows": 152227
   },
   "aot/typed-objects-2.test.ts": {
-    "default": 116290,
+    "default": 17467,
     "asan": 25323,
-    "musl": 126236,
     "windows": 162292
   },
   "aot/typed-objects-3.test.ts": {
-    "default": 86290,
+    "default": 15141,
     "asan": 19597,
-    "musl": 86708,
     "windows": 131479
   },
   "aot/typed-packages-wide-trees.test.ts": {
-    "default": 34,
+    "default": 339,
     "asan": 359,
-    "musl": 38,
     "windows": 57
   },
   "aot/typed-packages.test.ts": {
-    "default": 7982,
+    "default": 7985,
     "asan": 26586,
-    "musl": 6357,
     "windows": 9970
+  },
+  "aot/typed-parse-key-order.test.ts": {
+    "default": 1410
+  },
+  "aot/typed-parsing.test.ts": {
+    "default": 10900
+  },
+  "aot/typed-react-costs-no-more-than-erased.test.ts": {
+    "default": 25488
+  },
+  "aot/typed-version-in-a-strict-project.test.ts": {
+    "default": 649
+  },
+  "aot/typedness/one-line.test.ts": {
+    "default": 41048
   },
   "aot/typedness/typedness-1.test.ts": {
     "default": 61923,
@@ -2257,75 +4632,67 @@
     "windows": 68410
   },
   "aot/typedness/typedness-10.test.ts": {
-    "default": 57662,
+    "default": 32721,
     "asan": 29619,
-    "musl": 58123,
     "windows": 62335
   },
   "aot/typedness/typedness-2.test.ts": {
-    "default": 60911,
+    "default": 47369,
     "asan": 32271,
-    "musl": 65162,
     "windows": 71503
   },
   "aot/typedness/typedness-3.test.ts": {
-    "default": 52721,
+    "default": 32836,
     "asan": 30887,
-    "musl": 58035,
     "windows": 63143
   },
   "aot/typedness/typedness-4.test.ts": {
-    "default": 59371,
+    "default": 39660,
     "asan": 27431,
-    "musl": 58492,
     "windows": 68169
   },
   "aot/typedness/typedness-5.test.ts": {
-    "default": 61629,
+    "default": 51814,
     "asan": 32012,
-    "musl": 59672,
     "windows": 62895
   },
   "aot/typedness/typedness-6.test.ts": {
-    "default": 62670,
+    "default": 33499,
     "asan": 26661,
-    "musl": 65906,
     "windows": 67318
   },
   "aot/typedness/typedness-7.test.ts": {
-    "default": 54944,
+    "default": 39801,
     "asan": 27662,
-    "musl": 60791,
     "windows": 75308
   },
   "aot/typedness/typedness-8.test.ts": {
-    "default": 54538,
+    "default": 35946,
     "asan": 30447,
-    "musl": 59125,
     "windows": 58898
   },
   "aot/typedness/typedness-9.test.ts": {
-    "default": 57049,
+    "default": 33301,
     "asan": 30394,
-    "musl": 66314,
     "windows": 70908
   },
+  "aot/types-of-node-classes-name-what-buns-modules-make.test.ts": {
+    "default": 3436
+  },
   "aot/typescript-cases.test.ts": {
-    "default": 259950,
+    "default": 260324,
     "asan": 174943,
-    "musl": 121737,
     "windows": 129576
   },
-  "aot/unmarked-script-throws.test.ts": {
-    "default": 1408,
-    "asan": 4890,
-    "musl": 1555,
-    "windows": 1700
+  "aot/undefined-in-an-optional-property-of-a-package.test.ts": {
+    "default": 572
+  },
+  "aot/unlikely-marks-in-buns-modules.test.ts": {
+    "default": 9255
   },
   "aot/unresolved-imports.test.ts": {
-    "default": 3671,
+    "default": 1609,
     "asan": 10272,
-    "musl": 4003,
     "windows": 4177
   },
   "aot/untyped-code-1.test.ts": {
@@ -2335,9 +4702,8 @@
     "windows": 129721
   },
   "aot/untyped-code-2.test.ts": {
-    "default": 84448,
+    "default": 15658,
     "asan": 11891,
-    "musl": 96461,
     "windows": 122720
   },
   "aot/untyped-code-3.test.ts": {
@@ -2352,17 +4718,27 @@
     "musl": 1133,
     "windows": 2803
   },
+  "aot/untyped-speed.test.ts": {
+    "default": 2613
+  },
   "aot/untyped-stress-1.test.ts": {
-    "default": 129909,
+    "default": 5543,
     "asan": 51693,
-    "musl": 155642,
     "windows": 177211
   },
   "aot/untyped-stress-2.test.ts": {
-    "default": 153511,
+    "default": 12062,
     "asan": 75640,
-    "musl": 185792,
     "windows": 189469
+  },
+  "aot/unused-code-is-not-in-the-executable.test.ts": {
+    "default": 8781
+  },
+  "aot/unused-values-are-removed.test.ts": {
+    "default": 7761
+  },
+  "aot/validated-records-with-array-members.test.ts": {
+    "default": 1497
   },
   "aot/validation-by-types/both-modes.test.ts": {
     "default": 5390,
@@ -2371,21 +4747,16 @@
     "windows": 6835
   },
   "aot/validation-by-types/fuzz.test.ts": {
-    "default": 34314,
+    "default": 88620,
     "asan": 140974,
-    "musl": 43911,
     "windows": 42756
   },
-  "aot/validation-by-types/recorded-issues.test.ts": {
-    "default": 23802,
-    "asan": 457165,
-    "musl": 29306,
-    "windows": 35999
+  "aot/validation-by-types/json-parse-type-argument-without-installed-types.test.ts": {
+    "default": 3002
   },
   "aot/validation-by-types/standard-functions-without-installed-types.test.ts": {
-    "default": 551,
+    "default": 656,
     "asan": 2159,
-    "musl": 632,
     "windows": 1360
   },
   "aot/validation-by-types/types-that-cannot-be-validated.test.ts": {
@@ -2394,124 +4765,199 @@
     "musl": 1054,
     "windows": 802
   },
+  "aot/validation-in-packages-compiled-without-types.test.ts": {
+    "default": 3418
+  },
   "aot/values-against-their-types.test.ts": {
-    "default": 82157,
+    "default": 49566,
     "asan": 51028,
-    "musl": 29753,
     "windows": 31226
   },
   "aot/variables-assigned-in-cycles.test.ts": {
-    "default": 1053,
+    "default": 2157,
     "asan": 4857,
-    "musl": 1186,
     "windows": 1428
   },
+  "aot/variant-all-code-direct-1.test.ts": {
+    "default": 23150
+  },
+  "aot/variant-all-code-direct-2.test.ts": {
+    "default": 21005
+  },
+  "aot/variant-all-code-direct-3.test.ts": {
+    "default": 20653
+  },
+  "aot/variant-another-layout.test.ts": {
+    "default": 30533
+  },
+  "aot/variant-collecting-beside-the-program-2.test.ts": {
+    "default": 38395
+  },
+  "aot/variant-collecting-beside-the-program-3.test.ts": {
+    "default": 37584
+  },
+  "aot/variant-direct-code-by-linear-scan-1.test.ts": {
+    "default": 12671
+  },
+  "aot/variant-direct-code-by-linear-scan-3.test.ts": {
+    "default": 15053
+  },
+  "aot/variant-every-function-cold-1.test.ts": {
+    "default": 11784
+  },
+  "aot/variant-every-function-cold-2.test.ts": {
+    "default": 9452
+  },
+  "aot/variant-every-function-cold-3.test.ts": {
+    "default": 26667
+  },
+  "aot/variant-every-function-hot-1.test.ts": {
+    "default": 15761
+  },
+  "aot/variant-every-function-hot-2.test.ts": {
+    "default": 19141
+  },
+  "aot/variant-every-function-hot-3.test.ts": {
+    "default": 29151
+  },
+  "aot/variant-every-function-neither-hot-nor-cold-3.test.ts": {
+    "default": 19512
+  },
+  "aot/variant-flow-fixpoint-1.test.ts": {
+    "default": 11439
+  },
+  "aot/variant-flow-fixpoint-2.test.ts": {
+    "default": 14043
+  },
+  "aot/variant-flow-rules-delayed-2.test.ts": {
+    "default": 19921
+  },
+  "aot/variant-flow-rules-delayed-3.test.ts": {
+    "default": 25708
+  },
+  "aot/variant-inner-objects-flattened-wherever-legal-1.test.ts": {
+    "default": 17412
+  },
+  "aot/variant-inner-objects-flattened-wherever-legal-3.test.ts": {
+    "default": 4022
+  },
+  "aot/variant-no-flow-results-1.test.ts": {
+    "default": 13645
+  },
+  "aot/variant-no-flow-results-2.test.ts": {
+    "default": 42027
+  },
+  "aot/variant-no-flow-results-3.test.ts": {
+    "default": 28047
+  },
+  "aot/variant-no-inlining-1.test.ts": {
+    "default": 21845
+  },
+  "aot/variant-no-inlining-3.test.ts": {
+    "default": 24912
+  },
+  "aot/variant-program-is-very-large-1.test.ts": {
+    "default": 9806
+  },
+  "aot/variant-program-is-very-large-2.test.ts": {
+    "default": 16725
+  },
+  "aot/variant-program-is-very-large-3.test.ts": {
+    "default": 20648
+  },
+  "aot/variant-proofs-checked-at-run-time-1.test.ts": {
+    "default": 20936
+  },
+  "aot/variant-proofs-checked-at-run-time-2.test.ts": {
+    "default": 14180
+  },
+  "aot/variant-proofs-checked-at-run-time-3.test.ts": {
+    "default": 13868
+  },
   "aot/variant-stub-copies-1.test.ts": {
-    "default": 85317,
+    "default": 49898,
     "asan": 65742,
-    "musl": 94897,
     "windows": 133362
   },
   "aot/variant-stub-copies-2.test.ts": {
-    "default": 72527,
+    "default": 18169,
     "asan": 66315,
-    "musl": 74147,
     "windows": 95270
   },
   "aot/variant-stub-copies-3.test.ts": {
-    "default": 78195,
+    "default": 45507,
     "asan": 66023,
-    "musl": 85088,
     "windows": 115890
   },
-  "aot/variant-validated-facts-1.test.ts": {
-    "default": 122500,
-    "asan": 92015,
-    "musl": 129674,
-    "windows": 153447
+  "aot/variant-trimmed-runtime-2.test.ts": {
+    "default": 9066
   },
-  "aot/variant-validated-facts-2.test.ts": {
-    "default": 95079,
-    "asan": 80471,
-    "musl": 102148,
-    "windows": 126396
+  "aot/variant-validate-1.test.ts": {
+    "default": 45587
   },
-  "aot/variant-validated-facts-3.test.ts": {
-    "default": 107319,
-    "asan": 91249,
-    "musl": 128382,
-    "windows": 145187
+  "aot/variant-validate-2.test.ts": {
+    "default": 90960
   },
-  "aot/variant-validated-graphs-1.test.ts": {
-    "default": 117649,
-    "asan": 64406,
-    "musl": 137192,
-    "windows": 139229
+  "aot/variant-validate-back-end-1.test.ts": {
+    "default": 7538
   },
-  "aot/variant-validated-graphs-2.test.ts": {
-    "default": 115862,
-    "asan": 47293,
-    "musl": 129861,
-    "windows": 133932
+  "aot/variant-validate-back-end-2.test.ts": {
+    "default": 15070
   },
-  "aot/variant-validated-graphs-3.test.ts": {
-    "default": 98209,
-    "asan": 53056,
-    "musl": 106611,
-    "windows": 130603
+  "aot/variant-validate-back-end-3.test.ts": {
+    "default": 10986
   },
-  "aot/variant-validated-graphs-4.test.ts": {
-    "default": 129849,
-    "asan": 34581,
-    "musl": 132399,
-    "windows": 128007
+  "aot/variant-validate-back-end-4.test.ts": {
+    "default": 9401
   },
-  "aot/variant-validated-graphs-5.test.ts": {
-    "default": 117649,
-    "asan": 64406,
-    "musl": 137192,
-    "windows": 139229
+  "aot/variant-validate-back-end-5.test.ts": {
+    "default": 16442
   },
-  "aot/variant-validated-graphs-6.test.ts": {
-    "default": 115862,
-    "asan": 47293,
-    "musl": 129861,
-    "windows": 133932
+  "aot/variant-validate-back-end-8.test.ts": {
+    "default": 11274
   },
-  "aot/variant-validated-graphs-7.test.ts": {
-    "default": 98209,
-    "asan": 53056,
-    "musl": 106611,
-    "windows": 130603
+  "aot/variant-validate-collecting-1.test.ts": {
+    "default": 114469
   },
-  "aot/variant-validated-graphs-8.test.ts": {
-    "default": 129849,
-    "asan": 34581,
-    "musl": 132399,
-    "windows": 128007
+  "aot/variant-validate-collecting-2.test.ts": {
+    "default": 60065
   },
   "aot/variant-veneers-1.test.ts": {
-    "default": 88806,
+    "default": 15871,
     "asan": 64323,
-    "musl": 93697,
     "windows": 122935
   },
   "aot/variant-veneers-2.test.ts": {
-    "default": 70015,
+    "default": 20437,
     "asan": 66587,
-    "musl": 78769,
     "windows": 99231
   },
   "aot/variant-veneers-3.test.ts": {
-    "default": 90229,
+    "default": 13852,
     "asan": 69802,
-    "musl": 95572,
     "windows": 135137
   },
+  "aot/variant-verified-collections-1.test.ts": {
+    "default": 13832
+  },
+  "aot/variant-verified-collections-2.test.ts": {
+    "default": 20453
+  },
+  "aot/variant-verified-collections-3.test.ts": {
+    "default": 8194
+  },
+  "aot/variant-verify-each-pass-1.test.ts": {
+    "default": 122
+  },
+  "aot/variant-verify-each-pass-2.test.ts": {
+    "default": 69288
+  },
+  "aot/variant-verify-each-pass-3.test.ts": {
+    "default": 268392
+  },
   "aot/variant-wide-references-1.test.ts": {
-    "default": 82413,
+    "default": 14552,
     "asan": 68986,
-    "musl": 97676,
     "windows": 124662
   },
   "aot/variant-wide-references-2.test.ts": {
@@ -2527,22 +4973,31 @@
     "windows": 117266
   },
   "aot/variant-wide-references-out-of-range-1.test.ts": {
-    "default": 83536,
+    "default": 17764,
     "asan": 64120,
-    "musl": 89778,
     "windows": 122136
   },
   "aot/variant-wide-references-out-of-range-2.test.ts": {
-    "default": 63806,
+    "default": 17545,
     "asan": 60353,
-    "musl": 69962,
     "windows": 95744
   },
   "aot/variant-wide-references-out-of-range-3.test.ts": {
-    "default": 85221,
+    "default": 24734,
     "asan": 72524,
-    "musl": 90958,
     "windows": 116966
+  },
+  "aot/variant-without-flow-result-1.test.ts": {
+    "default": 20852
+  },
+  "aot/variant-without-flow-result-5.test.ts": {
+    "default": 302
+  },
+  "aot/variant-without-flow-result-6.test.ts": {
+    "default": 14051
+  },
+  "aot/warm-code-limit.test.ts": {
+    "default": 29
   },
   "aot/warmed-blocks.test.ts": {
     "default": 5916,
@@ -2550,16 +5005,38 @@
     "musl": 7449,
     "windows": 58
   },
+  "aot/ways-into-library-modules-1.test.ts": {
+    "default": 144582
+  },
+  "aot/ways-into-library-modules-2.test.ts": {
+    "default": 99275
+  },
+  "aot/ways-into-library-modules-5.test.ts": {
+    "default": 49554
+  },
+  "aot/ways-into-library-modules-6.test.ts": {
+    "default": 14006
+  },
+  "aot/ways-into-library-modules-8.test.ts": {
+    "default": 111532
+  },
+  "aot/ways-out.test.ts": {
+    "default": 1321
+  },
   "aot/webassembly.test.ts": {
-    "default": 5096,
+    "default": 1492,
     "asan": 342,
-    "musl": 5534,
     "windows": 9079
   },
+  "aot/what-extends-a-library-function-passes-its-checks.test.ts": {
+    "default": 3623
+  },
+  "aot/what-is-learned-outlasts-full-collections.test.ts": {
+    "default": 386
+  },
   "aot/wide-references.test.ts": {
-    "default": 2510,
+    "default": 1669,
     "asan": 16404,
-    "musl": 2335,
     "windows": 3892
   },
   "aot/wide-strings-in-json-are-written-in-place.test.ts": {
@@ -2580,425 +5057,17 @@
     "musl": 8684,
     "windows": 15827
   },
-  "bundler/bundler_compile_aot.test.ts": {
-    "default": 174110,
-    "asan": 383675,
-    "musl": 156378,
-    "windows": 212557,
-    "windows-aarch64": 191972
+  "aot/worker-entry-throw-origin.test.ts": {
+    "default": 6064
   },
-  "bundler/compile-aot-bun-sound.test.ts": {
-    "default": 1070,
-    "asan": 3260,
-    "musl": 420,
-    "windows": 840,
-    "windows-aarch64": 1070
+  "aot/writes-to-host-objects-1.test.ts": {
+    "default": 11878
   },
-  "bundler/compile-aot-crash.test.ts": {
-    "default": 1220,
-    "asan": 410,
-    "musl": 1120,
-    "windows": 40,
-    "windows-aarch64": 40
+  "aot/writes-to-host-objects-3.test.ts": {
+    "default": 20081
   },
-  "bundler/compile-aot-heap-snapshot.test.ts": {
-    "default": 3068,
-    "asan": 11195,
-    "musl": 3562,
-    "windows": 6910,
-    "windows-aarch64": 4967
-  },
-  "bundler/compile-aot-perf-map.test.ts": {
-    "default": 2520,
-    "asan": 12550,
-    "musl": 2700,
-    "windows": 40,
-    "windows-aarch64": 50
-  },
-  "bundler/compile-aot-sourcemap.test.ts": {
-    "default": 6450,
-    "asan": 24700,
-    "musl": 4860,
-    "windows": 19310,
-    "windows-aarch64": 8070
-  },
-  "bundler/compile-aot-typed-packages.test.ts": {
-    "default": 101310,
-    "asan": 315606,
-    "musl": 90544,
-    "windows": 48690,
-    "windows-aarch64": 53834
-  },
-  "bundler/compile-asset-streams.test.ts": {
-    "default": 4150,
-    "asan": 14040,
-    "musl": 5000,
-    "windows": 40,
-    "windows-aarch64": 50
-  },
-  "bundler/transpiler/react-compiler-fixtures-run.test.ts": {
-    "default": 1300,
-    "asan": 8840,
-    "musl": 1150,
-    "windows": 1620,
-    "windows-aarch64": 2060
-  },
-  "bundler/transpiler/ts-import-alias-runs-once.test.ts": {
-    "default": 20,
-    "asan": 320,
-    "musl": 50,
-    "windows": 50,
-    "windows-aarch64": 90
-  },
-  "cli/aot-builtin-modules-and-computed-paths.test.ts": {
-    "default": 18109,
-    "asan": 55639,
-    "musl": 20431,
-    "windows": 18859,
-    "windows-aarch64": 19101
-  },
-  "cli/aot-builtin-modules-and-names-handed-to-a-parameter.test.ts": {
-    "default": 19526,
-    "asan": 62587,
-    "musl": 22581,
-    "windows": 4724,
-    "windows-aarch64": 3976
-  },
-  "cli/aot-builtin-modules-and-node-module.test.ts": {
-    "default": 69976,
-    "asan": 183206,
-    "musl": 79797,
-    "windows": 57976,
-    "windows-aarch64": 59262
-  },
-  "cli/aot-builtin-modules-and-the-globals.test.ts": {
-    "default": 32221,
-    "asan": 83937,
-    "musl": 38180,
-    "windows": 27225,
-    "windows-aarch64": 23863
-  },
-  "cli/aot-builtin-modules-and-where-a-global-goes.test.ts": {
-    "default": 71244,
-    "asan": 178949,
-    "musl": 58581,
-    "windows": 49552,
-    "windows-aarch64": 30768
-  },
-  "cli/aot-builtin-modules-of-a-small-program.test.ts": {
-    "default": 25773,
-    "asan": 64987,
-    "musl": 18360,
-    "windows": 10029,
-    "windows-aarch64": 8610
-  },
-  "cli/aot-compile-executable-path.test.ts": {
-    "default": 2030,
-    "asan": 14190,
-    "musl": 2600,
-    "windows": 70,
-    "windows-aarch64": 90
-  },
-  "cli/aot-docs.test.ts": {
-    "default": 2707,
-    "asan": 7131,
-    "musl": 2511,
-    "windows": 100,
-    "windows-aarch64": 187
-  },
-  "cli/aot-huge-heap.test.ts": {
-    "default": 2340,
-    "asan": 14310,
-    "musl": 2270,
-    "windows": 40,
-    "windows-aarch64": 50
-  },
-  "cli/aot-options-without-effect.test.ts": {
-    "default": 740,
-    "asan": 4300,
-    "musl": 780,
-    "windows": 1440,
-    "windows-aarch64": 1800
-  },
-  "cli/aot-unknown-flags.test.ts": {
-    "default": 768,
-    "asan": 1971,
-    "musl": 237,
-    "windows": 896,
-    "windows-aarch64": 805
-  },
-  "cli/check/check.test.ts": {
-    "default": 22971,
-    "asan": 46903,
-    "musl": 25171,
-    "windows": 27911,
-    "windows-aarch64": 46246
-  },
-  "cli/check/narrowing-by-property.test.ts": {
-    "default": 70,
-    "asan": 379,
-    "musl": 43,
-    "windows": 82,
-    "windows-aarch64": 93
-  },
-  "cli/crash-if-interpreter-is-used.test.ts": {
-    "default": 11905,
-    "asan": 32335,
-    "musl": 11837,
-    "windows": 78,
-    "windows-aarch64": 107
-  },
-  "cli/format/format.test.ts": {
-    "default": 25191,
-    "asan": 88578,
-    "musl": 23119,
-    "windows": 30461,
-    "windows-aarch64": 30444
-  },
-  "cli/format/oxfmt-cli/oxfmt-cli.test.ts": {
-    "default": 419,
-    "asan": 5345,
-    "musl": 414,
-    "windows": 1089,
-    "windows-aarch64": 2254
-  },
-  "cli/format/sort-imports/sort-imports.test.ts": {
-    "default": 1488,
-    "asan": 18046,
-    "musl": 1452,
-    "windows": 4165,
-    "windows-aarch64": 5458
-  },
-  "cli/format/svelte/svelte.test.ts": {
-    "default": 2218,
-    "asan": 20463,
-    "musl": 2308,
-    "windows": 4803,
-    "windows-aarch64": 7761
-  },
-  "cli/format/tailwind/tailwind.test.ts": {
-    "default": 1138,
-    "asan": 8965,
-    "musl": 1136,
-    "windows": 2302,
-    "windows-aarch64": 2956
-  },
-  "cli/inspect/compile-aot-inspector.test.ts": {
-    "default": 770,
-    "asan": 2838,
-    "musl": 2076,
-    "windows": 2420,
-    "windows-aarch64": 1763
-  },
-  "cli/lint/bun-rules.test.ts": {
-    "default": 1281,
-    "asan": 16174,
-    "musl": 1376,
-    "windows": 2415,
-    "windows-aarch64": 3472
-  },
-  "cli/lint/config-files.test.ts": {
-    "default": 9513,
-    "asan": 192662,
-    "musl": 11658,
-    "windows": 21083,
-    "windows-aarch64": 29934
-  },
-  "cli/lint/defaults.test.ts": {
-    "default": 722,
-    "asan": 6670,
-    "musl": 1570,
-    "windows": 1951,
-    "windows-aarch64": 3007
-  },
-  "cli/lint/hints.test.ts": {
-    "default": 280,
-    "asan": 3064,
-    "musl": 244,
-    "windows": 585,
-    "windows-aarch64": 747
-  },
-  "cli/lint/js-plugins.test.ts": {
-    "default": 4325,
-    "asan": 271801,
-    "musl": 4752,
-    "windows": 6247,
-    "windows-aarch64": 7165
-  },
-  "cli/lint/react-compiler.test.ts": {
-    "default": 496,
-    "asan": 3684,
-    "musl": 485,
-    "windows": 548,
-    "windows-aarch64": 582
-  },
-  "cli/run/require-main-in-an-expression.test.ts": {
-    "default": 30,
-    "asan": 630,
-    "musl": 30,
-    "windows": 40,
-    "windows-aarch64": 100
-  },
-  "cli/run/run-aot.test.ts": {
-    "default": 62222,
-    "asan": 157830,
-    "musl": 70953,
-    "windows": 60152,
-    "windows-aarch64": 52073
-  },
-  "cli/test/test-aot-coverage.test.ts": {
-    "default": 920,
-    "asan": 5910,
-    "musl": 1090,
-    "windows": 1260,
-    "windows-aarch64": 1380
-  },
-  "cli/test/test-aot-deep-equality.test.ts": {
-    "default": 940,
-    "asan": 7330,
-    "musl": 800,
-    "windows": 3570,
-    "windows-aarch64": 1650
-  },
-  "cli/test/test-aot-mocks-and-lazy-constants.test.ts": {
-    "default": 2990,
-    "asan": 11720,
-    "musl": 2630,
-    "windows": 2870,
-    "windows-aarch64": 3000
-  },
-  "cli/test/test-aot.test.ts": {
-    "default": 11470,
-    "asan": 32750,
-    "musl": 11090,
-    "windows": 9481,
-    "windows-aarch64": 12294
-  },
-  "internal/build-cmake-lists.test.ts": {
-    "default": 220,
-    "asan": 340,
-    "musl": 60,
-    "windows": 100,
-    "windows-aarch64": 130
-  },
-  "internal/build-local-webkit.test.ts": {
-    "default": 270,
-    "asan": 1440,
-    "musl": 170,
-    "windows": 462,
-    "windows-aarch64": 1083
-  },
-  "js/bun/jsc/sealed-global-object-error-message.test.ts": {
-    "default": 70,
-    "asan": 870,
-    "musl": 70,
-    "windows": 100,
-    "windows-aarch64": 140
-  },
-  "js/bun/jsc/webkit-upgrade-dbdca7545d.test.ts": {
-    "default": 150,
-    "asan": 1050,
-    "musl": 60,
-    "windows": 1130,
-    "windows-aarch64": 200
-  },
-  "js/bun/module-graph/module-graph-compile.test.ts": {
-    "default": 4460,
-    "asan": 19939,
-    "musl": 2985,
-    "windows": 5462,
-    "windows-aarch64": 6352
-  },
-  "js/bun/module-graph/module-graph-gc.test.ts": {
-    "default": 933,
-    "asan": 4697,
-    "musl": 942,
-    "windows": 3143,
-    "windows-aarch64": 4180
-  },
-  "js/bun/module-graph/module-graph-isolation.test.ts": {
-    "default": 5756,
-    "asan": 21221,
-    "musl": 6126,
-    "windows": 7585,
-    "windows-aarch64": 8665
-  },
-  "js/bun/test/snapshot-tests/property-matchers.test.ts": {
-    "default": 50,
-    "asan": 190,
-    "musl": 30,
-    "windows": 50,
-    "windows-aarch64": 40
-  },
-  "js/node/http/node-http-incoming-socket.test.ts": {
-    "default": 100,
-    "asan": 380,
-    "musl": 120,
-    "windows": 90,
-    "windows-aarch64": 80
-  },
-  "js/node/http/node-http-own-keys-in-nodes-order.test.ts": {
-    "default": 60,
-    "asan": 620,
-    "musl": 80,
-    "windows": 80,
-    "windows-aarch64": 70
-  },
-  "js/node/http/node-http-server-close-drain.test.ts": {
-    "default": 1490,
-    "asan": 3020,
-    "musl": 1540,
-    "windows": 520,
-    "windows-aarch64": 510
-  },
-  "js/node/path/posix-as-node.test.ts": {
-    "default": 2907,
-    "asan": 19446,
-    "musl": 3002,
-    "windows": 3061,
-    "windows-aarch64": 3338
-  },
-  "js/node/path/wide-strings.test.ts": {
-    "default": 2880,
-    "asan": 48160,
-    "musl": 4920,
-    "windows": 4937,
-    "windows-aarch64": 3548
-  },
-  "js/node/process/process-warning-printer.test.ts": {
-    "default": 72902,
-    "asan": 48646,
-    "musl": 22893,
-    "windows": 60,
-    "windows-aarch64": 93
-  },
-  "js/node/stream/web-stream-state.test.ts": {
-    "default": 130,
-    "asan": 1390,
-    "musl": 230,
-    "windows": 290,
-    "windows-aarch64": 310
-  },
-  "js/sql/postgres-connection.test.ts": {
-    "default": 4316,
-    "asan": 6194,
-    "musl": 4067,
-    "windows": 1220,
-    "windows-aarch64": 1290
-  },
-  "js/sql/sql-mysql-connection.test.ts": {
-    "default": 1448,
-    "asan": 3733,
-    "musl": 1328,
-    "windows": 88,
-    "windows-aarch64": 119
-  },
-  "js/sql/sql-mysql-queued-query-failure.test.ts": {
-    "default": 314,
-    "asan": 777,
-    "musl": 303,
-    "windows": 60,
-    "windows-aarch64": 70
+  "aot/writes-to-host-objects-5.test.ts": {
+    "default": 15315
   },
   "bake/app-options.test.ts": {
     "default": 40,
@@ -3280,6 +5349,13 @@
     "windows": 48402,
     "windows-aarch64": 218711
   },
+  "bundler/bundler_compile_aot.test.ts": {
+    "default": 174110,
+    "asan": 383675,
+    "musl": 156378,
+    "windows": 212557,
+    "windows-aarch64": 191972
+  },
   "bundler/bundler_compile_autoload.test.ts": {
     "default": 7404,
     "asan": 22553,
@@ -3462,6 +5538,48 @@
     "windows": 4220,
     "windows-aarch64": 10020
   },
+  "bundler/compile-aot-bun-sound.test.ts": {
+    "default": 1070,
+    "asan": 3260,
+    "musl": 420,
+    "windows": 840,
+    "windows-aarch64": 1070
+  },
+  "bundler/compile-aot-crash.test.ts": {
+    "default": 1220,
+    "asan": 410,
+    "musl": 1120,
+    "windows": 40,
+    "windows-aarch64": 40
+  },
+  "bundler/compile-aot-heap-snapshot.test.ts": {
+    "default": 3068,
+    "asan": 11195,
+    "musl": 3562,
+    "windows": 6910,
+    "windows-aarch64": 4967
+  },
+  "bundler/compile-aot-perf-map.test.ts": {
+    "default": 2520,
+    "asan": 12550,
+    "musl": 2700,
+    "windows": 40,
+    "windows-aarch64": 50
+  },
+  "bundler/compile-aot-sourcemap.test.ts": {
+    "default": 6450,
+    "asan": 24700,
+    "musl": 4860,
+    "windows": 19310,
+    "windows-aarch64": 8070
+  },
+  "bundler/compile-aot-typed-packages.test.ts": {
+    "default": 101310,
+    "asan": 315606,
+    "musl": 90544,
+    "windows": 48690,
+    "windows-aarch64": 53834
+  },
   "bundler/compile-argv.test.ts": {
     "default": 5219,
     "asan": 35693,
@@ -3475,6 +5593,13 @@
     "musl": 336,
     "windows": 1079,
     "windows-aarch64": 5330
+  },
+  "bundler/compile-asset-streams.test.ts": {
+    "default": 4150,
+    "asan": 14040,
+    "musl": 5000,
+    "windows": 40,
+    "windows-aarch64": 50
   },
   "bundler/compile-elf-segment-layout.test.ts": {
     "default": 310,
@@ -3824,6 +5949,13 @@
     "windows": 73,
     "windows-aarch64": 83
   },
+  "bundler/transpiler/react-compiler-fixtures-run.test.ts": {
+    "default": 1300,
+    "asan": 8840,
+    "musl": 1150,
+    "windows": 1620,
+    "windows-aarch64": 2060
+  },
   "bundler/transpiler/react-compiler-fixtures.test.ts": {
     "default": 1870,
     "asan": 8770,
@@ -3887,6 +6019,13 @@
     "windows": 70,
     "windows-aarch64": 90
   },
+  "bundler/transpiler/ts-import-alias-runs-once.test.ts": {
+    "default": 20,
+    "asan": 320,
+    "musl": 50,
+    "windows": 50,
+    "windows-aarch64": 90
+  },
   "bundler/transpiler/ts-use-define-for-class-fields.test.ts": {
     "default": 100,
     "asan": 910,
@@ -3900,6 +6039,83 @@
     "musl": 30,
     "windows": 20,
     "windows-aarch64": 30
+  },
+  "cli/aot-builtin-modules-and-computed-paths.test.ts": {
+    "default": 18109,
+    "asan": 55639,
+    "musl": 20431,
+    "windows": 18859,
+    "windows-aarch64": 19101
+  },
+  "cli/aot-builtin-modules-and-names-handed-to-a-parameter.test.ts": {
+    "default": 19526,
+    "asan": 62587,
+    "musl": 22581,
+    "windows": 4724,
+    "windows-aarch64": 3976
+  },
+  "cli/aot-builtin-modules-and-node-module.test.ts": {
+    "default": 69976,
+    "asan": 183206,
+    "musl": 79797,
+    "windows": 57976,
+    "windows-aarch64": 59262
+  },
+  "cli/aot-builtin-modules-and-the-globals.test.ts": {
+    "default": 32221,
+    "asan": 83937,
+    "musl": 38180,
+    "windows": 27225,
+    "windows-aarch64": 23863
+  },
+  "cli/aot-builtin-modules-and-where-a-global-goes.test.ts": {
+    "default": 71244,
+    "asan": 178949,
+    "musl": 58581,
+    "windows": 49552,
+    "windows-aarch64": 30768
+  },
+  "cli/aot-builtin-modules-of-a-small-program.test.ts": {
+    "default": 25773,
+    "asan": 64987,
+    "musl": 18360,
+    "windows": 10029,
+    "windows-aarch64": 8610
+  },
+  "cli/aot-compile-executable-path.test.ts": {
+    "default": 2030,
+    "asan": 14190,
+    "musl": 2600,
+    "windows": 70,
+    "windows-aarch64": 90
+  },
+  "cli/aot-docs.test.ts": {
+    "default": 2707,
+    "asan": 7131,
+    "musl": 2511,
+    "windows": 100,
+    "windows-aarch64": 187
+  },
+  "cli/aot-huge-heap.test.ts": {
+    "default": 2340,
+    "asan": 14310,
+    "musl": 2270,
+    "windows": 40,
+    "windows-aarch64": 50
+  },
+  "cli/aot-options-without-effect.test.ts": {
+    "default": 740,
+    "asan": 4300,
+    "musl": 780,
+    "windows": 1440,
+    "windows-aarch64": 1800
+  },
+  "cli/aot-unknown-flags.test.ts": {
+    "default": 768,
+    "asan": 1971,
+    "musl": 237,
+    "windows": 896,
+    "windows-aarch64": 805
   },
   "cli/bun.test.ts": {
     "default": 115,
@@ -3915,12 +6131,33 @@
     "windows": 110,
     "windows-aarch64": 160
   },
+  "cli/check/check.test.ts": {
+    "default": 22971,
+    "asan": 46903,
+    "musl": 25171,
+    "windows": 27911,
+    "windows-aarch64": 46246
+  },
+  "cli/check/narrowing-by-property.test.ts": {
+    "default": 70,
+    "asan": 379,
+    "musl": 43,
+    "windows": 82,
+    "windows-aarch64": 93
+  },
   "cli/console-depth.test.ts": {
     "default": 70,
     "asan": 1990,
     "musl": 80,
     "windows": 190,
     "windows-aarch64": 250
+  },
+  "cli/crash-if-interpreter-is-used.test.ts": {
+    "default": 11905,
+    "asan": 32335,
+    "musl": 11837,
+    "windows": 78,
+    "windows-aarch64": 107
   },
   "cli/create/create-jsx.test.ts": {
     "default": 2050,
@@ -3942,6 +6179,41 @@
     "musl": 40,
     "windows": 90,
     "windows-aarch64": 120
+  },
+  "cli/format/format.test.ts": {
+    "default": 25191,
+    "asan": 88578,
+    "musl": 23119,
+    "windows": 30461,
+    "windows-aarch64": 30444
+  },
+  "cli/format/oxfmt-cli/oxfmt-cli.test.ts": {
+    "default": 419,
+    "asan": 5345,
+    "musl": 414,
+    "windows": 1089,
+    "windows-aarch64": 2254
+  },
+  "cli/format/sort-imports/sort-imports.test.ts": {
+    "default": 1488,
+    "asan": 18046,
+    "musl": 1452,
+    "windows": 4165,
+    "windows-aarch64": 5458
+  },
+  "cli/format/svelte/svelte.test.ts": {
+    "default": 2218,
+    "asan": 20463,
+    "musl": 2308,
+    "windows": 4803,
+    "windows-aarch64": 7761
+  },
+  "cli/format/tailwind/tailwind.test.ts": {
+    "default": 1138,
+    "asan": 8965,
+    "musl": 1136,
+    "windows": 2302,
+    "windows-aarch64": 2956
   },
   "cli/heap-prof.test.ts": {
     "default": 190,
@@ -3998,6 +6270,13 @@
     "musl": 52,
     "windows": 92,
     "windows-aarch64": 115
+  },
+  "cli/inspect/compile-aot-inspector.test.ts": {
+    "default": 770,
+    "asan": 2838,
+    "musl": 2076,
+    "windows": 2420,
+    "windows-aarch64": 1763
   },
   "cli/inspect/debugger-buntranspiledmodule.test.ts": {
     "default": 70,
@@ -4657,6 +6936,48 @@
     "windows": 3367,
     "windows-aarch64": 5182
   },
+  "cli/lint/bun-rules.test.ts": {
+    "default": 1281,
+    "asan": 16174,
+    "musl": 1376,
+    "windows": 2415,
+    "windows-aarch64": 3472
+  },
+  "cli/lint/config-files.test.ts": {
+    "default": 9513,
+    "asan": 192662,
+    "musl": 11658,
+    "windows": 21083,
+    "windows-aarch64": 29934
+  },
+  "cli/lint/defaults.test.ts": {
+    "default": 722,
+    "asan": 6670,
+    "musl": 1570,
+    "windows": 1951,
+    "windows-aarch64": 3007
+  },
+  "cli/lint/hints.test.ts": {
+    "default": 280,
+    "asan": 3064,
+    "musl": 244,
+    "windows": 585,
+    "windows-aarch64": 747
+  },
+  "cli/lint/js-plugins.test.ts": {
+    "default": 4325,
+    "asan": 271801,
+    "musl": 4752,
+    "windows": 6247,
+    "windows-aarch64": 7165
+  },
+  "cli/lint/react-compiler.test.ts": {
+    "default": 496,
+    "asan": 3684,
+    "musl": 485,
+    "windows": 548,
+    "windows-aarch64": 582
+  },
   "cli/run/as-node.test.ts": {
     "default": 90,
     "asan": 2355,
@@ -4817,6 +7138,20 @@
     "musl": 21842,
     "windows": 17701,
     "windows-aarch64": 29109
+  },
+  "cli/run/require-main-in-an-expression.test.ts": {
+    "default": 30,
+    "asan": 630,
+    "musl": 30,
+    "windows": 40,
+    "windows-aarch64": 100
+  },
+  "cli/run/run-aot.test.ts": {
+    "default": 62222,
+    "asan": 157830,
+    "musl": 70953,
+    "windows": 60152,
+    "windows-aarch64": 52073
   },
   "cli/run/run-autoinstall-abs-path.test.ts": {
     "default": 110,
@@ -5049,6 +7384,34 @@
     "windows": 210,
     "windows-aarch64": 280
   },
+  "cli/test/test-aot-coverage.test.ts": {
+    "default": 920,
+    "asan": 5910,
+    "musl": 1090,
+    "windows": 1260,
+    "windows-aarch64": 1380
+  },
+  "cli/test/test-aot-deep-equality.test.ts": {
+    "default": 940,
+    "asan": 7330,
+    "musl": 800,
+    "windows": 3570,
+    "windows-aarch64": 1650
+  },
+  "cli/test/test-aot-mocks-and-lazy-constants.test.ts": {
+    "default": 2990,
+    "asan": 11720,
+    "musl": 2630,
+    "windows": 2870,
+    "windows-aarch64": 3000
+  },
+  "cli/test/test-aot.test.ts": {
+    "default": 11470,
+    "asan": 32750,
+    "musl": 11090,
+    "windows": 9481,
+    "windows-aarch64": 12294
+  },
   "cli/test/test-changed.test.ts": {
     "default": 475,
     "asan": 1595,
@@ -5280,6 +7643,13 @@
     "windows": 60,
     "windows-aarch64": 90
   },
+  "internal/build-cmake-lists.test.ts": {
+    "default": 220,
+    "asan": 340,
+    "musl": 60,
+    "windows": 100,
+    "windows-aarch64": 130
+  },
   "internal/build-codegen-declared-outputs.test.ts": {
     "default": 148,
     "asan": 1170,
@@ -5300,6 +7670,13 @@
     "musl": 130,
     "windows": 140,
     "windows-aarch64": 150
+  },
+  "internal/build-local-webkit.test.ts": {
+    "default": 270,
+    "asan": 1440,
+    "musl": 170,
+    "windows": 462,
+    "windows-aarch64": 1083
   },
   "internal/build-post-link-ordering.test.ts": {
     "default": 54,
@@ -6505,6 +8882,13 @@
     "windows": 210,
     "windows-aarch64": 250
   },
+  "js/bun/jsc/sealed-global-object-error-message.test.ts": {
+    "default": 70,
+    "asan": 870,
+    "musl": 70,
+    "windows": 100,
+    "windows-aarch64": 140
+  },
   "js/bun/jsc/shadow.test.js": {
     "default": 20,
     "asan": 90,
@@ -6546,6 +8930,13 @@
     "musl": 30,
     "windows": 60,
     "windows-aarch64": 80
+  },
+  "js/bun/jsc/webkit-upgrade-dbdca7545d.test.ts": {
+    "default": 150,
+    "asan": 1050,
+    "musl": 60,
+    "windows": 1130,
+    "windows-aarch64": 200
   },
   "js/bun/json5/json5-test-suite.test.ts": {
     "default": 70,
@@ -6637,6 +9028,27 @@
     "musl": 90,
     "windows": 20,
     "windows-aarch64": 20
+  },
+  "js/bun/module-graph/module-graph-compile.test.ts": {
+    "default": 4460,
+    "asan": 19939,
+    "musl": 2985,
+    "windows": 5462,
+    "windows-aarch64": 6352
+  },
+  "js/bun/module-graph/module-graph-gc.test.ts": {
+    "default": 933,
+    "asan": 4697,
+    "musl": 942,
+    "windows": 3143,
+    "windows-aarch64": 4180
+  },
+  "js/bun/module-graph/module-graph-isolation.test.ts": {
+    "default": 5756,
+    "asan": 21221,
+    "musl": 6126,
+    "windows": 7585,
+    "windows-aarch64": 8665
   },
   "js/bun/namespace-prototype-pollution.test.ts": {
     "default": 30,
@@ -8913,6 +11325,13 @@
     "windows": 79,
     "windows-aarch64": 110
   },
+  "js/bun/test/snapshot-tests/property-matchers.test.ts": {
+    "default": 50,
+    "asan": 190,
+    "musl": 30,
+    "windows": 50,
+    "windows-aarch64": 40
+  },
   "js/bun/test/snapshot-tests/snapshots/more-snapshots/different-directory.test.ts": {
     "default": 20,
     "asan": 110,
@@ -10600,6 +13019,13 @@
     "windows": 2620,
     "windows-aarch64": 2160
   },
+  "js/node/http/node-http-incoming-socket.test.ts": {
+    "default": 100,
+    "asan": 380,
+    "musl": 120,
+    "windows": 90,
+    "windows-aarch64": 80
+  },
   "js/node/http/node-http-maxHeaderSize.test.ts": {
     "default": 100,
     "asan": 338,
@@ -10620,6 +13046,13 @@
     "musl": 70,
     "windows": 101,
     "windows-aarch64": 127
+  },
+  "js/node/http/node-http-own-keys-in-nodes-order.test.ts": {
+    "default": 60,
+    "asan": 620,
+    "musl": 80,
+    "windows": 80,
+    "windows-aarch64": 70
   },
   "js/node/http/node-http-parser.test.ts": {
     "default": 180,
@@ -10669,6 +13102,13 @@
     "musl": 60,
     "windows": 110,
     "windows-aarch64": 110
+  },
+  "js/node/http/node-http-server-close-drain.test.ts": {
+    "default": 1490,
+    "asan": 3020,
+    "musl": 1540,
+    "windows": 520,
+    "windows-aarch64": 510
   },
   "js/node/http/node-http-server-socket-end-drain.test.ts": {
     "default": 60,
@@ -11062,6 +13502,13 @@
     "windows": 200,
     "windows-aarch64": 160
   },
+  "js/node/path/posix-as-node.test.ts": {
+    "default": 2907,
+    "asan": 19446,
+    "musl": 3002,
+    "windows": 3061,
+    "windows-aarch64": 3338
+  },
   "js/node/path/posix-exists.test.js": {
     "default": 20,
     "asan": 110,
@@ -11103,6 +13550,13 @@
     "musl": 20,
     "windows": 30,
     "windows-aarch64": 30
+  },
+  "js/node/path/wide-strings.test.ts": {
+    "default": 2880,
+    "asan": 48160,
+    "musl": 4920,
+    "windows": 4937,
+    "windows-aarch64": 3548
   },
   "js/node/path/win32-exists.test.js": {
     "default": 20,
@@ -11244,6 +13698,13 @@
     "windows": 120,
     "windows-aarch64": 120
   },
+  "js/node/process/process-warning-printer.test.ts": {
+    "default": 72902,
+    "asan": 48646,
+    "musl": 22893,
+    "windows": 60,
+    "windows-aarch64": 93
+  },
   "js/node/process/process.test.js": {
     "default": 1006,
     "asan": 9145,
@@ -11362,6 +13823,13 @@
     "musl": 490,
     "windows": 1130,
     "windows-aarch64": 1130
+  },
+  "js/node/stream/web-stream-state.test.ts": {
+    "default": 130,
+    "asan": 1390,
+    "musl": 230,
+    "windows": 290,
+    "windows-aarch64": 310
   },
   "js/node/string-module.test.js": {
     "default": 40,
@@ -38322,6 +40790,13 @@
     "windows": 52,
     "windows-aarch64": 66
   },
+  "js/sql/postgres-connection.test.ts": {
+    "default": 4316,
+    "asan": 6194,
+    "musl": 4067,
+    "windows": 1220,
+    "windows-aarch64": 1290
+  },
   "js/sql/postgres-datarow-overrun.test.ts": {
     "default": 70,
     "asan": 430,
@@ -38560,6 +41035,13 @@
     "windows": 85,
     "windows-aarch64": 116
   },
+  "js/sql/sql-mysql-connection.test.ts": {
+    "default": 1448,
+    "asan": 3733,
+    "musl": 1328,
+    "windows": 88,
+    "windows-aarch64": 119
+  },
   "js/sql/sql-mysql-datetime-roundtrip.test.ts": {
     "default": 1801,
     "asan": 805,
@@ -38594,6 +41076,13 @@
     "musl": 358,
     "windows": 50,
     "windows-aarch64": 66
+  },
+  "js/sql/sql-mysql-queued-query-failure.test.ts": {
+    "default": 314,
+    "asan": 777,
+    "musl": 303,
+    "windows": 60,
+    "windows-aarch64": 70
   },
   "js/sql/sql-mysql-raw-length-prefix.test.ts": {
     "default": 156,

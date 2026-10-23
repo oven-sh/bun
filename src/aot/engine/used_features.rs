@@ -1,3 +1,4 @@
+use bun_sema::util::SharedSort;
 use bun_trim::{
     FeatureSet, LocaleTag, UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales,
     WitnessIndex,
@@ -81,7 +82,7 @@ fn used_locales(
             }
         }
     }
-    tags.sort_unstable();
+    tags.shared_sort_unstable();
     tags.dedup();
     UsedLocales::Listed(tags)
 }

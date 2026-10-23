@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cap } from "./support.ts";
-import { Problems, type MemberDeclaration, type Source, type SourcedDeclaration } from "./declarations.ts";
+import { leftOutOf, Problems, type MemberDeclaration, type Source, type SourcedDeclaration } from "./declarations.ts";
 import { memberPathOf } from "./paths.ts";
+import { cap } from "./support.ts";
 import { targetPlatforms, type BuiltinPath, type EntryColumns, type TargetPlatform } from "./vocabulary.ts";
 
 export interface StaticTableEntry {
@@ -53,6 +53,8 @@ const builtinCodeGenerator = "JSBuiltin";
 
 const beginPattern = /^@begin\s+([:\w]+)\s*\d*$/;
 const conditionPattern = /^#if\s+(!?)OS\((WINDOWS|DARWIN|LINUX)\)$/;
+// A row that only some builds of the host have. b.leftOut() lists the names that are defined.
+const definedPattern = /^#if\s+(!?)defined\((\w+)\)$/;
 
 const platformsByOS: Readonly<Record<string, readonly TargetPlatform[]>> = {
   WINDOWS: ["Windows"],
@@ -76,6 +78,7 @@ function findTableBegin(lines: readonly string[], table: string, report: Report)
 function parseDirective(
   line: string,
   condition: Condition | null,
+  definedNames: ReadonlySet<string>,
   lineNumber: number,
   report: Report,
 ): Condition | null {
@@ -95,13 +98,18 @@ function parseDirective(
     return { platforms: platformsExcept(condition.platforms), isElse: true };
   }
   const match = conditionPattern.exec(line);
-  if (match === null) {
+  const defined = definedPattern.exec(line);
+  if (match === null && defined === null) {
     report(lineNumber, `unsupported directive: ${line}`);
     return condition;
   }
   if (condition !== null) {
     report(lineNumber, "nested #if");
     return condition;
+  }
+  if (match === null) {
+    const holds = definedNames.has(defined![2]) !== (defined![1] === "!");
+    return { platforms: holds ? targetPlatforms : [], isElse: false };
   }
   const tested = platformsByOS[match[2]];
   return { platforms: match[1] === "!" ? platformsExcept(tested) : tested, isElse: false };
@@ -136,7 +144,12 @@ function parseEntryLine(
   };
 }
 
-function parseTable(text: string, table: string, report: Report): StaticTableEntry[] {
+function parseTable(
+  text: string,
+  table: string,
+  definedNames: ReadonlySet<string>,
+  report: Report,
+): StaticTableEntry[] {
   const lines = text.split("\n").map(line => line.trim());
   const beginIndex = findTableBegin(lines, table, report);
   if (beginIndex === null) return [];
@@ -152,11 +165,11 @@ function parseTable(text: string, table: string, report: Report): StaticTableEnt
     }
     if (line === "") continue;
     if (line.startsWith("#")) {
-      condition = parseDirective(line, condition, lineNumber, report);
+      condition = parseDirective(line, condition, definedNames, lineNumber, report);
       continue;
     }
     const entry = parseEntryLine(line, condition?.platforms ?? targetPlatforms, lineNumber, report);
-    if (entry === null) continue;
+    if (entry === null || entry.platforms.length === 0) continue;
     const earlierPlatforms = platformsByKey.get(entry.key) ?? new Set<TargetPlatform>();
     if (entry.platforms.some(platform => earlierPlatforms.has(platform))) {
       report(lineNumber, `${entry.key} appears twice`);
@@ -169,9 +182,16 @@ function parseTable(text: string, table: string, report: Report): StaticTableEnt
   return entries;
 }
 
-export function parseHashTable(text: string, table: string, file: string): StaticTableEntry[] {
+export function parseHashTable(
+  text: string,
+  table: string,
+  file: string,
+  definedNames: ReadonlySet<string> = new Set(),
+): StaticTableEntry[] {
   const problems = new Problems();
-  const entries = parseTable(text, table, (line, message) => problems.add(null, `${file}:${line}: ${message}`));
+  const entries = parseTable(text, table, definedNames, (line, message) =>
+    problems.add(null, `${file}:${line}: ${message}`),
+  );
   problems.throwIfAny();
   return entries;
 }
@@ -275,6 +295,7 @@ export function collectStaticTables(
   problems: Problems,
 ): SourcedDeclaration[] {
   const prototypePaths = findPrototypePaths(declared);
+  const definedNames = new Set(leftOutOf(declared).flatMap(leftOut => leftOut.definedNames));
   const texts = new Map<string, string | null>();
   const members: SourcedDeclaration[] = [];
   for (const { declaration, source } of declared) {
@@ -287,7 +308,7 @@ export function collectStaticTables(
     }
     const sourceAt = (line: number): Source => ({ file: table.file, line, origin: source.origin, proof: "Structure" });
     const report: Report = (line, message) => problems.add(sourceAt(line), message);
-    for (const entry of parseTable(text, table.table, report)) {
+    for (const entry of parseTable(text, table.table, definedNames, report)) {
       const member = memberOf(holder, prototypePaths.has(holder), entry, report);
       if (member !== null) members.push({ declaration: member, source: sourceAt(entry.line) });
     }

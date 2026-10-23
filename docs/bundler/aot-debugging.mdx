@@ -384,6 +384,12 @@ perf record -g ./app && perf report
 gdb ./app -ex 'break double' -ex run
 ```
 
+The names have limits:
+
+- `gdb` finds your functions in a program that it starts itself. In a process that it attaches to, and in a core file, it shows addresses. The executable loads its compiled code at a random address, and `gdb` looks for it where the file says. `perf` isn't affected.
+- On x64, many compiled functions don't keep a frame pointer. A call stack in `perf` or `gdb` skips the callers of such a function.
+- There are no line numbers, so `perf annotate` and `addr2line` don't show your source.
+
 Without that flag, `perf`, `gdb`, Instruments, `sample` and `lldb` show addresses, not names, where your compiled code runs. Use `--cpu-prof`.
 
 ## The inspector

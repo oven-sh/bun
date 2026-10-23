@@ -1,4 +1,3 @@
-import { cap } from "./support.ts";
 import { GeneratorError, Problems } from "./declarations.ts";
 import {
   classTokensArray,
@@ -14,6 +13,7 @@ import { emitMacroList, formatDouble, formatInt64, joinBlocks } from "./emit-cpp
 import { fileHeader } from "./emit-rust-ids.ts";
 import type { ModelAttachments, ModelBound, ModelBuiltin, ModelFunction, ModelSlot, TableModel } from "./model.ts";
 import { tokenOf } from "./paths.ts";
+import { cap } from "./support.ts";
 
 type Constant = readonly [name: string, number: number];
 type ArrayDeclaration = readonly [cppType: string, name: string, count: number];

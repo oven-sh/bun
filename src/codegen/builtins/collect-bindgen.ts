@@ -9,6 +9,7 @@ import {
   externType,
   getterHostFunctionName,
   getterSymbolName,
+  methodHostFunctionName,
   methodSymbolName,
   setterSymbolName,
   thunkSymbol,
@@ -766,6 +767,17 @@ function collectBuiltin(type: ClassType, builtin: Builtin, path: BuiltinPath): D
   return setMemberParts(b.method(path, b.otherwiseBy(implementation)), { length: builtin.length });
 }
 
+// The host function takes the receiver and the arguments out of the frame and converts them itself.
+function directEntryOfMethod(type: ClassType, fn: FunctionDefinition): DirectEntrySpec {
+  const symbol = methodHostFunctionName(type, fn);
+  return {
+    symbol,
+    declaration: `JSC_DECLARE_HOST_FUNCTION(${symbol});`,
+    headers: [],
+    parameters: [realmParameter, { value: "FrameOfValues", cppType: "JSC::CallFrame*" }],
+  };
+}
+
 function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinPath, isStatic: boolean): Declaration[] {
   if (member instanceof Getter || member instanceof InternalFieldAccessor) return collectAccessor(type, member, path);
   if (!(member instanceof FunctionDefinition)) return collectBuiltin(type, member, path);
@@ -777,7 +789,11 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
   if (methods[0].invalidThis === "undefined")
     return collectFunction(member, path, b.any.parameter, () => null, type.name);
   const thunkOf = (signature: Signature) => methodSymbolName(type, signature as Method);
-  return collectFunction(member, path, type.parameterType, thunkOf, type.name);
+  return collectFunction(member, path, type.parameterType, thunkOf, type.name).map(declaration =>
+    declaration.declares === "Member"
+      ? { ...declaration, columns: { ...declaration.columns, directEntryOfMethod: directEntryOfMethod(type, member) } }
+      : declaration,
+  );
 }
 
 const pathOfMember = (classPath: BuiltinPath, side: "static" | "proto", name: string): BuiltinPath =>

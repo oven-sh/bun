@@ -344,6 +344,11 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    /** Of the tests that are left after --include and --exclude, one in this many: others for each commit. */
+    ["one-in"]: {
+      type: "string",
+      default: undefined,
+    },
     ["vendor"]: {
       type: "string",
       default: undefined,
@@ -2743,6 +2748,23 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
       }
       !isQuiet && console.log("Skipping tests:", skipExpectations, skippedTests.length, "/", availableTests.length);
     }
+  }
+
+  const oneIn = parseInt(options["one-in"] ?? "1");
+  if (oneIn > 1) {
+    // Every shard draws the same files, because it draws by the path and the commit.
+    const commit = process.env.BUILDKITE_COMMIT ?? "";
+    const isDrawn = (testPath: string) =>
+      createHash("sha1")
+        .update(`${commit} ${testPath.replaceAll("\\", "/")}`)
+        .digest()
+        .readUInt32LE(0) %
+        oneIn ===
+      0;
+    const drawnTests = availableTests.filter(isDrawn);
+    !isQuiet &&
+      console.log("Drawing tests: one in", oneIn, "for", commit, drawnTests.length, "/", availableTests.length);
+    availableTests.splice(0, availableTests.length, ...drawnTests);
   }
 
   const shardId = parseInt(options.shard);

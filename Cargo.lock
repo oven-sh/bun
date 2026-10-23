@@ -645,6 +645,7 @@ dependencies = [
  "bun_sha_hmac",
  "bun_sys",
  "bytemuck",
+ "libc",
  "strum",
  "thiserror",
 ]

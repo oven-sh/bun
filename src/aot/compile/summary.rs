@@ -4,6 +4,7 @@ use crate::link::ProgramModule;
 use crate::load::{EntryPointKind, PerProject, ProgramFile, Sources};
 use crate::report::{ModuleSource, SourceTexts};
 use bun_sema::program::Files;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 
 pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<EntryPointPaths> {
@@ -48,7 +49,7 @@ pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<Folde
             .to_vec(),
         })
         .collect();
-    folders.sort_unstable();
+    folders.shared_sort_unstable();
     folders.dedup();
     folders
 }

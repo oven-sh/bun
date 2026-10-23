@@ -542,7 +542,7 @@ function collectNativeLoads(builder: ModelBuilder): NativeLoads {
   for (const { value: load, source } of declarationsOf(builder, "NativeLoad")) {
     const module = modulesByField.get(load.registryField);
     if (module === undefined) {
-      builder.problems.add(source, `InternalModuleRegistry has no field ${load.registryField}`);
+      builder.reportUnknown(source, `InternalModuleRegistry has no field ${load.registryField}`);
       continue;
     }
     const exports = load.exports === null ? null : readsAtNativeSite(builder, load.exports);

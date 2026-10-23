@@ -2,7 +2,7 @@
 
 #include "BunAOTCompile.h"
 
-#include "../../aot/ir/generated/AOTSchemaHash.h"
+#include "AOTSchemaHash.h"
 #include <JavaScriptCore/AOTBuiltinTableBindings.h>
 #include <JavaScriptCore/AOTCompile.h>
 #include <JavaScriptCore/AOTCompileOptionWords.h>
@@ -31,7 +31,7 @@
 #include <stdlib.h>
 #endif
 
-static_assert(JSC::AOT::Wire::schemaHash == BUN_AOT_SCHEMA_HASH, "src/aot/ir/generated and JavaScriptCore's AOTWire.h were generated from different schemas: run `bun run src/codegen/aot-schema/index.ts`");
+static_assert(JSC::AOT::Wire::schemaHash == BUN_AOT_SCHEMA_HASH, "the Rust half of the compiler and JavaScriptCore's AOTWire.h were generated from different schemas");
 static_assert(sizeof(JSC::AOT::Wire::ResultSection) == sizeof(uint32_t));
 static_assert(sizeof(JSC::AOT::Wire::PassID) == sizeof(uint32_t));
 
@@ -45,21 +45,21 @@ struct BunAOTResult {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(BunAOTResult);
 
     std::unique_ptr<JSC::AOT::CompileOutput> output;
-    Vector<uint8_t> text;
-    Vector<Wire::UserDiagnosticRecord> userDiagnostics;
-    Vector<Wire::InternalErrorRecord> internalErrors;
-    Vector<Wire::FeatureUseRecord> featuresUsed;
-    Vector<Wire::LocaleUseRecord> localesUsed;
-    Vector<Wire::AllocationRemarkRecord> allocationRemarks;
-    Vector<Wire::ObfuscatedSiteRecord> obfuscatedSites;
-    Vector<Wire::FunctionReportRecord> functions;
-    Vector<Wire::OperationCountRecord> operationCounts;
-    Vector<Wire::PassTimeRecord> passTimes;
-    Vector<uint64_t> statistics;
-    Vector<uint64_t> limitValues;
+    JSC::AOT::Vector<uint8_t> text;
+    JSC::AOT::Vector<Wire::UserDiagnosticRecord> userDiagnostics;
+    JSC::AOT::Vector<Wire::InternalErrorRecord> internalErrors;
+    JSC::AOT::Vector<Wire::FeatureUseRecord> featuresUsed;
+    JSC::AOT::Vector<Wire::LocaleUseRecord> localesUsed;
+    JSC::AOT::Vector<Wire::AllocationRemarkRecord> allocationRemarks;
+    JSC::AOT::Vector<Wire::ObfuscatedSiteRecord> obfuscatedSites;
+    JSC::AOT::Vector<Wire::FunctionReportRecord> functions;
+    JSC::AOT::Vector<Wire::OperationCountRecord> operationCounts;
+    JSC::AOT::Vector<Wire::PassTimeRecord> passTimes;
+    JSC::AOT::Vector<uint64_t> statistics;
+    JSC::AOT::Vector<uint64_t> limitValues;
 };
 
-static Wire::TextRange appendText(Vector<uint8_t>& text, std::span<const uint8_t> utf8)
+static Wire::TextRange appendText(JSC::AOT::Vector<uint8_t>& text, std::span<const uint8_t> utf8)
 {
     static_assert(!WTF::isValidCapacityForVector<uint8_t>(UINT32_MAX));
 
@@ -69,13 +69,13 @@ static Wire::TextRange appendText(Vector<uint8_t>& text, std::span<const uint8_t
     return { static_cast<uint32_t>(offset), static_cast<uint32_t>(utf8.size()) };
 }
 
-static Wire::TextRange appendText(Vector<uint8_t>& text, const String& string)
+static Wire::TextRange appendText(JSC::AOT::Vector<uint8_t>& text, const String& string)
 {
     return appendText(text, byteCast<uint8_t>(string.utf8().span()));
 }
 
 template<typename Record>
-static Vector<Record> rebaseTextRanges(Vector<uint8_t>& text, std::span<const uint8_t> recordText, Vector<Record> records, Wire::TextRange Record::* member)
+static JSC::AOT::Vector<Record> rebaseTextRanges(JSC::AOT::Vector<uint8_t>& text, std::span<const uint8_t> recordText, JSC::AOT::Vector<Record> records, Wire::TextRange Record::* member)
 {
     Wire::TextRange appended = appendText(text, recordText);
     bool didAppend = appended.length == recordText.size();
@@ -89,7 +89,7 @@ static Vector<Record> rebaseTextRanges(Vector<uint8_t>& text, std::span<const ui
 template<typename E>
 class EnumeratorNames {
 public:
-    explicit EnumeratorNames(Vector<uint8_t>& text)
+    explicit EnumeratorNames(JSC::AOT::Vector<uint8_t>& text)
         : m_text(text)
     {
     }
@@ -103,14 +103,14 @@ public:
     }
 
 private:
-    Vector<uint8_t>& m_text;
+    JSC::AOT::Vector<uint8_t>& m_text;
     std::array<std::optional<Wire::TextRange>, JSC::AOT::numberOfEnumerators<E>> m_names;
 };
 
 using OperationNames = EnumeratorNames<Typed::Opcode>;
 
 template<typename T>
-static BunAOTBytes bytesOf(const Vector<T>& vector)
+static BunAOTBytes bytesOf(const JSC::AOT::Vector<T>& vector)
 {
     static_assert(alignof(T) <= sectionAlignment);
     std::span<const uint8_t> bytes = asByteSpan(vector.span());
@@ -194,8 +194,8 @@ static void encodeDiagnostics(BunAOTResult& result)
 {
     const JSC::AOT::Diagnostics& diagnostics = result.output->diagnostics;
 
-    const Vector<JSC::AOT::UserDiagnostic>& userDiagnostics = diagnostics.userDiagnostics();
-    result.userDiagnostics = Vector<Wire::UserDiagnosticRecord>(userDiagnostics.size(), [&](size_t index) {
+    const JSC::AOT::Vector<JSC::AOT::UserDiagnostic>& userDiagnostics = diagnostics.userDiagnostics();
+    result.userDiagnostics = JSC::AOT::Vector<Wire::UserDiagnosticRecord>(userDiagnostics.size(), [&](size_t index) {
         const JSC::AOT::UserDiagnostic& diagnostic = userDiagnostics[index];
         return Wire::UserDiagnosticRecord {
             .kind = diagnostic.kind,
@@ -214,8 +214,8 @@ static void encodeDiagnostics(BunAOTResult& result)
         };
     });
 
-    const Vector<JSC::AOT::InternalError>& internalErrors = diagnostics.internalErrors();
-    result.internalErrors = Vector<Wire::InternalErrorRecord>(internalErrors.size(), [&](size_t index) {
+    const JSC::AOT::Vector<JSC::AOT::InternalError>& internalErrors = diagnostics.internalErrors();
+    result.internalErrors = JSC::AOT::Vector<Wire::InternalErrorRecord>(internalErrors.size(), [&](size_t index) {
         const JSC::AOT::InternalError& error = internalErrors[index];
         return Wire::InternalErrorRecord {
             .kind = error.kind,
@@ -360,7 +360,7 @@ static void encodeArrivalSites(BunAOTResult& result)
 
 static void encodePassTimes(BunAOTResult& result)
 {
-    const Vector<JSC::AOT::Statistics::PassTime>& passTimes = result.output->statistics.passTimes();
+    const JSC::AOT::Vector<JSC::AOT::Statistics::PassTime>& passTimes = result.output->statistics.passTimes();
     if (passTimes.isEmpty())
         return;
 

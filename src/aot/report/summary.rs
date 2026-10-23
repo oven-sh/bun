@@ -1,6 +1,7 @@
 use core::cmp::Reverse;
 
 use bun_options_types::aot_options::ExplainSet;
+use bun_sema::util::SharedSort;
 
 use super::format::{self, PathPrinter};
 use super::json::JsonWriter;
@@ -192,7 +193,7 @@ fn collect_untyped_files<'r>(
             });
         }
     }
-    files.sort_by_key(|file| (Reverse(file.accesses.not_free()), file.path));
+    files.shared_sort_by_key(|file| (Reverse(file.accesses.not_free()), file.path));
     files
 }
 

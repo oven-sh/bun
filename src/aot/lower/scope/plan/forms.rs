@@ -1,5 +1,6 @@
 use bun_sema::bind::{BindingKind, CodeUnit, Decl, ScopeId, SymbolId, has_mapped_arguments};
 use bun_sema::hir::FnId;
+use bun_sema::util::SharedSort;
 
 use super::{Context, NormalizedUses};
 use crate::ir::FunctionKey;
@@ -109,7 +110,7 @@ pub(super) fn normalize_uses(
         })
     });
     let mut eval_uses: Vec<EvalUse> = stored_eval_uses.collect();
-    eval_uses.sort_unstable();
+    eval_uses.shared_sort_unstable();
     eval_uses.dedup();
 
     let walked_references = walk

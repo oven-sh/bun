@@ -1,3 +1,5 @@
+use bun_sema::util::SharedSort;
+
 use super::ReportInput;
 use super::format::PathPrinter;
 use super::source_texts::ModuleLocator;
@@ -108,7 +110,7 @@ pub(super) fn resolve_ascending<T: Clone>(
         .filter_map(|(index, &position)| Some((position?, index)))
         .collect();
     // Ascending, so the locator scans the text of each module once.
-    order.sort_unstable();
+    order.shared_sort_unstable();
 
     let mut resolved: Vec<Option<T>> = vec![None; wanted.len()];
     let mut previous: Option<(Position, usize)> = None;

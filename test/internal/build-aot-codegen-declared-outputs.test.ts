@@ -24,6 +24,7 @@ import {
   engineFunctionsJson,
   registerAotRules,
   removableFeaturesJson,
+  schemaHashHeader,
   schemaRustFiles,
   schemaUseCheckStamp,
   type EngineSources,
@@ -177,13 +178,15 @@ const generatorTimeout = 60_000;
 function engineAt(javaScriptCore: string | undefined): EngineSources {
   return {
     javaScriptCore,
-    schema: "/fake/engine/aot/schema/AOTSchema.def",
-    schemaInputs: ["/fake/engine/aot/schema/AOTSchema.def", "/fake/engine/aot/schema/limits.def"],
-    schemaGeneratedDirectory: "/fake/engine/aot/schema/generated",
-    schemaOutputs: [
-      "/fake/engine/aot/schema/generated/AOTSchemaOperations.h",
-      "/fake/engine/aot/schema/generated/AOTSchemaFiles.cmake",
+    schema: "/fake/engine/aot/ir/AOTSchema.def",
+    schemaGenerator: "/fake/engine/aot/ir/generator/index.ts",
+    schemaInputs: [
+      "/fake/engine/aot/ir/AOTSchema.def",
+      "/fake/engine/aot/ir/schema/limits.def",
+      "/fake/engine/aot/ir/generator/index.ts",
     ],
+    schemaGeneratedDirectory: javaScriptCore === undefined ? undefined : "/fake/build/DerivedSources/aot",
+    schemaOutputs: javaScriptCore === undefined ? [] : ["/fake/build/DerivedSources/aot/AOTSchemaOperations.h"],
     schemaUsers: ["/fake/engine/aot/ir/AOTProgram.cpp"],
     builtinsGeneratedDirectory: "/fake/engine/aot/builtins/generated",
     builtinTableInputs: ["/fake/engine/aot/builtins/array.def"],
@@ -255,40 +258,40 @@ describe("emitRemovableFeatures", () => {
 });
 
 describe("emitAotSchema", () => {
-  test("with a checkout of the engine it declares the engine's generated files and every file of src/aot/ir/generated on one edge", () => {
+  test("with a checkout of the engine it declares the engine's generated files and Bun's on one edge", () => {
     using dir = tempDir("build-aot-schema", {});
     const { cfg, n, o, dirStamp } = configure(String(dir));
 
     emitAotSchema({ n, cfg, sources: noSources(), o, dirStamp, engine: checkout });
 
     const rust = schemaRustFiles(cfg);
-    expect(rust.length).toBeGreaterThan(0);
+    const outputs = [...checkout.schemaOutputs, ...rust, schemaHashHeader(cfg)];
     const edge = edgeOf(n, rust[0]);
     expect(edge.rule).toBe("codegen_bun");
-    expect(normalized(edge.outputs.map(p => resolve(n.buildDir, p)))).toEqual(
-      expect.arrayContaining(normalized([...checkout.schemaOutputs, ...rust])),
-    );
-    expect(normalized(o.all)).toEqual(normalized([...checkout.schemaOutputs, ...rust]));
+    expect(normalized(edge.outputs.map(p => resolve(n.buildDir, p)))).toEqual(normalized(outputs));
+    expect(normalized(o.all)).toEqual(normalized(outputs));
     expect(normalized(o.rustInputs)).toEqual(normalized(rust));
+    expect(o.cppHeaders).toEqual([schemaHashHeader(cfg)]);
     expect(edgeInputs(n, rust[0])).toEqual(expect.arrayContaining(checkout.schemaInputs.map(p => n.rel(p))));
-    expect(edgeArgs(n, rust[0])).toContain(checkout.schemaGeneratedDirectory);
-    expect(edgeArgs(n, rust[0])).not.toContain("--check");
+    expect(edgeArgs(n, rust[0])).toContain(checkout.schemaGenerator);
+    expect(edgeArgs(n, rust[0])).toContain(`--engine-out ${checkout.schemaGeneratedDirectory}`);
   });
 
-  test("with a prebuilt engine it writes nothing: a stamp says that src/aot/ir/generated is what the schema gives", () => {
+  test("with a prebuilt engine it writes Bun's half alone, by the generator and from the schema of the tarball", () => {
     using dir = tempDir("build-aot-schema-prebuilt", {});
     const { cfg, n, o, dirStamp } = configure(String(dir));
 
     emitAotSchema({ n, cfg, sources: noSources(), o, dirStamp, engine: prebuilt });
 
-    const stamp = resolve(cfg.codegenDir, "aot-schema-is-current.stamp");
-    expect(edgeOf(n, stamp).rule).toBe("aot_check");
-    expect(edgeOutputs(n, stamp)).toEqual([n.rel(stamp)]);
-    expect(o.all).toEqual([stamp]);
-    expect(o.rustInputs).toEqual([stamp]);
-    expect(edgeInputs(n, stamp)).toEqual(expect.arrayContaining(schemaRustFiles(cfg).map(p => n.rel(p))));
-    expect(edgeArgs(n, stamp)).toContain("--check");
-    expect(edgeArgs(n, stamp)).not.toContain("--engine-out");
+    const rust = schemaRustFiles(cfg);
+    const outputs = [...rust, schemaHashHeader(cfg)];
+    expect(edgeOf(n, rust[0]).rule).toBe("codegen_bun");
+    expect(normalized(edgeOf(n, rust[0]).outputs.map(p => resolve(n.buildDir, p)))).toEqual(normalized(outputs));
+    expect(normalized(o.all)).toEqual(normalized(outputs));
+    expect(normalized(o.rustInputs)).toEqual(normalized(rust));
+    expect(edgeInputs(n, rust[0])).toEqual(expect.arrayContaining(prebuilt.schemaInputs.map(p => n.rel(p))));
+    expect(edgeArgs(n, rust[0])).toContain(prebuilt.schemaGenerator);
+    expect(edgeArgs(n, rust[0])).not.toContain("--engine-out");
   });
 });
 

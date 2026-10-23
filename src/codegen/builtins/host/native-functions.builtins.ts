@@ -136,7 +136,7 @@ export default b.declarations(
     ...operandCodeOnly,
     args: { object: b.any.optional, filter: b.any.optional },
     returns: newArrayOf(b.union(b.string, b.symbol)),
-    uses: { object: [b.runs("OwnKeys")], filter: converted },
+    uses: { object: [b.runs("OwnKeys"), b.readsContents()], filter: converted },
     implementation: b.hostCall,
   }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {

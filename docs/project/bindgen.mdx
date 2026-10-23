@@ -786,14 +786,10 @@ A few things a schema cannot say with bindgen's own keys:
 
 `b.any.returning(..)` is still `b.any` to Rust. Each word is `"string"`, `"number"`, `"int32"`, `"bigint"`, `"boolean"`,
 `"undefined"`, `"null"`, `"object"`, `"Promise"`, `"this"` (the receiver itself), the name of a class of a schema, or one
-of `nativeInstances` in `src/codegen/declared-type-checks.ts` (`"Array"`, `"Buffer"`, `"Headers"` ..). Nothing proves the
-words, so `bun build --compile --aot` takes them for what it expects: compiled code tests the value where knowing its type
-pays, and a value that is none of them goes the way of a value nobody knows. A wrong word costs speed and nothing else. In a
-build with assertions (a debug build, CI's ASAN lane) the generated host function looks at the value too and ends the
-process, naming the member, if it is none of the words, and so does `x_set_cached` of a cached getter. A release build
-looks at nothing. A result that is a class (`b.self`, `Other.nullable`) or `b.string.local` is treated the same way,
-because Rust may hand back any JS value for it. A result that Rust hands over in a type of its own (`b.string`, `b.f64`,
-`b.bool`, a dictionary ..) is a fact to the compiler and costs no test: prefer one where the member is hot. Without
+of `nativeInstances` in `src/codegen/declared-type-checks.ts` (`"Array"`, `"Buffer"`, `"Headers"` ..). Compiled code takes
+the words on trust. In a build with assertions (a debug build, CI's ASAN lane) the generated host function looks at the
+value and ends the process, naming the member, if it is none of them. A release build looks at nothing. So does `x_set_cached` of a cached getter. A result that is a class (`b.self`, `Other.nullable`)
+or `b.string.local` is held to its type the same way, because Rust may hand back any JS value for it. Without
 `.returning` the compiler takes a `b.any` result for an object nobody knows, and takes the member to do anything at all
 to its operands.
 

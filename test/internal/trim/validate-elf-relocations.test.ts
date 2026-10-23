@@ -317,6 +317,7 @@ const X86 = {
   Abs64: 1,
   Pc32: 2,
   Plt32: 4,
+  Abs32S: 11,
   DtpMod64: 16,
   TpOff32: 23,
   Pc64: 24,
@@ -405,13 +406,19 @@ function symbol(info: number, sectionIndex: number, value: number): Buffer {
 const { Alloc, ExecInstr, Tls } = SectionFlag;
 const textStart = 0x1000;
 const pointerIntoRange = relocation(0x1810, X86.Abs64, "text", 0x2800 - textStart);
+const loads = { withBase: 0x1900, withIndex: 0x1910, withHighIndex: 0x1930, alone: 0x1920 };
+const text = Buffer.alloc(0x3000);
+text.set([0x0f, 0xb6, 0x80], loads.withBase - textStart);
+text.set([0x8b, 0x04, 0x85], loads.withIndex - textStart);
+text.set([0x8b, 0x04, 0x25], loads.alone - textStart);
+text.set([0xf7, 0x24, 0xe5], loads.withHighIndex - textStart);
 const sections: ElfSection[] = [
   {
     name: ".text",
     type: SectionType.ProgramBits,
     flags: Alloc | ExecInstr,
     address: textStart,
-    bytes: Buffer.alloc(0x3000),
+    bytes: text,
   },
   { name: ".rodata", type: SectionType.ProgramBits, flags: Alloc, address: 0x5000, bytes: Buffer.alloc(0x40) },
   { name: ".eh_frame", type: SectionType.ProgramBits, flags: Alloc, address: 0x6000, bytes: Buffer.alloc(0x40) },
@@ -531,6 +538,19 @@ describe("relocations in code", () => {
     expect(check([relocationsOf(".text", [fieldTo(0x1ffe)])])).toEqual({ failures: [], ...counts(1) });
     expect(check([relocationsOf(".text", [fieldTo(0x2800)])])).toEqual({
       failures: [referenceInto(caller, 0x1810, body)],
+      ...counts(1, 1),
+    });
+  });
+
+  test("count a base beside a register as ambiguous and report an address that stands alone", () => {
+    const { withBase, withIndex, withHighIndex, alone } = loads;
+    const fieldOf = (instruction: number) => relocation(instruction + 3, X86.Abs32S, "text", 0x2800 - textStart);
+    expect(check([relocationsOf(".text", [withBase, withIndex, withHighIndex].map(fieldOf))])).toEqual({
+      failures: [],
+      ...counts(3, 3, 3),
+    });
+    expect(check([relocationsOf(".text", [fieldOf(alone)])])).toEqual({
+      failures: [referenceInto(caller, alone + 3, body)],
       ...counts(1, 1),
     });
   });

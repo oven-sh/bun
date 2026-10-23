@@ -4,6 +4,7 @@
 // a program can prove of a value, and says no more than they do: a read that is missing here is reported, one too many would hide a wrong entry.
 import { types } from "node:util";
 import type { Realm } from "./members";
+import { admitsValue } from "./operands";
 import {
   isObject,
   keyOfSpelling,
@@ -89,13 +90,29 @@ function readsOfCalling(entry: DumpedEntry): ReadsOfOperandCode {
   return reads;
 }
 
-function readsOfMembersCalled(realm: Realm, value: object, spellings: readonly string[]): ReadsOfOperandCode {
+// A call of which the receiver is known too: describeCallOn(). It counts every overload up to the first that takes every such receiver, and this one only that.
+function readsOfCallingOn(realm: Realm, entry: DumpedEntry, receiver: object): ReadsOfOperandCode {
+  const overload = entry.overloads.find(
+    ({ mode, receiver: declared }) =>
+      mode === "Call" && (declared === null || admitsValue(realm, declared.accepted, receiver, true)),
+  );
+  if (!overload || overload.implementation.how === "Compiled") return [];
+  if (overload.isUndeclared || (overload.capability === "js" && !overload.runsOnlyOperandCode)) return "Everything";
+  return overload.parameters.some(({ protocols }) => protocols.length > 0) ? "Everything" : overload.reads;
+}
+
+function readsOfMembersCalled(
+  realm: Realm,
+  value: object,
+  spellings: readonly string[],
+  readsOf: (entry: DumpedEntry) => ReadsOfOperandCode,
+): ReadsOfOperandCode {
   const reads: Heap[] = [];
   for (const spelling of spellings) {
     const found: unknown = Reflect.get(value, keyOfSpelling(spelling));
     if (typeof found !== "function") continue;
     const entry = entryOfFunction(realm, spelling, found);
-    const ofCall = entry ? readsOfCalling(entry) : "Everything";
+    const ofCall = entry ? readsOf(entry) : "Everything";
     if (ofCall === "Everything") return ofCall;
     reads.push(...ofCall);
   }
@@ -107,6 +124,7 @@ const findsCallable = (value: object, spellings: readonly string[]) =>
 
 // The walk over all that the operand reaches reads every object it comes to, whatever else it finds there.
 function readsOfReachableValues(
+  realm: Realm,
   { uses, protocols, namedMembers, calledMembers }: DumpedParameter,
   value: object,
 ): ReadsOfOperandCode {
@@ -127,7 +145,11 @@ function readsOfReachableValues(
   if (protocols.includes("ToJSON") && findsCallable(value, protocolKeys.ToJSON)) return "Everything";
   if (protocols.includes("CallsNamed") && (calledMembers.length === 0 || findsCallable(value, calledMembers)))
     return "Everything";
-  return heapsOfReachableObjects;
+  if (!protocols.includes("ToPrimitive")) return heapsOfReachableObjects;
+  const ofConversion = readsOfMembersCalled(realm, value, protocolKeys.ToPrimitive, entry =>
+    readsOfCallingOn(realm, entry, value),
+  );
+  return ofConversion === "Everything" ? ofConversion : [...heapsOfReachableObjects, ...ofConversion];
 }
 
 function readsOfOwnProtocols(realm: Realm, parameter: DumpedParameter, value: object): ReadsOfOperandCode {
@@ -143,9 +165,10 @@ function readsOfOwnProtocols(realm: Realm, parameter: DumpedParameter, value: ob
     if (protocol === "Iterate" || protocol === "Species") {
       if (protocolKeys[protocol].some(spelling => Reflect.has(value, keyOfSpelling(spelling)))) return "Everything";
     } else if (protocol === "ToPrimitive" || protocol === "ToJSON") {
-      ofProtocol = readsOfMembersCalled(realm, value, protocolKeys[protocol]);
+      ofProtocol = readsOfMembersCalled(realm, value, protocolKeys[protocol], readsOfCalling);
     } else if (protocol === "CallsNamed") {
-      ofProtocol = calledMembers.length === 0 ? "Everything" : readsOfMembersCalled(realm, value, calledMembers);
+      ofProtocol =
+        calledMembers.length === 0 ? "Everything" : readsOfMembersCalled(realm, value, calledMembers, readsOfCalling);
     } else if (protocol === "Named" && namedMembers.length === 0) {
       return "Everything";
     }
@@ -158,7 +181,7 @@ function readsOfOwnProtocols(realm: Realm, parameter: DumpedParameter, value: ob
 export function readsOfOperandCode(realm: Realm, parameter: DumpedParameter, value: unknown): ReadsOfOperandCode {
   if (!isObject(value) || parameter.protocols.length === 0) return [];
   if (types.isProxy(value) || typeof value === "function") return "Everything";
-  if (parameter.uses.includes("AppliesTransitively")) return readsOfReachableValues(parameter, value);
+  if (parameter.uses.includes("AppliesTransitively")) return readsOfReachableValues(realm, parameter, value);
   // The protocols run on what the operand holds. The entry declares that it reads the operand.
   if (parameter.uses.includes("AppliesToContents")) return [];
   return readsOfOwnProtocols(realm, parameter, value);

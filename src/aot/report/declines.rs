@@ -1,4 +1,5 @@
 use bun_options_types::aot_options::ExplainSet;
+use bun_sema::util::SharedSort;
 
 use super::allocations::write_reasons;
 use super::format::{write_count, write_counted};
@@ -44,7 +45,7 @@ fn is_same_decline(first: &DeclineRecord, second: &DeclineRecord) -> bool {
 
 fn merge(records: &[DeclineRecord]) -> Vec<MergedDecline<'_>> {
     let mut sorted: Vec<&DeclineRecord> = records.iter().collect();
-    sorted.sort_by_key(|record| sort_key(record));
+    sorted.shared_sort_by_key(|record| sort_key(record));
 
     let mut merged: Vec<MergedDecline<'_>> = Vec::new();
     for record in sorted {

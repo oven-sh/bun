@@ -4,7 +4,7 @@ import { chmodSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BuildError } from "../../../scripts/build/error.ts";
-import type { Feature } from "../../../scripts/build/trim/features.ts";
+import type { Feature, FeatureModel } from "../../../scripts/build/trim/features.ts";
 import { libraryBytes } from "../../../scripts/build/trim/libraries.ts";
 import { EdgeKind, type PartitionFailure } from "../../../scripts/build/trim/partition.ts";
 import {
@@ -24,6 +24,7 @@ import {
   B,
   C,
   edgeKindOf,
+  modelOf,
   partitioned,
   tableOutput,
   Tools,
@@ -260,6 +261,19 @@ describe("the partition", () => {
     expect(result.groups.map(group => result.sets[group.set])).toEqual([[Tools], [A], [B]]);
     expect(result.layoutRank[Tools]).toBe(0);
     expect(result.groups.map(group => result.groupOfSet.get(group.set))).toEqual([0, 1, 2]);
+  });
+
+  test("what every compiled program leaves out lies together: the JIT's groups stand with the command line's, in front of a program's", () => {
+    const named = (index: number, name: string) =>
+      modelOf(...abc.features.map(each => (each.index === index ? { ...each, name } : each)));
+    const sections = { ...threeFeatures, entryT: { to: ["sharedBT"] }, entryB: { to: ["sharedBT"] }, sharedBT: {} };
+    const groupsOf = (model: FeatureModel) => {
+      const result = partitioned(sections, threeFeaturesGuards, model);
+      expect(result.failures).toEqual([]);
+      return result.groups.map(group => result.sets[group.set]);
+    };
+    expect(groupsOf(abc)).toEqual([[Tools], [A], [B], [B, Tools]]);
+    expect(groupsOf(named(B, "JIT"))).toEqual([[Tools], [B], [B, Tools], [A]]);
   });
 
   test("a set without movable bytes gets no group and stays a set", () => {

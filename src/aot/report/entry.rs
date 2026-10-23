@@ -3,6 +3,7 @@ use bun_ast::Kind;
 use bun_ast::Log;
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::messages::Category;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::{self as driver, log_message};
 
 use super::message::ReportMessage;
@@ -72,7 +73,7 @@ fn locate_texts(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<driver::Dia
     }
     // Ascending, so the locator scans the text of each module once. Entries arrive by rank.
     let mut order: Vec<usize> = (0..parts.len()).collect();
-    order.sort_unstable_by_key(|&index| parts[index].1);
+    order.shared_sort_unstable_by_key(|&index| parts[index].1);
 
     let mut locator = ModuleLocator::new(texts);
     let mut located: Vec<Option<driver::Diagnostic>> = parts.iter().map(|_| None).collect();

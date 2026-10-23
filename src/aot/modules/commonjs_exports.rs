@@ -30,6 +30,7 @@ use bun_sema::bind::{Parent, SymbolId};
 use bun_sema::hir::{ExprId, FnId, StmtId};
 use bun_sema::program::{FileId, Sym};
 use bun_sema::util::FxHashMap;
+use bun_sema::util::SharedSort;
 
 /// The callback of `__commonJS(cb)` that is a module of its own, and the name that holds what the helper gives.
 #[derive(Copy, Clone, Debug)]
@@ -260,7 +261,7 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
             is_enumerable: alias.is_enumerable,
         });
     }
-    names.sort_by_key(|entry| entry.created_at);
+    names.shared_sort_by_key(|entry| entry.created_at);
     ModuleEntries {
         module: text.module,
         has_names: text.form == Form::Names,

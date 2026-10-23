@@ -441,7 +441,7 @@ export function writeLinkInputs(
 export function linkArguments(
   inputs: LinkInputs,
   command: string[],
-  options?: { demangler?: string; validatesRelocations?: boolean },
+  options?: { demangler?: string; validatesRelocations?: boolean | "report" },
 ): string[] {
   return [
     bunExe(),
@@ -451,7 +451,8 @@ export function linkArguments(
     inputs.builtinUses,
     inputs.libraries,
     ...(options?.demangler === undefined ? [] : [`--demangler=${options.demangler}`]),
-    ...(options?.validatesRelocations ? ["--validate-relocations"] : []),
+    ...(options?.validatesRelocations === "report" ? ["--validate-relocations=report"] : []),
+    ...(options?.validatesRelocations === true ? ["--validate-relocations"] : []),
     "--",
     ...command,
   ];

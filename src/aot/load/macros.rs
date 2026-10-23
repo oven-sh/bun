@@ -14,6 +14,7 @@ use bun_sema::import_sites::macro_callee;
 use bun_sema::node::NodeData;
 use bun_sema::resolve::MacroRequest;
 use bun_sema::session::Arena;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 
 type MacroResult<'s> = (ExprId, HostValue<'s>);
@@ -77,7 +78,7 @@ fn run_round<'s>(
 ) -> Round<'s> {
     let hir = request.hir;
     let mut calls = request.analysis.pending_macro_calls.to_vec();
-    calls.sort_unstable();
+    calls.shared_sort_unstable();
     let bindings = collect_macro_bindings(hir, request.bound);
     let macro_symbols: Vec<SymbolId> = bindings.iter().map(|binding| binding.symbol).collect();
     let blocking_code = match (input.runs_macros, is_in_node_modules(request.importer)) {
@@ -192,7 +193,7 @@ fn collect_macro_bindings(hir: &File<'_>, bound: &Bound<'_>) -> Vec<MacroBinding
             }
         }
     }
-    bindings.sort_unstable_by_key(|binding| binding.symbol);
+    bindings.shared_sort_unstable_by_key(|binding| binding.symbol);
     bindings
 }
 

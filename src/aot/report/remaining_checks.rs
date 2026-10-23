@@ -1,4 +1,5 @@
 use bun_options_types::aot_options::ExplainSet;
+use bun_sema::util::SharedSort;
 
 use super::format::{write_count, write_counted};
 use super::json::JsonWriter;
@@ -81,7 +82,7 @@ fn listed_checks<'r>(
             is_listed_site(names, record.witness.location, record.witness.function_id())
         })
         .collect();
-    checks.sort_unstable_by_key(|record| {
+    checks.shared_sort_unstable_by_key(|record| {
         let position = position_of(record.witness.location);
         (position.is_none(), position, record.id)
     });

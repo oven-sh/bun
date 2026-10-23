@@ -66,6 +66,7 @@ interface Section {
 function readMachO(file: Buffer) {
   const segments: Section[] = [];
   const sections: Section[] = [];
+  const readOnlySegments: string[] = [];
   const addressOf = new Map<string, number>();
   let fixups = 0;
   let at = 32;
@@ -74,6 +75,7 @@ function readMachO(file: Buffer) {
     const text = (offset: number) => file.toString("latin1", offset, offset + 16).replace(/\0.*$/, "");
     if (kind === 0x19) {
       segments.push({ name: text(at + 8), address: Number(file.readBigUInt64LE(at + 24)), size: Number(file.readBigUInt64LE(at + 48)), offset: Number(file.readBigUInt64LE(at + 40)) });
+      if (file.readUInt32LE(at + 68) & 0x10) readOnlySegments.push(text(at + 8));
       for (let index = 0; index < file.readUInt32LE(at + 64); index++) {
         const section = at + 72 + index * 80;
         sections.push({
@@ -99,7 +101,7 @@ function readMachO(file: Buffer) {
   const sectionAt = (address: number) => sections.find(section => section.offset > 0 && holds(address)(section));
   const offsetOf = (address: number) => segmentAt(address)!.offset + address - segmentAt(address)!.address;
   const section = (name: string) => sections.find(section => section.name === name);
-  return { segments, sections, section, segmentAt, sectionAt, offsetOf, addressOf, fixups };
+  return { segments, readOnlySegments, sections, section, segmentAt, sectionAt, offsetOf, addressOf, fixups };
 }
 
 export function mergedRanges(ranges: { start: number; end: number }[]) {
@@ -337,8 +339,9 @@ export type LinkedProgram = Awaited<ReturnType<typeof linked>>;
 export const statisticOf = (linkOutput: string, name: string) => Number(new RegExp(`^graph: .*\\b${name} (\\d+)`, "m").exec(linkOutput)?.[1]);
 
 export async function expectTrimmedImage(machine: Machine, folder: string) {
-  const { segments } = readMachO(readFileSync(join(folder, "trimmed")));
+  const { segments, readOnlySegments } = readMachO(readFileSync(join(folder, "trimmed")));
   expect(segments.filter(({ name }) => name === "__TEXT").map(({ offset }) => offset)).toEqual([0]);
+  expect(readOnlySegments.length).toBeLessThanOrEqual(1);
   const mapped = segments.filter(({ size }) => size > 0);
   const overlapping = mapped.flatMap((first, index) =>
     mapped.slice(index + 1).flatMap(second => {

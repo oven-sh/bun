@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests;
 
+use bun_sema::util::SharedSort;
+
 use super::generated::MAX_TRACKED_INTEGER;
 use super::ids::TypeId;
 use super::types::{ClassPart, Primitives, Type, TypeFlags, TypeTable};
@@ -21,11 +23,12 @@ pub(super) fn normalize_without_table(ty: &mut Type) -> bool {
     ty.layouts.sort_unstable();
     ty.layouts.dedup();
     ty.builtins
-        .sort_unstable_by_key(|builtin| builtin.to_wire());
+        .shared_sort_unstable_by_key(|builtin| builtin.to_wire());
     ty.builtins.dedup();
     ty.functions.sort_unstable();
     ty.functions.dedup();
-    ty.classes.sort_by_key(|part| part.builtin_class.to_wire());
+    ty.classes
+        .shared_sort_by_key(|part| part.builtin_class.to_wire());
     let mut neighbors = ty.classes.iter().zip(ty.classes.iter().skip(1));
     !neighbors.any(|(left, right)| is_same_class(left, right))
 }

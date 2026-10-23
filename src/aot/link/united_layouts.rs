@@ -4,6 +4,7 @@ use crate::ir::{
     Type, TypeFlags, TypeId, TypeTable, drop_each, for_each_mut,
 };
 use bun_sema::check::aot::ObjectOrigin;
+use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 // The layout of a plain object belongs to no file.
@@ -171,7 +172,7 @@ fn list_literals(definition: &Layout, types: &TypeTable) -> Literals {
     let mut literals: Literals = checked
         .filter_map(|field| Some((field.key?, find_only_literal(types.get(field.declared.ty))?)))
         .collect();
-    literals.sort_unstable();
+    literals.shared_sort_unstable();
     literals
 }
 

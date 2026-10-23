@@ -200,7 +200,9 @@ export function withoutDebugInformation(_folder?: string): string[] {
     if (name.startsWith(prefix) && Date.now() - statSync(join(tmpdir(), name)).mtimeMs > 24 * 60 * 60 * 1000) rmSync(join(tmpdir(), name), { force: true });
   }
   const unfinished = `${copy}.${process.pid}`;
-  if (Bun.spawnSync({ cmd: [strip, "-o", unfinished, bunExe()], stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
+  // LeakSanitizer's suppressions (test/leaksan.supp) name functions, so under it the copy keeps its table of symbols.
+  const removed = isASAN ? ["--strip-debug"] : [];
+  if (Bun.spawnSync({ cmd: [strip, ...removed, "-o", unfinished, bunExe()], stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
     rmSync(unfinished, { force: true });
     return [];
   }

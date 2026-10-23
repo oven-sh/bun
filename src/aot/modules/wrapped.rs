@@ -11,6 +11,7 @@ use bun_sema::hir::{
 };
 use bun_sema::module_format::evaluates_own_this;
 use bun_sema::program::{FileId, Files};
+use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -392,8 +393,9 @@ impl Finder<'_, '_> {
                     .push((parameter, Role::ModuleParameter, index));
             }
         }
-        self.by_callback.sort_unstable_by_key(|entry| entry.0);
-        self.by_symbol.sort_unstable_by_key(|entry| entry.0);
+        self.by_callback
+            .shared_sort_unstable_by_key(|entry| entry.0);
+        self.by_symbol.shared_sort_unstable_by_key(|entry| entry.0);
     }
 
     fn candidate_of_callback(&self, function: FnId) -> Option<usize> {

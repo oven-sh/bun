@@ -222,11 +222,20 @@ describe.concurrent(
 
     test("a method that a read under a computed key hands out has the place of the read", async () => {
       const { lines } = await report(
-        `const cookies = JSON.parse(process.argv[2]);\nconsole.log(cookies[process.argv[3]]);`,
+        `const cookies = JSON.parse(process.argv[2]);\nconsole.log(cookies[process.argv[3]]("b"));`,
       );
       expect(kept(lines, "String.prototype.localeCompare")).toEqual([
         "used (String.prototype.localeCompare) at main.ts:3:13",
       ]);
+    });
+
+    // The function is there and prints its name. Nobody calls it, so what is behind it is not kept.
+    test("a method that a read under a computed key hands out and that is only printed is not kept", async () => {
+      const { lines } = await report(
+        `const cookies = JSON.parse(process.argv[2]);\nconsole.log(cookies[process.argv[3]]);`,
+      );
+      expect(kept(lines, "String.prototype.localeCompare")).toEqual([]);
+      expect(lines).toContain("removed Intl.Collator and localeCompare (intl): unused");
     });
   },
 );

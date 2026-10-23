@@ -16,6 +16,7 @@ import {
   compileFeatureCodeOnce,
   compileObjects,
   createElfFormat,
+  defaultObjects,
   describeLink,
   guardsBoth,
   isX64,
@@ -29,6 +30,7 @@ import {
   sectionOf,
   sources,
   tools,
+  wrapped,
 } from "./link-elf-support.ts";
 import {
   entryCalling,
@@ -210,7 +212,7 @@ describeLink("the linker's own relocations", () => {
       name: "relocations",
       output: "relocated",
       objects: linkedObjects,
-      linkFlags: relocationLinkArguments(folder),
+      linkFlags: relocationLinkArguments(folder, shipped.executable),
     });
     const reading = readElfGraph(shipped.executable, shipped.map, shipped.log);
     return { shipped, withRelocations, reading, ...createElfFormat(folder, "hand") };
@@ -236,6 +238,23 @@ describeLink("the linker's own relocations", () => {
   test("agree with a plain link", async () => {
     using dir = tempDir("trim-elf-relocations", sources);
     const result = await linked(String(dir), { validatesRelocations: true });
+    expect(result.linkOutput).toMatch(validatorSummary);
+    expectCleanRuns(result);
+  });
+
+  test("agree with a link without the header of the unwind tables", async () => {
+    using dir = tempDir("trim-elf-relocations", sources);
+    const result = await linked(String(dir), { validatesRelocations: true, linkFlags: ["-Wl,--no-eh-frame-hdr"] });
+    expect(result.linkOutput).toMatch(validatorSummary);
+    expectCleanRuns(result);
+  });
+
+  test("agree with a link that defines a symbol version, which names the output file", async () => {
+    using dir = tempDir("trim-elf-relocations", { ...sources, "version.lds": "TOY_1 { global: main; local: *; };\n" });
+    const result = await linked(String(dir), {
+      validatesRelocations: true,
+      linkFlags: ["-Wl,--version-script=version.lds", "-Wl,--export-dynamic"],
+    });
     expect(result.linkOutput).toMatch(validatorSummary);
     expectCleanRuns(result);
   });
@@ -275,6 +294,25 @@ describeLink("the linker's own relocations", () => {
       check(links, links.reading.graph, withOneByteChanged(links.shipped, section));
     expect(checkChanged(".text")).toEqual([{ kind: "RelinkedImageDiffers", section: ".text" }]);
     expect(checkChanged(".bun_trim")).toEqual([]);
+  });
+
+  test.skipIf(!isX64)("do not stop a link that asks for a report alone", async () => {
+    using dir = tempDir("trim-elf-relocations", {
+      ...sources,
+      "offset.c": String.raw`__asm__(".data\n.globl table_offset\ntable_offset: .quad feature_code_5@GOTOFF\n.text\n");`,
+      "main.c": `
+        ${start}
+        extern long table_offset;
+        ${mainReturning("table_offset != 0 ? 0 : 1")}
+      `,
+    });
+    const program = { objects: [...defaultObjects, "offset"] };
+    const stopped = await wrapped(String(dir), { ...program, validatesRelocations: true });
+    expect(stopped.exitCode).toBe(1);
+    expect(stopped.stderr).toContain("UnknownRelocationType");
+    const result = await linked(String(dir), { ...program, validatesRelocations: "report" });
+    expect(result.linkOutput).toContain("UnknownRelocationType");
+    expectCleanRuns(result);
   });
 
   test.skipIf(!isX64)("report a relocation type they do not know", async () => {

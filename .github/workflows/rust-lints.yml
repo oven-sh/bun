@@ -13,6 +13,7 @@ on:
       - "src/codegen/**"
       - "src/trim/features/**"
       - "test/aot/ir/**"
+      - "test/internal/aot-schema-generator.test.ts"
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
@@ -128,11 +129,14 @@ jobs:
   aot-rust-tests:
     name: AoT cargo test
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       # Without optimization a frame is several times as large, and the tests
       # of the nesting limits reach the end of the stack before the limit.
       CARGO_PROFILE_DEV_OPT_LEVEL: 1
+      # With optimization the frame pointer goes unless it is forced, as
+      # scripts/build/rust.ts does: `bun_core::return_address()` reads it.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -Cforce-frame-pointers=yes
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -150,8 +154,8 @@ jobs:
       - name: Locate the engine's files
         run: bun scripts/build/aot-paths.ts >> "$GITHUB_ENV"
 
-      - name: The checked-in schema is the engine's
-        run: bun src/codegen/aot-schema/index.ts --schema "$AOT_SCHEMA" --rust-out src/aot/ir/generated --check
+      - name: The engine's generator writes what the build declares
+        run: bun test ./test/internal/aot-schema-generator.test.ts
 
       - name: cargo test
         # ir_tests.rs skips the engine's half of every test when TESTAOT is

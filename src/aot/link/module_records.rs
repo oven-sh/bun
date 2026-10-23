@@ -23,6 +23,7 @@ use crate::modules::{
 };
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::resolve::ExternalKind;
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
 
 pub(super) struct RecordInput<'a, 's> {
@@ -125,8 +126,9 @@ fn collect_synthetic_exports(input: &RecordInput<'_, '_>) -> Vec<Vec<MergedSynth
     }
     let atoms = input.atoms;
     for module_exports in &mut exports {
-        module_exports
-            .sort_unstable_by(|a, b| compare_code_units(atoms.bytes(a.name), atoms.bytes(b.name)));
+        module_exports.shared_sort_unstable_by(|a, b| {
+            compare_code_units(atoms.bytes(a.name), atoms.bytes(b.name))
+        });
     }
     exports
 }

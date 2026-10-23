@@ -9,7 +9,9 @@ test/aot/frameworks/nuxt.test.ts
 test/aot/frameworks/react-router.test.ts
 test/aot/frameworks/sveltekit.test.ts
 test/aot/backend-packages/programs-2.test.ts
+test/aot/backend-packages/programs-3.test.ts
 test/aot/backend-packages/programs-4.test.ts
+test/aot/backend-packages/programs-one-file.test.ts
 
 # Before its first check LeakSanitizer forks a child that tries ptrace, and ignores
 # what waitpid returns. The signal storm test's SIGALRM (every 20 ms, no SA_RESTART)

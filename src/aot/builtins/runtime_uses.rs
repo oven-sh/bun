@@ -4,6 +4,7 @@ use super::table::{
 };
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom as _;
+use bun_sema::util::SharedSort;
 
 #[cfg(test)]
 mod tests;
@@ -146,7 +147,7 @@ impl Collector {
             |module: &RuntimeModule| self.modules_read_whole.is_set(module.to_wire() as usize);
         self.exports_read
             .retain(|(module, _)| !is_read_whole(module));
-        self.exports_read.sort_unstable();
+        self.exports_read.shared_sort_unstable();
         self.exports_read.dedup();
         let functions = table::runtime_functions()
             .iter()

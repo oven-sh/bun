@@ -14,6 +14,7 @@ use bun_sema::hir::{
     PatKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 const MAX_STATES_OF_CLASS: usize = 256;
@@ -132,7 +133,7 @@ impl Finder<'_, '_, '_> {
             self.candidates.extend(candidate);
         }
         self.candidates
-            .sort_unstable_by_key(|candidate| candidate.symbol);
+            .shared_sort_unstable_by_key(|candidate| candidate.symbol);
     }
 
     fn find_candidate(&self, creation: ExprId) -> Option<Candidate> {
@@ -478,7 +479,7 @@ impl Finder<'_, '_, '_> {
                 accepted.push((owner, candidate));
             }
         }
-        accepted.sort_unstable_by_key(|&(owner, candidate)| (owner, candidate.symbol));
+        accepted.shared_sort_unstable_by_key(|&(owner, candidate)| (owner, candidate.symbol));
         let mut states: Vec<PrivateState> = Vec::new();
         let mut sites: Vec<(ExprId, PrivateStateSite)> = Vec::new();
         for of_class in accepted.chunk_by(|first, second| first.0 == second.0) {
@@ -506,9 +507,9 @@ impl Finder<'_, '_, '_> {
         let mut by_creation: Vec<(ExprId, u32)> = indexed()
             .map(|(index, state)| (state.creation, index))
             .collect();
-        by_symbol.sort_unstable();
-        by_creation.sort_unstable();
-        sites.sort_unstable_by_key(|site| site.0);
+        by_symbol.shared_sort_unstable();
+        by_creation.shared_sort_unstable();
+        sites.shared_sort_unstable_by_key(|site| site.0);
         FilePrivateStates {
             by_symbol: by_symbol.into_boxed_slice(),
             by_creation: by_creation.into_boxed_slice(),

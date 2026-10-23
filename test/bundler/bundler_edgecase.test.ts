@@ -1893,6 +1893,8 @@ describe("bundler", () => {
     });
   }
   itCompiledAheadOfTime("EntryPointIsBunBuiltinNextToRealEntryPoint", {
+    // The API backend names every entry point after the outfile, which is an error of its own.
+    backend: "cli",
     files: {
       "/entry.ts": `console.log("built");`,
     },

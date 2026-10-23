@@ -11,6 +11,25 @@ ASCIILiteral trimFeatureNameOf(JSC::RemovableFeature);
 
 }
 
+extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobalObject*, uint16_t feature);
+
+namespace Bun {
+
+template<JSC::RemovableFeature feature, auto function, uint32_t builtin, typename Realm>
+ALWAYS_INLINE std::invoke_result_t<decltype(function), Realm> createRemovableBinding(Realm realm)
+{
+    if (JSC::isFeatureRemoved(feature)) [[unlikely]] {
+        JSC::EncodedJSValue standIn = Bun__createStandInForRemovedBinding(realm, static_cast<uint16_t>(feature));
+        if constexpr (std::is_same_v<std::invoke_result_t<decltype(function), Realm>, JSC::EncodedJSValue>)
+            return standIn;
+        else
+            return JSC::JSValue::decode(standIn);
+    }
+    return JSC::callRemovableBuiltin<feature, function, builtin>(realm);
+}
+
+}
+
 #define BUN_BEGIN_REMOVABLE_ENTRY_POINT(feature, stub, ...) \
     return ::JSC::callRemovableBody<::Bun::Feature::feature, ::JSC::RemovedFeatureStub::stub, __VA_ARGS__>(nullptr, [&]() ALWAYS_INLINE_LAMBDA WTF_IGNORES_THREAD_SAFETY_ANALYSIS -> __VA_ARGS__ {
 #define BUN_END_REMOVABLE_ENTRY_POINT \

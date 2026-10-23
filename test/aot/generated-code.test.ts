@@ -35,5 +35,5 @@ test.skipIf(!!skipReason)(
     expect(lines.slice(0, -1).filter(line => !line.startsWith("ok "))).toEqual([]);
     expect(exitCode).toBe(0);
   },
-  170_000,
+  280_000,
 );

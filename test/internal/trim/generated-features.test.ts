@@ -15,7 +15,7 @@ import { cppHeader, rustSource } from "../../../src/codegen/generate-removable-f
 import {
   beginGuardedBody,
   endGuardedBody,
-  guardedBuiltinCall,
+  guardedBindingCreation,
   guardedCall,
   hostFunctionDefinitionRecord,
   recordedPointer,
@@ -303,8 +303,8 @@ describe("removable-entry-points.ts", () => {
     expect(tableEntryRecord(realModel, "table", "Color", "Throw", "f", 812)).toBe(
       "JSC::recordRemovableTableEntry<table, Bun::Feature::Color, JSC::RemovedFeatureStub::Throw, f, JSC::GuardOrigin::Builtin, 812>();",
     );
-    expect(guardedBuiltinCall(realModel, "Color", "f", 812, ["global"])).toBe(
-      "JSC::callRemovableBuiltin<Bun::Feature::Color, f, 812>(global)",
+    expect(guardedBindingCreation(realModel, "Color", "f", 812, ["global"])).toBe(
+      "Bun::createRemovableBinding<Bun::Feature::Color, f, 812>(global)",
     );
     expect(hostFunctionDefinitionRecord(realModel, "Color", "jsColor", 812)).toBe(
       "BUN_REMOVABLE_BUILTIN_HOST_FUNCTION_DEFINITION(Color, 812, jsColor);",
@@ -318,7 +318,7 @@ describe("removable-entry-points.ts", () => {
     expect(() => recordedPointer(realModel, "color", "Throw", "f")).toThrow(BuildError);
     expect(() => tableEntryRecord(realModel, "table", "color", "Throw", "f")).toThrow(BuildError);
     expect(() => guardedCall(realModel, "Jit", "Abort", "f", [])).toThrow(BuildError);
-    expect(() => guardedBuiltinCall(realModel, "Jit", "f", 1, [])).toThrow(BuildError);
+    expect(() => guardedBindingCreation(realModel, "Jit", "f", 1, [])).toThrow(BuildError);
     expect(() => beginGuardedBody(realModel, "", "Abort", "void")).toThrow(BuildError);
     expect(() => hostFunctionDefinitionRecord(realModel, "Colour", "f")).toThrow(BuildError);
   });

@@ -9,6 +9,7 @@ use bun_sema::check::aot::{
 };
 use bun_sema::hir::{ExprId, ExprKind, PropKey, PropKind};
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
 
@@ -989,7 +990,7 @@ fn sort_untyped_members(
             source_index,
         });
     }
-    sorted.sort_by(|a, b| a.description.cmp(&b.description));
+    sorted.shared_sort_by(|a, b| a.description.cmp(&b.description));
     sorted.dedup_by(|later, earlier| {
         let is_repeated = later.key == earlier.key;
         if is_repeated {

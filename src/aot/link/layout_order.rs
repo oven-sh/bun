@@ -1,3 +1,5 @@
+use bun_sema::util::SharedSort;
+
 use super::keys::MergedKeys;
 use super::numbering::RetainedDefinitions;
 use super::program_keys::ProgramLayoutKey;
@@ -37,7 +39,7 @@ pub(super) fn order_program_layouts(
     let mut roots: Vec<u32> = defined.in_units(layout_lists).collect();
     let defined_count = roots.len();
     roots.extend(defined.without_definition());
-    roots[defined_count..].sort_unstable_by_key(|&layout| layouts.keys[layout as usize]);
+    roots[defined_count..].shared_sort_unstable_by_key(|&layout| layouts.keys[layout as usize]);
 
     let graph = LayoutGraph {
         units,

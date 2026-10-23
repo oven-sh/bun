@@ -100,6 +100,10 @@ describe("parseArguments", () => {
       demangler: "/usr/bin/llvm-cxxfilt",
     });
     expect(parse(...paths, "--validate-relocations", ...command)).toEqual({ ...parsed, validatesRelocations: true });
+    expect(parse(...paths, "--validate-relocations=report", ...command)).toEqual({
+      ...parsed,
+      validatesRelocations: "report",
+    });
     expect(parse("--validate-relocations", "work", "--demangler=filt", ...paths.slice(1), ...command)).toEqual({
       ...parsed,
       demangler: "filt",
@@ -288,11 +292,14 @@ describe("createLinker", () => {
     expect(printedArguments(second.log).slice(2)).toEqual(command.slice(3));
     expect(linker.command).toEqual(elfCommand(folder, bunExe()));
 
+    writeFileSync(second.executable, "the shipped image");
     const relocations = linker.link(request({ name: "relocations", first: [join(folder, "print-arguments.js")] }));
     expect(relocations).toMatchObject({
       executable: join(linker.work, "relocations"),
       map: join(linker.work, "relocations.map"),
     });
+    expect(printedArguments(relocations.log).slice(-2)).toEqual(["-o", second.executable]);
+    expect(readFileSync(second.executable, "utf8")).toBe("the shipped image");
     expect(readFileSync(join(linker.work, "second.log"), "latin1")).toBe(second.log);
     expect(readFileSync(join(linker.work, "relocations.log"), "latin1")).toBe(relocations.log);
   });

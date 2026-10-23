@@ -83,6 +83,18 @@ server.stop(true);`,
   },
 };
 
+const modulesWithNativeBindings: [specifier: string, remove: string, call: string][] = [
+  ["bun:sqlite", "sqlite", `new imported.Database(":memory:")`],
+  ["node:vm", "node-vm", `imported.runInNewContext("1")`],
+  ["node:crypto", "node-crypto", `imported.createHash("sha256")`],
+  ["node:worker_threads", "worker", `new imported.Worker("./none.js")`],
+  ["node:dns", "dns", `new imported.Resolver()`],
+  ["node:dgram", "udp", ""],
+  ["node:net", "sockets", ""],
+  ["node:tls", "sockets", ""],
+  ["node:test", "test", ""],
+];
+
 // What leaves the file with each at the least, in KB: the native library behind it, not only the functions that JavaScript calls.
 const smallest: Record<string, number> = {
   "ffi": 256,
@@ -124,6 +136,28 @@ describe.skipIf(!canTrim || !!unsupported)("compile.trim.remove", () => {
       expect(statSync(join(folder, "kept")).size - statSync(join(folder, "cut")).size).toBeGreaterThan(
         smallest[remove]! * 1024,
       );
+    },
+    240_000,
+  );
+
+  test.each(modulesWithNativeBindings)(
+    "importing %s works without %s",
+    async (specifier, remove, call) => {
+      using dir = tempDirForAotBuilds("compile-trim-remove", {
+        "build.mjs": buildScript,
+        "entry.ts": `import * as imported from ${JSON.stringify(specifier)};
+console.log(typeof imported);
+try { ${call || "throw { code: 'ERR_FEATURE_REMOVED', message: 'compile.trim.remove' }"}; console.log("returned"); } catch (error) { (${told})(error); }`,
+      });
+      const folder = String(dir);
+      expect(await build(folder, "entry.ts", "cut", { remove: [remove] })).toMatchObject({
+        stdout: "built\n",
+        exitCode: 0,
+      });
+      expect(await spawned([join(folder, "cut")], folder, bunEnv)).toMatchObject({
+        stdout: "object\nERR_FEATURE_REMOVED true\n",
+        exitCode: 0,
+      });
     },
     240_000,
   );

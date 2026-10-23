@@ -368,8 +368,8 @@
     "jit": 800.3
   },
   "host-classes/request-headers-read-again": {
-    "typed": 7,
-    "untyped": 7,
+    "typed": 4.9,
+    "untyped": 5,
     "jit": 39
   },
   "host-classes/request-made": {
@@ -401,17 +401,17 @@
     "jit": 142
   },
   "host-classes/request-url-read-again": {
-    "typed": 10.1,
+    "typed": 4.9,
     "untyped": 5,
     "jit": 43.7
   },
   "host-classes/request-url-reread-after-second-realm": {
-    "typed": 10,
+    "typed": 5,
     "untyped": 4.9,
     "jit": 42.9
   },
   "host-classes/request-url-reread-after-prototype-gains-name": {
-    "typed": 10,
+    "typed": 4.9,
     "untyped": 6.9,
     "jit": 43.2
   },
@@ -628,23 +628,31 @@
     }
   },
   "built-in/path-basename": {
-    "typed": 132.8,
-    "untyped": 132.8,
-    "jit": 224,
+    "typed": 156.9,
+    "untyped": 144,
+    "jit": 236,
     "best": {
       "typed": 132.7,
       "untyped": 132.8
     }
   },
   "built-in/path-dirname": {
-    "typed": 129.7,
-    "untyped": 129.8,
-    "jit": 199.8
+    "typed": 160.8,
+    "untyped": 147.8,
+    "jit": 219.1,
+    "best": {
+      "typed": 129.7,
+      "untyped": 129.8
+    }
   },
   "built-in/path-extname": {
-    "typed": 142.6,
-    "untyped": 142.8,
-    "jit": 212.8
+    "typed": 175.8,
+    "untyped": 162.9,
+    "jit": 234,
+    "best": {
+      "typed": 142.6,
+      "untyped": 142.8
+    }
   },
   "built-in/path-is-absolute": {
     "typed": 152,
@@ -1303,12 +1311,12 @@
     "jit": 10
   },
   "bytes/fill-a-buffer-by-index": {
-    "typed": 867.8,
+    "typed": 420.1,
     "untyped": 7967,
     "jit": 406
   },
   "bytes/find-a-byte-in-a-buffer": {
-    "typed": 611.4,
+    "typed": 356.1,
     "untyped": 8741,
     "jit": 471
   },
@@ -1323,17 +1331,17 @@
     "jit": 343
   },
   "bytes/sum-the-bytes-of-a-buffer-declared-a-view": {
-    "typed": 676.8,
+    "typed": 358.2,
     "untyped": 9060.9,
     "jit": 375
   },
   "bytes/sum-the-bytes-of-a-buffer": {
-    "typed": 515,
+    "typed": 387.2,
     "untyped": 9061.2,
     "jit": 375
   },
   "bytes/sum-the-bytes-of-a-view": {
-    "typed": 673.8,
+    "typed": 355.2,
     "untyped": 9061.4,
     "jit": 375
   },
@@ -1346,5 +1354,10 @@
     "typed": 265.8,
     "untyped": 307,
     "jit": 341.7
+  },
+  "built-in/fs-read-sync-at-a-position": {
+    "typed": 885,
+    "untyped": 876,
+    "jit": 720
   }
 }

@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-a5c3076f";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-6f092794";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -24,8 +24,8 @@ export const WEBKIT_VERSION = "autobuild-preview-pr-757-a5c3076f";
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { aotDirectories, findAotSourceListProblems, handwrittenAotFiles } from "../aot-source-lists.ts";
 import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
@@ -138,7 +138,7 @@ export function webkitTestAotPath(cfg: Config): string {
 }
 
 export type WebKitAotFile =
-  "AOTSchema.def" | "schema-generated" | "builtins-generated" | "verified-overloads.txt" | "tests";
+  "AOTSchema.def" | "schema-generator" | "builtins-generated" | "verified-overloads.txt" | "tests";
 
 /** A file or folder under JavaScriptCore's aot/ that Bun's build or tests read. The prebuilt tarball has it at the checkout's path. Absolute. It need not exist yet. */
 export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
@@ -149,8 +149,8 @@ export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
   switch (name) {
     case "AOTSchema.def":
       return join(aot, "ir", "AOTSchema.def");
-    case "schema-generated":
-      return join(aot, "ir", "generated");
+    case "schema-generator":
+      return join(aot, "ir", "generator", "index.ts");
     case "builtins-generated":
       return join(aot, "builtins", "generated");
     case "verified-overloads.txt":
@@ -165,14 +165,15 @@ const engineDeclarations = "AOTBuiltinEngineDeclarations.json";
 /** What Bun's code generators read and write in the engine (../aot.ts). With the prebuilt, one file stands for each folder: the fetch edge extracts all of the tarball. */
 export function webkitEngineSources(cfg: Config): EngineSources {
   const schema = webkitAotFile(cfg, "AOTSchema.def");
-  const schemaGeneratedDirectory = webkitAotFile(cfg, "schema-generated");
+  const schemaGenerator = webkitAotFile(cfg, "schema-generator");
   const builtinsGeneratedDirectory = webkitAotFile(cfg, "builtins-generated");
-  const common = { schema, schemaGeneratedDirectory, builtinsGeneratedDirectory };
+  const common = { schema, schemaGenerator, builtinsGeneratedDirectory };
   if (cfg.webkit === "prebuilt") {
     return {
       ...common,
       javaScriptCore: undefined,
-      schemaInputs: [schema],
+      schemaInputs: [schema, schemaGenerator],
+      schemaGeneratedDirectory: undefined,
       schemaOutputs: [],
       schemaUsers: [],
       builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations)],
@@ -184,12 +185,16 @@ export function webkitEngineSources(cfg: Config): EngineSources {
   return {
     ...common,
     javaScriptCore: wk.JSC,
-    schemaInputs: lists.paths("JavaScriptCore_AOT_SCHEMA_INPUTS"),
-    schemaOutputs: [
-      ...aotGeneratedFiles(lists, "SCHEMA"),
-      join(schemaGeneratedDirectory, "AOTSchemaFiles.cmake"),
-      join(schemaGeneratedDirectory, "AOTSchemaInputs.sha256"),
+    schemaInputs: [
+      ...lists.paths("JavaScriptCore_AOT_SCHEMA_INPUTS"),
+      join(dirname(schema), "AOTSchemaFiles.cmake"),
+      ...readdirSync(dirname(schemaGenerator))
+        .filter(name => name.endsWith(".ts"))
+        .sort()
+        .map(name => join(dirname(schemaGenerator), name)),
     ],
+    schemaGeneratedDirectory: aotGeneratedDirectory(wk),
+    schemaOutputs: aotGeneratedFiles(lists, "SCHEMA"),
     schemaUsers: handwrittenAotFiles(wk.JSC),
     builtinTableInputs: [
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS"),
@@ -737,8 +742,12 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   const flags = webkitFlags(wk);
   const icu = icuBuild(wk);
   const codegen = jscCodegenSteps(wk, lists.jsc);
-  // Checked in, and rewritten in this graph by Bun's own code generators (../aot.ts).
-  const aotGenerated = [...aotGeneratedFiles(lists.jsc, "SCHEMA"), ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE")];
+  // Written in this graph: the first by a step of this spec, the others by the steps of ../aot.ts.
+  const aotGenerated = [
+    ...aotRuntimeFactsStep(wk, lists.jsc),
+    ...aotGeneratedFiles(lists.jsc, "SCHEMA"),
+    ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE"),
+  ];
   // All codegen must exist before any JSC TU compiles; after that the
   // depfiles know exactly which TU reads which header.
   const codegenReady = [...codegen.headers, ...codegen.sources, ...aotGenerated, ...icu.outputs];
@@ -1069,6 +1078,11 @@ function frameworkHeaders(wk: WebKitBuild, lists: WebKitLists): Record<string, s
   );
   forward(join(wk.jscHeaders, "JavaScriptCore"), lists.jsc.paths("JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS"));
   forward(join(wk.jscPrivateHeaders, "JavaScriptCore"), lists.jsc.paths("JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS"));
+  // The stub of a header that is exported no longer would still be found by its name, and may include a file that is gone.
+  for (const dir of new Set(Object.keys(entries).map(entry => dirname(join(wk.B, entry))))) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) if (!(relative(wk.B, join(dir, name)) in entries)) rmSync(join(dir, name));
+  }
   return entries;
 }
 
@@ -1406,11 +1420,29 @@ function jscCodegenSteps(wk: WebKitBuild, lists: LibraryLists): { headers: strin
 // to know about aot/ is written there as plain lists, outside any function.
 
 /** The files of one generated folder that are compiled or included, from the list file beside them. */
+/** `JavaScriptCore_AOT_GENERATED_DIR` of aot/AOT.cmake. */
+function aotGeneratedDirectory(wk: WebKitBuild): string {
+  return join(wk.DS, "aot");
+}
+
 function aotGeneratedFiles(lists: LibraryLists, generator: "SCHEMA" | "BUILTIN_TABLE"): string[] {
   return [
     ...lists.paths(`JavaScriptCore_AOT_${generator}_GENERATED_HEADERS`),
     ...lists.paths(`JavaScriptCore_AOT_${generator}_GENERATED_SOURCES`),
   ];
+}
+
+/** AOT_GENERATE_RUNTIME_FACTS of aot/AOT.cmake. */
+function aotRuntimeFactsStep(wk: WebKitBuild, lists: LibraryLists): string[] {
+  const script = join(wk.JSC, "aot", "image", "generator", "runtime-facts.ts");
+  const outputs = lists.paths("JavaScriptCore_AOT_RUNTIME_FACTS_GENERATED_HEADERS");
+  gen(wk, {
+    outputs,
+    cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
+    inputs: [script, join(wk.JSC, "aot", "image", "AOTRuntimeFactsLeftOut.txt"), ...handwrittenAotFiles(wk.JSC)],
+    desc: "AOTRuntimeFactsOfLayouts.def",
+  });
+  return outputs;
 }
 
 /** AOT_CHECK_SOURCE_LISTS and AOT_CHECK_EXPORTED_HEADERS of aot/AOT.cmake. */
@@ -1674,8 +1706,11 @@ function jscGroup(
 ): SourceGroup {
   const { cfg, JSC } = wk;
   const forSize = new Set(cfg.release && cfg.unix ? compiledForSize : []);
+  const generated = aotGeneratedDirectory(wk) + sep;
   const aotPrefixOf = (path: string): AotPrefix | undefined => {
-    const file = relative(join(JSC, "aot"), path).replaceAll(sep, "/");
+    const file = path.startsWith(generated)
+      ? `ir/${basename(path)}`
+      : relative(join(JSC, "aot"), path).replaceAll(sep, "/");
     return (
       aotPrefixes.find(prefix => prefix.files?.test(file)) ??
       aotPrefixes.find(prefix => prefix.directories.some(directory => file.startsWith(`${directory}/`)))

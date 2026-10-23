@@ -4,6 +4,7 @@ use bun_sema::bind::{
     ScopeKind, SymbolId,
 };
 use bun_sema::hir::{self, ClassId, MemberId};
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::EvalContext;
@@ -232,7 +233,7 @@ pub(super) fn collect_eval_bindings(
     for &(scope, depth) in &depths {
         add_eval_scope_bindings(lowering, &mut builder, context, scope, depth);
     }
-    builder.bindings.sort_by_key(|binding| binding.depth);
+    builder.bindings.shared_sort_by_key(|binding| binding.depth);
     builder
 }
 

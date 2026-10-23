@@ -7,6 +7,8 @@ mod library_base_tests;
 #[cfg(test)]
 mod tests;
 
+use bun_sema::util::SharedSort;
+
 use super::beside::{Beside, run_beside};
 use super::keys::MergedKeys;
 use super::program_keys::{
@@ -193,7 +195,7 @@ pub(super) fn choose_definitions(
     let (functions, function_types, builtin_members, mut errors_by_unit) = of_functions;
     let (variables, errors_of_variables) = of_variables;
     errors_by_unit.extend(errors_of_variables);
-    errors_by_unit.sort_by_key(|&(unit, kind, _)| (unit, kind));
+    errors_by_unit.shared_sort_by_key(|&(unit, kind, _)| (unit, kind));
     errors.extend(errors_by_unit.into_iter().map(|(_, _, error)| error));
     Definitions {
         functions,
@@ -661,7 +663,7 @@ fn collect_runtime_functions(
             });
         }
     }
-    roots.sort_by_key(|root| (root.entry.id, root.file));
+    roots.shared_sort_by_key(|root| (root.entry.id, root.file));
     roots.dedup_by(|later, earlier| {
         let is_conflict = later.entry.id == earlier.entry.id;
         if is_conflict {

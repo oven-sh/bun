@@ -157,7 +157,10 @@ impl Resolver<'_> {
             }
             for subpath in &subpaths {
                 // The resolver keeps what it is asked for.
-                let specifier: &'static [u8] = [package, &subpath[..]].concat().leak();
+                let store = &self.fs_ref().dirname_store;
+                let Ok(specifier) = store.append_parts(&[package, &subpath[..]]) else {
+                    continue;
+                };
                 let folder = place.source_path;
                 let required = self.find_entry_point_named(
                     folder,

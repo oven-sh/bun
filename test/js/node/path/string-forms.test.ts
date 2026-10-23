@@ -152,6 +152,11 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
   });
 
   test("every short path made of a slash, a dot and a letter", () => {
+    // 650,000 comparisons: CI's runner collects garbage at every call of a matcher, so there is one call.
+    const different: unknown[][] = [];
+    const compare = (label: unknown[], narrow: unknown, inWideStorage: unknown) => {
+      if (!Bun.deepEquals(narrow, inWideStorage, true)) different.push([...label, narrow, inWideStorage]);
+    };
     const resolved: string[] = [];
     for (let length = 0; length <= 7; ++length) {
       for (let number = 0; number < 3 ** length; ++number) {
@@ -161,18 +166,17 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
         for (const before of ["", "/", "bbbbbb", "/bbbbbbbbbbbbb", "bbbbbbbbbbbbbbbb/"]) {
           for (const after of length < 6 || before === "/" ? ["", "c", "/ccccccc", "cccccccccccccccc"] : [""]) {
             const text = before + short + after;
-            for (const name of ofOnePath)
-              expect([text, name, p[name](flat(text))]).toEqual([text, name, p[name](wide(text))]);
+            for (const name of ofOnePath) compare([text, name], p[name](flat(text)), p[name](wide(text)));
             for (const suffix of ["a", ".a", "/", "a/", ".", "aa", "c", "ac", "/a", text.slice(-3), "b" + text])
-              expect([text, suffix, p.basename(flat(text), flat(suffix))]).toEqual([
-                text,
-                suffix,
-                p.basename(wide(text), wide(suffix)),
-              ]);
-            expect([text, p.join(flat("x/y"), flat(text))]).toEqual([text, p.join(wide("x/y"), wide(text))]);
-            expect([text, p.resolve(flat("/x/y"), flat(text))]).toEqual([text, p.resolve(wide("/x/y"), wide(text))]);
-            expect([text, p.relative(flat("/a/b"), flat(text))]).toEqual([text, p.relative(wide("/a/b"), wide(text))]);
-            expect([text, p.relative(flat(text), flat("/a/b"))]).toEqual([text, p.relative(wide(text), wide("/a/b"))]);
+              compare([text, suffix], p.basename(flat(text), flat(suffix)), p.basename(wide(text), wide(suffix)));
+            compare([text, "join"], p.join(flat("x/y"), flat(text)), p.join(wide("x/y"), wide(text)));
+            compare([text, "resolve"], p.resolve(flat("/x/y"), flat(text)), p.resolve(wide("/x/y"), wide(text)));
+            compare([text, "relative to"], p.relative(flat("/a/b"), flat(text)), p.relative(wide("/a/b"), wide(text)));
+            compare(
+              [text, "relative from"],
+              p.relative(flat(text), flat("/a/b")),
+              p.relative(wide(text), wide("/a/b")),
+            );
           }
         }
         if (length <= 4) resolved.push("/" + short);
@@ -180,7 +184,8 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
     }
     for (const from of resolved)
       for (const to of resolved)
-        expect([from, to, p.relative(flat(from), flat(to))]).toEqual([from, to, p.relative(wide(from), wide(to))]);
+        compare([from, to], p.relative(flat(from), flat(to)), p.relative(wide(from), wide(to)));
+    expect(different).toEqual([]);
   });
 
   test("an answer outlives its operand", () => {

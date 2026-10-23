@@ -1,5 +1,4 @@
 import type { EffectsSummary, Schema } from "../aot-schema/load.ts";
-import { cap } from "./support.ts";
 import { isObjectKind } from "./build-entries.ts";
 import { admits } from "./build-types.ts";
 import { checkDependencies } from "./check-dependencies.ts";
@@ -32,6 +31,7 @@ import type {
   TableModel,
 } from "./model.ts";
 import { globalThisPath } from "./paths.ts";
+import { cap } from "./support.ts";
 import {
   contentsSlots,
   conversionProtocols,

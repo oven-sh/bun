@@ -1,4 +1,3 @@
-import { cap } from "./support.ts";
 import { GeneratorError } from "./declarations.ts";
 import {
   emitArray,
@@ -22,6 +21,7 @@ import type {
   TableModel,
 } from "./model.ts";
 import { compareBytes, tokenOf } from "./paths.ts";
+import { cap } from "./support.ts";
 
 export const textNamesArray = "builtinTableTextNames";
 export const textNameSlotsArray = "builtinTableTextNameSlots";

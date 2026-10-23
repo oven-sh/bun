@@ -180,6 +180,7 @@ function pathOfDeclaration(declaration: Declaration): BuiltinPath | null {
     case "HostRole":
     case "HostClassRole":
     case "UnfilledHostRoles":
+    case "LeftOut":
     case "FrontEndFunction":
     case "EngineFeatures":
     case "HostRead":
@@ -274,6 +275,7 @@ function pristineTestOf(builder: ModelBuilder, { name, columns }: ClassDeclarati
 function declareClasses({ builder, sorted }: EntryContext): void {
   for (const { declaration, source } of select(sorted, "Class")) {
     const { name, columns } = declaration;
+    if (builder.isLeftOut(declaration.path)) continue;
     const builtinClass: MutableClass = {
       id: -1,
       token: tokenOf(parsePath(name)),
@@ -817,7 +819,7 @@ function describeFunctionsOfBindings({ builder }: EntryContext): void {
       continue;
     }
     Object.assign(builder.writtenEntryOf(made), {
-      columns: [...written.columns],
+      columns: [...builder.writtenEntryOf(made).columns, ...written.columns],
       signatures: [...written.signatures],
       length: written.length,
     });
@@ -1034,6 +1036,10 @@ function checkOwnPropertyLists({ builder, ownPropertyLists }: EntryContext): voi
 
 export function buildEntries(builder: ModelBuilder, declarations: readonly SourcedDeclaration[]): void {
   declareRoots(builder, declarations);
+  for (const { declaration, source } of select(declarations, "LeftOut")) {
+    if (source.origin !== "Host") builder.problems.add(source, "only a host says what is left out of it");
+    else builder.leaveOut(declaration);
+  }
   const sorted = sortDeclarations(builder, declarations);
   builder.declarations = sorted;
   const context: EntryContext = {

@@ -10,6 +10,8 @@ export interface AotSourceLists {
   testSources: string[];
   includeDirectories: string[];
   exportedHeaders: string[];
+  /** Names: a build writes them into one folder of its own. */
+  schemaExportedHeaders: string[];
 }
 
 export interface DeclaredAotLists {
@@ -27,9 +29,14 @@ const aotCMake = "aot/AOT.cmake";
 const headerExtensions = [".h", ".def", ".inc"];
 const includedAotHeader = /#\s*include\s+["<](?:JavaScriptCore\/)?(AOT[\w+]*\.(?:h|def|inc))[">]/g;
 
+/** Stands for a build's folder of generated files, which the lists name by absolute path. */
+const derivedSources = "/DerivedSources";
+const isInBuildFolder = (path: string): boolean => path.startsWith(`${derivedSources}/`);
+
 const listOpeners = {
   includeDirectories: "list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES",
   exportedHeaders: "set(JavaScriptCore_AOT_EXPORTED_HEADERS",
+  schemaExportedHeaders: "set(JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS",
   testSources: "set(JavaScriptCore_AOT_TEST_SOURCES",
 } as const;
 
@@ -56,13 +63,17 @@ const isHeader = (name: string): boolean =>
 const isTestSource = (path: string): boolean =>
   path.startsWith("aot/tests/") || /^AOT\w*TestCommands\.cpp$/.test(basename(path));
 
+function includedAotHeadersOf(text: string): string[] {
+  return [...text.matchAll(includedAotHeader)].map(match => match[1]!);
+}
+
 function includedAotHeaders(file: string): string[] {
-  return [...readFileSync(file, "utf8").matchAll(includedAotHeader)].map(match => match[1]!);
+  return includedAotHeadersOf(readFileSync(file, "utf8"));
 }
 
 export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
   const evaluated = evaluateCMake(join(javaScriptCore, aotCMake), {
-    variables: { JAVASCRIPTCORE_DIR: javaScriptCore },
+    variables: { JAVASCRIPTCORE_DIR: javaScriptCore, JavaScriptCore_DERIVED_SOURCES_DIR: derivedSources },
   });
   const librarySources = readFileSync(join(javaScriptCore, sourcesTxt), "utf8")
     .split(/\r?\n/)
@@ -73,8 +84,10 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
     testSources: evaluated.list("JavaScriptCore_AOT_TEST_SOURCES"),
     includeDirectories: evaluated
       .list("JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES")
+      .filter(directory => !isInBuildFolder(directory))
       .map(directory => relative(javaScriptCore, directory).replaceAll("\\", "/")),
     exportedHeaders: evaluated.list("JavaScriptCore_AOT_EXPORTED_HEADERS"),
+    schemaExportedHeaders: evaluated.list("JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS").map(path => basename(path)),
     generatedSources: [
       ...evaluated.list("JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES"),
       ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES"),
@@ -117,25 +130,40 @@ function exportRoots(javaScriptCore: string, bunRoot: string): Set<string> {
   return roots;
 }
 
-function exportedHeaderClosure(javaScriptCore: string, bunRoot: string, tableExportedHeaders: string[]): string[] {
+function exportedHeaderClosure(
+  javaScriptCore: string,
+  bunRoot: string,
+  tableExportedHeaders: string[],
+  schemaHeaders: ReadonlyMap<string, string>,
+): Pick<AotSourceLists, "exportedHeaders" | "schemaExportedHeaders"> {
   const byName = aotHeadersByName(javaScriptCore);
   const tableNames = new Set(tableExportedHeaders.map(path => basename(path)));
   const reached = new Set<string>();
   const pending = [...exportRoots(javaScriptCore, bunRoot), ...tableNames];
   for (const name of pending) {
+    if (reached.has(name)) continue;
     const path = byName.get(name);
-    if (path === undefined || reached.has(name)) continue;
+    const text =
+      schemaHeaders.get(name) ?? (path === undefined ? undefined : readFileSync(join(javaScriptCore, path), "utf8"));
+    if (text === undefined) continue;
     reached.add(name);
-    pending.push(...includedAotHeaders(join(javaScriptCore, path)));
+    pending.push(...includedAotHeadersOf(text));
   }
-  return [...reached]
-    .filter(name => !tableNames.has(name))
-    .map(name => byName.get(name)!)
-    .sort(byCodeUnit);
+  const names = [...reached].filter(name => !tableNames.has(name));
+  return {
+    exportedHeaders: names
+      .filter(name => !schemaHeaders.has(name))
+      .map(name => byName.get(name)!)
+      .sort(byCodeUnit),
+    schemaExportedHeaders: names.filter(name => schemaHeaders.has(name)).sort(byCodeUnit),
+  };
 }
 
 function headerDirectories(javaScriptCore: string, generatedHeaders: string[]): string[] {
-  const headers = [...filesUnder(javaScriptCore, "aot", isHeader), ...generatedHeaders];
+  const headers = [
+    ...filesUnder(javaScriptCore, "aot", isHeader),
+    ...generatedHeaders.filter(path => !isInBuildFolder(path)),
+  ];
   return [...new Set(headers.map(path => dirname(path)))].sort(byCodeUnit);
 }
 
@@ -143,6 +171,7 @@ export function computeAotSourceLists(
   javaScriptCore: string,
   bunRoot: string,
   declared: DeclaredAotLists,
+  schemaHeaders: ReadonlyMap<string, string>,
 ): AotSourceLists {
   const listedElsewhere = new Set([...declared.generatedSources, ...declared.programSources, ...declared.shellSources]);
   const sources = filesUnder(javaScriptCore, "aot", name => name.endsWith(".cpp")).filter(
@@ -152,7 +181,7 @@ export function computeAotSourceLists(
     librarySources: sources.filter(path => !isTestSource(path)),
     testSources: sources.filter(isTestSource),
     includeDirectories: headerDirectories(javaScriptCore, declared.generatedHeaders),
-    exportedHeaders: exportedHeaderClosure(javaScriptCore, bunRoot, declared.tableExportedHeaders),
+    ...exportedHeaderClosure(javaScriptCore, bunRoot, declared.tableExportedHeaders, schemaHeaders),
   };
 }
 
@@ -176,7 +205,7 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
   const sources = present.filter(path => !listedElsewhere.has(path));
 
   const exported = [...written.exportedHeaders, ...written.tableExportedHeaders];
-  const exportedNames = new Set(exported.map(path => basename(path)));
+  const exportedNames = new Set([...exported.map(path => basename(path)), ...written.schemaExportedHeaders]);
   const problems = [
     ...describeDifference(
       sourcesTxt,
@@ -244,12 +273,31 @@ export function formatAotCMake(text: string, lists: AotSourceLists): string {
   const directories = lists.includeDirectories.map(directory => `"\${JAVASCRIPTCORE_DIR}/${directory}"`);
   const withDirectories = replaceListBody(text, listOpeners.includeDirectories, directories);
   const withHeaders = replaceListBody(withDirectories, listOpeners.exportedHeaders, lists.exportedHeaders);
-  return replaceListBody(withHeaders, listOpeners.testSources, lists.testSources);
+  const withSchemaHeaders = replaceListBody(
+    withHeaders,
+    listOpeners.schemaExportedHeaders,
+    lists.schemaExportedHeaders.map(name => `"\${JavaScriptCore_AOT_GENERATED_DIR}/${name}"`),
+  );
+  return replaceListBody(withSchemaHeaders, listOpeners.testSources, lists.testSources);
+}
+
+/** The headers that the schema's generator writes, by name, with their text. No build is needed: the generator is asked. */
+export async function schemaHeadersOf(javaScriptCore: string): Promise<Map<string, string>> {
+  const ir = join(javaScriptCore, "aot", "ir");
+  const { loadSchemaModel } = await import(join(ir, "generator", "load.ts"));
+  const { engineOutputs } = await import(join(ir, "generator", "outputs.ts"));
+  const files: { name: string; lines: readonly string[] }[] = engineOutputs(loadSchemaModel(join(ir, "AOTSchema.def")));
+  return new Map(files.filter(file => isHeader(file.name)).map(file => [file.name, file.lines.join("\n")]));
 }
 
 /** Returns the files it changed, or with `check` the files it would change. */
-export function writeAotSourceLists(javaScriptCore: string, bunRoot: string, check: boolean): string[] {
-  const lists = computeAotSourceLists(javaScriptCore, bunRoot, readWrittenAotLists(javaScriptCore));
+export async function writeAotSourceLists(javaScriptCore: string, bunRoot: string, check: boolean): Promise<string[]> {
+  const lists = computeAotSourceLists(
+    javaScriptCore,
+    bunRoot,
+    readWrittenAotLists(javaScriptCore),
+    await schemaHeadersOf(javaScriptCore),
+  );
   const files: Array<[path: string, text: string]> = [
     [join(javaScriptCore, sourcesTxt), formatSourcesTxt(lists.librarySources)],
     [join(javaScriptCore, aotCMake), formatAotCMake(readFileSync(join(javaScriptCore, aotCMake), "utf8"), lists)],
@@ -259,7 +307,7 @@ export function writeAotSourceLists(javaScriptCore: string, bunRoot: string, che
   return changed.map(([path]) => path);
 }
 
-function main(args: string[]): number {
+async function main(args: string[]): Promise<number> {
   const bunRoot = resolve(import.meta.dirname, "..", "..");
   let webkit = process.env.BUN_WEBKIT_PATH || join(bunRoot, "vendor", "WebKit");
   let check = false;
@@ -271,14 +319,14 @@ function main(args: string[]): number {
       return 1;
     }
   }
-  const changed = writeAotSourceLists(join(webkit, "Source", "JavaScriptCore"), bunRoot, check);
+  const changed = await writeAotSourceLists(join(webkit, "Source", "JavaScriptCore"), bunRoot, check);
   for (const path of changed) console.log(check ? `${path} is not what this tool writes` : `wrote ${path}`);
   return check && changed.length > 0 ? 1 : 0;
 }
 
 if (import.meta.main) {
   try {
-    process.exit(main(process.argv.slice(2)));
+    process.exit(await main(process.argv.slice(2)));
   } catch (error) {
     if (!(error instanceof BuildError)) throw error;
     process.stderr.write(error.format());

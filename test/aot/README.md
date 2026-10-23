@@ -49,13 +49,18 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   `src/options_types/aot_options.rs`, `scripts/build/aot*`, `scripts/build/trim`, `packages/bun-sound`, this folder, the pinned WebKit,
   and the host's files for compiled programs: `src/resolver/compiled_program.rs`, `src/standalone_graph/executable_*`,
   `src/crash_handler/compiled_frames.rs`, `src/sql_jsc/shared/RowDecoder.rs`, `src/runtime/cli/check_command/compile_check.rs`,
-  `src/codegen/declared-type-checks.ts`, `src/jsc/bindings/BunCompiled*` ..) runs all of it, on every platform but Ubuntu;
-  `collector-stress` and `bad-time` on Debian x64 alone. Any other build runs a tenth, on Debian x64 and arm64:
-  `AOT_PROGRAMS=quick`, without those two groups, `startup-scaling` and `variant-*`. macOS x64 and Windows arm64 only ever run that
-  tenth. A failing file is run once more, not three times.
-- **The number of shards follows from the `aot/` lines of `test/expected-durations.json`**, twelve minutes to a shard, and the files are
-  dealt out by those lines. A file without a line counts as the median of the folder. `scripts/update-test-durations.mjs` renews them
-  from builds that ran all of the folder.
+  `src/codegen/declared-type-checks.ts`, `src/jsc/bindings/BunCompiled*` ..) runs it on every platform but Ubuntu: every file on
+  Debian, `collector-stress` and `bad-time` on Debian x64 alone. Any other build runs a tenth, on Debian x64 and arm64: one file in ten,
+  without those two groups, `heat`, `startup-scaling` and `variant-*`. macOS x64 and Windows arm64 only ever run that tenth. A failing
+  file is run once more, not three times.
+- **Every lane but Debian's two draws its files**: `getAotFileDraw()` in `.buildkite/ci.ts` gives the runner `--one-in=<n>`: one file in
+  two on macOS, one in eight on Alpine, Windows and the ASAN build. The draw follows from the commit and the path, so
+  every shard makes the same one, each commit takes other files, and in time all are taken.
+  `BUILDKITE_COMMIT=<commit> scripts/runner.node.ts --include=aot/ --one-in=<n>` makes it again.
+- **The number of shards follows from the `aot/` lines of `test/expected-durations.json`**, twelve minutes to a shard and at most 24 (13 on arm64, 8 on macOS), and
+  the files are dealt out by those lines. A file without a line adds nothing to the number of shards and is dealt out as the median of the
+  folder: a new file that takes minutes needs a line. `scripts/update-test-durations.mjs` renews them from builds that ran all of the
+  folder.
 - **No platform rejects `--aot`**, and `every-platform.test.ts` never skips itself. Only a Bun that was built without the compiler
   rejects the flag. A test file that uses the flag skips itself there: `import { describe, test } from "./supported";` in place of the same names of `bun:test`, or
   `test.skipIf(!!unsupported)` with `unsupported` of `run-programs.ts` where only some of its tests use it. Never a list of
@@ -90,12 +95,12 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **The direct code generators and the check of references.** `run-programs.ts` builds every program with
   `--aot-check=validate-references`, and a build with that check sends every function through B3. A build whose flags hold
   `--aot-testing=GenerateAllCodeDirectly` therefore goes without it, and must count `FunctionsGeneratedDirectly`.
-- **The share.** All programs in all ways are 130 hours of one processor, and CI has 40 shards of twelve minutes on four vCPUs. So a
+- **The share.** All programs in all ways are 130 hours of one processor, and CI has 24 shards of twelve minutes on four vCPUs. So a
   run that is told nothing takes a share, and which one follows from `Bun.revision`: each commit takes other programs, and in
   time all are taken. `inShare(name, oneIn)` and `partInShare(part, parts, oneIn)` of `run-programs.ts` decide: one program in
   10 for `programs()` and `programsBuiltWith()` (a list of names given to the second is taken whole), one in 400 for each
   `variant-*` (a fortieth of its tenth, another for each variant), one in 10 of `each-case-alone` and `typedness`, one in 100 for
-  `jit-mode-eager-tier-up`, a quarter for `generated()`, one of ten pieces of each file's part for `collector-stress`, `heat` and
+  `jit-mode-eager-tier-up`, a quarter for `generated()`, one of forty pieces of each file's part for `collector-stress`, `heat` and
   `bad-time`, three groups of each file's part for `joined()`. A file that takes a share says so once on stderr, with the seed. A test is named after its program:
   `AOT_PROGRAMS=<name> bun test test/aot/<file>` runs a red again, `AOT_SHARE=<revision>` the whole share of that commit,
   `AOT_SHARE=all` everything. A test with a body of its own in a `*.test.ts` is in no share: it runs every time. What grows with

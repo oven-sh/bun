@@ -3,7 +3,7 @@ use crate::bind::Decl;
 use crate::hir::{IdList, MemberId, MemberKind, Span, TypeNodeId, TypeNodeKind};
 use crate::program::{FileId, Sym};
 use crate::types::{MapperId, TypeData, TypeId};
-use crate::util::{FxHashMap, FxHashSet};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::SmallVec;
 
 /// Where a type is written. Equal places have equal orders.
@@ -44,7 +44,7 @@ impl WrittenUnionOrders {
         let mut positions: FxHashMap<TypeId, u32> = FxHashMap::default();
         let mut entered: SmallVec<[TypeId; 4]> = SmallVec::new();
         self.add_positions(union.plain(), &mut positions, &mut entered);
-        members.sort_by_key(|member| {
+        members.shared_sort_by_key(|member| {
             let member = written_type(member).plain();
             if let Some(&position) = positions.get(&member) {
                 Rank::InThisUnion(position)

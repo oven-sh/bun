@@ -9,9 +9,9 @@
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { isWindows, tempDir } from "harness";
+import { isCI, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { engineTests, jsc, testaot, toolEnv } from "./shell/tools";
+import { engineTests, jsc, scriptSkipReason, testaot, toolEnv } from "./shell/tools";
 
 const program = join(engineTests ?? "", "driver", "check-next.ir");
 const shellPath = testaot && join(dirname(testaot), "jsc" + (isWindows ? ".exe" : ""));
@@ -37,6 +37,12 @@ const whyShellSkipped =
 for (const why of new Set([whySkipped, whyEngineTestsSkipped, whyNativeTestsSkipped, whyShellSkipped])) {
   if (why) console.error(`SKIPPED: test/aot/engine-tests.test.ts: ${why}`);
 }
+
+// 89 test files of this folder skip themselves where a tool is missing: collector-stress/, heat/, bad-time/, generated-code,
+// relations-who-keeps and this one. CI packs the tools beside Bun; AOT_TOOLS=required says the same of any other place.
+test.skipIf(isWindows || (!isCI && process.env.AOT_TOOLS !== "required"))("no tool is missing", () => {
+  expect([whyNativeTestsSkipped, whyShellSkipped, scriptSkipReason].filter(why => why !== undefined)).toEqual([]);
+});
 
 async function runTool(cmd: string[]) {
   await using tool = Bun.spawn({ cmd, env: toolEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });

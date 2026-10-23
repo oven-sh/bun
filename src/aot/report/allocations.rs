@@ -1,4 +1,5 @@
 use bun_options_types::aot_options::ExplainSet;
+use bun_sema::util::SharedSort;
 
 use super::declines::write_limit;
 use super::format::{lower_camel_case, write_count};
@@ -125,7 +126,7 @@ fn listed_remarks<'r>(
         .iter()
         .filter(|record| is_listed_site(names, record.location, record.function_id()))
         .collect();
-    listed.sort_by_key(|record| sort_key(record));
+    listed.shared_sort_by_key(|record| sort_key(record));
     listed
 }
 

@@ -32,7 +32,6 @@ const DATA_ORDINAL: u8 = 9;
 const MH_NOUNDEFS: u32 = 0x1;
 const MH_DYLDLINK: u32 = 0x4;
 const MH_TWOLEVEL: u32 = 0x80;
-const SG_READ_ONLY: u32 = 0x10;
 const S_NON_LAZY_SYMBOL_POINTERS: u32 = 6;
 const N_EXT: u8 = 1;
 const PLATFORM_MACOS: u32 = 1;

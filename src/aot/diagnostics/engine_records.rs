@@ -1,6 +1,7 @@
 use core::fmt::Display;
 
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
+use bun_sema::util::SharedSort;
 
 use super::sink::to_log_message;
 use super::{
@@ -27,7 +28,7 @@ fn find_dependencies_with_unproven_int32(
     let mut paths: Vec<Vec<u8>> = declared_in
         .map(|module| names.module_path(module).to_vec())
         .collect();
-    paths.sort_unstable();
+    paths.shared_sort_unstable();
     paths.dedup();
     paths
 }

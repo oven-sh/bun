@@ -1,3 +1,5 @@
+use bun_sema::util::SharedSort;
+
 use super::keys::{MergedKeys, merge_keys};
 use super::state::{MergedPropertyKeys, UnitIds, UnitMarks};
 use super::unit::{KeyList, LinkUnit};
@@ -46,7 +48,7 @@ fn number_merged_keys(merged: &MergedKeys<PropertyKey>) -> (PropertyKeyTable, Ve
         first_occurrences.clear();
         let unit_keys = unit_keys.iter().copied();
         first_occurrences.extend(unit_keys.filter(|&index| program_ids[index as usize].is_none()));
-        first_occurrences.sort_unstable_by_key(|&index| {
+        first_occurrences.shared_sort_unstable_by_key(|&index| {
             let key = &merged.keys[index as usize];
             (
                 key.kind,

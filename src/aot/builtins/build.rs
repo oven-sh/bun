@@ -3,7 +3,8 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Export `BUN_CODEGEN_DIR` for the tables of built-ins that `src/codegen/builtins/index.ts` writes.
+//! Export `BUN_CODEGEN_DIR` for the tables of built-ins that `src/codegen/builtins/index.ts` writes, and for what
+//! JavaScriptCore's `aot/ir/generator/index.ts` writes from the schema.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,7 @@ fn main() {
         "aot_builtin_ids.rs",
         "aot_builtin_syntax.rs",
         "aot_builtin_table.rs",
+        "aot_schema_builtins.rs",
     ] {
         let table = codegen_dir.join(name);
         if !table.exists() {

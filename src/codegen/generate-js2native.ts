@@ -7,7 +7,7 @@ import path, { basename, sep } from "path";
 import { textOfNativeBinding, type Guard, type Guards } from "./builtins/guards";
 import type { NativeCallKind } from "./builtins/vocabulary";
 import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
-import { guardedBuiltinCall, guardedCall, recordedPointer, removableFeatures } from "./removable-entry-points";
+import { guardedBindingCreation, recordedPointer, removableFeatures } from "./removable-entry-points";
 
 //
 interface NativeCall {
@@ -277,9 +277,7 @@ function nativePointer(guard: Guard | null, native_symbol: string) {
 
 function callNative(guard: Guard | null, native_symbol: string) {
   if (!guard) return `${native_symbol}(global)`;
-  return guard.builtin === undefined
-    ? guardedCall(removableFeatures(), guard.feature, "Throw", native_symbol, ["global"])
-    : guardedBuiltinCall(removableFeatures(), guard.feature, native_symbol, guard.builtin, ["global"]);
+  return guardedBindingCreation(removableFeatures(), guard.feature, native_symbol, guard.builtin, ["global"]);
 }
 
 function nativeCallExpression(call: NativeCall, guard: Guard | null) {

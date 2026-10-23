@@ -57,6 +57,7 @@ type AddendBias = readonly [first: number, last: number] | "UnknownBase";
 interface AddressRule {
   inCode: AddendBias;
   inData: AddendBias;
+  isDisplacement?: true;
 }
 
 type RelocationRule = AddressRule | "NoAddress";
@@ -72,6 +73,7 @@ const exactAddend: AddendBias = [0, 0];
 // 4, or 5, 6 or 8 with an immediate after the field. Only decoding the instruction would tell them apart.
 const fieldToNextInstruction: AddendBias = [4, 8];
 const absolute: AddressRule = { inCode: exactAddend, inData: exactAddend };
+const displacement: AddressRule = { ...absolute, isDisplacement: true };
 // The field holds `target - base`. Its addend includes its distance from `base`, any label in its own input section.
 const labelDifference: AddressRule = { inCode: "UnknownBase", inData: "UnknownBase" };
 
@@ -79,7 +81,8 @@ const relocationRules = new Map<number, readonly RuleEntry[]>([
   [
     Machine.X86_64,
     [
-      { types: [1, 10, 11, 12, 14], rule: absolute },
+      { types: [1, 10, 12, 14], rule: absolute },
+      { types: [11], rule: displacement },
       { types: [2, 4, 9, 41, 42], rule: { inCode: fieldToNextInstruction, inData: "UnknownBase" } },
       { types: [24], rule: { inCode: [8, 8], inData: "UnknownBase" } },
       { types: [0, [16, 23], [32, 36]], rule: "NoAddress" },
@@ -112,6 +115,17 @@ function readUInt64(bytes: Buffer, at: number): number {
 
 function readInt64(bytes: Buffer, at: number): number {
   return bytes.readUInt32LE(at) + bytes.readInt32LE(at + 4) * 0x100000000;
+}
+
+// `table[index - least]` has its base in front of the table, and a loop's index may have any constant folded into the base.
+// With a section symbol the sum is all that is left, so beside a register the field names no object.
+function hasRegisterBesideField(code: Buffer, field: number): boolean {
+  if (field < 2) return false;
+  const last = code[field - 1]!;
+  if (last >>> 6 === 2 && (last & 7) !== 4) return true;
+  const modRM = code[field - 2]!;
+  if ((modRM & 7) !== 4) return false;
+  return modRM >>> 6 === 2 || (modRM >>> 6 === 0 && (last & 7) === 5 && last !== 0x25);
 }
 
 const isAllocated = (section: SectionHeader) => (section.flags & SectionFlag.Alloc) !== 0;
@@ -284,6 +298,7 @@ interface RelocationSection {
   name: string;
   isCode: boolean;
   bytes: Buffer;
+  relocated: { address: number; bytes: Buffer };
 }
 
 interface RelocationContext {
@@ -295,7 +310,7 @@ interface RelocationContext {
 }
 
 function checkSection(section: RelocationSection, context: RelocationContext, check: RelocationCheck): void {
-  const { name, isCode, bytes } = section;
+  const { name, isCode, bytes, relocated } = section;
   const { graph, symbols, rulesByType, classifier, reportedPairs } = context;
   if (bytes.length % relocationBytes !== 0) fail(`the size of ${name} is not a multiple of ${relocationBytes}`);
   check.relocations += bytes.length / relocationBytes;
@@ -335,7 +350,9 @@ function checkSection(section: RelocationSection, context: RelocationContext, ch
       check.fieldsOutsideGraph++;
       continue;
     }
-    const verdict = classifier.classify(from, first, last, isSectionSymbol);
+    let verdict = classifier.classify(from, first, last, isSectionSymbol);
+    const mayBeBase = verdict === "Illegal" && isCode && isSectionSymbol && rule.isDisplacement === true;
+    if (mayBeBase && hasRegisterBesideField(relocated.bytes, address - relocated.address)) verdict = "Ambiguous";
     if (verdict === "Ambiguous") check.ambiguous++;
     if (verdict !== "Illegal") continue;
     const target = bias === "UnknownBase" ? unbiased : first;
@@ -372,7 +389,9 @@ function checkRelocations(relinked: ElfFile, input: RelocationInput): Relocation
     if (section.type !== SectionType.Rela) fail(`${section.name} of ${path} is not in RELA format`);
     const isCode = (relocated.flags & SectionFlag.ExecInstr) !== 0;
     const bytes = readAt(relinked.fd, section.offset, section.size);
-    checkSection({ name: section.name, isCode, bytes }, context, check);
+    const relocatedBytes = isCode ? readAt(relinked.fd, relocated.offset, relocated.size) : Buffer.alloc(0);
+    const target = { address: relocated.address, bytes: relocatedBytes };
+    checkSection({ name: section.name, isCode, bytes, relocated: target }, context, check);
   }
   if (check.relocations === 0) fail(`${path} has no relocations, so it was not linked with --emit-relocs`);
   return check;

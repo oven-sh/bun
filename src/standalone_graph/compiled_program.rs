@@ -4,6 +4,7 @@ use core::mem::size_of;
 use core::ptr::read_unaligned;
 
 use bun_collections::StringArrayHashMap;
+use bun_collections::index_sort;
 use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
@@ -172,12 +173,12 @@ pub(crate) fn append_record(
             index,
         ));
     }
-    entries.sort_unstable_by_key(|(record, ..)| record.file_index);
+    index_sort::sort_slice_unstable_by_key(&mut entries, |(record, ..)| record.file_index);
     if !entries.is_sorted_by(|(a, ..), (b, ..)| a.file_index < b.file_index) {
         return Err(CORRUPTED);
     }
     let mut source_path_order: Vec<u32> = (0..entry_point_count).collect();
-    source_path_order.sort_unstable_by(|&a, &b| {
+    index_sort::sort_slice_unstable_by(&mut source_path_order, |&a, &b| {
         compare_source_paths(entries[a as usize].1, entries[b as usize].1).then(a.cmp(&b))
     });
     let records: Vec<CompiledEntryPointRecord> = entries.iter().map(|entry| entry.0).collect();
@@ -208,7 +209,7 @@ pub(crate) fn append_record(
 /// The number of names, a record a name, then the paths one after the other.
 fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) -> Option<Vec<u8>> {
     let mut names: Vec<&CompiledPackageNameInput<'_>> = names.iter().collect();
-    names.sort_unstable_by_key(|name| name.path);
+    index_sort::sort_slice_unstable_by_key(&mut names, |name| name.path);
     if !names.is_sorted_by(|a, b| a.path < b.path) {
         return None;
     }

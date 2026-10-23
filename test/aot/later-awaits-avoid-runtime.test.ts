@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
 
-const turns = 2000;
+// The promises are counted a list of free cells at a time, and the last list is lost: a block, which is 64 KB on some targets.
+const turns = 60_000;
 const files = {
   "main.mjs": `
     import { AsyncLocalStorage } from "node:async_hooks";

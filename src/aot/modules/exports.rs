@@ -732,8 +732,8 @@ pub(super) fn resolve_exports(
     }
     tables
         .failures
-        .sort_by_key(|pending| (pending.failure.importer, pending.order));
-    absent_names.sort_by_key(|&(imported, order)| (imported.importer, order));
+        .shared_sort_by_key(|pending| (pending.failure.importer, pending.order));
+    absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
     tables.absent_commonjs_names = absent_names;
     tables.commonjs_imports = commonjs_imports
         .iter()

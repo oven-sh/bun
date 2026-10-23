@@ -10,6 +10,7 @@ use std::sync::Arc;
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
+use bun_collections::index_sort;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{macho as bun_macho, pe as bun_pe};
@@ -1692,7 +1693,7 @@ pub(crate) fn to_bytes(
     // Every per-module region below is written in load order (entry point's
     // static imports first, then dynamic imports breadth-first) so the modules
     // a process actually loads share pages instead of each dragging in its own.
-    module_files.sort_by_key(|f| f.load_order);
+    index_sort::sort_slice_by_key(&mut module_files, |f| f.load_order);
     let entry_point_id = module_files
         .iter()
         .position(|f| core::ptr::eq(*f, entry_point_file))

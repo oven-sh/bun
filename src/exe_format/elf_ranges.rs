@@ -67,6 +67,7 @@ pub(crate) fn cut_model(elf: &[u8]) -> CutModel {
             alignment,
             capacity,
             cuttable_spans,
+            spans_cut_only_at_end: Vec::new(),
         },
         Err(_) => without_cuts(NoCutReason::HeadersUnreadable),
     }

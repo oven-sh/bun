@@ -5,7 +5,9 @@
 #include <JavaScriptCore/AOTBuiltinTable.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <algorithm>
 #include <cstdlib>
 #include <iterator>
@@ -177,6 +179,53 @@ extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedInstance(JSC::JSGloba
     JSC::JSValue prototype = JSC::JSValue::decode(encodedConstructor).get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject, JSC::asObject(prototype)));
+}
+
+namespace Bun {
+
+JSC_DEFINE_HOST_FUNCTION(constructRemovedBinding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return uncheckedDowncast<JSC::JSNativeStdFunction>(callFrame->jsCallee())->function()(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(getMemberOfRemovedBinding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* handler = JSC::asObject(callFrame->thisValue());
+    if (name == vm.propertyNames->toPrimitiveSymbol)
+        return JSC::JSValue::encode(handler->getDirect(vm, name));
+    if (name.isSymbol() || name == vm.propertyNames->then)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(handler->getDirect(vm, vm.propertyNames->value));
+}
+
+JSC_DEFINE_HOST_FUNCTION(convertRemovedBindingToPrimitive, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+}
+
+// A module reads the members of its native bindings while it is imported, and an import doesn't throw. Every member is the stand-in itself.
+// A module may also use a member as a number or a property key.
+extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobalObject* globalObject, uint16_t feature)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto throwForFeature = [feature](JSC::JSGlobalObject* realm, JSC::CallFrame*) {
+        return Bun__throwForRemovedFeature(realm, feature);
+    };
+    auto* target = JSC::JSNativeStdFunction::create(vm, globalObject, 0, WTF::String(), WTF::move(throwForFeature), JSC::NoIntrinsic, JSC::NativeFunction(Bun::constructRemovedBinding));
+    auto* handler = JSC::constructEmptyObject(globalObject);
+    handler->putDirectNativeFunction(vm, globalObject, vm.propertyNames->get, 3, Bun::getMemberOfRemovedBinding, JSC::ImplementationVisibility::Private, JSC::NoIntrinsic, 0);
+    handler->putDirectNativeFunction(vm, globalObject, vm.propertyNames->toPrimitiveSymbol, 1, Bun::convertRemovedBindingToPrimitive, JSC::ImplementationVisibility::Private, JSC::NoIntrinsic, 0);
+    auto* standIn = JSC::ProxyObject::create(globalObject, target, handler);
+    RETURN_IF_EXCEPTION(scope, {});
+    handler->putDirect(vm, vm.propertyNames->value, standIn);
+    return JSC::JSValue::encode(standIn);
 }
 
 extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* specifier)

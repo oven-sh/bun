@@ -16,7 +16,6 @@ typed-objects/plain-clone-takes-stores-behind-it	// CALLS- wide PutBy
 arrays/array-creation-and-search-stubs	// CALLS+ captureStrict CreateArguments
 arrays/array-creation-and-search-stubs	// CALLS+ doubleLiterals NewEmptyArray\.
 arrays/array-creation-and-search-stubs	// CALLS+ numbersFilledConditionally NewArrayWithLength
-arrays/array-creation-and-search-stubs	// CALLS+ searchStrings ArraySearch
 arrays/element-stubs-by-storage-shape	// CALLS+ loadFromInt32s LoadElement
 arrays/element-stubs-by-storage-shape	// CALLS+ pushNumbers ArrayPushDouble
 arrays/element-stubs-by-storage-shape	// CALLS+ pushOntoInt32s ArrayPush\b
@@ -267,9 +266,7 @@ calls-fast-paths/new-without-constructor	// IR= 1 keeps NewArray
 calls-fast-paths/number-parameters-indirect-call	// ENTRY-SIZE< oneNumber 48 8
 calls-fast-paths/number-parameters-indirect-call	// ENTRY-SIZE< threeNumbers 120 18
 calls-fast-paths/number-result-boxed-by-stub	// CALLS+ addOne BoxNumber
-calls-fast-paths/number-result-boxed-by-stub	// CALLS+ firstOf BoxNumber
 calls-fast-paths/number-result-boxed-by-stub	// CALLS+ half BoxNumber
-calls-fast-paths/number-result-boxed-by-stub	// CALLS+ pick BoxNumber
 calls-fast-paths/number-result-boxed-by-stub	// CALLS+ xOf BoxOptionalNumber
 calls-fast-paths/optional-arguments-of-built-ins	// CALLS+ arrayIncludesFrom ArraySearch\.IncludesFrom
 calls-fast-paths/optional-arguments-of-built-ins	// CALLS+ arrayIndexOfFrom ArraySearch\.IndexOfFrom
@@ -437,8 +434,6 @@ commonjs/constants-in-variables	// IR= 1 seenEarly GetEnvironmentField
 commonjs/constants-in-variables	// IR= 1 storedLater GetEnvironmentField
 commonjs/pure-module-reads-const-in-tdz	// IR+ ^variable (g\d+) name="kSound" [\s\S]* = GetModuleVariable variable=\1 isKnownInitialized
 commonjs/pure-module-required-in-function	// IR+ ^variable g\d+ name="onlyReadThroughTheObject" module=
-commonjs/pure-module-required-in-function	// IR= 0 read ElemGet
-commonjs/pure-module-required-in-function	// IR= 0 stamp ElemSet
 commonjs/symbols-from-escaping-exports	// IR= 1 info PropGet v[0-9]+ name=UniqueSymbol "[^"]*mini\.write"
 commonjs/symbols-from-escaping-exports	// IR= 1 mini PropSet v[0-9]+, v[0-9]+ name=UniqueSymbol "[^"]*mini\.stream"
 commonjs/symbols-from-escaping-exports	// IR= 1 readInACycle ElemGet
@@ -537,8 +532,6 @@ escape-analysis/returned-pair-from-recursion	//!
 escape-analysis/stack-closures	//!
 escape-analysis/write-only-object	//!
 escape-analysis/write-only-object-kept	//!
-known-helpers/stars-looked-at-late	// COUNTER: StarsCarriedOutLate >= 40
-known-helpers/stars-looked-at-late	// COUNTER: StarsRecorded >= 40
 language/baseline-cpu	// CALLS+ extend CloneObjectAndExtendWithNumber
 language/baseline-cpu	// CALLS+ storeInUntyped PutByIdDouble
 language/dead-counted-loops	// IR= 0 unusedField LoopHint
@@ -743,7 +736,6 @@ strings/searches-outside-loops	// CALLS+ indexOfTextL operationAOTStringFind8
 strings/searches-outside-loops	// CALLS+ lastIndexOfText f:;
 strings/searches-outside-loops	// CALLS+ lastIndexOfTextL operationAOTStringReverseFind8
 strings/searches-outside-loops	// CALLS+ starts5 StringStartsWithLiteral
-strings/searches-outside-loops	// CALLS- ends5 CallHostFunction|CallMethod|CallValue|f:;
 strings/searches-outside-loops	// CALLS- indexOfTextL operationAOTStringIndexOfLiteral
 strings/single-characters	// CALLS+ slashAt ValueEqualsLiteralOfLength1
 strings/single-characters	// CALLS+ twoCharacters ValueEqualsLiteralOfLength2
@@ -873,7 +865,6 @@ typed-objects/one-structure-check-across-call	// IRT= 2 farApart TypeTest v[0-9]
 typed-objects/one-structure-check-across-call	// IRT= 2 throughNext TypeTest v[0-9]+ testedType=L[0-9]+!
 typed-objects/one-structure-check-across-call	// IRT= 2 twoReceivers TypeTest v[0-9]+ testedType=L[0-9]+!
 typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout (L\d+) .*name="Nested" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout (L\d+) .*name="Reader" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout L\d+ .*name="Nested" .*isNeverAllocated=true
 typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout L\d+ .*name="Reader" .*isNeverAllocated=true
 typed-objects/optional-field-records-copied-at-one-site	// CALLS+ widen LookupCopyKeyOrder

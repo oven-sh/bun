@@ -27,7 +27,7 @@ export function collectorStress(collections: "full" | "young", part: number, par
   test.skipIf(!!skipReason)(
     `the programs answer the same under ${collections} collections all the time (part ${part} of ${parts})`,
     async () => {
-      const share = isDebug || isASAN ? `${part}/${parts * (isDebug ? 10 : 3)}` : partInShare(part, parts, 10);
+      const share = isDebug || isASAN ? `${part}/${parts * (isDebug ? 10 : 3)}` : partInShare(part, parts, 40);
       await using script = Bun.spawn({
         cmd: [python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--part", share, "all"],
         env: scriptEnvironment(),

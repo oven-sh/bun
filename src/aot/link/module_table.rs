@@ -7,6 +7,7 @@ use crate::ir::Id;
 use crate::load::{PerProject, ProgramFile, ProjectId};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
 
 pub(super) fn collect_modules(
@@ -46,7 +47,7 @@ pub(super) fn collect_modules(
         }
     }
     add_requested_records(projects, &mut modules, &mut known_modules);
-    modules.sort_unstable_by(|&a, &b| compare_program_modules(a, b, atoms));
+    modules.shared_sort_unstable_by(|&a, &b| compare_program_modules(a, b, atoms));
     create_module_table(modules, units)
 }
 

@@ -226,8 +226,10 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   });
   if (cfg.trimmable) {
     assert(cfg.cxxfilt !== undefined, "a trimmable link needs llvm-cxxfilt");
+    const isProven = cfg.linux && cfg.x64 && cfg.abi === "gnu";
+    const validate = !cfg.ci || cfg.darwin || cfg.windows ? "" : ` --validate-relocations${isProven ? "" : "=report"}`;
     n.rule("link_trimmable", {
-      command: `${cfg.jsRuntime} ${q(trimScript(cfg, "link.ts"))} $out.trim-work ${q(removableFeaturesJson(cfg))} ${q(builtinUsesJson(cfg))} ${q(librariesFilePath(cfg))} ${q(`--demangler=${cfg.cxxfilt}`)} -- ${linkCommand}`,
+      command: `${cfg.jsRuntime} ${q(trimScript(cfg, "link.ts"))} $out.trim-work ${q(removableFeaturesJson(cfg))} ${q(builtinUsesJson(cfg))} ${q(librariesFilePath(cfg))} ${q(`--demangler=${cfg.cxxfilt}`)}${validate} -- ${linkCommand}`,
       description: "link $out (trimmable)",
       rspfile: "$out.rsp",
       rspfile_content: "$in_newline",

@@ -2,6 +2,7 @@ import type { Schema } from "../aot-schema/load.ts";
 import {
   Problems,
   type ClassDeclaration,
+  type LeftOutDeclaration,
   type SignatureDeclaration,
   type Source,
   type SourcedDeclaration,
@@ -228,6 +229,8 @@ export class ModelBuilder {
   readonly #writtenClasses = new Map<ModelClass, WrittenClass>();
   readonly #signatures = new Map<ModelOverload, SignatureDeclaration>();
   readonly #reported = new Set<string>();
+  readonly #leftOut = new Set<BuiltinPath>();
+  #mayNameWhatIsLeftOut = false;
 
   constructor(input: { schema: Schema; engineFiles: readonly ModelEngineFile[] }) {
     this.schema = input.schema;
@@ -311,7 +314,7 @@ export class ModelBuilder {
   }
 
   resolve(path: BuiltinPath, source: Source): MutableBuiltin | null {
-    return this.find(path) ?? this.#reportUnknown(source, `${path}: no class, namespace or entry declares it`);
+    return this.find(path) ?? this.reportUnknown(source, `${path}: no class, namespace or entry declares it`);
   }
 
   findClass(name: ClassName): MutableClass | undefined {
@@ -319,7 +322,7 @@ export class ModelBuilder {
   }
 
   resolveClass(name: ClassName, source: Source): MutableClass | null {
-    return this.findClass(name) ?? this.#reportUnknown(source, `no class is named ${name}`);
+    return this.findClass(name) ?? this.reportUnknown(source, `no class is named ${name}`);
   }
 
   findLayout(name: LayoutName): MutableLayout | undefined {
@@ -327,25 +330,37 @@ export class ModelBuilder {
   }
 
   resolveLayout(name: LayoutName, source: Source): MutableLayout | null {
-    return this.findLayout(name) ?? this.#reportUnknown(source, `no layout is named ${name}`);
+    return this.findLayout(name) ?? this.reportUnknown(source, `no layout is named ${name}`);
   }
 
   resolveFunction(ref: FunctionRef, source: Source): MutableFunction | null {
     return (
       this.#registered.functions.find(keyOfFunction(ref)) ??
-      this.#reportUnknown(source, `${ref.file}: no runtime function is named ${ref.name}`)
+      this.reportUnknown(source, `${ref.file}: no runtime function is named ${ref.name}`)
     );
   }
 
   resolveModule(specifier: string, source: Source): MutableModule | null {
     return (
       this.#registered.modules.find(specifier) ??
-      this.#reportUnknown(source, `no runtime module has the specifier ${specifier}`)
+      this.reportUnknown(source, `no runtime module has the specifier ${specifier}`)
     );
   }
 
-  #reportUnknown(source: Source, message: string): null {
-    if (!this.#reported.has(message)) {
+  leaveOut({ paths, mayBeNamed }: LeftOutDeclaration): void {
+    for (const path of paths) this.#leftOut.add(joinPath(this.canonicalPathOf(path)));
+    this.#mayNameWhatIsLeftOut ||= mayBeNamed;
+  }
+
+  isLeftOut(path: BuiltinPath): boolean {
+    if (this.#leftOut.size === 0) return false;
+    const components = this.canonicalPathOf(path);
+    return components.some((_, index) => this.#leftOut.has(joinPath(components.slice(0, index + 1))));
+  }
+
+  /** A declaration names what nothing declares. */
+  reportUnknown(source: Source, message: string): null {
+    if (!this.#mayNameWhatIsLeftOut && !this.#reported.has(message)) {
       this.#reported.add(message);
       this.problems.add(source, message);
     }
@@ -353,6 +368,7 @@ export class ModelBuilder {
   }
 
   create(path: BuiltinPath, kind: BuiltinKind, source: Source, isRoot = false): MutableBuiltin | null {
+    if (this.isLeftOut(path)) return null;
     const components = this.canonicalPathOf(path);
     const key = joinPath(components);
     if (this.#registered.builtins.find(key) !== undefined) {

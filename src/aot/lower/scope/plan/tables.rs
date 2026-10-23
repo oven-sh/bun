@@ -1,6 +1,7 @@
 use bun_sema::bind::{CodeUnit, ScopeId, SymbolId};
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{Flags, FnId, FnKind, MemberId, MemberKind};
+use bun_sema::util::SharedSort;
 
 use super::storage::find_initial_functions;
 use super::{Context, Parts, Placements};
@@ -162,7 +163,7 @@ fn compute_loop_stores(
 ) -> LoopStores {
     let depths = compute_scope_depths(context);
     let mut loops: Vec<&WalkedLoop> = context.walk.loops.iter().collect();
-    loops.sort_unstable_by_key(|walked| walked.statement);
+    loops.shared_sort_unstable_by_key(|walked| walked.statement);
     let mut stored = Vec::new();
     for (index, &walked) in loops.iter().enumerate() {
         let is_loop_carried = |binding: &BindingRef| {

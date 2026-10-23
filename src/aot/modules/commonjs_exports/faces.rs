@@ -16,6 +16,7 @@ use crate::modules::requests::Scans;
 use crate::modules::{ModuleRef, collect_pending_failures};
 use bun_sema::atom::{Atom, known};
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet};
 
 #[derive(Default)]
@@ -208,7 +209,9 @@ impl Faces {
         let atoms = &input.bind.files.atoms;
         for &file in &faces.seen_namespaces {
             if let Some(mut names) = tables.names_of_commonjs_module(ModuleRef::File(file)) {
-                names.sort_unstable_by(|&a, &b| compare_code_units(atoms.bytes(a), atoms.bytes(b)));
+                names.shared_sort_unstable_by(|&a, &b| {
+                    compare_code_units(atoms.bytes(a), atoms.bytes(b))
+                });
                 faces.names_of_namespaces.insert(file, names);
             }
         }

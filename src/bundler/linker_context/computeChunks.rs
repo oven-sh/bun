@@ -220,6 +220,14 @@ pub(crate) fn compute_chunks(
                     ),
                     ..Default::default()
                 };
+            } else if this.graph.files.items_entry_point_kind()[source_index as usize]
+                == crate::EntryPoint::Kind::UserSpecified
+            {
+                // The stylesheet of an earlier entry point has this import order. This entry point names the CSS file, so it owns the chunk.
+                let shared = css_chunk_entry.value_ptr;
+                shared.entry_point = chunk::EntryPoint::entry_point(source_index, entry_bit);
+                // With HAS_HTML_CHUNK the chunk takes the chunk naming template, not the entry naming template.
+                shared.flags.remove(chunk::Flags::HAS_HTML_CHUNK);
             }
 
             continue;

@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1115,6 +1116,126 @@ body {
       });
     },
   });
+
+  const pageWithLinks = (...hrefs: string[]) =>
+    `<!doctype html><html><head>${hrefs.map(href => `<link rel="stylesheet" href="${href}" />`).join("")}</head><body></body></html>`;
+  const stylesheetsIn = (api: { outdir: string }) =>
+    readdirSync(api.outdir)
+      .filter(file => file.endsWith(".css"))
+      .sort();
+
+  // The same import orders with the CSS entry point first. The page does not share the chunk of the entry point.
+  itBundled("html/SeparateCSSForCSSEntryPointFirstProduction", {
+    outdir: "out/",
+    production: true,
+    files: {
+      "/page.html": pageWithLinks("./r.css", "./s.css"),
+      "/r.css": `@layer a { .r { color: red } }`,
+      "/m.css": `@layer b { .m { color: blue } }`,
+      "/s.css": `@import "./r.css" print;\n@import "./m.css";\n@import "./r.css";\n.s { color: green }`,
+    },
+    entryPoints: ["/s.css", "/page.html"],
+    onAfterBundle(api) {
+      const rest = `@layer b{.m{color:#00f}}@layer a{.r{color:red}}.s{color:green}\n`;
+      expect({ page: stylesheetOf(api, "page.html"), entry: api.readFile("out/s.css") }).toEqual({
+        page: `@layer a;` + rest,
+        entry: `@media print{@layer a;}` + rest,
+      });
+    },
+  });
+
+  for (const entryPoints of [
+    ["/page.html", "/s.css"],
+    ["/s.css", "/page.html"],
+  ]) {
+    const order = entryPoints[0].slice(1) + "-first";
+
+    // With CSS chunking on, a page and a CSS entry point that have the same import order share one stylesheet.
+    // The stylesheet has the name of the CSS entry point in each entry order.
+    itBundled(`html/CSSEntryPointNamesStylesheetSharedWithPage/${order}`, {
+      outdir: "out/",
+      production: true,
+      files: {
+        "/page.html": pageWithLinks("./s.css"),
+        "/s.css": `.s { color: green }`,
+      },
+      entryPoints,
+      onAfterBundle(api) {
+        expect(stylesheetsIn(api)).toEqual(["s.css"]);
+        expect(api.readFile("out/s.css")).toBe(".s{color:green}\n");
+        expect(api.readFile("out/page.html")).toContain(`<link rel="stylesheet" crossorigin href="./s.css">`);
+      },
+    });
+
+    // The page has more CSS than the entry point, so the import orders differ.
+    // The page keeps a stylesheet of its own, with a hash in the name.
+    itBundled(`html/CSSEntryPointDoesNotNameStylesheetOfPageWithMoreCSS/${order}`, {
+      outdir: "out/",
+      production: true,
+      files: {
+        "/page.html": pageWithLinks("./a.css", "./s.css"),
+        "/a.css": `.a { color: red }`,
+        "/s.css": `.s { color: green }`,
+      },
+      entryPoints,
+      onAfterBundle(api) {
+        const href = api.readFile("out/page.html").match(/href="\.\/(.*?\.css)"/)![1];
+        expect(href).toMatch(/^page-[a-z0-9]{8}\.css$/);
+        expect(stylesheetsIn(api)).toEqual([href, "s.css"]);
+        expect({ page: api.readFile("out/" + href), entry: api.readFile("out/s.css") }).toEqual({
+          page: ".a{color:red}.s{color:green}\n",
+          entry: ".s{color:green}\n",
+        });
+      },
+    });
+  }
+
+  // Each page links a.css and s.css, and s.css imports a.css, so each page has the import order of s.css.
+  // The CSS entry point names the one stylesheet at each place in the entry order.
+  for (const entryPoints of [
+    ["/s.css", "/one.html", "/two.html"],
+    ["/one.html", "/s.css", "/two.html"],
+    ["/one.html", "/two.html", "/s.css"],
+  ]) {
+    itBundled(`html/CSSEntryPointNamesStylesheetSharedWithTwoPages/s.css-at-${entryPoints.indexOf("/s.css")}`, {
+      outdir: "out/",
+      production: true,
+      files: {
+        "/one.html": pageWithLinks("./a.css", "./s.css"),
+        "/two.html": pageWithLinks("./a.css", "./s.css").replace("<body>", "<body>two"),
+        "/a.css": `.a { color: red }`,
+        "/s.css": `@import "./a.css";\n.s { color: green }`,
+      },
+      entryPoints,
+      onAfterBundle(api) {
+        expect(stylesheetsIn(api)).toEqual(["s.css"]);
+        expect(api.readFile("out/s.css")).toBe(".a{color:red}.s{color:green}\n");
+        for (const page of ["one.html", "two.html"]) {
+          expect(api.readFile("out/" + page)).toContain(`<link rel="stylesheet" crossorigin href="./s.css">`);
+        }
+      },
+    });
+  }
+
+  // The stylesheet of s.js and the CSS entry point s.css need one output path, and they have different CSS.
+  // The build fails in each entry order, as it does without CSS chunking.
+  for (const entryPoints of [
+    ["/page.html", "/s.js", "/s.css"],
+    ["/s.css", "/page.html", "/s.js"],
+  ]) {
+    itBundled(`html/CSSEntryPointAtPathOfOtherStylesheetFails/${entryPoints[0].slice(1)}-first`, {
+      outdir: "out/",
+      production: true,
+      files: {
+        "/page.html": pageWithLinks("./s.css"),
+        "/s.css": `.s { color: green }`,
+        "/s.js": `import "./t.css"; console.log("s");`,
+        "/t.css": `.t { color: red }`,
+      },
+      entryPoints,
+      bundleErrors: { "<bun>": ["Multiple files share the same output path"] },
+    });
+  }
 
   // Test manifest.json is copied as an asset and link href is rewritten
   itBundled("html/manifest-json", {

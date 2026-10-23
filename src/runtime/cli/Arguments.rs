@@ -539,7 +539,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--keep-names                     Preserve original function and class names when minifying"
         ),
         parse_param!(
-            "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
+            "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS. A .css entrypoint names the file that it shares"
         ),
         parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
         parse_param!(

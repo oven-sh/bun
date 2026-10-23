@@ -330,6 +330,33 @@ describe("bundler", () => {
     },
   });
 
+  // With CSS chunking on, entry.js and the CSS entry point share one stylesheet, and it has the name of the CSS
+  // entry point. The import() of the CSS file gets the same target in each entry order: the shared stylesheet,
+  // which is what the order with the CSS entry point first prints without this rule.
+  for (const entryPoints of [
+    ["/entry.js", "/styles.css"],
+    ["/styles.css", "/entry.js"],
+  ]) {
+    itBundled(`splitting/DynamicImportOfCSSEntryPointWithCSSChunking/${entryPoints[0].slice(1)}-first`, {
+      files: {
+        "/entry.js": `
+          import './styles.css'
+          import('./styles.css').then(ns => console.log(typeof ns.default, JSON.stringify(ns.default)));
+        `,
+        "/styles.css": `.styles { color: blue; }`,
+      },
+      entryPoints,
+      splitting: true,
+      cssChunking: true,
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).sort()).toEqual(["entry.js", "styles.css"]);
+        expect(api.readFile("/out/entry.js").match(/import\("(.*?)"\)/)![1]).toBe("./styles.css");
+      },
+      run: { file: "/out/entry.js", env, stdout: "object {}" },
+    });
+  }
+
   // An `import()` target only referenced from a part that tree shaking removes
   // must not get a chunk. `define` turns the gate into a compile-time `false`.
   const deadDynamicImportFiles = {

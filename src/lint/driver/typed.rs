@@ -19,6 +19,7 @@ use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::glob::Picomatch;
+use bun_lint::language::LanguageOptions;
 use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
@@ -306,6 +307,13 @@ fn files_matching(mut root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec
     found
 }
 
+/// [`LanguageOptions::with_libs_of_program`] of a config, for the program of a config file.
+struct LanguageInProgram<'c> {
+    config: &'c ResolvedConfig,
+    project: Vec<u8>,
+    language: Option<Arc<LanguageOptions>>,
+}
+
 /// The globals of a program that's loaded anyway.
 struct LoadedProgramGlobals {
     /// For `None`, see `Files::global_names`.
@@ -380,6 +388,7 @@ fn check_and_lint_in(
     // Keyed by config file.
     let program_globals: Guarded<Vec<(Vec<u8>, Arc<LoadedProgramGlobals>)>> =
         Guarded::new(Vec::new());
+    let languages: Guarded<Vec<LanguageInProgram>> = Guarded::new(Vec::new());
     let mut program_kinds = Guarded::new(vec![ProgramKind::InAProject; indices.len()]);
     let after_file = |checker: &mut bun_sema::check::Checker<'_, '_>, file: FileId| {
         let program = checker.p.files;
@@ -419,12 +428,30 @@ fn check_and_lint_in(
                 checks_javascript: it.checks_javascript,
             })
         }));
+        let language = (!infers).then(|| {
+            let mut known = languages.lock();
+            let is_this = |it: &&LanguageInProgram| {
+                std::ptr::eq(it.config, &raw const **config) && it.project == *project_of_file
+            };
+            if let Some(found) = known.iter().find(is_this) {
+                return found.language.as_ref().map(Arc::clone);
+            }
+            let made = config.language.with_libs_of_program(&program.options.libs);
+            let made = made.map(Arc::new);
+            known.push(LanguageInProgram {
+                config,
+                project: project_of_file.clone(),
+                language: made.as_ref().map(Arc::clone),
+            });
+            made
+        });
+        let language = language.flatten();
         let started = context.timing.now();
         let linted = bun_lint::types::with_file_and_modules(
             checker,
             file,
             Some(path),
-            &config.language,
+            language.as_deref().unwrap_or(&config.language),
             Some(&read_library),
             Some(context.modules),
             Some(context.formatter),

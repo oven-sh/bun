@@ -508,6 +508,25 @@ impl LanguageOptions {
         options
     }
 
+    /// What `@typescript-eslint/parser` does for a file that has a program: without `parserOptions.lib`, the libraries are
+    /// the program's. `libs` has the `N` of each `lib.N.d.ts`. `None` if these options stay as they are.
+    pub fn with_libs_of_program(&self, libs: &[Vec<u8>]) -> Option<LanguageOptions> {
+        if self.parser != Parser::TypeScript || self.is_oxlint || self.lib.is_some() {
+            return None;
+        }
+        let name_in_table = |lib: &Vec<u8>| -> Box<[u8]> {
+            match lib.is_empty() {
+                true => b"lib"[..].into(),
+                false => lib[..].into(),
+            }
+        };
+        Some(LanguageOptions {
+            lib: Some(libs.iter().map(name_in_table).collect()),
+            config_globals: OnceLock::new(),
+            ..self.clone()
+        })
+    }
+
     fn set_source_type(&mut self, source_type: SourceType) {
         self.source_type = source_type;
         // ESLint turns `globalReturn` off for espree in a module. Babel's parser ignores it there.

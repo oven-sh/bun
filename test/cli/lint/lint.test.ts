@@ -9381,6 +9381,38 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(await notes("5.8.3", { "eslint.config.js": untyped, "a.ts": "debugger;\n" })).toEqual([]);
     });
 
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3.
+    test("without parserOptions.lib, the names that TypeScript's libraries define are those of the file's tsconfig.json", async () => {
+      const tsconfig = (options: object) =>
+        JSON.stringify({ compilerOptions: { strict: true, module: "esnext", types: [], ...options } });
+      const text = `export type A = [DOMRect, ClientRect, NotThere];\nexport const b = document;\n`;
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.js": `${files["eslint.config.js"].replace(`rules: { `, `rules: { "no-undef": "error", `).slice(0, -2)},
+            { files: ["explicit/*.ts"], languageOptions: { parserOptions: { lib: ["es2020"] } } },
+          ];`,
+          "dom/tsconfig.json": tsconfig({ lib: ["dom", "esnext"] }),
+          "dom/a.ts": text,
+          "target/tsconfig.json": tsconfig({ target: "es2022" }),
+          "target/a.ts": text,
+          "only/tsconfig.json": tsconfig({ lib: ["es2020"] }),
+          "only/a.ts": text,
+          "explicit/tsconfig.json": tsconfig({ lib: ["dom", "esnext"] }),
+          "explicit/a.ts": text,
+        },
+        ["-f", "unix"],
+      );
+      const undefinedIn = (directory: string) =>
+        [...stdout.matchAll(/(\w+)\/a\.ts:\d+:\d+: '(\w+)' is not defined/g)]
+          .filter(it => it[1] === directory)
+          .map(it => it[2]);
+      expect(undefinedIn("dom")).toEqual(["NotThere", "document"]);
+      expect(undefinedIn("target")).toEqual(["NotThere", "document"]);
+      expect(undefinedIn("only")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
+      expect(undefinedIn("explicit")).toEqual(["DOMRect", "ClientRect", "NotThere", "document"]);
+      expect(exitCode).toBe(1);
+    });
+
     // `Element.textContent` is `string | null` up to TypeScript 5.8 and `string` after that. Removing a `!` that's
     // unnecessary with the built-in library would be an error for the project's own compiler.
     test("uses the lib files of the typescript installed in the project", async () => {

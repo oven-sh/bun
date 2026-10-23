@@ -5779,22 +5779,12 @@ class ClientHttp2Session extends Http2Session {
     } else {
       // Like node, https only: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
       if (protocol === "https:") initializeOptions(options);
-      socket = connectWithProtocol(
-        protocol,
-        options
-          ? {
-              host,
-              port: String(port),
-              ALPNProtocols: ["h2"],
-              ...options,
-            }
-          : {
-              host,
-              port: String(port),
-              ALPNProtocols: ["h2"],
-            },
-        onConnect.bind(this),
-      );
+      const connectOptions = { host, port: String(port), ALPNProtocols: ["h2"], ...options };
+      // HTTP/2 derives SNI from its authority; tls.connect itself never derives it.
+      if (protocol === "https:" && !connectOptions.servername && !net.isIP(host)) {
+        connectOptions.servername = host;
+      }
+      socket = connectWithProtocol(protocol, connectOptions, onConnect.bind(this));
       this[bunHTTP2Socket] = socket;
     }
     this.#encrypted = socket instanceof TLSSocket;

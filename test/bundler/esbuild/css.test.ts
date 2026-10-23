@@ -70,6 +70,46 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("css/WindowInactivePseudoClass", {
+    files: {
+      "/entry.css": /* css */ `
+        ::selection:window-inactive {
+          color: gray;
+        }
+        body:window-inactive {
+          color: silver;
+        }
+        a:is(:window-inactive) {
+          color: red;
+        }
+        b, ::selection:window-inactive {
+          color: blue;
+        }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        ::selection:window-inactive {
+          color: gray;
+        }
+        body:window-inactive {
+          color: silver;
+        }
+        a:window-inactive {
+          color: red;
+        }
+        b {
+          color: #00f;
+        }
+        ::selection:window-inactive {
+          color: #00f;
+        }
+      `);
+    },
+  });
+
   itBundled("css/CSSAtImportSimple", {
     // GENERATED
     files: {

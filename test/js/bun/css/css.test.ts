@@ -5409,13 +5409,137 @@ describe("css tests", () => {
       "single-button",
       "no-button",
       "corner-present",
-      "window-inactive",
     ]) {
       error_test(
         `:${clasz} {color: red}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassBeforeWebKitScrollbar)",
       );
     }
+
+    // :window-inactive is not a scrollbar-only state. WebKit and Blink also take it in a
+    // plain compound, after ::selection and after ::part().
+    minify_test(":window-inactive {color:red}", ":window-inactive{color:red}");
+    minify_test(":WINDOW-INACTIVE {color:red}", ":window-inactive{color:red}");
+    minify_test("a:window-inactive {color:red}", "a:window-inactive{color:red}");
+    minify_test(".a:window-inactive .b {color:red}", ".a:window-inactive .b{color:red}");
+    minify_test("a:window-inactive:hover {color:red}", "a:window-inactive:hover{color:red}");
+    minify_test("a:window-inactive::selection {color:red}", "a:window-inactive::selection{color:red}");
+    minify_test("::selection:window-inactive {color:red}", "::selection:window-inactive{color:red}");
+    minify_test("a::selection:window-inactive {color:red}", "a::selection:window-inactive{color:red}");
+    minify_test("::-moz-selection:window-inactive {color:red}", "::-moz-selection:window-inactive{color:red}");
+    minify_test("::part(x):window-inactive {color:red}", "::part(x):window-inactive{color:red}");
+    minify_test("::part(x)::selection:window-inactive {color:red}", "::part(x)::selection:window-inactive{color:red}");
+    // After a pseudo-element that the parser does not know, it passes through.
+    minify_test(
+      "::-webkit-slider-thumb:window-inactive {color:red}",
+      "::-webkit-slider-thumb:window-inactive{color:red}",
+    );
+
+    // The argument of a selector list is kept, not dropped.
+    minify_test("a:is(:window-inactive) {color:red}", "a:window-inactive{color:red}");
+    minify_test("a:is(:window-inactive, .b) {color:red}", "a:is(:window-inactive,.b){color:red}");
+    minify_test("a:where(:window-inactive) {color:red}", "a:where(:window-inactive){color:red}");
+    minify_test("a:not(:window-inactive) {color:red}", "a:not(:window-inactive){color:red}");
+    minify_test("a:not(:is(:window-inactive)) {color:red}", "a:not(:window-inactive){color:red}");
+    minify_test("a:has(:window-inactive) {color:red}", "a:has(:window-inactive){color:red}");
+    minify_test(":host(:window-inactive) {color:red}", ":host(:window-inactive){color:red}");
+    minify_test("::slotted(:window-inactive) {color:red}", "::slotted(:window-inactive){color:red}");
+    minify_test("::selection:is(:window-inactive) {color:red}", "::selection:window-inactive{color:red}");
+    minify_test("::selection:where(:window-inactive) {color:red}", "::selection:where(:window-inactive){color:red}");
+    minify_test("::selection:not(:window-inactive) {color:red}", "::selection:not(:window-inactive){color:red}");
+    minify_test(
+      "::-webkit-scrollbar-thumb:not(:window-inactive) {color:red}",
+      "::-webkit-scrollbar-thumb:not(:window-inactive){color:red}",
+    );
+    minify_test("@scope (:window-inactive) { a {color:red} }", "@scope(:window-inactive){a{color:red}}");
+
+    // A nested selector is parsed without its parent.
+    minify_test(".a { &:window-inactive {color:red} }", ".a{&:window-inactive{color:red}}");
+    minify_test("::selection { &:window-inactive {color:red} }", "::selection{&:window-inactive{color:red}}");
+    minify_test(
+      "::-webkit-scrollbar-thumb { &:window-inactive {color:red} }",
+      "::-webkit-scrollbar-thumb{&:window-inactive{color:red}}",
+    );
+    minify_test(".a { &::selection:window-inactive {color:red} }", ".a{&::selection:window-inactive{color:red}}");
+    prefix_test(
+      "::selection { &:window-inactive {color:red} }",
+      `
+      ::selection:window-inactive {
+        color: red;
+      }
+      `,
+      {
+        chrome: 100 << 16,
+      },
+    );
+
+    // A browser that does not know :window-inactive drops a whole list that has it.
+    // So a list is split, and the rule is not merged with its neighbour.
+    prefix_test(
+      "a, ::selection:window-inactive {color:red}",
+      `
+      a {
+        color: red;
+      }
+
+      ::selection:window-inactive {
+        color: red;
+      }
+      `,
+      {
+        chrome: 100 << 16,
+      },
+    );
+    minify_test(".p:window-inactive{top:0} .q{top:0}", ".p:window-inactive{top:0}.q{top:0}");
+
+    // The prefixer prints ::-moz-selection beside ::selection, so both take it.
+    prefix_test(
+      "::selection:window-inactive {color:red}",
+      `
+      ::-moz-selection:window-inactive {
+        color: red;
+      }
+
+      ::selection:window-inactive {
+        color: red;
+      }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    // It stays an error after the other known pseudo-elements.
+    test.each([
+      "::before",
+      "::after",
+      "::first-line",
+      "::first-letter",
+      "::marker",
+      "::placeholder",
+      "::backdrop",
+      "::file-selector-button",
+      "::cue",
+      "::view-transition",
+      "::view-transition-group(x)",
+      "::checkmark",
+      "::picker-icon",
+    ])("ERROR: %s:window-inactive {color:red}", element => {
+      expect(() => minify_test_with_options(`${element}:window-inactive {color:red}`, "")).toThrow(
+        "Invalid pseudo-class after pseudo-element",
+      );
+    });
+    test("ERROR: ::slotted(a):window-inactive {color:red}", () => {
+      expect(() => minify_test_with_options("::slotted(a):window-inactive {color:red}", "")).toThrow(
+        "Token is not allowed in this state",
+      );
+    });
+    // ::selection takes :window-inactive only, not a scrollbar state.
+    test("ERROR: ::selection:horizontal {color:red}", () => {
+      expect(() => minify_test_with_options("::selection:horizontal {color:red}", "")).toThrow(
+        "Invalid pseudo-class after pseudo-element",
+      );
+    });
 
     for (const element of [
       "-webkit-scrollbar",

@@ -329,13 +329,15 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
 // Gives `to` (and `second`) a getter for each own property name of `from`
 // that reads the property from `from`. The getter of a non-enumerable getter
 // is non-enumerable, so a spread or a `for in` does not call it. Every other
-// getter is enumerable: `bun run` exports a non-enumerable data property of
-// "module.exports" too.
+// getter stays enumerable: `bun run` also exports a non-enumerable data
+// property of "module.exports".
 //
-// Object.keys() lists the enumerable names in the order of
-// getOwnPropertyNames(), so a cursor finds them. A descriptor read for each
-// name would build every lazy property of a host object (`process.stdout`).
-var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => {
+// This must not read a data property of `from` by name, its descriptor
+// included: the read builds a lazy property of a host object (`process.stdout`,
+// `console._stdout`, each interface of `window`). Object.keys() lists the
+// enumerable names in the order of getOwnPropertyNames(), so a cursor finds
+// them, and __lookupGetter__() answers for the other names without a read.
+export var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => {
   // "module.exports" may be null, undefined, or a primitive; only objects and
   // functions have named exports.
   if ((from && typeof from === "object") || typeof from === "function") {
@@ -350,8 +352,19 @@ var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => 
     i = 0;
     for (let key of names) {
       let enumerable = key === enumerableKeys[i];
-      if (enumerable) i++;
-      else enumerable = !(desc = __getOwnPropDesc(from, key)) || desc.enumerable || "value" in desc;
+      if (enumerable) {
+        i++;
+      } else {
+        // __lookupGetter__() also answers with an inherited getter when the
+        // own property is a native data property (`arguments` of a function
+        // in Node 22), so the descriptor decides. A getter has no value to
+        // build.
+        enumerable =
+          !Object.prototype.__lookupGetter__?.call(from, key) ||
+          !(desc = __getOwnPropDesc(from, key)) ||
+          desc.enumerable ||
+          "value" in desc;
+      }
       if (key !== except) {
         if (!__hasOwnProp.call(to, key)) __defProp(to, key, { get: __accessProp.bind(from, key), enumerable });
         if (second && !__hasOwnProp.call(second, key))

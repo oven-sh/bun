@@ -1,5 +1,5 @@
 import { describe } from "bun:test";
-import { isLinux } from "harness";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -1488,35 +1488,133 @@ describe("bundler", () => {
     },
   });
 
-  // Test 72: the conversion must not read a property of "module.exports" by
-  // name. A read builds a lazy property of a host object: `process.stdout`
-  // makes a pipe on fd 1 non-blocking. CommonJS output for Bun (the default of
-  // `--bytecode`) converts `process` for this import.
-  (isLinux ? itBundled : itBundled.skip)("cjs/__toESM_does_not_build_lazy_host_properties", {
+  // Test 72: an export that is a function, the shape of express. Its
+  // `length`, `name` and `prototype` are non-enumerable data properties.
+  itBundled("cjs/__toESM_non_enumerable_getter_function_export", {
     files: {
-      "/entry.mjs": /* js */ `
-        import "./before.cjs";
-        import process from "node:process";
-        import "./after.cjs";
-        console.log(typeof process.pid, globalThis.stdoutIsNonBlocking.join());
-      `,
-      "/before.cjs": /* js */ `globalThis.stdoutIsNonBlocking = [require("./flags.cjs")()];`,
-      "/after.cjs": /* js */ `globalThis.stdoutIsNonBlocking.push(require("./flags.cjs")());`,
-      "/flags.cjs": /* js */ `
-        const O_NONBLOCK = 0o4000;
-        module.exports = () => {
-          const fdinfo = require("fs").readFileSync("/proc/self/fdinfo/1", "utf8");
-          return (parseInt(/^flags:\\s*(\\d+)/m.exec(fdinfo)[1], 8) & O_NONBLOCK) !== 0;
-        };
+      "/entry.mjs": describeStarImport,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": /* js */ `
+        function app() {}
+        app.shown = 1;
+        Object.defineProperty(app, "hidden", { value: 2 });
+        Object.defineProperty(app, "legacy", {
+          get() {
+            globalThis.legacyCalls = (globalThis.legacyCalls || 0) + 1;
+            return 3;
+          },
+        });
+        module.exports = app;
       `,
     },
+    run: {
+      stdout:
+        '{"keys":"default,length,name,prototype,shown,hidden","afterEnumeration":0,"byName":"2,true,3,3","afterTwoReads":2}',
+    },
+  });
+
+  // Test 73: "module.exports" can be a Proxy. Its two lists of names can
+  // disagree, and a name can have no descriptor. The conversion asks the Proxy
+  // for a descriptor 12 times: Object.keys() once for each of the 5 names, then
+  // once for each of the 4 names that the list of enumerable names does not
+  // have next, and once more for each of the 3 that a getter answers for.
+  itBundled("cjs/__toESM_proxy_module_exports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./dep.cjs";
+        const descriptorReads = globalThis.descriptorReads;
+        const flags = Object.getOwnPropertyNames(ns).map(name => name + ":" + Object.getOwnPropertyDescriptor(ns, name).enumerable);
+        console.log(flags.join(), ns.late, ns.shown, ns.hidden, ns.legacy, ns.ghost, descriptorReads);
+      `,
+      "/dep.cjs": /* js */ `
+        // "ghost" is a getter of the prototype. The Proxy lists it as an own name with no descriptor.
+        const target = Object.create({ get ghost() { return 5; } });
+        Object.defineProperty(target, "late", { enumerable: true, get() { return 1; } });
+        target.shown = 2;
+        Object.defineProperty(target, "hidden", { value: 3 });
+        Object.defineProperty(target, "legacy", { get() { return 4; } });
+        let ownKeysCalls = 0;
+        globalThis.descriptorReads = 0;
+        module.exports = new Proxy(target, {
+          // The first call is getOwnPropertyNames(). The second is Object.keys(), with another order.
+          ownKeys: () => (ownKeysCalls++ ? ["shown", "late", "hidden", "legacy", "ghost"] : ["late", "shown", "hidden", "legacy", "ghost"]),
+          getOwnPropertyDescriptor(target, name) {
+            globalThis.descriptorReads++;
+            return Reflect.getOwnPropertyDescriptor(target, name);
+          },
+        });
+      `,
+    },
+    run: {
+      stdout: "default:true,late:true,shown:true,hidden:true,legacy:false,ghost:true 1 2 3 4 5 12",
+    },
+  });
+
+  // Tests 74 and 75: the conversion must not read a data property of
+  // "module.exports" by name, its descriptor included. The read builds a lazy
+  // property of a host object: `process.stdout`, also through the
+  // non-enumerable `console._stdout`, makes a pipe on fd 1 non-blocking.
+  // CommonJS output for Bun (the default of `--bytecode`) converts the module
+  // of a builtin for an import.
+  const lazyHostPropertyFiles = {
+    "/entry.mjs": /* js */ `
+      import "./before.cjs";
+      import process from "node:process";
+      import console1 from "node:console";
+      import * as console2 from "node:console";
+      import * as barrel from "./barrel.mjs";
+      import "./after.cjs";
+      const [before, after] = globalThis.fd1IsNonBlocking;
+      console.log(
+        typeof process.pid,
+        typeof console1.log,
+        typeof console2.log,
+        typeof barrel.log,
+        before === after ? "fd 1 unchanged" : "fd 1 is now non-blocking",
+      );
+    `,
+    "/barrel.mjs": /* js */ `export * from "node:console";`,
+    "/before.cjs": /* js */ `globalThis.fd1IsNonBlocking = [require("./probe.cjs")()];`,
+    "/after.cjs": /* js */ `globalThis.fd1IsNonBlocking.push(require("./probe.cjs")());`,
+    // The probe of test/js/bun/spawn/fixtures/fd-nonblock-probe.js.
+    "/probe.cjs": /* js */ `
+      const { existsSync, readFileSync } = require("fs");
+      if (existsSync("/proc/self/fdinfo")) {
+        module.exports = () => (parseInt(/^flags:\\s*([0-7]+)/m.exec(readFileSync("/proc/self/fdinfo/1", "utf8"))[1], 8) & 0o4000) !== 0;
+      } else {
+        // F_GETFL is 3. O_NONBLOCK is 4 on macOS and the BSDs.
+        const libc = { darwin: "libSystem.B.dylib", freebsd: "libc.so.7" }[process.platform] ?? "libc.so.6";
+        const { fcntl } = require("bun:ffi").dlopen(libc, { fcntl: { args: ["i32", "i32", "i32"], returns: "i32" } }).symbols;
+        module.exports = () => (fcntl(1, 3, 0) & 4) !== 0;
+      }
+    `,
+  };
+  // A pipe handle on Windows has no O_NONBLOCK flag to read.
+  const itBundledPosix = isWindows ? itBundled.skip : itBundled;
+
+  // Test 74
+  itBundledPosix("cjs/__toESM_does_not_build_lazy_host_properties", {
+    files: lazyHostPropertyFiles,
     target: "bun",
     format: "cjs",
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain('__toESM(require("process"), 1)');
+      api.expectFile("/out.js").toContain('__toESM(require("console"), 1)');
     },
     run: {
-      stdout: "number false,false",
+      stdout: "number function function function fd 1 unchanged",
+    },
+  });
+
+  // Test 75
+  itBundledPosix("cjs/__toESM_does_not_build_lazy_host_properties_bytecode", {
+    files: lazyHostPropertyFiles,
+    bytecode: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    run: {
+      file: "/out/entry.js",
+      stdout: "number function function function fd 1 unchanged",
     },
   });
 });

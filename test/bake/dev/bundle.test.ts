@@ -1588,11 +1588,14 @@ devTest("a non-enumerable getter of a CommonJS module is not called by `export *
         const afterLoad = legacyCalls();
         ({ ...ns });
         const afterSpread = legacyCalls();
+        const required = require("../re");
         return Response.json({
           keys: Object.keys(ns).join(),
           afterLoad,
           afterSpread,
-          reExported: [re.shown, re.hidden],
+          reExported: [re.shown, re.hidden, required.shown, required.hidden],
+          // The spread re-exports the enumerable names only. \`bun build\` also re-exports "legacy".
+          legacyThroughExportStar: ["legacy" in re, "legacy" in required],
           byName: ns.legacy,
           afterRead: legacyCalls(),
         });
@@ -1604,7 +1607,8 @@ devTest("a non-enumerable getter of a CommonJS module is not called by `export *
       keys: "default,shown,hidden",
       afterLoad: 0,
       afterSpread: 0,
-      reExported: [1, 2],
+      reExported: [1, 2, 1, 2],
+      legacyThroughExportStar: [false, false],
       byName: 3,
       afterRead: 1,
     });

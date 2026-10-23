@@ -127,10 +127,11 @@ var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => 
     i = 0;
     for (let key of names) {
       let enumerable = key === enumerableKeys[i];
-      if (enumerable)
+      if (enumerable) {
         i++;
-      else
-        enumerable = !(desc = __getOwnPropDesc(from, key)) || desc.enumerable || "value" in desc;
+      } else {
+        enumerable = !Object.prototype.__lookupGetter__?.call(from, key) || !(desc = __getOwnPropDesc(from, key)) || desc.enumerable || "value" in desc;
+      }
       if (key !== except) {
         if (!__hasOwnProp.call(to, key))
           __defProp(to, key, { get: __accessProp.bind(from, key), enumerable });

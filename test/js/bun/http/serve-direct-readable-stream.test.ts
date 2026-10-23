@@ -2285,12 +2285,13 @@ describe("direct stream edge cases over Bun.serve", () => {
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
-      fetch: () =>
+      fetch: req =>
         new Response(
           (async function* () {
             try {
               yield "first";
-              for (let i = 0; i < 50; i++) {
+              // A turn count cannot bound this: the kernel delivers the abort, on macOS from another thread.
+              while (!req.signal.aborted) {
                 await later();
                 yield "more";
               }

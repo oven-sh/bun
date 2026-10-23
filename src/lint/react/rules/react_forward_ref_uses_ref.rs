@@ -37,7 +37,7 @@ impl Rule for ForwardRefUsesRef {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint takes `a["forwardRef"]` too, and no name in parentheses.
+        // oxlint also accepts `a["forwardRef"]`, but not a parenthesized name.
         let is_forward_ref_call = match is_oxlint {
             true => callee_name(call).is_some_and(|name| name.is("forwardRef")),
             false => is_forward_ref(call.callee()),
@@ -45,13 +45,13 @@ impl Rule for ForwardRefUsesRef {
         if !is_forward_ref_call {
             return;
         }
-        // oxlint looks at the first argument only, and not into parentheses.
+        // oxlint only checks the first argument, and doesn't look inside parentheses.
         let checked = if is_oxlint { 1 } else { usize::MAX };
         for exp in call.args().iter().take(checked).filter(|it| !is_oxlint || !it.is_parenthesized()) {
             let Some(func) = exp.as_fn() else {
                 continue;
             };
-            // oxlint does not count `this`, and leaves a rest parameter alone.
+            // oxlint doesn't count `this`, and ignores a rest parameter.
             let this_param = if is_oxlint { None } else { func.this_param() };
             let mut params = this_param.into_iter().chain(func.params());
             let (Some(param), None) = (params.next(), params.next()) else {
@@ -72,7 +72,7 @@ impl Rule for ForwardRefUsesRef {
             if param.is_rest() {
                 continue;
             }
-            // A statement cannot start with `function (`.
+            // A statement can't start with `function (`.
             let can_remove_forward_ref = func.is_arrow()
                 || func.name().is_some()
                 || e.is_chain_root()
@@ -83,11 +83,11 @@ impl Rule for ForwardRefUsesRef {
             }
             report.suggest(OXLINT_ADD_REF_PARAMETER, |fixer| {
                 let span = func.params_span()?;
-                let written = fixer.file().slice(span);
-                let written = written.strip_suffix(b")").unwrap_or(written).trim_ascii_end();
-                let written = written.strip_suffix(b",").unwrap_or(written);
-                let open = if written.starts_with(b"(") { "" } else { "(" };
-                Some(fixer.replace(span, [open.as_bytes(), written, b", ref)"].concat()))
+                let params_text = fixer.file().slice(span);
+                let params_text = params_text.strip_suffix(b")").unwrap_or(params_text).trim_ascii_end();
+                let params_text = params_text.strip_suffix(b",").unwrap_or(params_text);
+                let open = if params_text.starts_with(b"(") { "" } else { "(" };
+                Some(fixer.replace(span, [open.as_bytes(), params_text, b", ref)"].concat()))
             });
         }
     }

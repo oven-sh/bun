@@ -46,7 +46,7 @@ Every option, set to its default:
 
 Reported:
 
-{/* bad {"filename": "logger.cjs"} */}
+{/* bad */}
 ```js
 if (process.env.DEBUG) {
   function log(message) {
@@ -59,7 +59,7 @@ log("ready"); // TypeError unless DEBUG is set
 
 Not reported:
 
-{/* good {"filename": "logger.cjs"} */}
+{/* good */}
 ```js
 function log(message) {
   if (process.env.DEBUG) {
@@ -72,7 +72,7 @@ log("ready");
 
 Not reported either, because the file is in strict mode and `log` stays in its block:
 
-{/* good {"filename": "logger.cjs"} */}
+{/* good */}
 ```js
 "use strict";
 

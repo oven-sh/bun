@@ -16,7 +16,8 @@ const USE_TO_SORTED: Message = Message::new(
      the original.",
 );
 
-/// What `Array#sort()` cannot compare with: the method is that of something else then, such as a query.
+/// True for an argument that can't be `Array#sort()`'s compare function. The method then belongs to something else,
+/// such as a query.
 fn is_non_compare_fn_argument(argument: Expr) -> bool {
     match argument.kind() {
         ExprKind::Object(_)
@@ -31,7 +32,7 @@ fn is_non_compare_fn_argument(argument: Expr) -> bool {
     }
 }
 
-/// The `a` of `a.b[c].d`.
+/// The `a` in `a.b[c].d`.
 fn leftmost_identifier_reference(e: Expr<'_>) -> Option<Expr<'_>> {
     let mut at = e;
     while !at.is_parenthesized() {

@@ -57,33 +57,14 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     join_config_path(dir, b".bunfig.toml", buf)
 }
 
+/// Like npm, skips a config file that was found automatically but can't be read.
 fn unreadable_config(
     cmd: CommandTag,
     auto_loaded: bool,
-    ctx: Context<'_>,
     err: &bun_sys::Error,
     config_path: &[u8],
 ) -> Result<(), crate::Error> {
     if auto_loaded {
-        // A directory with the config file's name gets the warning, but it has no settings to lose,
-        // so it is not recorded as an unreadable config and does not block an install.
-        let is_file = err.is_unreadable_file(config_path);
-        if (is_file || err.is_directory())
-            && !ctx.debug.silent
-            && bun_ast::DEFAULT_LOG_LEVEL
-                .load()
-                .at_least(bun_ast::Level::Warn)
-        {
-            bun_core::warn!(
-                "{}\nignoring settings in <b>{}<r>",
-                err,
-                BStr::new(config_path),
-            );
-        }
-        if is_file {
-            ctx.unreadable_config
-                .get_or_insert_with(|| config_path.into());
-        }
         return Ok(());
     }
     bun_core::pretty_errorln!(
@@ -132,7 +113,7 @@ fn load_bunfig(
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
             Err(err) => {
-                return unreadable_config(cmd, auto_loaded, ctx, &err, config_path.as_bytes());
+                return unreadable_config(cmd, auto_loaded, &err, config_path.as_bytes());
             }
         };
 
@@ -174,7 +155,7 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
 }
 
 /// Whether `[install.security] scanner` is set in the user's global `.bunfig.toml` or in any
-/// `bunfig.toml` from `dir` up to `root`. `Err` holds the path of an unreadable config file.
+/// `bunfig.toml` from `dir` up to `root`. `Err` holds the path of a config file that doesn't parse.
 pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf)
@@ -202,13 +183,12 @@ fn file_has_security_scanner(config_path: &ZStr) -> Result<bool, Box<[u8]>> {
     let path = config_path.as_bytes();
     match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
         Ok(source) => Bunfig::has_security_scanner(&source).map_err(|_| path.into()),
-        Err(err) if err.is_unreadable_file(path) => Err(path.into()),
         Err(_) => Ok(false),
     }
 }
 
 /// Reads the `[install]` section of the `bunfig.toml` in `dir`, the way `bun install` run in `dir`
-/// would. `Err` holds the path of the file when it exists but cannot be read or parsed.
+/// would. `Err` holds the path of the file if it doesn't parse.
 pub fn load_install_section(dir: &[u8]) -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     match join_config_path(dir, b"bunfig.toml", &mut config_buf) {
@@ -231,7 +211,6 @@ fn read_install_section(config_path: &ZStr) -> Result<Option<Box<api::BunInstall
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(source) => source,
-            Err(err) if err.is_unreadable_file(path) => return Err(path.into()),
             Err(_) => return Ok(None),
         };
     Bunfig::parse_install_section(&source).map_err(|_| path.into())
@@ -381,7 +360,6 @@ pub fn load_config_for_tool(
         return unreadable_config(
             cmd,
             auto_loaded,
-            ctx,
             &bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                 .with_path(config_path_),
             config_path_,

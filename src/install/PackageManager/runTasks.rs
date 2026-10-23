@@ -226,7 +226,8 @@ impl ErasedCallbacks {
         unsafe { &mut *ctx.cast() }
     }
 
-    /// A later enqueue then fails fast. `Some(is_required)`: the caller reports it.
+    /// Marks the task as failed, so that a later enqueue fails fast. Returns `Some(is_required)` if
+    /// the caller has to report the error.
     fn dispatch_tarball_error(
         &self,
         manager: &mut PackageManager,
@@ -279,7 +280,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     )
 }
 
-/// What every exit of `run_tasks_erased` does last.
+/// The cleanup that runs however `run_tasks_erased` exits.
 struct FinishPass<'a> {
     manager: *mut PackageManager,
     counts_tasks: bool,
@@ -336,7 +337,7 @@ impl Drop for ReturnResolveTask {
     }
 }
 
-/// Null: the resolve task owns no network task.
+/// Null if the resolve task doesn't own a network task.
 struct ReturnNetworkTask {
     manager: *mut PackageManager,
     task: *mut NetworkTask,
@@ -388,7 +389,8 @@ pub(crate) fn resolve_waiters_of_appended_package(
     install_peer: bool,
     any_root: &Cell<bool>,
 ) -> crate::Result<()> {
-    // For a dependency enqueued later on the same task; see `AppendedTaskPackageMap`.
+    // Recorded for a dependency that's enqueued on the same task later. See
+    // `AppendedTaskPackageMap`.
     manager.appended_task_packages.insert(task_id, pkg.meta.id);
     let Some(entry) = manager.task_queue.get_mut(&task_id) else {
         return Ok(());
@@ -451,7 +453,7 @@ fn run_tasks_erased(
 
     const DOWNLOAD: &str = ProgressStrings::DOWNLOAD_EMOJI;
     const EXTRACT: &str = ProgressStrings::EXTRACT_EMOJI;
-    // The first task of a pass names the line of the progress bar.
+    // The progress bar shows the name of the first task in each pass.
     let name_progress = |manager: &mut PackageManager, name: &[u8], emoji: &str| {
         if log_level.show_progress() && !has_updated_this_run.replace(true) {
             manager.set_node_name::<true>(manager.downloads_node_mut(), name, emoji.as_bytes());
@@ -579,7 +581,7 @@ fn run_tasks_erased(
             }
         }
 
-        // .monotonic: spawned and reaped on this thread.
+        // Relaxed is enough, because scripts are spawned and reaped on this thread.
         while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
             < manager.options.max_concurrent_lifecycle_scripts
         {
@@ -599,7 +601,8 @@ fn run_tasks_erased(
             let list_val = unsafe { (*list).clone() };
             // reborrow instead of moving the field out of `*installer`
             let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
-            // `installer.manager == manager`: called via the reborrow of `manager_ptr`.
+            // `installer.manager == manager`, so this is called through the reborrow of
+            // `manager_ptr`.
             let spawn_res = manager.spawn_package_lifecycle_scripts(
                 command_ctx,
                 list_val,
@@ -611,7 +614,8 @@ fn run_tasks_erased(
                 }),
             );
             if let Err(err) = spawn_res {
-                // .monotonic is okay: the task was popped from the queue and no longer runs.
+                // Relaxed is enough, because the task was popped from the queue and isn't running
+                // anymore.
                 installer.store.entries.items_step()[entry_id.get() as usize]
                     .store(store_installer::Step::Done as u32, Ordering::Relaxed);
                 installer.on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
@@ -693,7 +697,7 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    // One more try: the full document was only requested for `libc`.
+                    // Try once more, because the full document was only requested for `libc`.
                     if is_extended_manifest && manager.options.minimum_release_age_ms.is_none() {
                         task.retry_with_abbreviated_manifest(
                             manager.scope_for_package_name(name),
@@ -1098,7 +1102,8 @@ fn run_tasks_erased(
                         extract.name.slice(),
                         Some(extract.dependency_id),
                         // The manifest just listed this version, so an error status for its tarball
-                        // counts as no answer: it says nothing about the package's other versions.
+                        // counts as no response. It says nothing about the package's other
+                        // versions.
                         is_required,
                     );
 
@@ -1158,8 +1163,7 @@ fn run_tasks_erased(
         };
         manager.decrement_pending_tasks();
 
-        // What is wrong with a manifest is reported by the dependency that needs it, if there is
-        // one.
+        // An error in a manifest is reported by the dependency that needs it, if there is one.
         let holds_log = task.tag == Task::Tag::PackageManifest
             && task.status == Task::Status::Fail
             && !cb.has_on_package_manifest_error;
@@ -1312,7 +1316,7 @@ fn run_tasks_erased(
                             _ => unreachable!(),
                         }
                     };
-                    // The mark is a no-op for `local_tarball` tasks (they never populate the map).
+                    // A linker's `local_tarball` task is not in the map, so it gets no mark.
                     let Some(is_required) = cb.dispatch_tarball_error(
                         manager,
                         extract_ctx,
@@ -1454,7 +1458,8 @@ fn run_tasks_erased(
                         }
                     }
 
-                    // git's own lines were warnings if the requiring dependency joined later.
+                    // If the dependency that requires it joined later, git's own output was only
+                    // logged as warnings, so report the error here.
                     if !is_required || !cb.is_store_installer {
                         add_error_or_warning_pretty!(
                             manager.log_mut(),
@@ -1469,7 +1474,8 @@ fn run_tasks_erased(
 
                 manager.git_repositories.insert(task.id, repo_fd);
 
-                // `bun pm fetch` has no installer, and parks its checkouts on the clone like one.
+                // `bun pm fetch` has no installer, but like an installer, it queues its checkouts
+                // on the clone task.
                 let has_checkout_waiters = cb.has_on_extract
                     || manager.task_queue.get(&task.id).is_some_and(|waiters| {
                         waiters.iter().any(|waiter| {
@@ -1557,7 +1563,12 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
                     let is_required = manager.is_network_task_required(task.id);
-                    let _ = forget_failed_git_task(manager, task.id, name);
+                    // The repository (with `--offline`, its cached clone) has no such commit.
+                    for waiter in forget_failed_git_task(manager, task.id, name).iter() {
+                        if let &bun_install::TaskCallbackContext::Dependency(id) = waiter {
+                            manager.lockfile.unbind_refreshing(id);
+                        }
+                    }
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
                     } else {
@@ -1688,9 +1699,9 @@ fn run_tasks_erased(
     Ok(())
 }
 
-/// `(failed, retry)`. `failed`: the connection died before a response or under a 2xx/3xx one.
-/// `blocking`: the caller blocks on this one request, so it is not retried after a timeout or a
-/// 501 (Not Implemented).
+/// Returns `(failed, retry)`. `failed` means the connection died before a response, or during a 2xx
+/// or 3xx response. `blocking` means the caller blocks on this one request, so it isn't retried
+/// after a timeout or a 501 (Not Implemented).
 pub(crate) fn download_outcome(
     response: &http::HTTPClientResult<'static>,
     blocking: bool,
@@ -1753,7 +1764,8 @@ impl PackageManager {
     #[inline]
     pub(crate) fn increment_pending_tasks(&mut self, count: u32) {
         self.total_tasks += count;
-        // .monotonic is okay: the start of a task has no side effects other threads depend on.
+        // Relaxed is enough, because starting a task has no side effects that other threads depend
+        // on.
         let _ = self.pending_tasks.fetch_add(count, Ordering::Relaxed);
     }
 
@@ -1897,8 +1909,8 @@ fn manifest_retry_count(
     {
         return 0;
     }
-    // No dependency waits for this manifest. It is only nice to have, for example for the bins of a
-    // migrated lockfile, so without a network connection it is given up at once.
+    // No dependency is waiting for this manifest. It's only nice to have, for example for the bins
+    // of a migrated lockfile, so without a network connection it isn't retried.
     // `FailedToOpenSocket` means that `connect(2)` itself failed, as it does on macOS for a closed
     // loopback port.
     if matches!(
@@ -1921,12 +1933,13 @@ fn manifest_retry_count(
 static REQUEST_GOT_NO_ANSWER: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Tells `bunx` so (`EX_TEMPFAIL`): the `bun add` it spawned linked and saved nothing.
+/// The exit code (`EX_TEMPFAIL`) that tells `bunx` that the `bun add` it spawned couldn't reach the
+/// registry, and that it linked and saved nothing.
 pub const BUNX_REGISTRY_UNREACHABLE: u32 = 75;
 
-/// Whether `dir`, the directory of the root package.json, is where `bunx` spawned its `bun add`. A
-/// command that merely inherits the environment variable runs in another directory and gets no
-/// special treatment.
+/// Returns true if `dir`, the directory of the root package.json, is where `bunx` spawned its `bun
+/// add`. A command that merely inherits the environment variable runs in another directory and gets
+/// no special treatment.
 pub fn is_bunx_tree(dir: &[u8]) -> bool {
     let Some(tree) = bun_core::env_var::BUN_INTERNAL_BUNX_INSTALL.get() else {
         return false;
@@ -1954,7 +1967,7 @@ fn is_bunx_install() -> bool {
     is_bunx_tree(crate::bun_fs::FileSystem::instance().top_level_dir())
 }
 
-/// How a command ends whose request failed, before it linked or saved anything.
+/// The error that a command returns when a request failed before it linked or saved anything.
 pub(crate) fn failed_request_error() -> crate::Error {
     if REQUEST_GOT_NO_ANSWER.load(Ordering::Relaxed) && is_bunx_install() {
         bun_core::Global::exit(BUNX_REGISTRY_UNREACHABLE);
@@ -1962,8 +1975,8 @@ pub(crate) fn failed_request_error() -> crate::Error {
     crate::Error::InstallFailed
 }
 
-/// What the package.json in `bunx`'s install directory contains while packages are being linked. If
-/// `bunx` finds this content later, the install did not finish.
+/// The contents of the package.json in `bunx`'s install directory while packages are being linked.
+/// If `bunx` finds this content later, the install didn't finish.
 pub const BUNX_UNFINISHED_PACKAGE_JSON: &[u8] = b"{}\n";
 
 /// Called right before anything is linked. Up to this point the copy that `bunx` already has is
@@ -1982,8 +1995,8 @@ pub(crate) fn begin_linking_for_bunx(root_package_json_path: &bun_core::ZStr, ha
     );
 }
 
-/// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.
-/// `unanswered`: the download is required, and no attempt got an answer about the package.
+/// `bun add` and `bun update <name>` exit 1 and save nothing when a download for the request fails.
+/// `unanswered` means the download is required, and no attempt got a response about the package.
 pub(crate) fn fail_update_requests(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -2003,7 +2016,9 @@ pub(crate) fn fail_update_requests(
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
     // An npm tarball task has no waiters: the dependencies it was for already resolved to its package.
+    // A dependency that is refreshed still has the package of bun.lock, which the task was not for.
     let package_id = tarball_dependency_id
+        .filter(|&id| !lockfile.is_refreshing(id))
         .and_then(|id| resolutions.get(id as usize).copied())
         .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
     let was_for = |id: DependencyID| {
@@ -2050,7 +2065,7 @@ pub(crate) fn fail_update_requests(
     }
 }
 
-/// Once per pass. Not under auto-install: the number is `fetch()`'s too.
+/// Runs once per pass. Skipped for auto-install, because the limit also applies to `fetch()`.
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
     if manager.options.runtime_auto_install || core::mem::replace(has_network_error, true) {
         return;
@@ -2161,7 +2176,7 @@ pub fn generate_network_task_for_tarball<'a>(
     };
 
     if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
-        // No task will complete the dedupe entry: a later enqueue would wait for ever.
+        // No task will ever complete the dedupe entry, so a later enqueue would wait forever.
         this.mark_network_task_failed(task_id);
         return Err(err);
     }
@@ -2289,9 +2304,9 @@ impl PackageManager {
 }
 
 /// A manifest request ended without a manifest, and the messages logged since `log_mark` say why.
-/// They are taken out of the log again: each dependency that needs the manifest reports the
-/// failure when it is resolved. Returns false, and leaves the log alone, if no dependency asked
-/// for the manifest: `populate_manifest_cache` did, and its caller reads the log.
+/// Removes them from the log, because each dependency that needs the manifest reports the failure
+/// when it's resolved. If no dependency asked for the manifest, `populate_manifest_cache` did, and
+/// its caller reads the log. In that case this returns false and leaves the log alone.
 fn leave_failure_to_dependencies(
     cb: &ErasedCallbacks,
     manager: &mut PackageManager,

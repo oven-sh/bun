@@ -1,7 +1,8 @@
-//! The half of oxlint's `utils/react.rs` that is about accessibility, and the tables of its `globals.rs` for HTML and ARIA, on the
-//! handles. Each function has the name that it has there. See [`jsx`](crate::jsx) for what stands for the nodes of oxc.
+//! The accessibility half of oxlint's `utils/react.rs`, plus the HTML and ARIA tables from its `globals.rs`, ported to
+//! this linter's AST handles. Each function keeps oxlint's name. See [`jsx`](crate::jsx) for how oxc's nodes map to the
+//! handles.
 //!
-//! A table is sorted by bytes: [`contains`] searches it.
+//! Every table is sorted by bytes, because [`contains_name`] binary-searches it.
 
 use crate::jsx::{
     AttributeValue, Child, children, get_element_type, get_prop_value,
@@ -19,7 +20,7 @@ pub(crate) fn cow_to_ascii_lowercase(text: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// The elements that cannot have ARIA roles, states and properties.
+/// The elements that can't have ARIA roles, states or properties.
 pub(crate) static RESERVED_HTML_TAG: [&str; 16] = [
     "base", "col", "colgroup", "head", "html", "link", "meta", "noembed", "noscript", "param",
     "picture", "script", "source", "style", "title", "track",
@@ -177,7 +178,7 @@ pub(crate) static HTML_TAG: [&str; 149] = [
     "xmp",
 ];
 
-/// What is after the `aria-` of each ARIA state and property.
+/// Each ARIA state and property, without its `aria-` prefix.
 const ARIA_PROPERTIES: [&str; 51] = [
     "activedescendant",
     "atomic",
@@ -232,7 +233,8 @@ const ARIA_PROPERTIES: [&str; 51] = [
     "valuetext",
 ];
 
-/// `AriaProperty::try_from`: the index in [`ARIA_PROPERTIES`] of the state or property `name`, which starts with `aria-` in lower case.
+/// `AriaProperty::try_from`: returns the index in [`ARIA_PROPERTIES`] of the state or property `name`, which starts
+/// with a lowercase `aria-`.
 fn aria_property(name: &[u8]) -> Option<usize> {
     let name = name.strip_prefix(b"aria-")?;
     ARIA_PROPERTIES
@@ -244,7 +246,7 @@ pub(crate) fn is_valid_aria_property(name: &[u8]) -> bool {
     aria_property(name).is_some()
 }
 
-/// The set of the states and properties `names`, which a blank separates: the bit `1 << i` is for `ARIA_PROPERTIES[i]`.
+/// Returns the set of the space-separated states and properties in `names`. Bit `1 << i` is `ARIA_PROPERTIES[i]`.
 const fn props(names: &str) -> u64 {
     let names = names.as_bytes();
     let (mut set, mut start) = (0, 0);
@@ -253,7 +255,7 @@ const fn props(names: &str) -> u64 {
         while end < names.len() && names[end] != b' ' {
             end += 1;
         }
-        // It does not compile with a name that there is not.
+        // An unknown name runs off the end of the array, which is a compile error.
         let mut index = 0;
         while !is_at(names, start, end, ARIA_PROPERTIES[index].as_bytes()) {
             index += 1;
@@ -277,11 +279,11 @@ const GLOBAL: u64 = props(
 );
 const NAMED: u64 = GLOBAL | props("label labelledby");
 const GLOBAL_IN_ARIA_1_1: u64 = NAMED | props("disabled errormessage expanded haspopup invalid");
-/// `INTERACTIVE_ROLES`, `NON_INTERACTIVE_ROLES`: bits that no property has.
+/// `INTERACTIVE_ROLES`, `NON_INTERACTIVE_ROLES`: bits that no property uses.
 const INTERACTIVE: u64 = 1 << 62;
 const NON_INTERACTIVE: u64 = 1 << 63;
 
-/// `VALID_ARIA_ROLES`: each role that is not abstract, with the states and properties that it supports, and whether it is
+/// `VALID_ARIA_ROLES`: every non-abstract role with the states and properties it supports, and whether it's
 /// interactive.
 static ARIA_ROLES: [(&str, u64); 125] = [
     ("alert", NON_INTERACTIVE | NAMED),
@@ -581,7 +583,7 @@ static ARIA_ROLES: [(&str, u64); 125] = [
     ),
 ];
 
-/// What [`ARIA_ROLES`] has for `role`.
+/// Returns the [`ARIA_ROLES`] entry for `role`.
 fn aria_role(role: &[u8]) -> Option<u64> {
     let index = ARIA_ROLES
         .binary_search_by(|it| it.0.as_bytes().cmp(role))
@@ -594,13 +596,13 @@ pub(crate) fn is_valid_aria_role(role: &[u8]) -> bool {
     aria_role(role).is_some()
 }
 
-/// Whether the role `role_value` supports the state or property `name`, which starts with `aria-` in lower case. `false` if there
-/// is no such role or no such property.
+/// True if the role `role_value` supports the state or property `name`, which starts with a lowercase `aria-`. False if
+/// there's no such role or property.
 pub(crate) fn is_valid_aria_property_for_role(role_value: &[u8], name: &[u8]) -> bool {
     matches!((aria_role(role_value), aria_property(name)), (Some(set), Some(index)) if set >> index & 1 != 0)
 }
 
-/// `<input type="hidden">`, `aria-hidden`, `aria-hidden="true"`, `aria-hidden={true}` or another literal that is truthy.
+/// `<input type="hidden">`, `aria-hidden`, `aria-hidden="true"`, `aria-hidden={true}` or any other truthy literal.
 pub(crate) fn is_hidden_from_screen_reader<'a>(file: &'a File<'a>, node: Jsx<'a>) -> bool {
     if get_element_type(file, node).eq_ignore_ascii_case(b"input")
         && let Some(item) = has_jsx_prop_ignore_case(node, "type")
@@ -615,9 +617,9 @@ pub(crate) fn is_hidden_from_screen_reader<'a>(file: &'a File<'a>, node: Jsx<'a>
     })
 }
 
-/// Whether a child can be read by a screen reader: text, also blank, an element that is not
-/// [hidden](is_hidden_from_screen_reader), `{e}` other than `{null}` and `{undefined}`; or there is a `dangerouslySetInnerHTML` or a
-/// `children` attribute.
+/// True if a screen reader can read one of the children: text, even if it's blank, an element that isn't
+/// [hidden](is_hidden_from_screen_reader), or `{e}` other than `{null}` and `{undefined}`. Also true if there's a
+/// `dangerouslySetInnerHTML` or `children` attribute.
 pub(crate) fn object_has_accessible_child<'a>(file: &'a File<'a>, node: Jsx<'a>) -> bool {
     children(file, node).any(|child| match child {
         Child::Text(_) => true,
@@ -628,7 +630,7 @@ pub(crate) fn object_has_accessible_child<'a>(file: &'a File<'a>, node: Jsx<'a>)
         || has_jsx_prop_ignore_case(node, "children").is_some()
 }
 
-/// `JSXExpression::NullLiteral`, `Expression::NullLiteral`: not in parentheses.
+/// `JSXExpression::NullLiteral`, `Expression::NullLiteral`: not parenthesized.
 pub(crate) fn is_null_literal(e: Expr) -> bool {
     e.tag() == ExprTag::Null && !e.is_parenthesized()
 }
@@ -687,7 +689,7 @@ pub(crate) fn is_abstract_role_name(role: &[u8]) -> bool {
     )
 }
 
-/// An element of HTML whose `role="…"` is an abstract role.
+/// True for an HTML element whose `role="…"` is an abstract role.
 pub(crate) fn is_abstract_role<'a>(file: &'a File<'a>, jsx_opening_el: Jsx<'a>) -> bool {
     contains_name(&HTML_TAG, &get_element_type(file, jsx_opening_el))
         && has_jsx_prop(jsx_opening_el, "role")
@@ -695,7 +697,7 @@ pub(crate) fn is_abstract_role<'a>(file: &'a File<'a>, jsx_opening_el: Jsx<'a>) 
             .is_some_and(is_abstract_role_name)
 }
 
-/// `disabled`, with whatever value, `aria-disabled="true"`, `aria-disabled={true}`
+/// `disabled` with any value, `aria-disabled="true"`, `aria-disabled={true}`
 pub(crate) fn is_disabled_element(jsx_el: Jsx) -> bool {
     has_jsx_prop(jsx_el, "disabled").is_some()
         || match has_jsx_prop(jsx_el, "aria-disabled").and_then(get_prop_value) {
@@ -768,7 +770,7 @@ static NON_INTERACTIVE_ELEMENT_TYPES: [&str; 58] = [
     "ul",
 ];
 
-/// `element_type`: from [`get_element_type`]. A `section` is one if it has a name.
+/// `element_type`: from [`get_element_type`]. A `section` only counts if it has an accessible name.
 pub(crate) fn is_non_interactive_element(element_type: &[u8], jsx_opening_el: Jsx) -> bool {
     match element_type {
         b"section" => {
@@ -805,7 +807,7 @@ pub(crate) static MOUSE_AND_KEYBOARD_EVENT_HANDLERS: [&str; 22] = [
     "onKeyUp",
 ];
 
-/// An option that has names for the names of some elements: `{ "tr": ["none", "presentation"] }`.
+/// An option that maps element names to lists of names: `{ "tr": ["none", "presentation"] }`.
 pub(crate) struct NamesByElement(Vec<(String, Vec<String>)>);
 
 impl NamesByElement {
@@ -819,8 +821,8 @@ impl NamesByElement {
         )
     }
 
-    /// All of `config` but what it has for the key `except`.
-    pub(crate) fn of_option(config: Object, except: &str) -> Self {
+    /// Copies every entry of `config` except the key `except`.
+    pub(crate) fn from_option_except(config: Object, except: &str) -> Self {
         let keys = config
             .entries()
             .iter()
@@ -837,18 +839,18 @@ impl NamesByElement {
         )
     }
 
-    /// `None` if the option does not name `element`.
-    pub(crate) fn has_if_named(&self, element: &[u8], name: &[u8]) -> Option<bool> {
+    /// Returns `None` if the option has no entry for `element`.
+    pub(crate) fn has_if_listed(&self, element: &[u8], name: &[u8]) -> Option<bool> {
         let names = self.0.iter().find(|it| it.0.as_bytes() == element)?;
         Some(names.1.iter().any(|it| it.as_bytes() == name))
     }
 
     pub(crate) fn has(&self, element: &[u8], name: &[u8]) -> bool {
-        self.has_if_named(element, name) == Some(true)
+        self.has_if_listed(element, name) == Some(true)
     }
 }
 
-/// `a="b"`, `a={"b"}`: the `b`.
+/// Returns the `b` in `a="b"` or `a={"b"}`.
 pub(crate) fn get_static_string_prop_value(item: Prop<'_>) -> Option<&[u8]> {
     match get_prop_value(item)? {
         AttributeValue::StringLiteral(literal) => Some(literal.value),
@@ -859,7 +861,7 @@ pub(crate) fn get_static_string_prop_value(item: Prop<'_>) -> Option<&[u8]> {
     }
 }
 
-/// The elements of HTML and the roles that they have without a `role`. Which of several it is depends on attributes.
+/// HTML elements and their implicit roles. If an element has several, the attributes decide which one applies.
 static ELEMENT_ROLE_MAP: [(&str, &str); 72] = [
     ("a", "link"),
     ("address", "group"),
@@ -942,17 +944,18 @@ pub(crate) fn get_element_implicit_roles(tag: &[u8]) -> impl Iterator<Item = &'s
         .map(|it| it.1)
 }
 
-/// How [`search_for_accessible_label`] tells a label.
+/// How [`search_for_accessible_label`] recognizes a label.
 pub(crate) struct LabelSearch<'s> {
-    /// How many levels of children are looked at.
+    /// How many levels of children to search.
     pub(crate) depth: u8,
     pub(crate) has_labelling_prop: &'s dyn Fn(Jsx) -> bool,
-    /// By what [`get_element_type`] says.
+    /// Gets the result of [`get_element_type`].
     pub(crate) is_control_component: &'s dyn Fn(&[u8]) -> bool,
 }
 
-/// Whether `node`, which is at the level `depth` below a label or a control, may be text for it: text that is not blank, `{e}`, an
-/// element with an attribute that labels, a component without children that is not a control, or something in it that is.
+/// True if `node`, which is `depth` levels below a label or a control, may be text for it: non-blank text, `{e}`, an
+/// element with a labelling attribute, a component without children that isn't a control, or anything nested in it that
+/// qualifies.
 pub(crate) fn search_for_accessible_label<'a>(
     file: &'a File<'a>,
     node: Child<'a>,
@@ -989,7 +992,7 @@ pub(crate) fn search_for_accessible_label<'a>(
     children(file, parent).any(|child| search_for_accessible_label(file, child, depth + 1, search))
 }
 
-/// The elements that have the role `role` without a `role`.
+/// Returns the elements whose implicit role is `role`.
 pub(crate) fn get_tags_for_role(role: &[u8]) -> impl Iterator<Item = &'static str> {
     ELEMENT_ROLE_MAP
         .iter()

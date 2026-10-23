@@ -1444,6 +1444,22 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMock__toThisStrict(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue)
+{
+    return JSValue::encode(JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()));
+}
+
+// `target` is whatever `globalThis.setTimeout` is set to, so it can be any object. It's fine if it rejects the marker.
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSMock__defineFakeTimersMarker(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedTarget)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* target = asObject(JSValue::decode(encodedTarget));
+    target->createDataProperty(globalObject, Identifier::fromString(vm, "clock"_s), jsBoolean(true), false);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
@@ -1474,7 +1490,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     // from this value instead of the activation-time clock.
     Bun__FakeTimers__setSystemTime(globalObject, ms);
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, ECMAMode::strict()));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -1527,6 +1543,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     JSC::JSObject* object = objectValue.getObject();
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+
+    // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
+    if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
+        throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);
+        return {};
+    }
 
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);

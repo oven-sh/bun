@@ -171,11 +171,11 @@ In-process scheduling is the lightweight option for long-running servers and wor
 
 ### Parameters
 
-| Parameter  | Type                         | Description                                                                                                                                                                  |
-| ---------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                   |
-| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise; Bun schedules the next fire only once it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
-| `options`  | `{ tz?: string }`            | IANA time-zone name to interpret the schedule in (defaults to the system zone).                                                                                              |
+| Parameter  | Type                         | Description                                                                                                                                                                                      |
+| ---------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                                       |
+| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise or another thenable; Bun schedules the next fire only once it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
+| `options`  | `{ tz?: string }`            | IANA time-zone name to interpret the schedule in (defaults to the system zone).                                                                                                                  |
 
 Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid, the time-zone name is unknown, or the expression has no future occurrences, like `"0 0 30 2 *"` (February 30th).
 
@@ -183,12 +183,23 @@ Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` i
 
 Bun computes the next fire time only after the handler and any returned `Promise` settle. If your handler takes 90 seconds and the schedule is `* * * * *`, the second fire is the first minute boundary _after_ the handler finishes, not 60 seconds after the first fire. Invocations never stack.
 
+Bun waits for the returned value the way `await` does. A returned thenable has its `then()` called once per fire. A value that starts its work in `then()`, such as a [Bun Shell](/runtime/shell) command or a [`Bun.SQL`](/runtime/sql) query, runs when the handler returns it:
+
+```ts
+import { $ } from "bun";
+
+// The command runs on each fire. The next fire waits for it to exit.
+Bun.cron("0 * * * *", () => $`rm -rf ./tmp/cache`);
+```
+
+A returned value that never settles holds the job. The job does not fire again, Bun reports nothing, and a job that is not `unref()`'d keeps the process alive. Give work that can hang a deadline, for example with `AbortSignal.timeout()`.
+
 ### Error handling
 
 Errors match `setTimeout` semantics:
 
 - A synchronous `throw` emits `process.on("uncaughtException")`.
-- A rejected returned `Promise` emits `process.on("unhandledRejection")`.
+- A returned `Promise` or thenable that rejects emits `process.on("unhandledRejection")`. The second argument of the listener is the promise that Bun waited on.
 
 Without a listener, the process exits with code `1`. With a listener, the job keeps running — it does not stop on the first failure.
 
@@ -220,6 +231,10 @@ job.ref(); // keep the process alive (default)
 ### Fake timers
 
 In-process cron honors `jest.useFakeTimers()`. `setSystemTime()`, `advanceTimersByTime()`, and `runAllTimers()` control when it fires, so you can test scheduled callbacks without waiting on the real clock.
+
+The [no-overlap guarantee](#no-overlap-guarantee) holds under fake timers too. A job whose handler returned a `Promise` or a thenable fires again only after that value settles.
+
+`jest.useRealTimers()` and `jest.clearAllTimers()` stop a job that waits for its next fire. A job whose returned value is still pending keeps running, so call `job.stop()` in your test's cleanup.
 
 ---
 

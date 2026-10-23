@@ -8647,11 +8647,16 @@ declare module "bun" {
      * Promise). If your callback takes 3 minutes and runs every minute, it fires at T+0 → runs
      * until T+3 → next fire is the first minute boundary after T+3. Invocations never stack.
      *
+     * Bun waits for the returned value the way `await` does. A returned thenable has its
+     * `then()` called once per fire, so a value that starts its work in `then()` (a `Bun.$`
+     * command, a `Bun.SQL` query) runs when the callback returns it. A returned value that
+     * never settles holds the job: it does not fire again, and nothing is reported.
+     *
      * ### Error semantics
      *
-     * Matches `setTimeout`: a synchronous throw emits `uncaughtException`, a rejected Promise
-     * emits `unhandledRejection`. Without a listener, the process exits with code 1. The job
-     * reschedules itself after an error — it does not stop on first failure.
+     * Matches `setTimeout`: a synchronous throw emits `uncaughtException`, a returned Promise
+     * or thenable that rejects emits `unhandledRejection`. Without a listener, the process exits
+     * with code 1. The job reschedules itself after an error — it does not stop on first failure.
      *
      * ```ts
      * process.on("unhandledRejection", (err) => log.error(err)); // keep going
@@ -8688,8 +8693,8 @@ declare module "bun" {
      * the process exit naturally when nothing else is pending.
      *
      * @param schedule Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`).
-     * @param handler Function to call on each fire. May return a Promise — the next fire
-     *   is not scheduled until it settles.
+     * @param handler Function to call on each fire. May return a Promise or another thenable —
+     *   the next fire is not scheduled until it settles.
      * @returns A {@link CronJob} handle. Chainable: `.stop()`, `.ref()`, `.unref()` all
      *   return the job itself.
      * @throws Synchronously if `schedule` is invalid, or the expression has no future

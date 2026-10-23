@@ -1,6 +1,9 @@
-import { describe, expect, jest, test } from "bun:test";
+import { $, SQL } from "bun";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 
 describe("Bun.cron (in-process)", () => {
   test("validates cron expression", () => {
@@ -494,4 +497,434 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(await Bun.file(m("result")).text()).toBe("ok");
     expect(await Bun.file(m("ghost.fired")).exists()).toBe(false);
   }, 130_000);
+});
+
+describe("Bun.cron (in-process) — the returned value is awaited as `await` does", () => {
+  // setImmediate is not faked: one real turn of the event loop runs every pending microtask.
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+  // One minute on the fake clock, then the jobs that the tick queued.
+  async function nextMinute() {
+    jest.advanceTimersByTime(60_000);
+    await turn();
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date("2026-01-01T12:00:00.000Z") });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test("a thenable: then is read in the tick, and called once in a job after the tick's own microtasks", async () => {
+    const log: string[] = [];
+    using job = Bun.cron("* * * * *", () => {
+      log.push("fire");
+      queueMicrotask(() => log.push("microtask"));
+      return {
+        get then() {
+          log.push("get then");
+          return (resolve: () => void, reject: unknown) => {
+            log.push(`then(${typeof resolve}, ${typeof reject})`);
+            resolve();
+          };
+        },
+      };
+    });
+
+    await nextMinute();
+    expect(log).toEqual(["fire", "get then", "microtask", "then(function, function)"]);
+  });
+
+  test("a thenable that has not settled: the next fire waits for it", async () => {
+    const firedAt: string[] = [];
+    let settle!: () => void;
+    using job = Bun.cron("* * * * *", () => {
+      firedAt.push(new Date().toISOString());
+      return { then: (resolve: () => void) => void (settle = resolve) };
+    });
+
+    await nextMinute();
+    await nextMinute();
+    await nextMinute();
+    expect(firedAt).toEqual(["2026-01-01T12:01:00.000Z"]);
+
+    settle();
+    await turn();
+    await nextMinute();
+    expect(firedAt).toEqual(["2026-01-01T12:01:00.000Z", "2026-01-01T12:04:00.000Z"]);
+  });
+
+  test("only a promise or a thenable that has not settled holds the next fire", async () => {
+    // `await` does not call then() on a promise of its own realm.
+    const ownThenCalls = { fulfilled: 0, pending: 0 };
+    const returned: Record<string, () => unknown> = {
+      "undefined": () => undefined,
+      "a plain object": () => ({}),
+      "a then that is not callable": () => ({ then: 1 }),
+      "a fulfilled promise": () => Promise.resolve(),
+      "a fulfilled promise with an own then()": () =>
+        Object.assign(Promise.resolve(), { then: () => ownThenCalls.fulfilled++ }),
+      "a pending promise with an own then()": () =>
+        Object.assign(new Promise<void>(resolve => queueMicrotask(resolve)), { then: () => ownThenCalls.pending++ }),
+      "a fulfilled promise of another realm": () => runInNewContext("Promise.resolve()"),
+      "an async function": async () => {},
+      "a thenable that never settles": () => ({ then() {} }),
+    };
+    const fires: Record<string, number> = {};
+    const jobs = Object.entries(returned).map(([name, value]) =>
+      Bun.cron("* * * * *", () => {
+        fires[name] = (fires[name] ?? 0) + 1;
+        return value();
+      }),
+    );
+    try {
+      await nextMinute();
+      await nextMinute();
+      await nextMinute();
+      expect({ fires, ownThenCalls }).toEqual({
+        fires: {
+          "undefined": 3,
+          "a plain object": 3,
+          "a then that is not callable": 3,
+          "a fulfilled promise": 3,
+          "a fulfilled promise with an own then()": 3,
+          "a pending promise with an own then()": 3,
+          "a fulfilled promise of another realm": 3,
+          "an async function": 3,
+          "a thenable that never settles": 1,
+        },
+        ownThenCalls: { fulfilled: 0, pending: 0 },
+      });
+    } finally {
+      for (const job of jobs) job.stop();
+    }
+  });
+
+  test("a Promise subclass: then() is called once, pending or settled, and the next fire waits for it", async () => {
+    class Lazy extends Promise<void> {
+      thenCalls = 0;
+      static get [Symbol.species]() {
+        return Promise;
+      }
+      then(...args: any[]) {
+        this.thenCalls++;
+        return super.then(...args);
+      }
+    }
+    let finish!: () => void;
+    const returned: Lazy[] = [];
+    using job = Bun.cron("* * * * *", () => {
+      // The first tick returns a pending one, the second tick a settled one.
+      const lazy = returned.length === 0 ? new Lazy(resolve => void (finish = resolve)) : (Lazy.resolve() as Lazy);
+      returned.push(lazy);
+      return lazy;
+    });
+
+    await nextMinute();
+    await nextMinute();
+    expect(returned.map(lazy => lazy.thenCalls)).toEqual([1]);
+
+    finish();
+    await turn();
+    await nextMinute();
+    expect(returned.map(lazy => lazy.thenCalls)).toEqual([1, 1]);
+  });
+
+  test("a Bun.$ command: it runs, and the next fire waits for it", async () => {
+    const commands: ReturnType<typeof $>[] = [];
+    using job = Bun.cron("* * * * *", () => {
+      const command = $`echo tick`;
+      // The command starts in a later job, as with `await`: this microtask can still configure it.
+      queueMicrotask(() => command.quiet());
+      commands.push(command);
+      return command;
+    });
+
+    await nextMinute();
+    expect(commands.length).toBe(1);
+    // A command that has started refuses configuration.
+    expect(() => void commands[0].cwd(".")).toThrow("Shell is already running");
+    expect((await commands[0]).text()).toBe("tick\n");
+
+    await turn();
+    await nextMinute();
+    expect(commands.length).toBe(2);
+    expect((await commands[1]).text()).toBe("tick\n");
+  });
+
+  test("a Bun.SQL query: it runs", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`create table ticks (n integer)`;
+    let fires = 0;
+    using job = Bun.cron("* * * * *", () => sql`insert into ticks values (${++fires})`);
+
+    await nextMinute();
+    await nextMinute();
+    const rows = await sql`select n from ticks order by n`;
+    expect(rows.map((row: { n: number }) => row.n)).toEqual([1, 2]);
+  });
+
+  test("stop() inside then(): the job does not fire again", async () => {
+    let fires = 0;
+    const job = Bun.cron("* * * * *", () => {
+      fires++;
+      return {
+        then(resolve: () => void) {
+          job.stop();
+          resolve();
+        },
+      };
+    });
+
+    await nextMinute();
+    await nextMinute();
+    await nextMinute();
+    expect(fires).toBe(1);
+  });
+
+  test("stop() inside the handler ends the schedule, not the tick: the returned value is still awaited", async () => {
+    const log: string[] = [];
+    Bun.cron("* * * * *", function () {
+      log.push("fire");
+      this.stop();
+      return {
+        then(resolve: () => void) {
+          log.push("then");
+          resolve();
+        },
+      };
+    });
+    const commands: ReturnType<typeof $>[] = [];
+    Bun.cron("* * * * *", function () {
+      this.stop();
+      const command = $`echo once`.quiet();
+      commands.push(command);
+      return command;
+    });
+
+    await nextMinute();
+    await nextMinute();
+    expect(log).toEqual(["fire", "then"]);
+    expect(commands.length).toBe(1);
+    expect(() => void commands[0].cwd(".")).toThrow("Shell is already running");
+    expect((await commands[0]).text()).toBe("once\n");
+  });
+
+  test("then is read and called in the AsyncLocalStorage store that the handler was registered in", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    const ticks: Record<string, string | undefined>[] = [];
+    using job = storage.run("handler", () =>
+      Bun.cron("* * * * *", () => {
+        const seen: Record<string, string | undefined> = { "tick": storage.getStore() };
+        ticks.push(seen);
+        return {
+          get then() {
+            seen["get then"] = storage.getStore();
+            return (resolve: () => void) => {
+              seen["then()"] = storage.getStore();
+              resolve();
+            };
+          },
+        };
+      }),
+    );
+
+    // The code that drives the timer has another store, and has it again after the tick.
+    const afterWithAStore = storage.run("timer", () => {
+      jest.advanceTimersByTime(60_000);
+      return storage.getStore();
+    });
+    await turn();
+    // A tick that is driven outside every store leaves none behind.
+    jest.advanceTimersByTime(60_000);
+    const afterWithNoStore = storage.getStore();
+    await turn();
+
+    const inTheHandlersStore = { "tick": "handler", "get then": "handler", "then()": "handler" };
+    expect({ ticks, after: [afterWithAStore, afterWithNoStore] }).toEqual({
+      ticks: [inTheHandlersStore, inTheHandlersStore],
+      after: ["timer", undefined],
+    });
+  });
+});
+
+// Inside `bun test` a tick's rejection goes to the test runner, so these run in a child process
+// that drives its own fake clock.
+describe.concurrent("Bun.cron (in-process) — the returned value is awaited as `await` does, child process", () => {
+  const clock = `
+    const { jest } = require("bun:test");
+    jest.useFakeTimers({ now: new Date("2026-01-01T12:00:00.000Z") });
+  `;
+
+  // `script` declares `job`. Two ticks, then what the process listeners received.
+  async function twoTicks(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        clock +
+          `
+        const events = [];
+        let fires = 0;
+        let returned;
+        process.on("unhandledRejection", (error, promise) =>
+          events.push(["unhandledRejection", error.message, promise instanceof Promise, promise === returned]),
+        );
+        process.on("uncaughtException", error => events.push(["uncaughtException", error.message]));
+        ${script}
+        for (let i = 0; i < 2; i++) {
+          jest.advanceTimersByTime(60_000);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        job.stop();
+        console.log(JSON.stringify({ fires, events }));
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    // The last column: is the promise that the listener receives the returned value itself?
+    ["a thenable that rejects", `{ then(_, reject) { reject(new Error("boom")); } }`, false],
+    ["a thenable whose then() throws", `{ then() { throw new Error("boom"); } }`, false],
+    ["a thenable whose then getter throws", `{ get then() { throw new Error("boom"); } }`, false],
+    ["a rejected Promise subclass", `(class extends Promise {}).reject(new Error("boom"))`, false],
+    [
+      "a Promise subclass that rejects later",
+      `new (class extends Promise {})((_, reject) => queueMicrotask(() => reject(new Error("boom"))))`,
+      false,
+    ],
+    [
+      "a rejected promise of another realm",
+      `require("node:vm").runInNewContext("Promise.reject(new Error('boom'))")`,
+      false,
+    ],
+    ["a rejected Promise", `Promise.reject(new Error("boom"))`, true],
+    [
+      "a Promise that rejects later",
+      `new Promise((_, reject) => queueMicrotask(() => reject(new Error("boom"))))`,
+      true,
+    ],
+  ])("%s: one unhandledRejection per tick with a promise, and the job keeps running", async (_, value, same) => {
+    const script = `const job = Bun.cron("* * * * *", () => { fires++; return (returned = ${value}); });`;
+    expect(await twoTicks(script)).toEqual({
+      stdout:
+        JSON.stringify({
+          fires: 2,
+          events: [
+            ["unhandledRejection", "boom", true, same],
+            ["unhandledRejection", "boom", true, same],
+          ],
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a promise whose constructor getter throws: uncaughtException, and the job keeps running", async () => {
+    const script = `const job = Bun.cron("* * * * *", () => {
+      fires++;
+      return Object.defineProperty(new Promise(() => {}), "constructor", { get() { throw new Error("boom"); } });
+    });`;
+    expect(await twoTicks(script)).toEqual({
+      stdout:
+        JSON.stringify({
+          fires: 2,
+          events: [
+            ["uncaughtException", "boom"],
+            ["uncaughtException", "boom"],
+          ],
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("stop() inside a then getter: a later rejection is still reported with a promise", async () => {
+    // After stop() only the tick that is pending keeps the job's wrapper alive.
+    const script = `let job = Bun.cron("* * * * *", () => {
+      fires++;
+      return {
+        get then() {
+          job.stop();
+          job = { stop() {} };
+          Bun.gc(true);
+          return (_, reject) => setImmediate(() => { Bun.gc(true); reject(new Error("boom")); });
+        },
+      };
+    });`;
+    expect(await twoTicks(script)).toEqual({
+      stdout: JSON.stringify({ fires: 1, events: [["unhandledRejection", "boom", true, false]] }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("one advance over three fires: a job that waits on the returned value fires once", async () => {
+    // No microtask runs inside advanceTimersByTime() here, so a value that needs one to settle holds the job.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        clock +
+          `
+        const returned = {
+          "undefined": () => undefined,
+          "a fulfilled promise": () => Promise.resolve(),
+          "an async function that awaits": async () => { await null; },
+          "a thenable": () => ({ then(resolve) { resolve(); } }),
+          "a fulfilled Promise subclass": () => (class extends Promise {}).resolve(),
+        };
+        const fires = {};
+        const jobs = Object.entries(returned).map(([name, value]) =>
+          Bun.cron("* * * * *", () => { fires[name] = (fires[name] ?? 0) + 1; return value(); }),
+        );
+        jest.advanceTimersByTime(180_000);
+        const first = { ...fires };
+        await new Promise(resolve => setImmediate(resolve));
+        jest.advanceTimersByTime(180_000);
+        for (const job of jobs) job.stop();
+        console.log(JSON.stringify([first, fires]));
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const fires = (a: number, b: number) => ({
+      "undefined": a,
+      "a fulfilled promise": a,
+      "an async function that awaits": b,
+      "a thenable": b,
+      "a fulfilled Promise subclass": b,
+    });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([fires(3, 1), fires(6, 2)]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a thenable that rejects, with no listener: the process exits with code 1", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        clock +
+          `
+        Bun.cron("* * * * *", () => ({ then(_, reject) { reject(new Error("boom")); } })).unref();
+        jest.advanceTimersByTime(60_000);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
 });

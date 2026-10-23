@@ -1631,6 +1631,21 @@ impl JSValue {
         AsyncContextFrame__callbackOf(self)
     }
 
+    /// Makes the async context `self` was stored with current until the guard drops. `None`: `self` carries none.
+    #[must_use = "dropping immediately leaves the async context; bind to a local"]
+    #[inline]
+    pub fn enter_async_context(self, global: &JSGlobalObject) -> Option<AsyncContextScope<'_>> {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__enter(global: &JSGlobalObject, stored: JSValue) -> JSValue;
+        }
+        // An `AsyncContextFrame` is a plain object cell: a bare function is answered without the call into C++.
+        if self.js_type() != JSType::Object {
+            return None;
+        }
+        let previous = AsyncContextFrame__enter(global, self);
+        (!previous.is_empty()).then(|| AsyncContextScope { global, previous })
+    }
+
     /// Protects a JSValue from garbage collection (refcounted). The is_cell
     /// check happens on the C++ side (bindings.cpp).
     #[inline]
@@ -1721,6 +1736,22 @@ impl Drop for Protected {
     #[inline]
     fn drop(&mut self) {
         self.0.unprotect();
+    }
+}
+
+/// RAII guard returned by [`JSValue::enter_async_context`]. Puts the previous async context back on drop.
+#[must_use = "dropping immediately leaves the async context; bind to a local"]
+pub struct AsyncContextScope<'a> {
+    global: &'a JSGlobalObject,
+    previous: JSValue,
+}
+impl Drop for AsyncContextScope<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__leave(global: &JSGlobalObject, previous: JSValue);
+        }
+        AsyncContextFrame__leave(self.global, self.previous);
     }
 }
 

@@ -23,6 +23,7 @@ use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_jsc::bindgen::JsWrapper;
+use bun_jsc::js_promise::Thenables;
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
@@ -1398,7 +1399,7 @@ pub(crate) struct CronJob {
     /// given, which holds a ref on the job. The reaction that runs hands the ref back; the
     /// collector releases it if the promise is never settled; teardown takes it back.
     tick_cell: Cell<JSValue>,
-    /// True between onTimerFire's cb.call() and processing of its result.
+    /// True from onTimerFire's cb.call() until the value it returned is adopted: both run the tick's script.
     in_fire: Cell<bool>,
     /// The context of the script that called `Bun.cron()`: its ticks are that script's.
     context: bun_jsc::ContextId,
@@ -1430,7 +1431,7 @@ pub(crate) enum ClearMode {
 impl CronJob {
     /// Defer downgrading the JS wrapper to weak until any in-flight promise
     /// has settled, so onPromiseReject can still read pendingPromise from
-    /// the wrapper and pass the real Promise to unhandledRejection.
+    /// the wrapper and pass the Promise the tick waits on to unhandledRejection.
     fn maybe_downgrade(&self) {
         if self.stopped.get()
             && self.tick_cell.get().is_empty()
@@ -1544,7 +1545,7 @@ impl CronJob {
 
     /// May free `this`.
     fn self_stop(this: ThisPtr<Self>, vm: &VirtualMachine) {
-        // While the callback is on the stack or its promise is pending, defer
+        // While the callback is on the stack or the tick's promise is pending, defer
         // list removal + downgrade to finishDeferredStop (called from
         // scheduleNext after settle) so onPromiseReject can read pendingPromise
         // and clearAllForVM(.teardown) can take the tick's claim back.
@@ -1671,7 +1672,7 @@ impl CronJob {
         // `enter()` now, `exit()` on drop; holds the raw pointer (not `&mut`)
         // so re-entrant JS can re-borrow.
         let _ev_guard = vm.enter_event_loop_scope();
-        // The tick and what follows from it (the reactions on the promise it returns, what they
+        // The tick and what follows from it (the reactions on the promise it waits on, what they
         // report) are the script's that scheduled the job.
         let _context = vm.enter_context(this.context);
 
@@ -1687,6 +1688,20 @@ impl CronJob {
             js_this,
             &[],
         );
+        // What `await` waits on for the returned value. `in_fire` is still set, and no microtask has run yet.
+        let awaited = if result.is_object() {
+            let _async_context = cb.enter_async_context(&this.global);
+            jsc::JSPromise::awaitable(&this.global, result, Thenables::Adopt)
+        } else {
+            Ok(None)
+        };
+        let awaited = match awaited {
+            Ok(awaited) => awaited,
+            Err(err) => {
+                let _ = jsc::task::report_error_or_terminate(&this.global, err);
+                None
+            }
+        };
         this.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out
@@ -1695,19 +1710,16 @@ impl CronJob {
             Self::self_stop(this, vm);
             return;
         }
-        if result.is_empty() {
-            Self::schedule_next(this, vm);
-            return;
-        }
 
-        if let Some(promise) = result.as_any_promise() {
+        if let Some(promise) = awaited {
             match promise.status() {
                 jsc::js_promise::Status::Pending => {
-                    js::pending_promise_set_cached(js_this, &this.global, result);
+                    let promise = promise.to_js();
+                    js::pending_promise_set_cached(js_this, &this.global, promise);
                     // The reactions own the job's ref through their cell, not a raw pointer: a
                     // promise that settles after the job stopped finds the job, and one that
                     // never settles releases it when it is collected.
-                    result.then_with_value(
+                    promise.then_with_value(
                         &this.global,
                         Self::create_tick_cell(this),
                         crate::generated_host_exports::Bun__CronJob__onPromiseResolve,
@@ -1728,22 +1740,13 @@ impl CronJob {
                 }
                 jsc::js_promise::Status::Fulfilled => {}
                 jsc::js_promise::Status::Rejected => {
-                    promise.set_handled(this.global.vm());
-                    // `bun_jsc::AnyPromise` (lib.rs duplicate) lacks `.result()`;
-                    // dispatch on the variant and call `JSPromise::result` directly.
-                    // S012: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
-                    let reason = match promise {
-                        jsc::AnyPromise::Normal(p) => {
-                            jsc::JSPromise::opaque_mut(p).result(this.global.vm())
-                        }
-                        jsc::AnyPromise::Internal(p) => {
-                            jsc::JSPromise::opaque_mut(p).result(this.global.vm())
-                        }
-                    };
+                    promise.set_handled();
+                    let reason = promise.result(this.global.vm());
+                    let promise = promise.to_js();
                     let global_ref = vm.global();
                     VirtualMachine::get()
                         .as_mut()
-                        .unhandled_rejection(global_ref, reason, result);
+                        .unhandled_rejection(global_ref, reason, promise);
                 }
             }
         }

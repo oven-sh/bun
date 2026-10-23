@@ -145,6 +145,23 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     return stored;
 }
 
+// AsyncContextScope for Rust, on the context `stored` was wrapped with. Returns what AsyncContextFrame__leave() puts back, or empty when `stored` carries none.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__enter(JSGlobalObject* globalObject, JSC::EncodedJSValue stored)
+{
+    auto* wrapper = dynamicDowncast<AsyncContextFrame>(JSValue::decode(stored));
+    if (!wrapper)
+        return {};
+    JSValue previous = globalObject->m_asyncContextData.get()->getInternalField(0);
+    ASSERT_WITH_MESSAGE(previous, "no async context is undefined, never the empty value");
+    setCurrentAsyncContext(globalObject, wrapper->context.get());
+    return JSValue::encode(previous);
+}
+
+extern "C" void AsyncContextFrame__leave(JSGlobalObject* globalObject, JSC::EncodedJSValue previous)
+{
+    setCurrentAsyncContext(globalObject, JSValue::decode(previous));
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                                                   \
     if (!functionObject.isCell())                                                                                          \
         return jsUndefined();                                                                                              \

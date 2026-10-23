@@ -4,6 +4,15 @@ const { validateString } = require("internal/validators");
 const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
 const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
 const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
+
+type Glob = import("bun").Glob;
+
+// One memo per flavour: posix passes `\` in a pattern to Bun.Glob as an escape, win32 reads a separator, as Node.js does in both flavours: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/glob.js#L938
+let posixGlob: Glob | undefined;
+let posixPattern: string | undefined;
+let win32Glob: Glob | undefined;
+let win32Pattern: string | undefined;
+
 const posix = {
   resolve: bindingPosix.resolve.bind(bindingPosix),
   normalize: bindingPosix.normalize.bind(bindingPosix),
@@ -16,6 +25,18 @@ const posix = {
   extname: bindingPosix.extname.bind(bindingPosix),
   format: bindingPosix.format.bind(bindingPosix),
   parse: bindingPosix.parse.bind(bindingPosix),
+  matchesGlob(path, pattern) {
+    validateString(path, "path");
+    let glob: Glob;
+    if (posixGlob !== undefined && posixPattern === pattern) {
+      glob = posixGlob;
+    } else {
+      validateString(pattern, "pattern");
+      glob = posixGlob = new Bun.Glob(pattern);
+      posixPattern = pattern;
+    }
+    return glob.match(path);
+  },
   sep: "/",
   delimiter: ":",
   win32: undefined as typeof win32,
@@ -34,6 +55,19 @@ const win32 = {
   extname: bindingWin32.extname.bind(bindingWin32),
   format: bindingWin32.format.bind(bindingWin32),
   parse: bindingWin32.parse.bind(bindingWin32),
+  matchesGlob(path, pattern) {
+    validateString(path, "path");
+    path = path.replaceAll("\\", "/");
+    let glob: Glob;
+    if (win32Glob !== undefined && win32Pattern === pattern) {
+      glob = win32Glob;
+    } else {
+      validateString(pattern, "pattern");
+      glob = win32Glob = new Bun.Glob(pattern.replaceAll("\\", "/"));
+      win32Pattern = pattern;
+    }
+    return glob.match(path);
+  },
   sep: "\\",
   delimiter: ";",
   win32: undefined as typeof win32,
@@ -42,40 +76,5 @@ const win32 = {
 };
 posix.win32 = win32.win32 = win32;
 posix.posix = posix;
-
-type Glob = import("bun").Glob;
-
-// the most-recently used glob is memoized in case `matchesGlob` is called in a
-// loop with the same pattern
-let prevGlob: Glob | undefined;
-let prevPattern: string | undefined;
-function matchesGlob(isWindows, path, pattern) {
-  let glob: Glob;
-
-  validateString(path, "path");
-  if (isWindows) path = path.replaceAll("\\", "/");
-
-  if (prevGlob) {
-    $assert(prevPattern !== undefined);
-    if (prevPattern === pattern) {
-      glob = prevGlob;
-    } else {
-      validateString(pattern, "pattern");
-      if (isWindows) pattern = pattern.replaceAll("\\", "/");
-      glob = prevGlob = new Bun.Glob(pattern);
-      prevPattern = pattern;
-    }
-  } else {
-    validateString(pattern, "pattern");
-    if (isWindows) pattern = pattern.replaceAll("\\", "/");
-    glob = prevGlob = new Bun.Glob(pattern);
-    prevPattern = pattern;
-  }
-
-  return glob.match(path);
-}
-
-posix.matchesGlob = matchesGlob.bind(null, false);
-win32.matchesGlob = matchesGlob.bind(null, true);
 
 export default (process.platform === "win32" ? win32 : posix) as any as typeof import("node:path");

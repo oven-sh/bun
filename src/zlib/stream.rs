@@ -137,7 +137,7 @@ impl ZStream {
 
 impl Drop for ZStream {
     fn drop(&mut self) {
-        // SAFETY: `ptr` came from `heap::alloc` in `new` and is freed once,
+        // SAFETY: `ptr` came from `heap::alloc_nn` in `new` and is freed once,
         // here. The owner has already ended the zlib state, so zlib holds no
         // live pointer into it.
         unsafe { bun_core::heap::destroy(self.ptr.as_ptr()) };

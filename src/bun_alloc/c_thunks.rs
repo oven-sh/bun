@@ -6,28 +6,17 @@
 //! | brotli `brotli_alloc/free_func`  | `(opaque, size: usize)`                  | `(opaque, ptr)`            |
 //! | JSC `JSTypedArrayBytesDeallocator` | —                                      | `(bytes, ctx)`             |
 //!
-//! The plain (non-zone-tagged) variants are free functions below; the
-//! zone-tagged variants are minted per-label by [`c_thunks_for_zone!`].
+//! The plain (non-zone-tagged) JSC variant is a free function below; the
+//! zone-tagged zlib and brotli variants are minted per-label by
+//! [`c_thunks_for_zone!`].
 
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 
 use crate::default_alloc as raw;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plain default-allocator thunks (no heap-breakdown tagging)
 // ──────────────────────────────────────────────────────────────────────────
-
-/// zlib `alloc_func` → default allocator `malloc(items * size)` (non-zeroing).
-/// Null on failure, which zlib reports as `Z_MEM_ERROR`.
-pub extern "C" fn mi_malloc_items(_: *mut c_void, items: c_uint, size: c_uint) -> *mut c_void {
-    raw::malloc(items as usize * size as usize)
-}
-
-/// `(opaque, ptr)` → default allocator `free(ptr)`; opaque cookie ignored.
-pub unsafe extern "C" fn mi_free_opaque(_: *mut c_void, ptr: *mut c_void) {
-    // SAFETY: ptr was allocated by the default allocator (or is null).
-    unsafe { raw::free(ptr) };
-}
 
 /// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(bytes)`; `ctx` ignored.
 pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {

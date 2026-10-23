@@ -3576,6 +3576,96 @@ snapshots:
     expect(exitCode).toBe(0);
   });
 
+  // pnpm-lock.yaml has `hasBin: true` for a package with bins, not the bins. For a tarball or a git repository only
+  // its own package.json has them, and its install scripts.
+  describe.each(["hoisted", "isolated"])("bun install --linker %s reads the package.json of", linker => {
+    const files = {
+      "package.json": JSON.stringify({
+        name: "tool",
+        version: "1.0.0",
+        bin: { tool: "cli.js" },
+        scripts: { postinstall: "exit 0" },
+      }),
+      "cli.js": "#!/usr/bin/env node\n",
+    };
+    const lockfile = (version: string, resolution: string) => `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      tool:
+        specifier: ${version.split("#")[0]}
+        version: ${version}
+
+packages:
+
+  tool@${version}:
+    resolution: ${resolution}
+    version: 1.0.0
+    hasBin: true
+
+snapshots:
+
+  tool@${version}: {}
+`;
+    async function installed(dir: string, env: Record<string, string>) {
+      const migrated = await runWithEnv(dir, env, "pm", "migrate");
+      const unread = await bunLockOf(dir);
+      rmSync(join(dir, "pnpm-lock.yaml"));
+      const { stdout, stderr, exitCode } = await runWithEnv(dir, env, "install", "--linker", linker);
+      return {
+        migrated: migrated.exitCode,
+        unread: unread.includes(`"tool": ["tool@`) && unread.includes(UNREAD),
+        errors: stderr.split("\n").filter(line => line.startsWith("error")),
+        bins: readdirSync(join(dir, "node_modules", ".bin")).map(name => name.replace(/\.(exe|bunx)$/, "")),
+        blocked: stdout.includes("Blocked 1 postinstall"),
+        recorded: (await bunLockOf(dir)).includes(`{ "hasInstallScript": true, "bin": { "tool": "cli.js" } }`),
+        exitCode,
+      };
+    }
+    const complete = {
+      migrated: 0,
+      unread: true,
+      errors: [],
+      bins: ["tool"],
+      blocked: true,
+      recorded: true,
+      exitCode: 0,
+    };
+
+    test.concurrent("a tarball resolution", async () => {
+      const tarball = await githubTarball("package", files);
+      const requests: string[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(new URL(req.url).pathname);
+          return new Response(tarball);
+        },
+      });
+      const url = `${server.url.origin}/tool.tgz`;
+      using dir = tempDir("pnpm-v9-tarball-bin", {
+        "package.json": JSON.stringify({ name: "tarball-bin", dependencies: { tool: url } }),
+        "pnpm-lock.yaml": lockfile(url, `{tarball: ${url}}`),
+      });
+
+      expect(await installed(String(dir), {})).toEqual(complete);
+      expect(requests).toEqual(["/tool.tgz"]);
+    });
+
+    test.concurrent("a git resolution", async () => {
+      const url = "https://git.example.com/me/tool.git";
+      using repo = await hostedGitRepository([url], files);
+      using dir = tempDir("pnpm-v9-git-bin", {
+        "package.json": JSON.stringify({ name: "git-bin", dependencies: { tool: `git+${url}` } }),
+        "pnpm-lock.yaml": lockfile(`git+${url}#${repo.sha}`, `{commit: ${repo.sha}, repo: ${url}, type: git}`),
+      });
+
+      expect(await installed(String(dir), repo.env)).toEqual(complete);
+    });
+  });
+
   describe("registry tarball: urls", () => {
     // pnpm/pnpm#13534: GitHub Packages / npm Enterprise tarballs are not on the canonical `/-/` path
     test("recorded under the configured registry is kept", async () => {

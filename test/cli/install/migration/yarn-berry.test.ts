@@ -4,11 +4,13 @@ import { readdir, rm } from "fs/promises";
 import {
   bunEnv,
   bunExe,
+  githubTarball,
   isLinux,
   isWindows,
   libcFamily,
   nodeModulesPackages,
   normalizeBunSnapshot,
+  tempDir,
   toBeValidBin,
   unprivilegedSpawnOptions,
 } from "harness";
@@ -1185,6 +1187,64 @@ describe("yarn berry migration", () => {
       `"hue": ["hue@git+https://github.com/org/hue.git#ec3d1d18f73ab023b1fa3e31e1f4316f476566a5", { "hasInstallScript": null }, "ec3d1d18f73ab023b1fa3e31e1f4316f476566a5"]`,
     );
   });
+
+  // yarn.lock has the bins of a package, not its scripts. The manifest has them for a registry package, and only the
+  // package.json of a tarball has them for a tarball.
+  test.concurrent.each(["hoisted", "isolated"])(
+    "bun install --linker %s records the install script of a tarball URL",
+    async linker => {
+      const tarball = await githubTarball("package", {
+        "package.json": JSON.stringify({
+          name: "tool",
+          version: "1.0.0",
+          bin: { tool: "cli.js" },
+          scripts: { postinstall: "exit 0" },
+        }),
+        "cli.js": "#!/usr/bin/env node\n",
+      });
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(tarball) });
+      const url = `${server.url.origin}/tool.tgz`;
+      using dir = tempDir("berry-tarball-scripts", {
+        "package.json": JSON.stringify({ name: "berry-tool", dependencies: { tool: url } }),
+        "yarn.lock": `__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"berry-tool@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "berry-tool@workspace:."
+  dependencies:
+    tool: "${url}"
+  languageName: unknown
+  linkType: soft
+
+"tool@${url}":
+  version: 1.0.0
+  resolution: "tool@${url}"
+  bin:
+    tool: cli.js
+  languageName: node
+  linkType: hard
+`,
+      });
+
+      const migrated = await run(String(dir), "pm", "migrate");
+      expect(await bunLockOf(String(dir))).toContain(
+        `"tool": ["tool@http://localhost:1234/tool.tgz", { "hasInstallScript": null, "bin": { "tool": "cli.js" } }]`,
+      );
+      expect(migrated.exitCode).toBe(0);
+
+      await rm(join(String(dir), "yarn.lock"));
+      const { stdout, stderr, exitCode } = await run(String(dir), "install", "--linker", linker);
+      expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+      expect(stdout).toContain("Blocked 1 postinstall");
+      expect(await bunLockOf(String(dir))).toContain(
+        `"tool": ["tool@http://localhost:1234/tool.tgz", { "hasInstallScript": true, "bin": { "tool": "cli.js" } }, "sha512-`,
+      );
+      expect(existsSync(join(String(dir), "node_modules", ".bin", isWindows ? "tool.exe" : "tool"))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent(
     "__archiveUrl under the configured registry keeps its URL and gets the manifest's integrity",

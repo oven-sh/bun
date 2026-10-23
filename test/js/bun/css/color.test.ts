@@ -769,3 +769,29 @@ describe("conversions between color spaces", () => {
     );
   });
 });
+
+// A named color is a CSS keyword, and a CSS keyword is ASCII case-insensitive.
+// https://drafts.csswg.org/css-color-4/#named-colors
+describe("named colors in any letter case", () => {
+  test.each([
+    ["Red", "#ff0000"],
+    ["RED", "#ff0000"],
+    ["rEd", "#ff0000"],
+    ["DodgerBlue", "#1e90ff"],
+    ["RebeccaPurple", "#663399"],
+    ["LIGHTGOLDENRODYELLOW", "#fafad2"],
+    ["color-mix(in srgb, Red, Blue)", "#800080"],
+    ["rgb(from Red r g b)", "#ff0000"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
+  });
+
+  test("the css format prints the name in lowercase", () => {
+    expect(color("RED", "css")).toBe("red");
+  });
+
+  // Only ASCII letters fold: U+212A KELVIN SIGN lowercases to "k" in Unicode, and it is not a "k" here.
+  test.each(["Redd", "Re d", "R\u00e9d", "blac\u212a", "LIGHTGOLDENRODYELLOWW"])("%j is not a color", input => {
+    expect(color(input, "hex")).toBeNull();
+  });
+});

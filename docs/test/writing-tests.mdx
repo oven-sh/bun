@@ -549,7 +549,7 @@ A directive in one file of your project does the same as the `types` entry:
 - Load an entry only after you uninstall `vitest`. The entry and the package declare the same module, and their declarations conflict.
 - The types follow Vitest 5, where `Matchers` and `Assertion` have two type parameters, `R` and `T`. TypeScript rejects a `declare module "vitest"` block that declares them with Vitest 4's `<T = any>`.
 - The types declare what `bun test` implements. Vitest's other entry points, such as `vitest/node` and `vitest/config`, have no types, because Bun doesn't have those modules.
-- `assert` and `should` get their types from `@types/chai`. Without it, they are `any`.
+- `assert` and `should` get their types from `@types/chai`. Without it, they are `any`. TypeScript accepts them through any kind of import, but only a named import works at run time.
 - `inject()` has the type `ProvidedContext[key] | undefined`, because it returns `undefined`.
 
 ## Promises

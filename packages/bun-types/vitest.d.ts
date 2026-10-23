@@ -31,9 +31,18 @@ declare module "vitest" {
   } from "bun:test";
 
   export type { SnapshotSerializer, TestAnnotation } from "bun:test";
-  // @ts-ignore `bun test` imports these from the project's `chai`. They're `any` if chai's types aren't installed.
-  export { assert, should } from "chai";
   export { test as it, describe as suite, vi as vitest };
+  /**
+   * chai's `assert`. `bun test` rewrites `import { assert } from "vitest"` to import it from your project's `chai`.
+   *
+   * Only a named import works. Through `import * as`, `import()`, `require()` or a re-export of `"vitest"`, it's
+   * `undefined` at run time. It's typed `any` if `@types/chai` isn't installed.
+   */
+  // @ts-ignore
+  export const assert: typeof import("chai").assert;
+  /** chai's `should`. It has the same limits as {@link assert}. */
+  // @ts-ignore
+  export const should: typeof import("chai").should;
 
   type Awaitable<T> = T | PromiseLike<T>;
   type Procedure = (...args: any[]) => any;

@@ -19,12 +19,12 @@ async function bun(files: Record<string, string | Buffer>, args: string[]) {
   using dir = tempDir("bun-lint-messages", files);
   await using proc = spawn({ cmd: [bunExe(), ...args], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const shown = (text: string) => normalizeBunSnapshot(text, String(dir));
-  return { stdout: shown(stdout), stderr: shown(stderr), exitCode };
+  const normalize = (text: string) => normalizeBunSnapshot(text, String(dir));
+  return { stdout: normalize(stdout), stderr: normalize(stderr), exitCode };
 }
 
 describe.concurrent("bun lint", () => {
-  test("rules that need types are skipped with a warning", async () => {
+  test("warns that it skipped the rules that need types", async () => {
     const rules = (...names: string[]) => `[lint.rules]\n${names.map(it => `"${it}" = "error"\n`).join("")}`;
     const files = { "a.ts": "export const a: number = 1;\n" };
     const [one, two] = await Promise.all([
@@ -51,7 +51,7 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
     expect(stderr).toStartWith("warn: Skipped 1 rule that needs type information\n  Use --type-aware to run it.\n");
   });
 
-  test("a config file that calls process.exit", async () => {
+  test("fails if the config file calls process.exit", async () => {
     const { stderr, exitCode } = await bun({ "eslint.config.mjs": "process.exit(1);\n", "a.js": "a;\n" }, ["lint"]);
     expect(stderr).toBe(
       "error: Cannot load the configuration file <dir>/eslint.config.mjs:\nIt exited before it exported a config.",
@@ -59,13 +59,13 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
     expect(exitCode).toBe(2);
   });
 
-  test("an .eslintrc.json with invalid JSON", async () => {
+  test("fails on an .eslintrc.json with invalid JSON", async () => {
     const { stderr, exitCode } = await bun({ ".eslintrc.json": "{ nope\n", "a.js": "a;\n" }, ["lint"]);
     expect(stderr).toEndWith("Cannot read config file: <dir>/.eslintrc.json\nError: Invalid JSON.");
     expect(exitCode).toBe(2);
   });
 
-  test("a non-JSON option for a rule that runs in JavaScript", async () => {
+  test("rejects a non-JSON option for a rule that runs in JavaScript", async () => {
     const files = {
       "mine.js": `export default { meta: { name: "mine" }, rules: { x: { meta: { schema: false }, create: () => ({}) } } };\n`,
       "oxlint.config.ts": `export default { jsPlugins: ["./mine.js"], rules: { "mine/x": ["error", { a: new Map() }] } };\n`,
@@ -78,7 +78,7 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
     expect(exitCode).toBe(1);
   });
 
-  test("an older typescript-eslint with an .eslintrc", async () => {
+  test("warns about an older installed typescript-eslint with an .eslintrc", async () => {
     const files = {
       "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({
         name: "@typescript-eslint/eslint-plugin",
@@ -100,7 +100,7 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
     expect(exitCode).toBe(0);
   });
 
-  test("a recognized but unsupported flag, and --env-info", async () => {
+  test("rejects a recognized but unsupported flag, and --env-info prints the ESLint version", async () => {
     const [flag, info] = await Promise.all([
       bun({ "a.js": "a;\n" }, ["lint", "--mcp"]),
       bun({}, ["lint", "--env-info"]),
@@ -113,13 +113,13 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
 });
 
 describe.concurrent("bun fmt", () => {
-  test("a UTF-16 file", async () => {
+  test("fails on a UTF-16 file", async () => {
     const { stderr, exitCode } = await bun({ "a.js": Buffer.from("﻿a;\n", "utf16le") }, ["fmt", "a.js"]);
     expect(stderr).toStartWith("error: This file is UTF-16. bun fmt only reads UTF-8\n    at a.js\n\n");
     expect(exitCode).toBe(2);
   });
 
-  test("--plugin with --allow-unsupported, and a recognized but unsupported flag", async () => {
+  test("warns about --plugin with --allow-unsupported, and rejects a recognized but unsupported flag", async () => {
     const [plugin, flag] = await Promise.all([
       bun({ "a.js": "a;\n" }, ["fmt", "--plugin=prettier-plugin-x", "--allow-unsupported", "--check", "a.js"]),
       bun({ "a.js": "a;\n" }, ["fmt", "--migrate=prettier"]),
@@ -130,7 +130,7 @@ describe.concurrent("bun fmt", () => {
     expect(flag.exitCode).toBe(2);
   });
 
-  test("oxfmt options in a .prettierrc", async () => {
+  test("rejects unsupported oxfmt options in a .prettierrc unless --allow-unsupported is passed", async () => {
     const hint = "\n  Use --allow-unsupported to make this a warning.";
     const [one, two, allowed] = await Promise.all([
       bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, ["fmt", "a.js"]),
@@ -155,7 +155,7 @@ describe.concurrent("bun fmt", () => {
     [`{ "customGroups": 1 }`, "`customGroups` must be an array"],
     [`{ "internalPattern": 1 }`, "`internalPattern` must be an array of strings"],
     ["1", "it must be a boolean or an object"],
-  ])("sortImports: %s", async (sortImports, message) => {
+  ])("rejects an invalid sortImports: %s", async (sortImports, message) => {
     const files = { ".oxfmtrc.json": `{ "sortImports": ${sortImports} }\n`, "a.js": "a;\n" };
     const { stderr, exitCode } = await bun(files, ["fmt", "a.js"]);
     expect(stderr).toContain(`error: Invalid \`sortImports\` configuration: ${message}\n`);

@@ -1,4 +1,4 @@
-//! The names of the fields of ESTree nodes.
+//! The field names of ESTree nodes.
 
 macro_rules! fields {
     ($($variant:ident $name:literal,)*) => {
@@ -15,7 +15,7 @@ macro_rules! fields {
                 match self { $(Field::$variant => $name),* }
             }
 
-            /// The field that is called `name`. `None` if no type of node has such a field.
+            /// Returns the field named `name`, or `None` if no node type has such a field.
             pub(crate) fn from_name(name: &[u8]) -> Option<Field> {
                 let at = Field::ALL.binary_search_by(|it| it.name().as_bytes().cmp(name)).ok()?;
                 Some(Field::ALL[at])

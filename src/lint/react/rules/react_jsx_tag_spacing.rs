@@ -44,7 +44,7 @@ const BEFORE_CLOSE_NEED_NEWLINE: Message =
     Message::new("beforeCloseNeedNewline", "A newline is required before closing bracket");
 
 impl Spacing {
-    fn of(options: Object<'_>, key: &str, default: Spacing) -> Spacing {
+    fn from_option(options: Object<'_>, key: &str, default: Spacing) -> Spacing {
         match options.str(key) {
             Some("always") => Spacing::Always,
             Some("proportional-always") => Spacing::ProportionalAlways,
@@ -64,10 +64,10 @@ impl Rule for JsxTagSpacing {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         JsxTagSpacing {
-            closing_slash: Spacing::of(options, "closingSlash", Spacing::Never),
-            before_self_closing: Spacing::of(options, "beforeSelfClosing", Spacing::Always),
-            after_opening: Spacing::of(options, "afterOpening", Spacing::Never),
-            before_closing: Spacing::of(options, "beforeClosing", Spacing::Allow),
+            closing_slash: Spacing::from_option(options, "closingSlash", Spacing::Never),
+            before_self_closing: Spacing::from_option(options, "beforeSelfClosing", Spacing::Always),
+            after_opening: Spacing::from_option(options, "afterOpening", Spacing::Never),
+            before_closing: Spacing::from_option(options, "beforeClosing", Spacing::Allow),
         }
     }
 
@@ -129,7 +129,7 @@ enum Element {
 }
 
 impl JsxTagSpacing {
-    /// `validateClosingSlash`: the `/` and the `>` of `/>`, or the `<` and the `/` of `</`.
+    /// `validateClosingSlash`: the `/` and the `>` in `/>`, or the `<` and the `/` in `</`.
     fn validate_closing_slash(
         &self,
         first: Span,
@@ -148,7 +148,7 @@ impl JsxTagSpacing {
 
     fn validate_before_self_closing(&self, node: Span, left_token: Span, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        // After a name with type arguments it is their `<`.
+        // After a name with type arguments, upstream's next token is their `<`.
         let closing_slash = punctuator(skip_trivia(file.text(), left_token.end));
         if !ast_utils::is_on_one_line(file, left_token.between(closing_slash)) {
             return;
@@ -168,7 +168,7 @@ impl JsxTagSpacing {
         }
     }
 
-    /// `validateAfterOpening`: `opening_token` is the one before `name`.
+    /// `validateAfterOpening`. `opening_token` is the token before `name`.
     fn validate_after_opening(&self, opening_token: Span, name: Span, cx: &mut Cx<'_, Self>) {
         let (file, at) = (cx.file(), Span::before(opening_token.start, name));
         if self.after_opening == Spacing::AllowMultiline && !ast_utils::is_on_one_line(file, at) {
@@ -184,7 +184,7 @@ impl JsxTagSpacing {
 
     fn validate_before_closing(&self, node: Span, left_token: Span, element: Element, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        // After a name with type arguments it is their `<`.
+        // After a name with type arguments, upstream's next token is their `<`.
         let closing_token = punctuator(skip_trivia(file.text(), left_token.end));
         let at = left_token.between(closing_token);
         let is_proportional = self.before_closing == Spacing::ProportionalAlways;
@@ -211,13 +211,13 @@ impl JsxTagSpacing {
     }
 }
 
-/// The `<`, `/` or `>` at `at`.
+/// Returns the span of the `<`, `/` or `>` at `at`.
 fn punctuator(at: u32) -> Span {
     Span::new(at, at + 1)
 }
 
-/// The last token of an opening element before its `>` or `/>`. Only a string can have a line break in it: of any
-/// other it is the end.
+/// Returns the last token of an opening element before its `>` or `/>`. Only a string token can contain a line break,
+/// so for any other token this returns just its end.
 fn last_token(jsx: Jsx<'_>, name: Span) -> Span {
     let Some(attribute) = jsx.attrs().last() else {
         return Span::empty(jsx.type_args().angle_brackets_span().map_or(name.end, |it| it.end));
@@ -229,8 +229,9 @@ fn last_token(jsx: Jsx<'_>, name: Span) -> Span {
     }
 }
 
-/// The `/` of the closing element `node`, if it follows the `<` at once. Not before a comment: espree reads `<//` and
-/// `</*` as a `<` and a comment, and typescript-estree has no token for the `/` of `<//`.
+/// Returns the `/` of the closing element `node`, if it immediately follows the `<`. Not if a comment starts there,
+/// because espree reads `<//` and `</*` as a `<` plus a comment, and typescript-estree has no token for the `/` in
+/// `<//`.
 fn slash_of_closing_element(file: &File<'_>, node: Span) -> Option<Span> {
     match file.text().get(node.start as usize + 1..) {
         Some([b'/', next, ..]) if !matches!(next, b'/' | b'*') => Some(punctuator(node.start + 1)),
@@ -238,7 +239,7 @@ fn slash_of_closing_element(file: &File<'_>, node: Span) -> Option<Span> {
     }
 }
 
-/// `isSpaceBetweenTokens` of `first` and `second`, which is or starts with the next token.
+/// `isSpaceBetweenTokens` for `first` and `second`, which is or starts with the next token.
 fn is_spaced<'a>(file: &'a File<'a>, first: Span, second: Span) -> bool {
     match file.slice(first.between(second)).first() {
         None => false,

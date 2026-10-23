@@ -29,7 +29,7 @@ impl Rule for NoDanger {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        // oxlint also looks at the props of `createElement`.
+        // oxlint also checks the props passed to `createElement`.
         if !file.language().is_oxlint || !file.mentions("createElement") {
             return on;
         }
@@ -54,7 +54,7 @@ impl Rule for NoDanger {
                 let Some(first) = dangerous.peek().and_then(|it| it.key()) else {
                     return;
                 };
-                // oxlint looks at every element, and points at the name of the first.
+                // oxlint checks every element, and reports the first attribute's name.
                 if cx.language().is_oxlint {
                     cx.report(first.span(cx.file()), NO_DANGER);
                 } else if is_dom_component(jsx) || self.is_custom_component(jsx) {
@@ -91,7 +91,7 @@ impl NoDanger {
     }
 }
 
-/// `functionName`. `None` for `<a:b>`, where upstream has a node and no text.
+/// `functionName`. `None` for `<a:b>`, where upstream has a node instead of a string.
 fn function_name(jsx: Jsx<'_>) -> Option<Cow<'_, [u8]>> {
     match jsx.tag()?.kind() {
         ExprKind::String(name) if strings::contains_char(name.bytes(), b':') => None,

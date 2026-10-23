@@ -530,6 +530,14 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
+        /// Returns false if the offset and length, which may come from a file, reach past the end
+        /// of `buf`. `slice` returns "" for such a string.
+        #[inline]
+        pub fn is_within(self, buf: &[u8]) -> bool {
+            let ptr_ = self.ptr();
+            self.is_inline() || ptr_.off as usize + ptr_.len as usize <= buf.len()
+        }
+
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]
         pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
@@ -570,7 +578,8 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                // An equal hash is not an equal string: the second one stays out of the pool.
+                // Equal hashes don't mean equal strings, so the second string isn't added to the
+                // pool.
                 if strings::eql(entry.value_ptr.slice(self.bytes), str) {
                     return Ok(*entry.value_ptr);
                 }
@@ -659,7 +668,8 @@ pub mod semver_string {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             use core::fmt::Write;
             for chunk in self.bytes.utf8_chunks() {
-                // `?`: a query-string delimiter in module resolution, invalid in Windows filenames.
+                // `?` is the query-string delimiter in module resolution, and it's invalid in
+                // Windows filenames.
                 let mut rest = chunk.valid();
                 while let Some(i) = strings::index_of_any(rest.as_bytes(), b"/\\:#?") {
                     f.write_str(&rest[..i])?;
@@ -822,7 +832,8 @@ pub mod semver_string {
     }
 
     impl Builder {
-        // `Wyhash11::hash` is `#[inline(always)]`: about 700 bytes at each of 130 call sites.
+        // `Wyhash11::hash` is `#[inline(always)]`, which would add about 700 bytes at each of 130
+        // call sites.
         #[inline(never)]
         pub fn string_hash(buf: &[u8]) -> u64 {
             bun_wyhash::Wyhash11::hash(0, buf)

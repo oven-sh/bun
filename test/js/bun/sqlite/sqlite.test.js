@@ -4906,7 +4906,8 @@ describe("row objects", () => {
 });
 
 describe("the newest run of a Statement owns its cursor", () => {
-  const invalidated = "This iterator was invalidated: its statement was run again";
+  const invalidated =
+    "This iterator was invalidated: its statement was run again. Use db.prepare() to get a statement with a cursor of its own.";
 
   function open() {
     const db = new Database(":memory:");
@@ -4963,6 +4964,45 @@ describe("the newest run of a Statement owns its cursor", () => {
     const pairs = [];
     for (const outer of db.prepare(SELECT).iterate()) for (const inner of db.prepare(SELECT).iterate()) pairs.push(outer.a * 3 + inner.a); // prettier-ignore
     expect(pairs).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("db.query() with another parameter while the loop body awaits gets its own rows, and the loop throws at its next row", async () => {
+    using db = new Database(":memory:");
+    db.exec(
+      "CREATE TABLE msgs (user INTEGER, n INTEGER); INSERT INTO msgs VALUES (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)",
+    );
+    const SQL = "SELECT user, n FROM msgs WHERE user = ? ORDER BY n";
+    const rowsOf = user => [0, 1, 2].map(n => ({ user, n }));
+
+    // Two requests at the same time: one reads the rows of user 1 and awaits between two rows, the other one runs
+    // the same SQL for user 2 during that await.
+    async function twoRequests(statement) {
+      const seen = [];
+      const { promise: otherIsDone, resolve } = Promise.withResolvers();
+      const loop = (async () => {
+        try {
+          for (const row of statement().iterate(1)) {
+            seen.push(row);
+            await otherIsDone;
+          }
+        } catch (error) {
+          return error.message;
+        }
+      })();
+      // The loop waits behind its first row.
+      const other = statement().all(2);
+      resolve();
+      return { seen, other, error: await loop };
+    }
+
+    // db.query() gives both requests the same Statement.
+    expect(await twoRequests(() => db.query(SQL))).toEqual({
+      seen: [{ user: 1, n: 0 }],
+      other: rowsOf(2),
+      error: invalidated,
+    });
+    // db.prepare() gives each request a Statement of its own.
+    expect(await twoRequests(() => db.prepare(SQL))).toEqual({ seen: rowsOf(1), other: rowsOf(2), error: undefined });
   });
 
   it("of two iterators the second one runs, and closing the first does not disturb it", () => {

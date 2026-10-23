@@ -894,4 +894,100 @@ describe.concurrent("bundler", () => {
     files: { "/entry.ts": `console.log("entry");` },
     run: eachMode(() => ({ stdout: "banner awaited\nentry\nfooter awaited", stderr: "" })),
   });
+
+  // A Worker that is terminated while JSC's own pipeline makes the record of a graph module. late.ts is an entry point
+  // that nothing in the graph imports, and the data: module that imports it is outside the graph, so late.js goes
+  // through JSC's fetch -> makeModule. Registering its record makes the builtin modules it imports on the spot, so the
+  // first Symbol.for() call of node:zlib's module body runs inside that step. The worker parks there, and the parent
+  // requests the termination before it lets the worker go on. A loader that makes node:zlib anywhere else never parks
+  // the worker there, and the program says so.
+  itBundled("compile/prelinked/WorkerTerminatedWhileMakingGraphModule", {
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    files: {
+      "/entry.ts": /* js */ `
+        import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+
+        if (isMainThread) {
+          // flags[0]: the worker is parked. flags[1]: the worker may go on.
+          const flags = new Int32Array(new SharedArrayBuffer(8));
+          const worker = new Worker(new URL(import.meta.url), { workerData: flags });
+          const events: string[] = [];
+          worker.on("error", error => events.push("error " + error.message));
+          worker.on("message", message => events.push("message " + message));
+          const exited = new Promise<string>(resolve =>
+            worker.once("exit", code => {
+              events.push("exit " + code);
+              resolve("exited");
+            }),
+          );
+          const parked = Atomics.waitAsync(flags, 0, 0);
+          const state = parked.async ? await Promise.race([parked.value, exited]) : parked.value;
+          Atomics.notify(flags, 0);
+          const terminated = worker.terminate();
+          Atomics.store(flags, 1, 1);
+          Atomics.notify(flags, 1);
+          await terminated;
+          await exited;
+          console.log(state === "exited" ? "never parked:" : "parked:", events.join(", "));
+        } else {
+          const flags: Int32Array = workerData;
+          const symbolFor = Symbol.for;
+          Symbol.for = key => {
+            Symbol.for = symbolFor;
+            Atomics.store(flags, 0, 1);
+            Atomics.notify(flags, 0);
+            Atomics.wait(flags, 1, 0);
+            return symbolFor(key);
+          };
+          const late = new URL("./late.js", import.meta.url).href;
+          await import("data:text/javascript," + encodeURIComponent("import " + JSON.stringify(late) + ";"));
+          parentPort!.postMessage("the import finished");
+        }
+      `,
+      "/late.ts": /* js */ `
+        import * as zlib from "node:zlib";
+        export const names = Object.keys(zlib).length;
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./late.ts"],
+    outfile: "dist/out",
+    run: eachMode(() => ({ file: "dist/out", stdout: "parked: exit 1", stderr: "" })),
+  });
+
+  // The loader does not look up a graph module by name when its key is not Latin-1: it makes that record from an
+  // analysis of the module's source text, and a module JSC's parser rejects fails there.
+  itBundled("compile/prelinked/ModuleKeyNotLatin1", {
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    files: {
+      "/entry.ts": /* js */ `
+        const load = (name: string) => import(new URL("./" + name + ".js", import.meta.url).href);
+        const late = await load("日本");
+        console.log(late.read(), (await load("日本")) === late);
+        console.log(await load("壊").then(() => "loaded", error => error.name + ": " + error.message));
+      `,
+      "/日本.ts": /* js */ `
+        import * as path from "node:path";
+        import { sep } from "node:path";
+        let reads = 0;
+        export function read() {
+          return [++reads, path.posix.sep, sep === path.sep, decodeURIComponent(import.meta.url.split("/").pop()!)].join();
+        }
+      `,
+      // Bun's parser accepts this property name and JSC's does not, so the build embeds the module without bytecode.
+      "/壊.ts": /* js */ `
+        export const test = (text: string) => /\\p{NotAProperty}/u.test(text);
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./日本.ts", "./壊.ts"],
+    outfile: "dist/out",
+    run: eachMode(() => ({
+      file: "dist/out",
+      stdout: "1,/,true,日本.js true\nSyntaxError: Invalid regular expression: invalid property expression",
+      stderr: "",
+    })),
+  });
 });

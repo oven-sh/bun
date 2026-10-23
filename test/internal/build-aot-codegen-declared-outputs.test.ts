@@ -226,15 +226,14 @@ describe("emitRemovableFeatures", () => {
     emitRemovableFeatures({ n, cfg, sources: noSources({ removableFeatures: [definitions] }), o, dirStamp });
 
     const rust = resolve(cfg.codegenDir, "removable_features.rs");
-    const initialRemoval = resolve(cfg.codegenDir, "removable_features_initial_removal.s");
     const header = resolve(cfg.codegenDir, "BunRemovableFeatures.h");
     const json = resolve(cfg.codegenDir, "removable-features.json");
     expect(removableFeaturesJson(cfg)).toBe(json);
-    expect(edgeOutputs(n, json)).toEqual([rust, initialRemoval, header, json].map(p => n.rel(p)).sort());
-    expect(o.rustInputs).toEqual([rust, initialRemoval]);
+    expect(edgeOutputs(n, json)).toEqual([rust, header, json].map(p => n.rel(p)).sort());
+    expect(o.rustInputs).toEqual([rust]);
     expect(o.cppHeaders).toEqual([header]);
     expect(o.cppSources).toEqual([]);
-    expect(normalized(o.all)).toEqual(normalized([rust, initialRemoval, header, json]));
+    expect(normalized(o.all)).toEqual(normalized([rust, header, json]));
 
     const inputs = edgeInputs(n, json);
     expect(inputs).toContain(n.rel(definitions));
@@ -450,12 +449,9 @@ describe("emitAotCodegen", () => {
 
     expect(normalized(o.all)).toEqual(
       normalized(
-        [
-          "removable_features.rs",
-          "removable_features_initial_removal.s",
-          "BunRemovableFeatures.h",
-          "removable-features.json",
-        ].map(name => resolve(cfg.codegenDir, name)),
+        ["removable_features.rs", "BunRemovableFeatures.h", "removable-features.json"].map(name =>
+          resolve(cfg.codegenDir, name),
+        ),
       ),
     );
   });

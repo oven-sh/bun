@@ -1439,8 +1439,9 @@ ${cppCallBody(signature, thunkSymbol(fn, signature))}
   }
   const name = hostFunctionName(fn);
   // At the definition: tables, namespaces, `$bindgen` and hand-written C++ all hold the pointer.
-  const record = guard
-    ? `    ${hostFunctionDefinitionRecord(removableFeatures(), guard.feature, name, guard.builtin)}\n`
+  const feature = guard?.feature ?? fn.feature;
+  const record = feature
+    ? `    ${hostFunctionDefinitionRecord(removableFeatures(), feature, name, guard?.builtin)}\n`
     : "";
   const leading = cppLeadingOfFunction(fn).map(() => "JSC::EncodedJSValue");
   const hostFunction = cppHostFunction(name, fn, signature => thunkSymbol(fn, signature), "", record);

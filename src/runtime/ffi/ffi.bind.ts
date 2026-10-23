@@ -12,7 +12,7 @@ export const FFI = b.class({
   },
 });
 
-const method = { returns: b.any, capability: "js", throws: true } as const;
+const method = { returns: b.any, feature: "Ffi", capability: "js", throws: true } as const;
 
 // The functions of `Bun.FFI`. One that is given bad options returns the error.
 export const viewSource = b.fn({
@@ -31,6 +31,7 @@ export const linkSymbols = b.fn({ ...method, export: "Bun__FFI__linkSymbols", ar
 /** A callback that is closed has no address any more. */
 export const closeCallback = b.fn({
   export: "Bun__FFI__closeCallback",
+  feature: "Ffi",
   args: { callback: b.any },
   uses: { callback: [...table.handedOver, table.definesName(["ptr"], table.strictNull)] },
 });

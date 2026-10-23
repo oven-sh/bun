@@ -2,7 +2,7 @@ import { builtinFeatureUses, readTrimTable } from "bun:internal-for-testing";
 import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
-import { loadFeatures, narrowestTrimFeature, type Feature, type FeatureModel, type FeatureName, type TrimFeature } from "../../scripts/build/trim/features";
+import { loadFeatures, narrowestTrimFeature, type FeatureModel, type FeatureName, type TrimFeature } from "../../scripts/build/trim/features";
 import type { TrimTable } from "../../scripts/build/trim/table";
 import type { BuiltinEntry } from "../../scripts/build/trim/types";
 
@@ -27,15 +27,6 @@ const probed = Bun.spawnSync({
 });
 export const trimProbe: { stderr: string; exitCode: number } = { stderr: probed.stderr.toString(), exitCode: probed.exitCode };
 export const canTrim: boolean = !trimProbe.stderr.includes("this build of Bun doesn't support --trim");
-
-// `bun-aot` is linked without the commands that `bun` never hands over to it. What is built on it can't have them either.
-const leavesCommandsToBun = Bun.spawnSync({ cmd: [bunExe(), "lint", "--rules"], cwd: String(probe), env: bunEnv, stdout: "ignore", stderr: "pipe" })
-  .stderr.toString()
-  .startsWith("error: bun-aot doesn't include ");
-export const featuresLeftOutOfThisBun: Feature[] = leavesCommandsToBun ? model.features.filter(each => each.notInBunAot) : [];
-export const thisBunLacks = (allowed: string): boolean =>
-  model.trimFeatures.some(each => each.name === allowed && each.features.some(name => featuresLeftOutOfThisBun.some(leftOut => leftOut.name === name)));
-export const startsFromBunWithout = "the Bun executable that this build starts from doesn't have ";
 
 const featuresByKey = new Map<string, FeatureName>();
 for (const { name } of model.features) {

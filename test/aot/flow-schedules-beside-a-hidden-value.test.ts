@@ -30,6 +30,7 @@ for (const program of [
   "a-library-module-arrives-late-beside-a-hidden-value-and-is-read-by-reflect-get-with-a-receiver",
   "a-library-module-arrives-late-beside-a-hidden-value-and-lies-two-links-above-what-is-read",
   "the-global-object-is-printed",
+  "a-class-that-a-module-of-bun-makes-is-named-long-after-bun-has-left",
   "evaluators-and-a-loader-beside-a-hidden-value-are-called",
   "evaluators-and-a-loader-arrive-late-beside-a-hidden-value-and-are-called",
 ]) {

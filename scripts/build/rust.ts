@@ -271,7 +271,7 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_lint_driver: ["compressed/lint/", "compressed/codegen/lint-rule-pages.txt.zst"],
   bun_parsers: ["json_byte_class.rs", "xml_byte_class.rs"],
   bun_patch_jsc: ["generated_bindgen_bun_patch_jsc.rs"],
-  bun_removable_features: ["removable_features.rs", "removable_features_initial_removal.s"],
+  bun_removable_features: ["removable_features.rs"],
   bun_resolver: ["node-fallbacks/"],
   bun_runtime: "all",
   bun_sema: ["compressed/src/sema/"],

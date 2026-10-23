@@ -11,7 +11,7 @@ A row that measure.py marked void (other work ran on its cores) is used and coun
 """
 import argparse, json, math, statistics
 
-NAMES = {"bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "koa": "Koa", "tanstack": "TanStack Start", "express": "Express", "fastify": "Fastify"}
+NAMES = {"bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "koa": "Koa", "tanstack": "TanStack Start", "tanstack-typed": "TanStack Start with typed versions", "express": "Express", "fastify": "Fastify", "fastify-schemas": "Fastify with schemas"}
 
 parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
 parser.add_argument("one")

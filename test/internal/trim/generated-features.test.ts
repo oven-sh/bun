@@ -12,7 +12,7 @@ import {
   serializeFeatureModel,
 } from "../../../scripts/build/trim/features.ts";
 import { rustTableFormat } from "../../../scripts/build/trim/table-format.ts";
-import { cppHeader, initialRemovalAssembly, rustSource } from "../../../src/codegen/generate-removable-features.ts";
+import { cppHeader, rustSource } from "../../../src/codegen/generate-removable-features.ts";
 import {
   beginGuardedBody,
   endGuardedBody,
@@ -107,8 +107,6 @@ pub(crate) const TRIM_FEATURE_RECORDS: &[TrimFeatureRecord] = &[
     TrimFeatureRecord { trim_feature: TrimFeature::HtmlRewriter, name: "html-rewriter", features: &[Feature::Jit, Feature::Sqlite] },
     TrimFeatureRecord { trim_feature: TrimFeature::Jit, name: "jit", features: &[Feature::Jit] },
 ];
-pub(crate) const LEFT_OUT_OF_LINK: &[Feature] = &[
-];
 #[unsafe(no_mangle)]
 extern "C" fn Bun__removableFeatureName(index: u16) -> *const core::ffi::c_char {
     match index {
@@ -123,32 +121,6 @@ pub(crate) const RUST_SOURCE_VERSION: u32 = 2;
 `);
   });
 
-  test("leaves the commands that bun never hands over out of bun-aot, and nothing out of any other build", () => {
-    const withCommand = parse({
-      ...sampleFiles,
-      "bun.def": sampleFiles["bun.def"] + "  not-in-bun-aot\n",
-    });
-    const listOf = (source: string) => /const LEFT_OUT_OF_LINK: &\[Feature\] = &\[\n((?: .*\n)*)\];/.exec(source)![1];
-    const removalOf = (assembly: string) => assembly.slice(".byte ".length).trim().split(",").map(Number);
-    expect(listOf(rustSource(withCommand))).toBe("");
-    expect(listOf(rustSource(withCommand, true))).toBe("    Feature::Quoted,\n");
-    expect(removalOf(initialRemovalAssembly(withCommand))).toEqual(new Array(featureIndexLimit).fill(0));
-    expect(
-      removalOf(initialRemovalAssembly(withCommand, true)).flatMap((byte, index) => (byte ? [index] : [])),
-    ).toEqual([129]);
-    expect(realModel.features.filter(feature => feature.notInBunAot).map(feature => feature.name)).toEqual([
-      "Lint",
-      "Install",
-      "Fmt",
-      "Repl",
-      "Create",
-      "Upgrade",
-    ]);
-    expect(buildErrorOf(() => parse({ "bun.def": 'feature A "a"\n  not-in-bun-aot\n' })).message).toBe(
-      "not-in-bun-aot is for a command",
-    );
-  });
-
   test("numbers the real features and trim features in ascending order", () => {
     const source = rustSource(realModel);
     expect(captures(source, /^pub(?:\(crate\))? (?:const|enum) (\w+)/gm).flat()).toEqual([
@@ -159,7 +131,6 @@ pub(crate) const RUST_SOURCE_VERSION: u32 = 2;
       "ALL_TRIM_FEATURES",
       "FEATURE_RECORDS",
       "TRIM_FEATURE_RECORDS",
-      "LEFT_OUT_OF_LINK",
       "RUST_SOURCE_VERSION",
     ]);
     const [featureVariants, trimFeatureVariants] = captures(source, /^pub enum \w+ \{\n([^}]*)\}$/gm).map(([body]) =>
@@ -242,7 +213,7 @@ describe.concurrent("command line", () => {
     async () => {
       expect(await runGenerator([root])).toEqual({
         stdout: "",
-        stderr: "usage: bun src/codegen/generate-removable-features.ts <repository root> <codegen dir> [--bun-aot]\n",
+        stderr: "usage: bun src/codegen/generate-removable-features.ts <repository root> <codegen dir>\n",
         exitCode: 1,
       });
     },
@@ -263,13 +234,9 @@ describe.concurrent("command line", () => {
         "BunRemovableFeatures.h",
         "removable-features.json",
         "removable_features.rs",
-        "removable_features_initial_removal.s",
       ]);
       expect(readFileSync(join(codegenDir, "removable_features.rs"), "utf8")).toBe(
         rustSource(model) + rustTableFormat().join("\n") + "\n",
-      );
-      expect(readFileSync(join(codegenDir, "removable_features_initial_removal.s"), "utf8")).toBe(
-        initialRemovalAssembly(model),
       );
       expect(readFileSync(join(codegenDir, "BunRemovableFeatures.h"), "utf8")).toBe(cppHeader(model));
       expect(readFileSync(join(codegenDir, "removable-features.json"), "utf8")).toBe(serializeFeatureModel(model));

@@ -561,8 +561,7 @@ const nativeCalls = [
       "m_processEnvObject.getInitializedOnMainThread",
       "processEnvObject",
     ],
-    // On Windows it calls windowsEnv, which every executable for Windows has: b.startup below.
-    calls: [],
+    calls: functionsIn("builtins/ProcessObjectInternals", "windowsEnv"),
     otherMentions: [
       { file: inBindings("JSEnvironmentVariableMap.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.h") },
@@ -767,8 +766,6 @@ export default b.declarations(
         }),
       ),
       b.functionUsed(b.functionIn("builtins/UtilInspect", "stylizeWithNoColor"), b.keptIn(stylizeWithNoColorCell)),
-      // Whoever goes over the members of `process` or of `Bun` reads `env` under no name, and on Windows this function makes the object.
-      b.functionIn("builtins/ProcessObjectInternals", "windowsEnv"),
     ],
     namesOfMethodsCallingLoads: [customInspect],
     moduleLoaderFunctions: functionsIn(

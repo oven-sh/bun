@@ -28,7 +28,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v6 = NewClosure function=f2
     v7 = NewObject -, v6 layout=L2 fields=[0]
     v8 = NewObject -, v7 layout=L1 fields=[0]
-    v9 = Builtin builtin=NativeFunctionsFfiRsBun__FFI__cc
+    v9 = Builtin builtin=NativeFunctionsFfiBindTsCc
     v10 = Call v9, -, v8
     v11 = Builtin builtin=Bun
     v12 = PropGet v11 key="FFI"

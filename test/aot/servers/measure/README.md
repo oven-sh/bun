@@ -1,8 +1,10 @@
 # Measuring the servers
 
-Eight small servers with the same eight routes (`../app`, `../tanstack`; the routes and their answers are in `../answers.ts`): Bun.serve, Hono, Elysia,
-node:http, Koa, TanStack Start, Express and Fastify. `measure.py` builds each of them with every Bun it is given, loads them side by side and writes
+Nine small servers with the same eight routes (`../app`, `../tanstack`; the routes and their answers are in `../answers.ts`): Bun.serve, Hono, Elysia,
+node:http, Koa, TanStack Start, Express, Fastify, and Fastify with a schema for the body of an order and for every JSON response (`fastify-schemas`: ajv and
+fast-json-stringify generate code from the schemas at run time, which a compiled server interprets). `measure.py` builds each of them with every Bun it is given, loads them side by side and writes
 one line of JSON for each server, route and build. Every response is compared with the expected one, byte for byte.
+`tanstack-typed` is TanStack Start once more, with the typed versions of react, react-dom and seroval from `packages/bun-sound` in `.sound/`.
 
 ## Compiled ahead of time against the JIT, in one command
 
@@ -26,8 +28,8 @@ It prints, and leaves in `<folder>/table.md`:
 - requests per second for every route, worst first.
 
 It needs Linux, `python3`, `perf` (with `kernel.perf_event_paranoid` at 2 or below), `taskset`, `cc`, and network access once, for `bun install` (`--modules` of `measure.py` takes an
-installed `node_modules` instead, `MODULES=` of the script). The cores must be a multiple of eight, consecutive and idle. With sixteen of them it takes about three and a half hours: every
-server, route and column is started twice and warmed each time. `QUICK=1` (one start, two rounds of one-second windows) takes about fifty minutes and scatters by up to 4% a row; thirty-two cores
+installed `node_modules` instead, `MODULES=` of the script). The cores must be a multiple of eight, consecutive and idle. With sixteen of them it takes about four hours: every
+server, route and column is started twice and warmed each time. `QUICK=1` (one start, two rounds of one-second windows) takes about an hour and scatters by up to 4% a row; thirty-two cores
 halve either, and `SERVERS=express,fastify` or `ROUTES=text,json` measure a part.
 
 ## What makes the numbers fair

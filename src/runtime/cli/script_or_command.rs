@@ -157,6 +157,7 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
         b"--help" | b"-h" | b"--no-script" => true,
         b"--help-all" | b"--doctor" => command != b"check" && command != b"compile",
         b"--aot" => command == b"check",
+        b"--library" => command == b"compile",
         b"--explain" => command == b"lint",
         _ => false,
     }

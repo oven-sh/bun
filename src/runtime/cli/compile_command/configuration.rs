@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use super::entry_points::find_default_entry_point;
+use super::library::find_default_library_entry_points;
 use super::{BundlerInputs, CompileProduct, CompileRequest, ExecutableSettings, RequestOrigin};
 pub(super) use crate::cli::build_command::compile_outfile;
 use crate::cli::command::Context;
@@ -19,6 +20,8 @@ use bun_options_types::schema::api;
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, RuntimeOptions, target_base_public_path};
 use bun_sys::Fd;
+
+pub(crate) const DEFAULT_LIBRARY_OUTDIR: &[u8] = b"dist";
 
 pub(super) struct Configuration {
     pub(super) transpiler: &'static mut Transpiler<'static>,
@@ -46,6 +49,12 @@ pub(super) fn use_default_entry_point(ctx: &mut ContextData) {
         .absolute_working_dir
         .as_deref()
         .expect("Arguments::parse sets the working directory");
+    if ctx.bundler_options.library {
+        let found =
+            find_default_library_entry_points(working_directory, &ctx.bundler_options.outdir);
+        ctx.args.entry_points = found.unwrap_or_else(|error| error.exit());
+        return;
+    }
     match find_default_entry_point(working_directory) {
         Ok(found) => {
             ctx.args.entry_points = vec![found.path];

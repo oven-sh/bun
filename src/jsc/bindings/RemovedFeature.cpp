@@ -163,14 +163,6 @@ extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature)
     _exit(70);
 }
 
-extern "C" [[noreturn]] void Bun__abortForCommandLeftOut(uint16_t feature)
-{
-    Bun::writeToStandardError("error: bun-aot doesn't include "_span);
-    Bun::writeToStandardError(Bun::textOfRemovableFeature(static_cast<JSC::RemovableFeature>(feature)).span());
-    Bun::writeToStandardError(". Run bun instead.\n"_span);
-    _exit(70);
-}
-
 extern "C" [[noreturn]] void Bun__abortForRemovedLocaleData()
 {
     Bun::writeToStandardError("error: the locale data this program needs was removed by --trim. Add the locale to compile.trim.locales to keep it.\n"_span);

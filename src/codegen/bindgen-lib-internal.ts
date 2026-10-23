@@ -2769,6 +2769,8 @@ export interface FunctionOptions extends SignatureOptions {
   passCallee?: boolean;
   /** The host function has C linkage under this name. C++ declares it with `BUN_DECLARE_HOST_FUNCTION`, and in Rust it is a `JSHostFn` of the generated module. */
   export?: string;
+  /** The feature that `bun build --compile --trim` removes the function with, for one that native code makes callable: no property table and no `$bindgen` names it, so the table of built-ins has no entry that says it. */
+  feature?: string;
 }
 
 /** What `b.value` takes. */
@@ -2805,6 +2807,7 @@ export class Signature {
       "requiredArguments",
       "passCallee",
       "export",
+      "feature",
       "rustPath",
       "cppSymbol",
       "cppInlineBody",
@@ -2970,6 +2973,7 @@ export class FunctionDefinition {
   readonly passThis: boolean;
   readonly passCallee: boolean;
   readonly exportName: string | undefined;
+  readonly feature: string | undefined;
   /** `b.value`: there is no JS function. */
   readonly isValue: boolean;
   name = "";
@@ -2980,7 +2984,8 @@ export class FunctionDefinition {
     this.passThis = options.passThis ?? false;
     this.passCallee = options.passCallee ?? false;
     this.exportName = options.export;
-    for (const key of ["passThis", "passCallee", "export"] as const) {
+    this.feature = options.feature;
+    for (const key of ["passThis", "passCallee", "export", "feature"] as const) {
       assert(
         signatures.every(
           signature => signature instanceof Signature || (signature as FunctionOptions)[key] === options[key],
@@ -3583,7 +3588,7 @@ export class NamespaceDefinition {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
       assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);
       const signatures: readonly SignatureOptions[] = Array.isArray(options) ? options : [options];
-      for (const key of ["passThis", "passCallee", "export"])
+      for (const key of ["passThis", "passCallee", "export", "feature"])
         assert(!signatures.some(signature => key in signature), `${name}: a function of a namespace has no ${key}`);
       const fn = new FunctionDefinition(signatures);
       fn.name = name;

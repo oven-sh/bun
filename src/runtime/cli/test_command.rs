@@ -1772,10 +1772,6 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if run_compiled::is_requested(ctx) && !bun_aot::engine::has_compiler() {
-            crate::cli::compile_command::run_in_bun_with_compiler();
-        }
-
         if !ctx.test_options.test_worker && !run_compiled::is_second_process() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();

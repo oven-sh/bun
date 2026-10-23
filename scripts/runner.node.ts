@@ -12,8 +12,6 @@ import { createHash } from "node:crypto";
 import {
   accessSync,
   appendFileSync,
-  chmodSync,
-  copyFileSync,
   existsSync,
   constants as fs,
   linkSync,
@@ -314,16 +312,6 @@ const { values: options, positionals: filters } = parseArgs({
       default: undefined,
     },
     ["build-id"]: {
-      type: "string",
-      default: undefined,
-    },
-    /** The step that built `bun-aot`, or a path to it. It is laid beside the Bun under test, as a release lays it. */
-    ["bun-aot-step"]: {
-      type: "string",
-      default: undefined,
-    },
-    /** The step that built the `bun` that has every command, or a path to it, for when the Bun under test is `bun-aot`. */
-    ["every-command-step"]: {
       type: "string",
       default: undefined,
     },
@@ -745,22 +733,6 @@ async function runTests(): Promise<TestResult[]> {
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
-  if (options["bun-aot-step"]) {
-    const built = await getExecPathFromBuildkite(options["bun-aot-step"], options["build-id"], "release-aot");
-    const beside = join(dirname(execPath), isWindows ? "bun-aot.exe" : "bun-aot");
-    copyFileSync(built, beside);
-    chmodSync(beside, 0o755);
-    !isQuiet && console.log("bun-aot:", beside, getRevision(beside));
-  }
-
-  // `bun-aot` has no `bun install`.
-  let installerPath = execPath;
-  if (options["every-command-step"]) {
-    installerPath = await getExecPathFromBuildkite(options["every-command-step"], options["build-id"], "release-bun");
-    process.env.BUN_WITH_EVERY_COMMAND = installerPath;
-    !isQuiet && console.log("bun with every command:", installerPath, getRevision(installerPath));
-  }
-
   const expectations = getTestExpectations();
   const modifiers = getTestModifiers(execPath);
   // "1.2.3+abcdef123", and not "1.2.3-canary.1+abcdef123" or "1.2.3-debug+abcdef123".
@@ -987,7 +959,7 @@ async function runTests(): Promise<TestResult[]> {
   if (!isQuiet) {
     for (const path of [cwd, testsPath]) {
       const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
-      await runTest(title, async () => spawnBunInstall(installerPath, { cwd: path }));
+      await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
     }
   }
 
@@ -1018,7 +990,7 @@ async function runTests(): Promise<TestResult[]> {
 
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
-    if (isCI && !isWindows && (await installCiRemapServer(installerPath))) {
+    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers<{ port: number }>();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers<Error | string>();
       let exiting = false;
@@ -1395,7 +1367,7 @@ async function runTests(): Promise<TestResult[]> {
 
       const packageJson = join(relative(cwd, vendorPath), "package.json").replace(/\\/g, "/");
       if (packageManager === "bun") {
-        const installResult = await runTest(packageJson, () => spawnBunInstall(installerPath, { cwd: vendorPath }));
+        const installResult = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd: vendorPath }));
         if (!installResult?.ok) {
           continue;
         }
@@ -2943,12 +2915,12 @@ function getExecPath(bunExe: string): string {
   throw new Error(`Could not find executable: ${bunExe}`, { cause: error });
 }
 
-async function getExecPathFromBuildkite(target: string, buildId?: string, folder = "release"): Promise<string> {
+async function getExecPathFromBuildkite(target: string, buildId?: string): Promise<string> {
   if (existsSync(target) || target.includes("/")) {
     return getExecPath(target);
   }
 
-  const releasePath = join(cwd, folder);
+  const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath: string | undefined;
@@ -3030,7 +3002,7 @@ function addPath(...paths: (string | undefined)[]): string {
 }
 
 function getTestLabel(): string | undefined {
-  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hand-over|hardened)$/, "");
+  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hardened)$/, "");
 }
 
 /**

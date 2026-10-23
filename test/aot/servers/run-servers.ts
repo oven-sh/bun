@@ -1,7 +1,7 @@
 // Helpers shared by ./servers.test.ts and ./features.test.ts.
 import { expect } from "bun:test";
 import { symlinkSync } from "fs";
-import { bunEnv, bunExe, bunExeWithEveryCommand } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { spawned } from "../run-programs";
 
@@ -15,7 +15,7 @@ export function filterRequested(names: string[]) {
 /** Runs `bun install` in the folder, or links AOT_SERVERS_MODULES as its node_modules. */
 export async function installPackages(folder: string) {
   if (process.env.AOT_SERVERS_MODULES) return symlinkSync(process.env.AOT_SERVERS_MODULES, join(folder, "node_modules"));
-  const install = await spawned([bunExeWithEveryCommand(), "install", "--ignore-scripts"], folder, bunEnv);
+  const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
   expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
 }
 

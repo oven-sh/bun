@@ -1,5 +1,5 @@
-// Opt-in test. Nine HTTP servers implement the same routes, each written the way a user of that framework would write it:
-// Bun.serve, a thin typed framework over it (./app/thin-framework.ts), Hono, Elysia, node:http, Koa, Express and Fastify (./app/<name>.ts on top of ./app/shared.ts), and TanStack Start
+// Opt-in test. Ten HTTP servers implement the same routes, each written the way a user of that framework would write it:
+// Bun.serve, a thin typed framework over it (./app/thin-framework.ts), Hono, Elysia, node:http, Koa, Express, Fastify without and with schemas (./app/<name>.ts on top of ./app/shared.ts), and TanStack Start
 // (./tanstack, built with vite first, using the same shared.ts). Each one is built with `bun build --compile --aot`, startServer,
 // and sent requests. ./answers.ts has the expected responses.
 //
@@ -15,7 +15,7 @@
 //   other build options            same answers with --trim, with --disallow-code-generation-from-strings, and with both
 // ./go (net/http) and ./rust (axum) implement six of the routes. ./measure compares against them, so they are checked too.
 //
-//   AOT_SERVERS=1 bun test test/aot/servers                 all nine (about two minutes, mostly `bun install`)
+//   AOT_SERVERS=1 bun test test/aot/servers                 all ten (about two minutes, mostly `bun install`)
 //   AOT_SERVERS=express,fastify bun test test/aot/servers   only these
 //   AOT_SERVERS=go,rust bun test test/aot/servers           the two native servers; `cargo build` downloads crates
 //   AOT_SERVERS_MODULES=<node_modules folder> ..            use packages that are already installPackages; nothing is downloaded
@@ -32,9 +32,20 @@ import { built, spawned, unsupported } from "../run-programs";
 import { invalidOrderBody, invalidOrders, routes, type Route } from "./answers";
 import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
 
-const servers = filterRequested(["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "tanstack"]);
+const servers = filterRequested([
+  "bun",
+  "thin",
+  "hono",
+  "elysia",
+  "node",
+  "koa",
+  "express",
+  "fastify",
+  "fastify-schemas",
+  "tanstack",
+]);
 
-const generatesHandlersFromStrings = ["elysia", "koa"];
+const generatesHandlersFromStrings = ["elysia", "koa", "fastify", "fastify-schemas"];
 
 const json = { "Content-Type": "application/json" };
 const order = routes.find(route => route.name === "post")!.request!;

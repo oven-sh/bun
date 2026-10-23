@@ -134,6 +134,109 @@ If your build only removes the types from your TypeScript files, each source fil
 
 A bundler or a minifier rewrites the code, so its input no longer matches its output.
 
+## Build the package
+
+`bun compile --library` builds a package to publish instead of an executable.
+
+```ts src/index.ts icon="/icons/typescript.svg"
+export interface Options {
+  name: string;
+  times: number;
+}
+
+export function greet(options: Options): string {
+  return ("hello " + options.name + " ").repeat(options.times).trim();
+}
+```
+
+```json package.json icon="file-json"
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "license": "MIT",
+  "scripts": { "test": "bun test" },
+  "devDependencies": { "@types/bun": "latest" }
+}
+```
+
+```bash terminal icon="terminal"
+bun compile --library
+```
+
+Bun type checks the package, then writes a `dist` folder that's ready to publish. A type error fails the build.
+
+```txt
+  index.js      135 bytes  (entry point)
+  index.d.ts    123 bytes  (declaration)
+  package.json  352 bytes  (asset)
+```
+
+| File           | Holds                                              | Read by                     |
+| -------------- | -------------------------------------------------- | --------------------------- |
+| `index.js`     | The bundle, as ES modules                          | Every runtime and bundler   |
+| `index.d.ts`   | Types for everything `index.js` exports            | Editors, `tsc`, `bun check` |
+| `package.json` | Your `package.json`, rewritten for the files above | npm and whoever installs it |
+
+The files are named after the entry point. There is one `.d.ts` file for each source file. Bun also copies your `README` and `LICENSE` files.
+
+`--library` bundles, so it writes no typed file and no `"bun-aot"` condition. A program built with `bun compile` compiles the package as JavaScript.
+
+### The package.json that Bun writes
+
+```json title="dist/package.json" icon="file-json"
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["index.d.ts", "index.js"]
+}
+```
+
+Bun keeps the fields that describe the package, such as `name`, `version`, `license` and `dependencies`. It leaves out `scripts`, `devDependencies`, `private` and `workspaces`. It writes its own `type`, `main`, `module`, `types`, `exports` and `files`.
+
+Bun keeps an entry of your own `exports` if this build writes its file. The entry can point at the source (`./src/index.ts`) or at the file that the build writes (`./dist/index.js`). It keeps its name and its conditions, and Bun rewrites the paths.
+
+Bun drops the rest of what your own `package.json` lists under `exports` and `files`, such as CSS or JSON assets. It doesn't copy those files either. It keeps a `bin` entry only if its file is one of the entry points. The build warns about each `exports` and `bin` entry that it drops, whole or in part.
+
+```txt
+warn: dist/package.json has no "./style.css" export, because no entry point builds it
+warn: dist/package.json has no "rich" bin, because ./src/cli.ts is not an entry point
+```
+
+Read `dist/package.json` before you publish.
+
+### Entry points, dependencies and flags
+
+- Without an entry point, Bun builds every TypeScript file that `"exports"` in `package.json` points at. If there is none, it builds the file that `"module"` or `"main"` points to, if it's a TypeScript file. Otherwise it looks for `index.ts`, then `src/index.ts`.
+- With several entry points, each gets its own files and its own entry in `exports`: `./src/index.ts ./src/version.ts` gives `"."` and `"./version"`.
+- Bun leaves `dependencies`, `peerDependencies` and `optionalDependencies` as imports. It bundles the `devDependencies` that your code imports.
+- `--outdir` sets the output folder. The default is `dist`.
+- `--target` is `node` by default. `browser` and `bun` work too.
+- `--format` is `esm` by default. `cjs` works too, for sources that use `require()` and `module.exports`.
+- An entry point inside `--outdir` is an error, because the build would overwrite it.
+- `--library` also takes a JavaScript entry point. Bun infers the `.d.ts` file from the code and its JSDoc comments.
+
+`--library` writes a package into a folder, so it rejects `--outfile` and [`--trim`](/bundler/aot-size).
+
+```bash terminal icon="terminal"
+bun compile --library --outfile greeter
+```
+
+```txt
+error: --library writes a folder. Use --outdir instead of --outfile
+```
+
 ## Test before you publish
 
 A typed file doesn't change what your package does. A value that doesn't match its declared type [falls back to the slow path](/bundler/aot-types#when-a-value-doesnt-match-its-type) and behaves as it does in `bun run` or Node.js. Wrong types only cost speed, so find them before your users do. Run your package's tests under the compiler's rules, then compiled and with the log.

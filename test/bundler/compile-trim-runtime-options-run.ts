@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { slot, unsupported } from "../aot/run-programs";
-import { canTrim, startsFromBunWithout, thisBunLacks } from "./compile-trim-features";
+import { canTrim } from "./compile-trim-features";
 
 const source = readFileSync(join(import.meta.dir, "../../src/runtime/cli/Arguments.rs"), "utf8");
 
@@ -204,14 +204,6 @@ async function started(folder: string, name: string, options?: string, args: str
 const formsOf = (sorted: Record<string, string[]>) => Object.entries(sorted).flatMap(([name, forms]) => forms.map(form => [name, form] as const));
 const formsByUse = Object.entries(obeyedWhereTheProgramUsesTheFeature).flatMap(([name, { forms, program }]) => forms.map(form => [name, form, program] as const));
 const formsByAllowing = Object.entries(obeyedWhereTheFeatureIsAllowed).flatMap(([name, { forms, allow }]) => forms.map(form => [name, form, allow] as const));
-// What is built starts from the Bun that builds it, and has no feature that this one was linked without.
-const formsThisBunCanAllow = formsByAllowing.filter(([, , allow]) => !thisBunLacks(allow));
-const formsThisBunLacks = formsByAllowing.filter(([, , allow]) => thisBunLacks(allow));
-const messagesOf = (build: Promise<unknown>) =>
-  build.then(
-    () => "",
-    (error: AggregateError) => [error.message, ...(error.errors ?? [])].map(String).join("\n"),
-  );
 
 export function testTheSorting() {
   test("every option that a compiled executable reads is in one of the lists: it works like in the untrimmed executable, it is ignored with a warning, or it fails at startup", () => {
@@ -303,12 +295,7 @@ export function testBunOptions() {
       expect(await started(whole, name, form)).toEqual(failure);
     });
 
-    test.each([...new Set(formsThisBunLacks.map(([, , allow]) => allow))])("compile.trim.allow can't list a feature that this Bun was linked without: %s", async allow => {
-      const folder = laidOut(join(root, String(folders++)), "trimmed");
-      expect(await messagesOf(builtAllowing(folder, allow))).toContain(startsFromBunWithout);
-    });
-
-    test.each(formsThisBunCanAllow)("%s is read where compile.trim.allow lists that feature: %s, %s", async (name, form, allow) => {
+    test.each(formsByAllowing)("%s is read where compile.trim.allow lists that feature: %s, %s", async (name, form, allow) => {
       const folder = laidOut(join(root, String(folders++)), "trimmed");
       await builtAllowing(folder, allow);
       const ran = await started(folder, name, form);
@@ -374,20 +361,9 @@ export function testExecArgv(part: number, parts: number) {
       expect(await started(trimmed.folder, name)).toEqual(await started(whole.folder, name));
     });
 
-    test.each(inThisPart(formsThisBunLacks))("%s fails the build, with and without --trim and where compile.trim.allow lists it, because this Bun was linked without the feature that it needs: %s, %s", async (name, form, allow) => {
-      const both = await builtBothWaysWith(form);
-      using whole = both[0];
-      using trimmed = both[1];
-      const failure = { stderr: expect.stringContaining(startsFromBunWithout), exitCode: 1 };
-      expect([whole.build, trimmed.build]).toMatchObject([failure, failure]);
-      const folder = laidOut(join(root, String(folders++)), "trimmed");
-      expect(await messagesOf(builtAllowing(folder, allow, [form]))).toContain(startsFromBunWithout);
-      rmSync(folder, { recursive: true, force: true });
-    });
+    test.each(inThisPart(formsByAllowing))("%s works, because the build keeps the feature that it needs: %s", (name, form) => worksLikeInTheUntrimmedExecutable(name, form));
 
-    test.each(inThisPart(formsThisBunCanAllow))("%s works, because the build keeps the feature that it needs: %s", (name, form) => worksLikeInTheUntrimmedExecutable(name, form));
-
-    test.each(inThisPart(formsThisBunCanAllow))("%s works where compile.trim.allow lists that feature: %s, %s", async (name, form, allow) => {
+    test.each(inThisPart(formsByAllowing))("%s works where compile.trim.allow lists that feature: %s, %s", async (name, form, allow) => {
       using whole = await builtWith("whole", form);
       expect(whole.build).toMatchObject({ exitCode: 0 });
       const folder = laidOut(join(root, String(folders++)), "trimmed");

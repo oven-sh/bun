@@ -11,7 +11,7 @@
 import { SQL } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, bunExeWithEveryCommand, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../../run-programs";
 import { difference, makeExchanges, send, type Exchange } from "./exchanges";
@@ -50,7 +50,7 @@ describe.skipIf(!databaseUrl || !!unsupported)("compile/aot/backend/tracker", ()
   async function install(folder: string) {
     if (process.env.AOT_TRACKER_MODULES)
       return symlinkSync(process.env.AOT_TRACKER_MODULES, join(folder, "node_modules"));
-    const install = await spawned([bunExeWithEveryCommand(), "install", "--ignore-scripts"], folder, bunEnv);
+    const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
     expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   }
 

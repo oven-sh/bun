@@ -82,6 +82,17 @@ function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCal
   engine.end(buffer);
 }
 
+const emptyOutBuffer = Buffer.alloc(0);
+function ignoreResult() {}
+
+function takeCallback(engine: $Node.ZlibBase): ZlibCallback {
+  const callback = engine.cb;
+  engine.cb = ignoreResult;
+  engine.buffers = null;
+  engine._outBuffer = emptyOutBuffer;
+  return callback;
+}
+
 function zlibBufferOnData(this: $Node.ZlibBase, chunk: Buffer) {
   if (!this.buffers) this.buffers = [chunk];
   else ArrayPrototypePush.$call(this.buffers, chunk);
@@ -90,13 +101,13 @@ function zlibBufferOnData(this: $Node.ZlibBase, chunk: Buffer) {
   if (this.nread > maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb($ERR_BUFFER_TOO_LARGE(maxOutputLength));
+    takeCallback(this).$call(this, $ERR_BUFFER_TOO_LARGE(maxOutputLength));
   }
 }
 
 function zlibBufferOnError(this: $Node.ZlibBase, err: Error) {
   this.removeAllListeners("end");
-  this.cb(err);
+  takeCallback(this).$call(this, err);
 }
 
 function zlibBufferOnEnd(this: $Node.ZlibBase) {
@@ -108,8 +119,9 @@ function zlibBufferOnEnd(this: $Node.ZlibBase) {
     buf = bufs.length === 1 ? bufs[0] : Buffer.concat(bufs, this.nread);
   }
   this.close();
-  if (this._info) this.cb(null, { buffer: buf, engine: this });
-  else this.cb(null, buf);
+  const callback = takeCallback(this);
+  if (this._info) callback.$call(this, null, { buffer: buf, engine: this });
+  else callback.$call(this, null, buf);
 }
 
 function zlibBufferSync(engine: $Node.ZlibBase, buffer: ZlibInput) {

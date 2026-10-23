@@ -7,7 +7,7 @@
 # CHECK-NOT: f1 v3 -> unknown
 # CHECK: f1 v7 -> NativeFunctionsModuleGraphCppJsFunctionModuleGraphFrameOfFrame
 # CHECK-NEXT: f1 v9 -> f3
-# CHECK-NEXT: f1 v12 -> NativeFunctionsIpcRsEmitHandleIPCMessage
+# CHECK-NEXT: f1 v12 -> NativeFunctionsIpc_hostBindTsEmitHandleIPCMessage
 # RUN(UNREACHED): valueflow-solve unreached
 # UNREACHED: unreached f2
 # UNREACHED-NOT: unreached f3

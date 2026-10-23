@@ -624,7 +624,7 @@ describe("@types/bun integration test", () => {
         ),
     ).toEqual([
       // `undefined` for a Blob without a store or with bytes. What is published is a BunFile.
-      "Blob.bind.ts: new Blob().stat() is Promise<unknown> | undefined, not Promise<Stats>",
+      "Blob.bind.ts: file().stat() is Promise<unknown> | undefined, not Promise<Stats>",
       // An S3File is a Blob with more members, which C++ adds and no schema describes.
       "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
       "S3Client.bind.ts: new S3Client().file().stat() is Promise<unknown> | undefined, not Promise<S3Stats>",
@@ -647,6 +647,8 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
       "resolve_message.bind.ts: new ResolveMessage().stack is not published",
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
+      // Only compiled code calls it.
+      "response.bind.ts: constructJSONFromText is not published",
       // As for `match` of FileSystemRouter.
       "response.bind.ts: new Request().clone() has no keepalive, duplex",
       // `undefined` once the socket is closed.

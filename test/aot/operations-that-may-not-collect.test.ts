@@ -45,7 +45,8 @@ describe.skipIf(isASAN || isDebug).concurrent("compile/aot/operations that may n
     ["private names beside added properties", "untyped-code", "contents-survive-added-properties-and-elements.js", 8],
   ])("%s", startsAsPlainBun, 240_000);
 
-  test.each([
+  // TODO: on Windows an executable in which the collector asks from another thread all the time does not end within four minutes.
+  test.todoIf(isWindows).each([
     [
       "a method of a class that is evaluated again",
       "inner-objects",

@@ -16,6 +16,7 @@ Other environment variables:
     WORK            where intermediate files go (default: <temporary directory>/aot-quick); the files of a failure are not deleted
     WORDS           option words added to every compile, after the program's own, separated by blanks (`testaot list options`)
     RUN_OPTIONS     options of `jsc` for the run of an image, separated by blanks
+    RUN_SECONDS     how long the run of an image may take (default: 120)
 
 Prints one line per program and exits with 1 if any line is a failure:
     same            the output equals <program>.expected.txt or, if there is none, the output of `$PLAIN run <file>`
@@ -149,7 +150,7 @@ def run_program(program):
     except toolchain.ToolFailed as failed:
         return f"NOT COMPILED (exit code {failed.code}): " + " ".join(failed.said.split("\n")[:3])[:300]
 
-    code, output = toolchain.run_image(image, entries[0], env, os.environ.get("RUN_OPTIONS", "").split(), cwd=cwd)
+    code, output = toolchain.run_image(image, entries[0], env, os.environ.get("RUN_OPTIONS", "").split(), cwd=cwd, seconds=int(os.environ.get("RUN_SECONDS", 120)))
     output = without_times(output)
     needed = re.search(r"^AOT: the program needs the host's (.*), and this realm has no host$", output, re.M)
     if needed:

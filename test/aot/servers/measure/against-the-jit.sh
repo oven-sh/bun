@@ -3,14 +3,14 @@
 # Three columns: compiled with --aot | the second Bun's JIT | the first Bun's own JIT (the same runtime, modules and native code as the compiled column).
 #
 #   against-the-jit.sh <bun whose `build --compile` takes --aot> <bun to compile the JIT's column with> [<cores, default 0-15>] [<folder for the rows, default ./against-the-jit>]
-#   SERVERS=express,fastify ROUTES=text,json STARTS=1 MODULES=<an installed node_modules of ../app> narrow it down. QUICK=1: one start and shorter windows: fifty minutes.
+#   SERVERS=express,fastify ROUTES=text,json STARTS=1 MODULES=<an installed node_modules of ../app> narrow it down. QUICK=1: one start and shorter windows: an hour.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 aot=$1 jit=$2 cores=${3:-0-15} out=${4:-against-the-jit}
 [ -x "$aot" ] && [ -x "$jit" ] || { sed -n 2,6p "$0"; exit 2; }
 mkdir -p "$out"
 rm -f "$out/one-core.jsonl" "$out/four-cores.jsonl"
-servers=${SERVERS:-bun,hono,elysia,node,koa,tanstack,express,fastify}
+servers=${SERVERS:-bun,hono,elysia,node,koa,tanstack,tanstack-typed,express,fastify,fastify-schemas}
 routes=${ROUTES:-text,async,params,json,hand,typed,post,stream}
 # The name of the event differs by processor, and a name that perf takes may still count nothing.
 misses=

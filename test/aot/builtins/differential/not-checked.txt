@@ -43,13 +43,13 @@ NativeFunctionsBunProcessCppJsFunction_throwValue/0: it is not called: this real
 NativeFunctionsBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
-NativeFunctionsIpcRsEmitHandleIPCMessage/0: it is not called: it opens a connection or writes to the channel of a parent process
+NativeFunctionsIpc_hostBindTsEmitHandleIPCMessage/0: it is not called: it opens a connection or writes to the channel of a parent process
 NativeFunctionsJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/0: it is not called: this realm does not have its holder
 NativeFunctionsJSEventListenerCppJsFunctionEmitUncaughtException/0: it is not called: this realm does not have its holder
 NativeFunctionsNodeAsyncHooksCppJsSetAsyncHooksEnabled/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have its holder
-NativeFunctionsNode_cluster_bindingRsClusterRawBind/0: it is not called: it opens a connection or writes to the channel of a parent process
-NativeFunctionsNode_cluster_bindingRsSendHelperPrimary/0: it is not called: it opens a connection or writes to the channel of a parent process
+NativeFunctionsNode_cluster_bindingBindTsClusterRawBind/0: it is not called: it opens a connection or writes to the channel of a parent process
+NativeFunctionsNode_cluster_bindingBindTsSendHelperPrimary/0: it is not called: it opens a connection or writes to the channel of a parent process
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have it

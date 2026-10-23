@@ -139,11 +139,6 @@ export interface Config {
    */
   aot: boolean;
   /**
-   * `bun-aot`: the commands that `bun` runs itself and never hands over stay out of the link (`not-in-bun-aot` in
-   * src/trim/features/tools.def). Asked for one of them, the executable says that it doesn't have it.
-   */
-  onlyHandedOverCommands: boolean;
-  /**
    * Default true. Off compiles JavaScriptCore without its JIT tiers (Baseline, DFG, FTL, WebAssembly's BBQ and OMG plans,
    * RegExp code made at run time): JavaScript, RegExps and WebAssembly that arrive at run time are interpreted. Programs
    * compiled with `--aot` run as before, and one compiled by a Bun with the tiers runs on a Bun without them. B3, Air and
@@ -461,7 +456,6 @@ export interface PartialConfig {
   trimmable?: boolean;
   jit?: boolean;
   aot?: boolean;
-  onlyHandedOverCommands?: boolean;
   relr?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
@@ -964,7 +958,6 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
   const fuzzilli = partial.fuzzilli ?? false;
-  const onlyHandedOverCommands = partial.onlyHandedOverCommands ?? false;
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
   const version = pkgJson.version;
@@ -982,7 +975,6 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     canary,
     canaryRevision,
     fuzzilli,
-    onlyHandedOverCommands,
     version,
     revision,
     nodejsVersion,
@@ -1030,7 +1022,6 @@ export type CodegenFields = Pick<
   | "canary"
   | "canaryRevision"
   | "fuzzilli"
-  | "onlyHandedOverCommands"
   | "version"
   | "revision"
   | "nodejsVersion"
@@ -1086,7 +1077,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     canary,
     canaryRevision,
     fuzzilli,
-    onlyHandedOverCommands,
     version,
     revision,
     nodejsVersion,
@@ -1512,7 +1502,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       linksWithLld({ darwin, crossTarget }) &&
       host.os !== "windows",
     aot: partial.aot ?? true,
-    onlyHandedOverCommands,
     relr: partial.relr ?? false,
     pgoGenerate,
     pgoUse,
@@ -1922,7 +1911,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.trimmable) features.push("trimmable");
   if (!cfg.jit) features.push("no-jit");
   if (!cfg.aot) features.push("no-aot");
-  if (cfg.onlyHandedOverCommands) features.push("only-handed-over-commands");
   if (cfg.relr) features.push("relr");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");

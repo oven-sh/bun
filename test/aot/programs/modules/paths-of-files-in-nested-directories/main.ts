@@ -5,7 +5,8 @@ import { where as whereE } from "./a/e/leaf.ts";
 import { where as whereAccent } from "./a/né/leaf.ts";
 import { where as whereTop } from "./top.ts";
 const root = import.meta.dir;
-const relative = (path: string) => (path.startsWith(root) ? path.slice(root.length) : path.replace("file://" + root, "file://"));
+const rootOfUrls = "file://" + (root.startsWith("/") ? "" : "/") + root.replaceAll("\\", "/");
+const relative = (path: string) => (path.startsWith(root) ? path.slice(root.length) : path.replace(rootOfUrls, "file://"));
 for (const where of [whereC, whereD, whereE, whereAccent, whereTop, () => import.meta])
   console.log(relative(where().path), relative(decodeURI(where().url)), relative(where().dir), where().file);
 try {

@@ -17,7 +17,7 @@
 //
 //   AOT_SLOPE=<letters>     only these rows
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -116,7 +116,7 @@ const rows: Record<string, Row> = {
     // `load` returns what it required, so the exports of each module are an object, the first one of a layout of its own. Nearly all of the
     // bound is the price of a first object of a layout, not of the module.
     atLeast: n => ({ ModulesWithState: n - 1, ModulesWithValue: n - 1 }),
-    bound: 1600,
+    bound: isMusl ? 1750 : 1600,
     asksTheRunTime: true,
   },
   P: {

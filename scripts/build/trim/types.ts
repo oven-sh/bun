@@ -20,8 +20,6 @@ export interface Feature {
   isEngine: boolean;
   minimumBytes: Partial<Record<ObjectFormat, number>>;
   exports: boolean;
-  /** A command that `bun` runs itself and never hands over to `bun-aot`. */
-  notInBunAot?: boolean;
   cFunctions?: string[];
   cxxFunctions?: CxxFunctionPattern[];
 }

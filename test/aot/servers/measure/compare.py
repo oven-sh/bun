@@ -21,7 +21,7 @@ import argparse, json, statistics
 
 import layers
 
-NAMES = {"api-bun": "API on Bun.serve", "api-thin": "API on the thin typed framework", "api-hono": "API on Hono", "bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "express": "Express", "fastify": "Fastify", "tanstack": "TanStack Start"}
+NAMES = {"api-bun": "API on Bun.serve", "api-thin": "API on the thin typed framework", "api-hono": "API on Hono", "bun": "Bun.serve", "thin": "thin typed framework", "hono": "Hono", "elysia": "Elysia", "node": "node:http", "express": "Express", "fastify": "Fastify", "fastify-schemas": "Fastify with schemas", "tanstack": "TanStack Start", "tanstack-typed": "TanStack Start with typed versions"}
 MEMORY = (("ready_rss_mb", "RSS at ready, MB"), ("peak_rss_mb", "peak RSS, MB"), ("private_mb", "private memory, MB"), ("first_response_ms", "first response, ms"))
 
 parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])

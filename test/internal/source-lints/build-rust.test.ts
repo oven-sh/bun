@@ -90,8 +90,8 @@ function withAbi(cfg: Config, abi: Abi): Config {
 describe("allRustTargets", () => {
   test("is exactly the set of triples .buildkite/ci.ts builds", () => {
     const ciScript = readFileSync(join(repoRoot, ".buildkite", "ci.ts"), "utf8");
-    const matrix = /^const bunPlatforms: Platform\[\] = \[\n([\s\S]*?)^\];/m.exec(ciScript);
-    if (matrix === null) throw new Error("bunPlatforms not found in .buildkite/ci.ts");
+    const matrix = /^const buildPlatforms: Platform\[\] = \[\n([\s\S]*?)^\];/m.exec(ciScript);
+    if (matrix === null) throw new Error("buildPlatforms not found in .buildkite/ci.ts");
 
     const entries =
       matrix[1]!

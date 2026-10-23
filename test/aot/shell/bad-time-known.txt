@@ -39,7 +39,6 @@ untyped-code/inlined-constructors-meet-setters    has one in the plain engine to
 untyped-code/define-properties-own-descriptors    has one in the plain engine too
 untyped-code/empty-number-literals-pushed    has one in the plain engine too
 untyped-code/in-of-optional-field    has one in the plain engine too
-untyped-code/index-accessor-on-builtin-prototypes-2    has one in the plain engine too
 untyped-code/properties-added-under-changing-prototypes    has one in the plain engine too
 untyped-code/number-array-spread    means it: "A BAD TIME" in program.js
 untyped-code/set-prototype-of-plain-objects    TODO: has none in the plain engine, nor has its untyped twin set-prototype-of-untyped-objects: its literals are typed records, whether one has been a prototype is kept per layout, and a record of such a layout is given a prototype with an accessor at an index

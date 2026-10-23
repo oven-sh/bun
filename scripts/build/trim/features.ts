@@ -200,11 +200,6 @@ function parseFeatureAttribute(feature: Feature, seen: Set<string>, line: Line) 
       argumentsOf(line, 0, 0);
       feature.exports = true;
       return;
-    case "not-in-bun-aot":
-      argumentsOf(line, 0, 0);
-      if (feature.enteredFrom !== "command-line") fail("not-in-bun-aot is for a command", line.site);
-      feature.notInBunAot = true;
-      return;
     case "minimum":
       return parseMinimum(feature, line);
     case "c-function":

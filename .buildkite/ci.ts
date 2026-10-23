@@ -172,7 +172,7 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 type Abi = Exclude<HostAbi, "gnu">;
 type Distro = "debian" | "ubuntu" | "alpine";
 type Tier = "latest" | "previous" | "oldest" | "beta";
-type Profile = "release" | "assert" | "debug" | "asan" | "aot" | "hardened";
+type Profile = "release" | "assert" | "debug" | "asan" | "hardened";
 
 interface Target {
   os: Os;
@@ -255,7 +255,7 @@ function getAzureVmSize(os: Os, arch: Arch, tier: AzureVmTier = "build"): string
  */
 const buildHostPlatform: Platform = { os: "linux", arch: "aarch64", distro: "debian", release: "13" };
 
-const bunPlatforms: Platform[] = [
+const buildPlatforms: Platform[] = [
   // macOS is cross-compiled from the debian-13 aarch64 host (clang --target +
   // the Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts
   // and scripts/build/flags.ts). There is no native macOS build lane: the mac
@@ -288,14 +288,6 @@ const bunPlatforms: Platform[] = [
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
-
-// Each release build is made twice. `bun` has neither the ahead-of-time compiler nor the run time of its programs
-// (--aot=off); it is what binary-size judges. `bun-aot`, the "aot" profile, has both: `bun` fetches it and hands the command
-// line over when it is asked for --aot (src/runtime/cli/compile_command/hand_over.rs), and the test-aot steps run on it.
-// The asan build has both as well.
-const buildPlatforms: Platform[] = bunPlatforms.flatMap(platform =>
-  platform.profile ? [platform] : [platform, { ...platform, profile: "aot" as const }],
-);
 
 // A Bun built with --hardened=on is in no release, so nothing else would notice where its layout is lost. The build checks
 // the file that it links and the one that it strips (scripts/build/verify-binary.ts), and test/aot/hardened-*.test.ts check
@@ -601,8 +593,6 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
   if (profile === "hardened") args.push("--hardened=on");
-  args.push(profile === "aot" || profile === "asan" || profile === "hardened" ? "--aot=on" : "--aot=off");
-  if (profile === "aot") args.push("--only-handed-over-commands=on");
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
@@ -653,12 +643,12 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
 }
 
 /**
- * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64", "bun-linux-x64-musl-baseline" or "bun-aot-linux-x64".
+ * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
  * Matches the naming convention in cmake/targets/BuildBun.cmake.
  */
 function getTargetTriplet(platform: Target): string {
   const { os, arch, abi, baseline, profile } = platform;
-  let triplet = `${profile === "aot" || profile === "hardened" ? "bun-aot" : "bun"}-${os}-${arch}`;
+  let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
   }
@@ -890,8 +880,6 @@ interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
   aot?: AotTests | undefined;
-  /** `bun` with the `bun-aot` of the same build beside it, as a release lays them out. */
-  handOver?: boolean | undefined;
   /** The Bun of `hardenedPlatform`. */
   hardened?: boolean | undefined;
 }
@@ -1028,21 +1016,10 @@ function getAotParallelism(platform: Platform, aot: AotTests): number {
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
-  const { buildId, testFiles, aot, handOver, hardened } = testOptions;
+  const { buildId, testFiles, aot, hardened } = testOptions;
 
-  // The tests of --aot run on the build that has the compiler.
-  const aotBuildKey = `${getTargetKey({ ...platform, profile: "aot" })}-build-bun`;
-  const buildKey = hardened
-    ? `${getTargetKey(hardenedPlatform)}-build-bun`
-    : aot && !profile
-      ? aotBuildKey
-      : `${getTargetKey(platform)}-build-bun`;
-  // `bun-aot` has no `bun install`: the runner and the tests that install packages run `bun`.
-  const everyCommandBuildKey = buildKey === aotBuildKey ? `${getTargetKey(platform)}-build-bun` : undefined;
+  const buildKey = `${getTargetKey(hardened ? hardenedPlatform : platform)}-build-bun`;
   const args = [`--step=${buildKey}`];
-  if (everyCommandBuildKey) {
-    args.push(`--every-command-step=${everyCommandBuildKey}`);
-  }
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
@@ -1056,8 +1033,6 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       "--include=aot/texts-that-tell-builds-apart",
       "--vendor=false",
     );
-  } else if (handOver) {
-    args.push(`--bun-aot-step=${aotBuildKey}`, "--include=cli/hand-over-to-the-real-bun-aot", "--vendor=false");
   } else if (aot) {
     args.push(...aotTests.map(group => `--include=${group}`));
     args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
@@ -1086,11 +1061,9 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   const depends: string[] = [];
   if (!buildId) {
     depends.push(buildKey);
-    if (handOver) depends.push(aotBuildKey);
-    if (everyCommandBuildKey) depends.push(everyCommandBuildKey);
   }
 
-  const kind = hardened ? "hardened" : handOver ? "hand-over" : aot ? "aot" : "bun";
+  const kind = hardened ? "hardened" : aot ? "aot" : "bun";
   return {
     key: `${getPlatformKey(platform)}-test-${kind}`,
     label: `${getPlatformLabel(platform)} - test-${kind}`,
@@ -1110,7 +1083,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // PR's own build, and a cancel clears it.
     parallelism: aot
       ? getAotParallelism(platform, aot)
-      : platform.tier === "beta" || handOver || hardened
+      : platform.tier === "beta" || hardened
         ? 1
         : os === "darwin"
           ? 2
@@ -1994,11 +1967,11 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
 
         // Trace the symbol order file later builds inherit, on the target's own
         // test fleet (see getTraceOrderStep). On main: that is where every
-        // build, of a pull request too, inherits from. `bun` and `bun-aot` only —
+        // build, of a pull request too, inherits from. Release profile only —
         // usesOrderFile() is false under a sanitizer anyway.
         const traceOn = traceOrderTargets.find(
           t =>
-            t.os === target.os && t.arch === target.arch && !target.abi && (!target.profile || target.profile === "aot"),
+            t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
         if (traceOn && isMainBranch()) {
           const traceDeps = getImageDependsOn(traceOn.on, baking);
@@ -2053,9 +2026,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           const aot = getAotTests(target, options);
           const aotStep = aot && getTestBunStep(target, options, { buildId, aot });
           if (aotStep) testStepKeys.push(aotStep.key);
-          // The asan build has the compiler itself.
-          const handOverStep = aot && !target.profile && getTestBunStep(target, options, { buildId, handOver: true });
-          if (handOverStep) testStepKeys.push(handOverStep.key);
           // Its build is made in this run alone, and no release waits for it.
           const runsHardened =
             !buildId &&
@@ -2070,7 +2040,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             {
               key: getPlatformKey(target),
               group: getPlatformLabel(target),
-              steps: [step, aotStep, handOverStep, hardenedStep].filter((step): step is CommandStep => !!step),
+              steps: [step, aotStep, hardenedStep].filter((step): step is CommandStep => !!step),
             },
             ...dependsOn,
           );

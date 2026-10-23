@@ -174,8 +174,7 @@ describe.skipIf(!canTrim || !!unsupported)("bun build --compile --aot, without -
     expect(await run([bunExe(), "build", "--compile", "hello.ts", "--outfile", "plain"], folder)).toMatchObject({
       exitCode: 0,
     });
-    // `bun-aot` is linked without the commands that `bun` never hands over to it.
-    expect(removedFeaturesOf(join(folder, "plain"))).toEqual(removedFeaturesOf(bunExe().replace(/\.exe$/, "")));
+    expect(removedFeaturesOf(join(folder, "plain"))).toEqual([]);
     expect(
       await run([join(folder, "plain"), "-e", "console.log(1 + 1)"], folder, { ...bunEnv, BUN_BE_BUN: "1" }),
     ).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });

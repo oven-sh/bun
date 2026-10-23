@@ -24,6 +24,8 @@ export function heat(heatOverride: "hot" | "cold" | "neither", part: number, par
     async () => {
       const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "heat.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", share, heatOverride, "all"], undefined, { ...scriptEnvironment(), WRITTEN: written });
       const lines = stdout.split("\n").filter(line => line !== "");
+      // `expect` leaves out the middle of a long line, and the line of a program that died holds all that the machine said about the death.
+      if (lines.length > 1) console.error(lines.slice(0, -1).join("\n"));
       // What shell/quick.py passes over for now. The lines say what happened.
       const todo = stderr.split("\n").filter(line => line.includes(": skipped: TODO: "));
       if (todo.length) console.error(todo.join("\n"));

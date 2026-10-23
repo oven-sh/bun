@@ -99,6 +99,10 @@ To reach the function:
   `crate::generated_bindgen::cron::Bun__CronJob__onPromiseResolve`, for `JSFunction::create` and `JSValue::then`. What makes
   the function gives its `.length`, so `length` is refused.
 
+`bun build --compile --trim` removes a function with the feature that the table of built-ins gives the property or the
+`$bindgen` that names it. A function that only native code makes callable has no such entry and says it itself:
+`feature: "Cron"`, a name from `src/trim/features/*.def`.
+
 `passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds `callee: JsLocal<'a>`, the
 function that was called, after it.
 
@@ -131,7 +135,7 @@ A namespace that can itself be called, like `Bun.hash`, names the function that 
 `b.namespace({ wyhash: { .. }, crc32: { .. } }, { call: "wyhash" })`. The object is then a
 function named after the namespace.
 
-A function with [overloads](#overloads) is an array of its signatures. A function of a namespace has no `passThis`, `passCallee` or `export`.
+A function with [overloads](#overloads) is an array of its signatures. A function of a namespace has no `passThis`, `passCallee`, `export` or `feature`.
 
 ### What a function may do: `capability`
 
@@ -209,7 +213,7 @@ export const read = b.overloads(
 );
 ```
 
-`passThis`, `passCallee`, `export`, `rejects` and `requiredArguments` belong to the JS function, so every signature gives them the same value.
+`passThis`, `passCallee`, `export`, `feature`, `rejects` and `requiredArguments` belong to the JS function, so every signature gives them the same value.
 
 Use it when the type of one argument says what the others are. A union for each
 argument would accept combinations that mean nothing, and leave the body to sort them out.

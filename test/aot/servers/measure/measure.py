@@ -59,6 +59,11 @@ decoder validates by itself. They are built with `go build` and `cargo build --r
 GOMAXPROCS=1 and SERVER_THREADS=1 in the environment make them run on one thread, like the JavaScript of the other servers.
 TanStack Start has two extra routes, the pages / ("static") and /items ("list"). The expected page is whatever the first process
 returned, with timestamps removed; under load only the length of a page is compared.
+`tanstack-typed` is the same program with `.sound/` beside it: the typed versions from packages/bun-sound of the packages it has
+installed (react, react-dom, seroval). Only an --aot build reads them. As a column it is held to the same pages as the plain one:
+
+    python3 measure.py --servers tanstack --column aot=/path/to/bun:--aot --column typed=/path/to/bun:--aot@tanstack-typed --out rows.jsonl
+
 A window runs under `perf stat -p <pid>`, which counts all threads of the server. Hardware counters are saved and restored on
 every context switch, which costs a server about 1%, and far more if its threads hand off work on every request. The first
 window after SIGCONT also costs a JIT build about 1%. So a round is three windows: one that is discarded, one under
@@ -107,7 +112,8 @@ import argparse, fcntl, functools, glob, json, multiprocessing, os, re, resource
 import layers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "tanstack"]
+SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "fastify-schemas", "tanstack", "tanstack-typed"]
+TANSTACK = ("tanstack", "tanstack-typed")
 API_SERVERS = ["api-bun", "api-thin", "api-hono"]
 EFFECT = {"effect": "./bun.ts", "effect-sources": "./bun.ts", "effect-plain": "./plain.ts"}
 PAGES = [{"name": "static", "method": "GET", "path": "/", "type": "text/html"}, {"name": "list", "method": "GET", "path": "/items", "type": "text/html"}]
@@ -222,7 +228,7 @@ class Server:
         self.folder = os.path.join(options.work, "lane-%d" % lane["server"], column["name"])
         self.copy = os.path.join("/dev/shm" if os.access("/dev/shm", os.W_OK) else options.work, "aot-servers-lane-%03d-column-%02d" % (lane["server"], options.columns.index(column) if column in options.columns else 99))
         os.makedirs(self.folder, exist_ok=True)
-        self.cwd = os.path.join(options.work, "tanstack") if server == "tanstack" else self.folder
+        self.cwd = os.path.join(options.work, "tanstack") if server in TANSTACK else self.folder
         self.process, self.rounds, self.max_private_mb, self.max_anon_mb, self.sampled = None, [], 0.0, 0.0, {}
 
     def kill(self):
@@ -658,6 +664,22 @@ def run_checked(command, **more):
     return run.stdout
 
 
+def add_typed_versions(folder):
+    """Copies the typed versions under packages/bun-sound that are for the installed versions to <folder>/.sound, where an --aot build finds them."""
+    typed_versions = os.path.join(HERE, "..", "..", "..", "..", "packages", "bun-sound")
+    added = []
+    for described in sorted(glob.glob(os.path.join(typed_versions, "*", "*", "sound.json")) + glob.glob(os.path.join(typed_versions, "@*", "*", "*", "sound.json"))):
+        name, version = os.path.split(os.path.relpath(os.path.dirname(described), typed_versions))
+        installed = os.path.join(folder, "node_modules", name, "package.json")
+        if os.path.exists(installed) and json.load(open(installed))["version"] == version:
+            shutil.copytree(os.path.join(os.path.dirname(described), "lay"), os.path.join(folder, ".sound", name, "lay"))
+            shutil.copy(described, os.path.join(folder, ".sound", name))
+            added.append("%s %s" % (name, version))
+    if not added:
+        sys.exit("no typed version under %s is for a version installed in %s" % (os.path.normpath(typed_versions), folder))
+    print("typed versions: " + ", ".join(added), flush=True)
+
+
 @functools.lru_cache(maxsize=None)
 def accepts_layout_seed_flag(bun):
     """Older Buns reject the flag and read BUN_AOT_LAYOUT_SEED instead."""
@@ -736,7 +758,7 @@ def main():
     installer = next(column["bun"] for column in options.columns if column["flags"] != ["run"])
     folders = {}
     for name in ("app", "tanstack"):
-        if not any((server == "tanstack") == (name == "tanstack") for server in servers if server not in NATIVE and server not in EFFECT):
+        if not any((server in TANSTACK) == (name == "tanstack") for server in servers if server not in NATIVE and server not in EFFECT):
             continue
         folders[name] = os.path.join(options.work, name)
         shutil.rmtree(folders[name], ignore_errors=True)
@@ -759,6 +781,11 @@ def main():
     if "tanstack" in folders:
         shutil.copy(os.path.join(HERE, "..", "app", "shared.ts"), os.path.join(folders["tanstack"], "src", "utils", "shared.ts"))
         run_checked([installer, "node_modules/vite/bin/vite.js", "build"], cwd=folders["tanstack"], env=build_env)
+        folders["tanstack-typed"] = os.path.join(options.work, "tanstack-typed")
+        shutil.rmtree(folders["tanstack-typed"], ignore_errors=True)
+        shutil.copytree(folders["tanstack"], folders["tanstack-typed"], ignore=shutil.ignore_patterns("node_modules"))
+        os.symlink(os.path.realpath(os.path.join(folders["tanstack"], "node_modules")), os.path.join(folders["tanstack-typed"], "node_modules"))
+        add_typed_versions(folders["tanstack-typed"])
     spec = json.loads(run_checked([installer, os.path.join(HERE, "..", "answers.ts")], env=build_env))
     run_checked(["cc", "-O2", "-pthread", "-o", os.path.join(options.work, "bin", "load"), os.path.join(HERE, "load.c")])
 
@@ -776,8 +803,8 @@ def main():
         # The bundler inlines process.env.NODE_ENV and defaults it to "development".
         for column in options.columns:
             program = column["server"] or server
-            folder = folders["tanstack" if program == "tanstack" else "effect-sources" if program == "effect-sources" else "effect" if program in EFFECT else "app"]
-            entry = "./serve.ts" if program == "tanstack" else EFFECT.get(program, "./%s.ts" % program)
+            folder = folders[program if program in TANSTACK else "effect-sources" if program == "effect-sources" else "effect" if program in EFFECT else "app"]
+            entry = "./serve.ts" if program in TANSTACK else EFFECT.get(program, "./%s.ts" % program)
             executable = os.path.join(options.work, "bin", "%s-%s" % (program, column["name"]))
             if column["flags"] == ["run"]:
                 if program in EFFECT and os.path.basename(column["bun"]).startswith("node"):
@@ -819,7 +846,7 @@ def main():
     for server in servers:
         routes = [
             route
-            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["routes"]) + (PAGES if server == "tanstack" and not options.soak else [])
+            for route in (spec["effectRoutes"] if server in EFFECT else spec["apiRoutes"] if server in API_SERVERS else spec["routes"]) + (PAGES if server in TANSTACK and not options.soak else [])
             if (not options.routes or route["name"] in options.routes.split(",")) and (server not in NATIVE or route["name"] in NATIVE_ROUTES)
         ]
         for job in [routes] if options.soak else routes:

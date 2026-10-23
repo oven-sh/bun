@@ -111,8 +111,6 @@ export const bunEnv: NodeJS.Dict<string> = {
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
-  // A Bun built without the ahead-of-time compiler says so, as test/aot/run-programs.ts expects, and fetches nothing.
-  BUN_AOT_DISABLE_DOWNLOAD: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
@@ -184,13 +182,6 @@ if (isDebug && !locksEnvironment) {
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
-}
-
-/** `bun-aot` is linked without `bun install`, `bun lint` and other commands that `bun` never hands over to it. */
-export function bunExeWithEveryCommand() {
-  const path = process.env.BUN_WITH_EVERY_COMMAND;
-  if (!path) return bunExe();
-  return isWindows ? path.replaceAll("\\", "/") : path;
 }
 
 /**

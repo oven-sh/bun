@@ -19,6 +19,8 @@ const plainBunVaries: Record<string, string> = {
     "a call in a catch block a million deep ends or overflows with the limit of the stack in the shell that runs it",
   "calls/stack-across-vm-entries":
     "plain Bun prints one of four outputs from run to run, the stored one among them: once its optimizing compilers have taken String.prototype.replace in, the stack has no frame for it. Without them it prints the stored output every time",
+  "memory-of-many-objects/records-made-by-a-callback-for-each-element":
+    "it asks whether the process grew by less than 320 MB: plain Bun grows by 340 MB on Linux, and on macOS by a little less than the bound in some runs",
   "static-modules/cycles/the-second-of-two-commonjs-imports-requires-the-importer":
     "plain Bun begins the second file before the first in about one run of ten on a busy machine; the stored output is what it prints in the other nine, and what the executable always prints",
   "static-modules/earlier-cases/names-imported-by-es-modules-against-later-stores":

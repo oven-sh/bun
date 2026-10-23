@@ -65,6 +65,44 @@ If `package.json` has a `"compile"` script, `bun compile` runs that script.
   With <code>--trim</code>: keep only these locales, such as <code>en,de-AT</code>
 </ParamField>
 
+### Libraries
+
+```bash
+bun compile --library [flags] [entry points]
+```
+
+Builds a package to publish instead of an executable. It writes into `--outdir`:
+
+- the JavaScript (ES modules), which any runtime or bundler can use
+- `.d.ts` files, for `tsc` and `bun check`
+- a `package.json` made from the project's own: `main`, `module`, `types`, `exports` and `files` name what was written,
+  and `scripts`, `devDependencies`, `private` and `workspaces` are left out
+- the project's `README` and `LICENSE`
+
+`dependencies`, `peerDependencies` and `optionalDependencies` stay imports. `devDependencies` are bundled.
+
+Without an entry point, it builds the TypeScript files that `"exports"` in `package.json` points to, then `"module"` or
+`"main"` if that is a TypeScript file, then `index.ts` or `src/index.ts`.
+
+The sources can be plain JavaScript. The `.d.ts` files are then inferred from the code and its JSDoc comments, one for
+each source file.
+
+<ParamField path="--library" type="boolean">
+  Build a package to publish instead of an executable
+</ParamField>
+
+<ParamField path="--outdir" type="string" default="dist">
+  The folder to write the package to. It cannot be the project's own folder
+</ParamField>
+
+<ParamField path="--target" type="string" default="node">
+  With <code>--library</code>: <code>node</code>, <code>browser</code> or <code>bun</code>
+</ParamField>
+
+<ParamField path="--format" type="string" default="esm">
+  With <code>--library</code>: <code>esm</code>, or <code>cjs</code> for sources that are CommonJS
+</ParamField>
+
 ### Scripts
 
 <ParamField path="--no-script" type="boolean">

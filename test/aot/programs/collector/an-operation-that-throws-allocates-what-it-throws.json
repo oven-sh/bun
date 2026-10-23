@@ -1,5 +1,4 @@
 {
-  "skipInShell": "TODO: the check of native calls stops the shell's own structuredClone() for emptying the buffer that it is asked to transfer",
   "build": ["--aot-validate"],
   "env": {
     "BUN_JSC_slowPathAllocsBetweenGCs": "1",

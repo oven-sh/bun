@@ -89,9 +89,6 @@ pub(crate) fn compile_from_context(
     product: CompileProduct<'_>,
 ) -> Result<Result<CompileOutcome, CompileFailure>, crate::Error> {
     debug_assert!(!matches!(product, CompileProduct::Executable { .. }));
-    if !has_compiler() {
-        super::hand_over::run_in_bun_with_compiler();
-    }
     Global::configure_allocator(Global::AllocatorConfiguration {
         long_running: true,
         ..Default::default()

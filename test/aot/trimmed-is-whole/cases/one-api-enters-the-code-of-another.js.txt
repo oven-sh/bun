@@ -121,16 +121,3 @@ const got = await new Promise(async resolve => {
 });
 console.log(got);
 receiver.close();
-//// spawn-sync-under-a-computed-name-beside-a-file-sink
-//@ trimmed-says ERR_FEATURE_REMOVED and the program goes on
-const spawnSyncByName = Bun[["s", "pawnSync"].join(process.argv.length > 99 ? "x" : "")];
-const writer = Bun.stdout.writer();
-writer.write("written\n");
-await writer.flush();
-let outcome;
-try {
-  outcome = String(spawnSyncByName(["echo", "hi"]).stdout).trim();
-} catch (error) {
-  outcome = error.code;
-}
-console.log(outcome, "and the program goes on");

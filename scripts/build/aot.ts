@@ -132,9 +132,8 @@ export function builtinUsesArguments({ cfg, engine }: Pick<Ctx, "cfg" | "engine"
 export function emitRemovableFeatures({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-removable-features.ts");
   const rust = resolve(cfg.codegenDir, "removable_features.rs");
-  const initialRemoval = resolve(cfg.codegenDir, "removable_features_initial_removal.s");
   const header = resolve(cfg.codegenDir, "BunRemovableFeatures.h");
-  const outputs = [rust, initialRemoval, header, removableFeaturesJson(cfg)];
+  const outputs = [rust, header, removableFeaturesJson(cfg)];
 
   n.build({
     outputs,
@@ -152,12 +151,12 @@ export function emitRemovableFeatures({ n, cfg, sources, o, dirStamp }: Ctx): vo
     vars: {
       cwd: cfg.cwd,
       desc: "removable features",
-      args: shJoin(cfg, ["run", script, cfg.cwd, cfg.codegenDir, ...(cfg.onlyHandedOverCommands ? ["--bun-aot"] : [])]),
+      args: shJoin(cfg, ["run", script, cfg.cwd, cfg.codegenDir]),
     },
   });
 
   o.all.push(...outputs);
-  o.rustInputs.push(rust, initialRemoval);
+  o.rustInputs.push(rust);
   o.cppHeaders.push(header);
 }
 

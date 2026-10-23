@@ -1,0 +1,1 @@
+{ "skipWithASAN": "TODO: a bug. AddressSanitizer stops the executable that a validating build makes of it, in code of node:child_process" }

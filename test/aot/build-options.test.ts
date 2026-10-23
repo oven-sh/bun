@@ -298,8 +298,8 @@ declare const require: any;`,
     },
     options: `minify: true`,
     prints: "42 n e \n",
-    // Nothing is renamed: the names are those of the sources, as under `bun run`.
-    differs: { stdout: "42 longName Named \n" },
+    // A binding that a bundle renames is shown under a short name here too. Which one is the compiler's own choice, not the bundle's.
+    differs: { stdout: expect.stringMatching(/^42 [A-Za-z_$]{1,3} [A-Za-z_$]{1,3} \n$/) },
   },
   "jsx": {
     files: {

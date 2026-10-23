@@ -13,7 +13,7 @@
 // The file only goes down. Whoever means to accept a worse number edits it, where a reviewer sees it.
 //
 // Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used only the memory is judged. The growth
-// of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64.
+// of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64 with glibc.
 //
 //   bun test test/aot/build-scaling                                     all shapes (a minute on eight cores)
 //   AOT_BUILD_SCALING=wrappers bun test test/aot/build-scaling          the shapes whose name contains the text
@@ -24,7 +24,7 @@
 // Each shape prints one line that begins with SCALING.
 import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand, type Cost } from "../analysis-scaling/measure-check";
 import { withThreads } from "../harness/flags";
@@ -45,13 +45,14 @@ const leastBytesJudged = 96 * 1024 * 1024;
 const leastInstructionsJudged = 300_000_000;
 // What a budget leaves to the changes that every week brings. A step that explodes passes it at once.
 const slack = 1.2;
-const slackOfGrowth = 1.1;
+// The numbers in the file were counted with glibc. With musl one shape has cost a third more instructions, and has grown a fifth faster.
+const slackOfGrowth = isMusl ? 1.3 : 1.1;
 const factor = Number(process.env.AOT_BUILD_SCALING_FACTOR) || 1;
 const wanted = process.env.AOT_BUILD_SCALING ?? "";
 const mode = process.env.AOT_BUDGETS;
 const budgetsPath = join(import.meta.dir, "budgets.linux-x64.json");
 const budgets: Record<string, Budget> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
-const holdsBudgets = isLinux && process.arch === "x64" && factor === 1;
+const holdsBudgets = isLinux && !isMusl && process.arch === "x64" && factor === 1;
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions and bytes"

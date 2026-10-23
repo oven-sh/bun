@@ -75,7 +75,49 @@ for (const { from, to, access, path } of mappings) {
     }
   }
 }
-console.log(found, tables);
+
+const allCode = mappings.filter(each => each.access[2] === "x");
+const isCode = (address: number) => allCode.some(each => address >= each.from && address < each.to);
+const wordAt = (from: Uint32Array, index: number) => from[2 * index + 1] * 2 ** 32 + from[2 * index];
+const records = new Uint32Array(64);
+// Eight records in a row, of one to four words each, with an address of code at the same place in each.
+function isTableOfCode(address: number) {
+  if (address % 8 || address < 65536 || address >= 2 ** 47) return false;
+  try {
+    if (readSync(memory, records, 0, 256, address) !== 256) return false;
+  } catch {
+    return false;
+  }
+  for (let size = 1; size <= 4; size++) {
+    for (let place = 0; place < size; place++) {
+      let record = 0;
+      while (record < 8 && isCode(wordAt(records, size * record + place))) record++;
+      if (record === 8) return true;
+    }
+  }
+  return false;
+}
+function wordsThatLeadToTables({ from, to }: { from: number; to: number }) {
+  let count = 0;
+  for (let page = from; page < to; page += pageSize) {
+    readSync(residence, entries, 0, 8, (page / pageSize) * 8);
+    if (!(entries[1] >>> 31) || readSync(memory, words, 0, pageSize, page) !== pageSize) continue;
+    for (let index = 0; index < pageSize / 8; index++) if (isTableOfCode(wordAt(words, index))) count++;
+  }
+  return count;
+}
+// The words that nothing writes once compiled code runs lie between the other words that compiled code finds from the same address.
+const isAnonymous = (index: number, access: string) => mappings[index].access === access && !mappings[index].path;
+let instances = 0;
+let writableWords = 0;
+for (let index = 1; index + 1 < mappings.length; index++) {
+  if (!isAnonymous(index - 1, "rw-p") || !isAnonymous(index, "r--p") || !isAnonymous(index + 1, "rw-p")) continue;
+  if (mappings[index - 1].to !== mappings[index].from || mappings[index].to !== mappings[index + 1].from) continue;
+  if (!wordsThatLeadToTables(mappings[index])) continue;
+  instances++;
+  writableWords += wordsThatLeadToTables(mappings[index - 1]) + wordsThatLeadToTables(mappings[index + 1]);
+}
+console.log(found, tables, instances, writableWords);
 `;
 
 async function withCompiledProgram(
@@ -192,9 +234,9 @@ describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", 
   );
 
   test.skipIf(!isX64)(
-    "keeps the tables of addresses that compiled code jumps through on pages that cannot be written",
+    "keeps the tables of addresses that compiled code jumps through, and the words that lead to them, on pages that cannot be written",
     async () => {
-      await withCompiledProgram(() => {}, programThatLooksForTablesOfCode, "12 0\n");
+      await withCompiledProgram(() => {}, programThatLooksForTablesOfCode, "12 0 1 0\n");
     },
     120_000,
   );

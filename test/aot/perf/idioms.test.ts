@@ -15,7 +15,7 @@
 // ./untyped-idioms.ts makes the JavaScript.
 import { afterAll, expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
@@ -66,9 +66,11 @@ const skipped =
     ? "a debug or ASAN build counts other instructions"
     : isWindows
       ? "it counts with perf_event_open or /usr/bin/time -l"
-      : !existsSync(pinsPath) && mode !== "update"
-        ? `there is no ${pinsPath}`
-        : undefined;
+      : isMusl
+        ? "the pins are those of glibc"
+        : !existsSync(pinsPath) && mode !== "update"
+          ? `there is no ${pinsPath}`
+          : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/idioms.test.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {

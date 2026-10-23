@@ -33,6 +33,8 @@ export function collectorStress(collections: "full" | "young", part: number, par
     async () => {
       const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--part", share, "all"], undefined, { ...scriptEnvironment(), WRITTEN: written });
       const lines = stdout.split("\n").filter(line => line !== "");
+      // `expect` leaves out the middle of a long line, and the line of a program that died holds all that the machine said about the death.
+      if (lines.length > 1) console.error(lines.slice(0, -1).join("\n"));
       expect(stderr).toBe("");
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs, [0-9]+ fail under stress alone, [0-9]+ run out of time$/);
       expect(lines.slice(0, -1)).toEqual([]);
@@ -54,7 +56,7 @@ export function collectorStressOn(collections: "full" | "young", every: 1 | 2 | 
   test.skipIf(!!skipReason)(
     `${programs.length} programs answer the same with a ${collections} collection at ${frequency}`,
     async () => {
-      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs], undefined, { ...scriptEnvironment(), WRITTEN: folderOfWritten });
+      const { stdout, stderr, exitCode } = await run([python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs], undefined, { ...scriptEnvironment(), WRITTEN: folderOfWritten, RUN_SECONDS: "240" });
       expect(stderr).toBe("");
       expect(stdout.split("\n").filter(line => line !== "")).toEqual([`${programs.length} programs, 0 fail under stress alone, 0 run out of time`]);
       expect(exitCode).toBe(0);

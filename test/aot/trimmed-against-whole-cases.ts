@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { canTrim, featureOf, featuresLeftOutOfThisBun, model } from "../bundler/compile-trim-features";
+import { canTrim, featureOf, model } from "../bundler/compile-trim-features";
 import { unsupported, withoutDebugInformation } from "./run-programs";
 import { compareAll, described, jailOfThisMachine, Tally, type Program, type Result, type Settings } from "./trimmed-against-whole/compare";
 import { aotPrograms, test262 } from "./trimmed-against-whole/corpora";
@@ -100,8 +100,7 @@ const parts: (() => void)[] = [
       expect(readRemovedFeatures(join(String(dir), "corrupt"))).toBeUndefined();
     });
 
-    test.skipIf(!canCompare)("readRemovedFeatures returns what an untrimmed Bun was linked without: nothing, or in bun-aot the commands that are left to bun", () =>
-      expect(readRemovedFeatures(bunExe())).toEqual(featuresLeftOutOfThisBun.map(each => each.index).sort((a, b) => a - b)));
+    test.skipIf(!canCompare)("readRemovedFeatures returns [] for an untrimmed Bun", () => expect(readRemovedFeatures(bunExe())).toEqual([]));
 
     test.skipIf(!canCompare)("names reached by constant and computed keys: --corpus names --seed fixed", () => expectSame(programsThatReachNames(reflect(bunExe()), "fixed", 30), 1), 900_000);
 

@@ -4569,51 +4569,6 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
 }
 
-/// Replaces this process with the program at `argv[0]`: the pid, the descriptors and the signals stay. Returns the errno.
-#[cfg(unix)]
-pub fn exec_program(argv: &[&[u8]]) -> i32 {
-    unsafe extern "C" {
-        safe fn on_before_reload_process_posix(close_inherited_fds: bool);
-    }
-    let argv: Vec<ZBox> = argv.iter().map(ZBox::from_bytes).collect();
-    let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
-    pointers.push(core::ptr::null());
-    on_before_reload_process_posix(false);
-    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, and `environ` is the
-    // process's own.
-    unsafe {
-        libc::execve(pointers[0], pointers.as_ptr().cast(), c_environ().cast());
-    }
-    std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
-}
-
-/// What the program at `argv[0]` writes to its standard output, if it exits with 0. It reads nothing, what it writes to its
-/// standard error is dropped, and `without` is not in its environment.
-#[allow(clippy::disallowed_types)]
-pub fn spawn_sync_read_stdout(argv: &[&[u8]], without: &str) -> Option<Vec<u8>> {
-    #[cfg(unix)]
-    fn to_os(bytes: &[u8]) -> std::ffi::OsString {
-        use std::os::unix::ffi::OsStrExt;
-        std::ffi::OsStr::from_bytes(bytes).to_os_string()
-    }
-    #[cfg(windows)]
-    fn to_os(bytes: &[u8]) -> std::ffi::OsString {
-        use std::os::windows::ffi::OsStringExt;
-        let mut wide = vec![0u16; bytes.len() + 1];
-        let length = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wide, bytes).len();
-        std::ffi::OsString::from_wide(&wide[..length])
-    }
-    let (program, arguments) = argv.split_first()?;
-    let output = std::process::Command::new(to_os(program))
-        .args(arguments.iter().map(|argument| to_os(argument)))
-        .env_remove(without)
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    output.status.success().then_some(output.stdout)
-}
-
 // ── spawn_sync_inherit ────────────────────────────────────────────────────
 /// Minimal "spawn argv, inherit stdio, wait" used by crash_handler's
 /// symbolizer. Port of the subset of `bun.spawnSync` needed at tier-0.
@@ -4626,12 +4581,6 @@ impl SpawnStatus {
     #[inline]
     pub fn is_ok(self) -> bool {
         self.code == 0
-    }
-
-    /// -1 if a signal ended it.
-    #[inline]
-    pub fn code(self) -> i32 {
-        self.code
     }
 }
 

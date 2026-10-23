@@ -1,15 +1,13 @@
-// An accessor installed for an index on `Array.prototype` or `Object.prototype` affects every array created afterwards (part 2).
+// Another realm gets accessors for indices on its built-in prototypes while prototype objects of this realm inherit from it. What inherits from that realm changes its storage; the arrays of this realm inherit nothing from it and keep theirs (part 2).
 // ENV JSC_useDollarVM=1
 const vm = (globalThis as any).$vm;
-const DEPENDENT: boolean = true;
-function haveABadTime(): void {
-    if (!DEPENDENT) { vm.haveABadTime(globalThis); return; }
-    const other = vm.createGlobalObject();
-    // What JavaScriptCore's finder asks for: an object of this global with indexed storage, that is itself a prototype, and whose chain leaves this global.
-    const held = Object.create(other.Object.prototype);
+const other = vm.createGlobalObject();
+// An object of this realm with indexed storage, that is itself a prototype, and whose chain leaves this realm.
+const held = Object.create(other.Object.prototype);
+function theirsHaveABadTime(): void {
     held[0] = 1;
     (globalThis as any).child = Object.create(held);
-    // A realm made at run time beside a compiled program has a bad time from its birth (realm4): then it reaches this global where a prototype of ours gets one of theirs for its own.
+    // And a prototype object of this realm that gets one of theirs for its own.
     const holder: any = {};
     (globalThis as any).heir = Object.create(holder);
     Object.setPrototypeOf(holder, other.Object.prototype);
@@ -37,17 +35,17 @@ const kinds: [string, (n: number) => unknown[]][] = [
     ["match", _ => "xaby".match(/a(b)/) as unknown[]], ["match with indices", _ => "xaby".match(/a(b)/d) as unknown[]],
 ];
 function show(when: string): void {
-    for (const [name, make] of kinds) console.log(when, name + ":", vm.indexingMode(make(1)), JSON.stringify(make(2)));
+    for (const [name, make] of kinds) console.log(when, name + ":", vm.indexingMode(make(1)).includes("SlowPut") ? "asks its prototypes at every store" : "stores at once", JSON.stringify(make(2)));
 }
 function many(k: number): number {
     let s = 0;
     for (const [, make] of kinds) for (let i = 0; i < k; i++) s += make(i).length;
     return s;
 }
-console.log("bad time:", vm.isHavingABadTime(globalThis), many(300));
-haveABadTime();
-console.log("bad time:", vm.isHavingABadTime(globalThis));
-show("made in it,");
+console.log("bad time:", vm.isHavingABadTime(globalThis), vm.isHavingABadTime(other), many(300));
+theirsHaveABadTime();
+console.log("bad time:", vm.isHavingABadTime(globalThis), vm.isHavingABadTime(other), vm.indexingMode(held));
+show("made behind it,");
 // Until every free list has run out several times, so that the slow-path operations of the stubs run too.
 console.log(many(60000));
 show("and still,");

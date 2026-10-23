@@ -257,7 +257,7 @@ bun compile ./strings.ts && ./strings
 5 10 object
 ```
 
-That's fine for a template or a configuration file. It matters when a library generates its hot code that way: zod 4, ajv, fast-json-stringify and Elysia do. If the library has a mode without generated code, measure both: `z.config({ jitless: true })` makes `parse` in zod 4 about 2.5 times cheaper, while `new Elysia({ aot: false })` makes a request slower.
+That's fine for a template or a configuration file. It matters when a library generates its hot code that way: zod 4, ajv, fast-json-stringify and Elysia do. If the library has a mode without generated code, measure both: `z.config({ jitless: true })`, called before you create a schema, makes `parse` in zod 4 cheaper, while `new Elysia({ aot: false })` makes a request slower.
 
 If your program never calls `eval` or `new Function`, the compiler assumes it has seen all the code that will ever run (a closed-world assumption, like GraalVM Native Image) and optimizes accordingly.
 

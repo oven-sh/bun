@@ -199,6 +199,8 @@ pub struct BundlerOptions {
     pub react_fast_refresh: bool,
     /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
     pub check: bool,
+    pub dts: bool,
+    pub library: bool,
     pub react_compiler: bool,
     pub code_splitting: bool,
     pub split_require: bool,
@@ -268,6 +270,8 @@ impl Default for BundlerOptions {
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             react_fast_refresh: false,
             check: false,
+            dts: false,
+            library: false,
             react_compiler: false,
             code_splitting: false,
             split_require: true,

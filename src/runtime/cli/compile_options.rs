@@ -646,7 +646,7 @@ pub(crate) fn misplaced_key<'a>(key: &'a [u8], is_inside_compile: bool) -> Optio
 
 pub(crate) fn is_aot_requested(cmd: Tag, args: &clap::Args<clap::Help>) -> bool {
     if cmd == Tag::CompileCommand {
-        !args.flag(b"--no-aot")
+        !args.flag(b"--no-aot") && !args.flag(b"--library")
     } else {
         args.flag(b"--aot")
     }
@@ -794,7 +794,6 @@ fn list_and_exit(list: &[u8], origin: RequestOrigin) -> ! {
         );
     }
     if !engine::has_compiler() {
-        crate::cli::compile_command::run_in_bun_with_compiler();
         let mut message = Vec::new();
         CompileFailure::NoCompiler.write_message(origin, &CompileTarget::default(), &mut message);
         exit_with_message(&message);

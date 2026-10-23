@@ -341,7 +341,7 @@ pub fn package_of(name: &[u8]) -> Cow<'_, [u8]> {
         (_, end) => end,
     };
     let package = &inside[..end.unwrap_or(inside.len())];
-    match package.contains(&b'\\') {
+    match bun_core::strings::contains_char(package, b'\\') {
         true => Cow::Owned(
             package
                 .iter()

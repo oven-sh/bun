@@ -412,6 +412,13 @@ describe("transpiler cache", () => {
 
       expect(run(temp_dir, ["run", "--define", 'BVAL:"cli"', "./a.js"])).toBe("cli");
       expect(newCacheCount()).toBe(0);
+    });
+
+    test("--define order and repeated keys do not change the cache key", () => {
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(1);
 
       // The key is built from the resolved map: flag order does not matter,
       // and a key given twice keeps its last value, so `x` then `cli` is
@@ -458,9 +465,10 @@ describe("transpiler cache", () => {
     });
 
     test("--drop invalidates cache", () => {
+      // Not process.stdout.write: a debug build takes 1.4s to load process.stdout, in each run.
       writeFileSync(
         join(temp_dir, "a.js"),
-        `console.log("logged");\nprocess.stdout.write("written\\n");` + "\n//" + filler,
+        `console.log("logged");\nawait Bun.write(Bun.stdout, "written\\n");` + "\n//" + filler,
       );
 
       expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");

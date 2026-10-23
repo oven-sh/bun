@@ -332,10 +332,6 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) socket: Cell<uws::NewSocketHandler<SSL>>,
     /// A TLS socket whose close still waits for the peer. `socket` is detached by then, so `terminate()` closes this one.
     pub(crate) closing: Cell<uws::NewSocketHandler<SSL>>,
-    /// `SSL_CTX` this client connection was opened with. Server-accepted
-    /// sockets and plain TCP leave this `None` (the Listener / SecureContext
-    /// owns the ref there).
-    pub(crate) owned_ssl_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
 
     pub(crate) flags: Cell<Flags>,
     pub(crate) ref_count: bun_ptr::RefCount<Self>,
@@ -592,7 +588,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let init = Self {
             socket: Cell::new(SocketHandler::<SSL>::DETACHED),
             closing: Cell::new(SocketHandler::<SSL>::DETACHED),
-            owned_ssl_ctx: JsCell::new(None),
             flags: Cell::new(Flags::empty()),
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(handlers),
@@ -643,10 +638,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// Connects to `self.connection`. `Err` is why that failed, and the inner result is what an `on_open` that ran in here left pending.
+    /// Connects to `self.connection`. `Err` is why that failed, and the inner result is what an `on_open` that ran in here left pending. What outlives the call (a connecting socket, an `SSL`, a pipe's TLS engine) takes its own reference on `ssl_ctx`.
     pub(crate) fn do_connect(
         &self,
         cx: &bun_jsc::JsThread<'_>,
+        ssl_ctx: Option<boringssl_sys::OwnedSslCtx>,
     ) -> Result<JsResult<()>, sys::SystemErrno> {
         // Keep `self` alive across the re-entrant connect path.
         // SAFETY: `self` is live for this call and outlives the sockets below.
@@ -660,7 +656,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             use super::listener::NamedPipe;
             use super::windows_named_pipe::{SocketType, WindowsNamedPipe};
             let mut buf = bun_paths::path_buffer_pool::get();
-            let ssl_ctx = self.owned_ssl_ctx.get().clone();
             let socket = SocketType::of(this);
             match super::listener::named_pipe(connection, buf.as_mut_slice()) {
                 Some(NamedPipe::Path(name)) => {
@@ -689,14 +684,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         // The loop never closes on a FIN. `on_end` applies `Flags::ENDS_ON_PEER_FIN`.
         let flags: i32 = uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
-        let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
-            self.owned_ssl_ctx
-                .get()
-                .as_ref()
-                .map(|p| p.as_ptr().cast::<uws::SslCtx>())
-        } else {
-            None
-        };
+        let owned_ssl_ctx = ssl_ctx.filter(|_| SSL);
+        let ssl_ctx: Option<*mut uws::SslCtx> = owned_ssl_ctx
+            .as_ref()
+            .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         use super::listener::UnixOrHost;
         match connection {
@@ -3186,7 +3177,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let verify = options.server_verify();
         let tls = options.new_socket(defers_server_identity);
         tls.update_flags(|f| f.insert(self.flags.get() & Flags::ENDS_ON_PEER_FIN));
-        tls.owned_ssl_ctx.set(Some(options.ctx));
         tls.connection.set(self.connection.get().clone());
         let sni: Option<&core::ffi::CStr> =
             options.config.as_ref().and_then(|c| c.server_name_cstr());
@@ -3216,13 +3206,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         let groups = unsafe { &mut *groups };
         let group = groups.bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
-        // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
+        // `InternalSocket::Connected` above; `options.ctx` is the +1 ref
         // taken from SecureContext/ssl_ctx_cache and never null here.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
             (*raw_socket).adopt_tls(
                 group,
                 uws::SocketKind::BunSocketTls,
-                &mut *(tls.owned_ssl_ctx.get().as_ref().unwrap().as_ptr()),
+                &mut *options.ctx.as_ptr(),
                 sni,
                 !is_server,
                 verify.request_cert,
@@ -3235,7 +3225,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             None => {
                 let err = boringssl_sys::ERR_get_error();
                 let _clear_err = ClearErrorQueue(err != 0);
-                // Sole owner of the fresh allocation: `deref` drops it, with its `SSL_CTX` reference and its handlers.
+                // Sole owner of the fresh allocation: `deref` drops it, with its handlers.
                 tls.get().deref();
                 if err != 0 {
                     return Err(global.throw_value(boringssl_err_to_js(global, err)));

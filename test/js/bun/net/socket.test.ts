@@ -2472,6 +2472,72 @@ describe.concurrent.skipIf(!isWindows)("Bun.connect named-pipe client Handlers l
   );
 });
 
+// A client socket holds no SSL_CTX of its own: the connection attempt and then the SSL do.
+// The program keeps every socket here, so no collection can be what lets the SSL_CTX go.
+describe.concurrent("a Bun.connect TLS socket that is done lets go of its SSL_CTX", () => {
+  it.each([
+    // Windows retries a refused connect for seconds. The named-pipe rows above cover a failed connect there.
+    ...(isWindows
+      ? []
+      : [["whose connect was refused", "listener.stop(true);", ["connectError", "rejected"]] as const]),
+    ["that closed", "", ["open", "handshake", "close"]] as const,
+  ])("a socket %s", async (_name, beforeConnecting, events) => {
+    const src = /* js */ `
+      const { sslCtxLiveCount } = require("bun:internal-for-testing");
+      const tls = ${JSON.stringify(tls)};
+      const listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: { data() {}, open() {}, handshake(socket) { socket.end(); }, close() {}, error() {} },
+      });
+      const port = listener.port;
+      ${beforeConnecting}
+      const before = sslCtxLiveCount();
+
+      const kept = [];
+      const seen = new Set();
+      let during = 0;
+      for (let i = 0; i < 4; i++) {
+        const done = Promise.withResolvers();
+        const note = (event, socket) => {
+          seen.add(event);
+          kept.push(socket);
+          during = Math.max(during, sslCtxLiveCount() - before);
+        };
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port,
+          tls: { ca: tls.cert, serverName: "localhost" },
+          socket: {
+            data() {},
+            error() {},
+            open(socket) { note("open", socket); },
+            handshake(socket) { note("handshake", socket); },
+            close(socket) { note("close", socket); done.resolve(); },
+            connectError(socket) { note("connectError", socket); done.resolve(); },
+          },
+        }).catch(() => seen.add("rejected"));
+        await done.promise;
+      }
+      // uSockets frees a closed socket, and with it the SSL, at the end of the loop iteration.
+      for (let i = 0; i < 100 && sslCtxLiveCount() > before; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(JSON.stringify({ events: [...seen], during, left: sslCtxLiveCount() - before, kept: kept.length > 0 }));
+      listener.stop(true);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { events, during: 1, left: 0, kept: true },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A socket over a Windows named pipe frees its native context from a task
 // that is queued when the socket closes. A handler can close the socket and
 // then spin the event loop before it returns (`expect().resolves` blocks on

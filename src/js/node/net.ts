@@ -1897,17 +1897,18 @@ Socket.prototype.connect = function connect(...args) {
   // The closed handle cancels its queued write from the event loop. By then that would fail this connection.
   if (this.destroyed && this[kWriteReq]) onWriteComplete(this, this[kWriteReq].handle, uv().UV_ECANCELED);
   const [options, cb] = $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
+  const isTLS = typeof this[bunTlsSymbol] === "function";
   {
     let connection = this[ksocket];
     let upgradeDuplex = false;
-    let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
+    const { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
     // A session over a transport the caller handed in has no connection of its own to dial again.
     if (!socket && this[kupgraded] && !this.destroyed) {
       const ex = new ExceptionWithHostPort(uv().UV_EISCONN, "connect", path || host || "localhost", port);
       process.nextTick(destroyNT, this, ex);
       return this;
     }
-    if (typeof this[bunTlsSymbol] === "function") this.servername = options.servername;
+    if (isTLS) this.servername = options.servername;
     if (socket) {
       connection = socket;
     }
@@ -1941,14 +1942,9 @@ Socket.prototype.connect = function connect(...args) {
       process.nextTick(startReadingNT, this);
       this.connecting = true;
     }
-    const bunTLS = this[bunTlsSymbol];
     if (
       // TLSSocket already created a socket and is forwarding it here. This is a private API.
-      !(
-        socket &&
-        $isObject(socket) &&
-        (typeof bunTLS === "function" ? isWrappableStream(socket) : socket instanceof Duplex)
-      ) &&
+      !(socket && $isObject(socket) && (isTLS ? isWrappableStream(socket) : socket instanceof Duplex)) &&
       // public api for net.Socket.connect
       port === undefined &&
       path == null
@@ -1956,26 +1952,15 @@ Socket.prototype.connect = function connect(...args) {
       throw $ERR_MISSING_ARGS(["options", "port", "path"]);
     }
     var tls: TLSConnectOptions | undefined = undefined;
-    if (typeof bunTLS === "function") {
-      tls = bunTLS.$call(this, host);
+    if (isTLS) {
+      if (checkServerIdentity !== undefined) validateFunction(checkServerIdentity, "options.checkServerIdentity");
       // Client always request Cert
       this._requestCert = true;
-      if (tls) {
-        applyRejectUnauthorized(this, tls, rejectUnauthorized);
-        tls.requestCert = true;
-        tls.session = session || tls.session;
-        this.servername = tls.servername;
-        if (checkServerIdentity !== undefined) {
-          validateFunction(checkServerIdentity, "options.checkServerIdentity");
-        }
-        tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
-        this[bunTLSConnectOptions] = tls;
-      }
+      tls = clientTLSOptions(this, { rejectUnauthorized, checkServerIdentity, session }, host);
       if (connection) {
         // An http 'connect' or 'upgrade' socket is connected but has no fd to adopt.
         const connectedWithoutHandle = !connection._handle && !isNotConnected(connection);
         if (
-          typeof connection !== "object" ||
           !(connection instanceof Socket) ||
           typeof connection[bunTlsSymbol] === "function" ||
           connectedWithoutHandle
@@ -2015,11 +2000,7 @@ Socket.prototype.connect = function connect(...args) {
     }
   }
 
-  if (typeof this[bunTlsSymbol] === "function" && cb !== null) {
-    this.once("secureConnect", cb);
-  } else if (cb !== null) {
-    this.once("connect", cb);
-  }
+  if (cb !== null) this.once(isTLS ? "secureConnect" : "connect", cb);
   if (this._parent?.connecting) {
     return this;
   }
@@ -2040,7 +2021,7 @@ Socket.prototype.connect = function connect(...args) {
   $debug("pipe", pipe, path);
 
   if (!this._handle) {
-    this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
+    this._handle = newDetachedSocket(isTLS);
     initSocketHandle(this);
   }
 
@@ -2811,12 +2792,11 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
   });
 }
 
-// Per attempt, not per connect(): setServername()/setSession() calls made after tls.connect() must reach the dial.
-// Per attempt: a setSession() or setServername() made since connect() counts.
-function clientTLSOptionsForAttempt(self, options): TLSConnectOptions | undefined {
+// connect() asks for a transport it was handed. A dial asks per attempt: a setSession() or setServername() made since connect() counts.
+function clientTLSOptions(self, options, host): TLSConnectOptions | undefined {
   const bunTLS = self[bunTlsSymbol];
   if (typeof bunTLS !== "function") return undefined;
-  const tls = bunTLS.$call(self, self._host);
+  const tls = bunTLS.$call(self, host);
   if (tls) {
     const { rejectUnauthorized, session, checkServerIdentity } = options;
     applyRejectUnauthorized(self, tls, rejectUnauthorized);
@@ -2839,7 +2819,7 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
   // The native connect binds, and reports a failed bind() as its own error.
   if (localPort) localAddress ||= addressType === 4 ? "0.0.0.0" : "::";
 
-  const tls = clientTLSOptionsForAttempt(self, options);
+  const tls = clientTLSOptions(self, options, self._host);
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
@@ -2930,7 +2910,7 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  const tls = clientTLSOptionsForAttempt(self, context.options);
+  const tls = clientTLSOptions(self, context.options, self._host);
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
@@ -3443,7 +3423,8 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
       // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
       // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
-      if (typeof options.callback === "function") onListen = options?.callback;
+      const { callback } = options;
+      if (typeof callback === "function") onListen = callback;
     } else if (port === undefined || port === null) {
       port = 0;
     } else if (typeof port === "number" || typeof port === "string") {
@@ -3498,7 +3479,7 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
       queryAddress = path;
       queryPort = -1;
       queryAddressType = -1;
-    } else if (typeof fd === "number" && fd >= 0) {
+    } else if (fd !== undefined) {
       queryPort = null;
       queryAddressType = null;
     } else if (typeof clusterHost === "string") {

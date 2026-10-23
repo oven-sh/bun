@@ -769,6 +769,39 @@ describe("tls.minVersion and tls.maxVersion take node:tls's version names", () =
     ]);
   });
 
+  test("a number that is no protocol code leaves the default bounds", async () => {
+    const versions = ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"] as const;
+    // The versions that a client pinned to one version at a time gets.
+    const accepted = async (bounds: object) => {
+      using server = serve(bounds);
+      const got: string[] = [];
+      for (const version of versions) {
+        const { promise, resolve } = Promise.withResolvers<boolean>();
+        const client = tls
+          .connect({
+            port: server.port,
+            host: "127.0.0.1",
+            ca: tlsCert.cert,
+            servername: "localhost",
+            minVersion: version,
+            maxVersion: version,
+            ciphers: "ALL",
+          })
+          .on("secureConnect", () => resolve(true))
+          .on("error", () => resolve(false));
+        if (await promise) got.push(version);
+        client.destroy();
+      }
+      return got;
+    };
+    // The clients do speak TLS 1.0 and 1.1.
+    expect(await accepted({ minVersion: "TLSv1" })).toEqual([...versions]);
+    for (const code of [5, 0x0305]) {
+      expect(await accepted({ minVersion: code })).toEqual(["TLSv1.2", "TLSv1.3"]);
+      expect(await accepted({ maxVersion: code })).toEqual(["TLSv1.2", "TLSv1.3"]);
+    }
+  });
+
   test("another string throws ERR_TLS_INVALID_PROTOCOL_VERSION", () => {
     expect(() => serve({ minVersion: "TLSv9" as any })).toThrow(
       expect.objectContaining({

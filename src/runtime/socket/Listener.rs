@@ -1082,7 +1082,6 @@ fn connect_finish<const IS_SSL: bool>(
     socket
         .server_name
         .set(ssl.as_mut().and_then(|s| s.take_server_name()));
-    socket.owned_ssl_ctx.set(owned_ssl_ctx);
     // Either the caller's JS-owned socket (reconnect) or the fresh one above.
     let socket_ref = socket;
     socket_ref.ref_();
@@ -1103,7 +1102,7 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref
         .poll_ref
         .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-    let opened = match socket_ref.do_connect(cx) {
+    let opened = match socket_ref.do_connect(cx, owned_ssl_ctx) {
         Ok(opened) => opened,
         Err(errno) => {
             let is_unix = port.is_none();

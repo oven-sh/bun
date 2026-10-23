@@ -7,7 +7,7 @@
 //! `get_or_create` for that digest sees the tombstone and rebuilds.
 //!
 //! Race-freedom relies on the per-VM instance only being touched from the JS
-//! thread: every consumer's `SSL_CTX_free` (socket close, `owned_ssl_ctx`
+//! thread: every consumer's `SSL_CTX_free` (socket close, `SSLWrapper`
 //! deinit, `SecureContext.finalize`) runs there — JSC sweeps destructible
 //! objects on the mutator, not heap-helper, thread. The mutex makes the
 //! tombstone-write / `get_or_create`-load+`up_ref` ordering explicit and

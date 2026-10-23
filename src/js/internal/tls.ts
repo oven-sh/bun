@@ -65,7 +65,7 @@ const VALID_TLS_ERROR_MESSAGE_TYPES = "string or an instance of Buffer, TypedArr
 
 const protocolVersionCode = $bindgen("SSLConfig.bind.ts", "protocolVersionCode");
 
-// The code SSL_CTX_set_min/max_proto_version takes, 0 for none. Node's toV() also throws for a `fallback` that names no version.
+// The code SSL_CTX_set_min/max_proto_version takes, 0 for none. A `fallback` that names no version counts as none, as on 1.4.4 (Node throws).
 function toProtocolVersion(which, version, fallback) {
   if (version == null) return typeof fallback === "string" ? protocolVersionCode(fallback) : 0;
   const code = typeof version === "string" ? protocolVersionCode(version) : 0;

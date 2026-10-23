@@ -1984,3 +1984,49 @@ describe("an option of the wrong type", () => {
     }
   });
 });
+
+describe("a tls.DEFAULT_MIN_VERSION or DEFAULT_MAX_VERSION that names no version", () => {
+  const versions = ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"] as const;
+  // The versions that a client pinned to one version at a time gets.
+  async function accepted(server: tls.Server) {
+    server.on("tlsClientError", () => {});
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const got: string[] = [];
+    for (const version of versions) {
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      const client = tls
+        .connect({
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+          minVersion: version,
+          maxVersion: version,
+          ciphers: "ALL",
+        })
+        .on("secureConnect", () => resolve(true))
+        .on("error", () => resolve(false));
+      if (await promise) got.push(version);
+      client.destroy();
+    }
+    server.close();
+    return got;
+  }
+  const identity = { key: agent1Key, cert: agent1Cert, ciphers: "ALL" };
+
+  it("the clients of these tests do speak TLS 1.0 and 1.1", async () => {
+    expect(await accepted(tls.createServer({ ...identity, minVersion: "TLSv1" }))).toEqual([...versions]);
+  });
+
+  it.each(["DEFAULT_MIN_VERSION", "DEFAULT_MAX_VERSION"] as const)("%s leaves the built-in bounds", async name => {
+    const saved = tls[name];
+    (tls as any)[name] = "TLSv9";
+    let server: tls.Server;
+    try {
+      server = tls.createServer(identity);
+    } finally {
+      tls[name] = saved;
+    }
+    expect(await accepted(server)).toEqual(["TLSv1.2", "TLSv1.3"]);
+  });
+});

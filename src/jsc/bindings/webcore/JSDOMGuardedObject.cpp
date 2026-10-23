@@ -25,12 +25,15 @@
 
 #include "config.h"
 #include "JSDOMGuardedObject.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
 
 DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guarded)
-    : ActiveDOMCallback(globalObject.scriptExecutionContext())
+    // The context of the script that is asking: a `Bun.ModuleGraph`'s, when its script is (what is
+    // guarded is then released, never settled, once that graph is disposed).
+    : ActiveDOMCallback(defaultGlobalObject(&globalObject)->currentScriptExecutionContext())
     , m_guarded(&guarded)
     , m_globalObject(&globalObject)
 {

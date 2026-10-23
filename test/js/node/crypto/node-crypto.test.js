@@ -4,6 +4,7 @@ import { bunEnv, bunExe } from "harness";
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
+import vm from "node:vm";
 
 it("crypto.randomBytes should return a Buffer", () => {
   expect(crypto.randomBytes(1) instanceof Buffer).toBe(true);
@@ -518,6 +519,84 @@ describe("createHash", () => {
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
 
+  // end() takes the digest in _flush. After that update() and copy() must
+  // throw (SHA-3 used to spin forever in BoringSSL's keccak absorb loop, other
+  // digests kept hashing from a zeroed state) while a zero-length update()
+  // and one explicit digest() still work, as in Node. Runs in a child because
+  // the unfixed behaviour is a hang. sha3-*/sha256 are BoringSSL EVP digests,
+  // blake2b512/shake128 take the ExternZigHash path.
+  it("update() and copy() after the stream has ended throw instead of reusing finalized state", async () => {
+    const algorithms = ["sha3-256", "sha3-512", "sha256", "blake2b512", "shake128"];
+    const script = `
+      const crypto = require("node:crypto");
+      const code = fn => { try { fn(); return "returned"; } catch (e) { return e.code; } };
+      const out = {};
+      for (const algo of ${JSON.stringify(algorithms)}) {
+        const expected = crypto.createHash(algo).update("abc").digest("hex");
+        const h = crypto.createHash(algo);
+        h.update("abc");
+        h.end();
+        out[algo] = {
+          streamed: h.read().toString("hex") === expected,
+          update: code(() => h.update("late")),
+          updateEmpty: code(() => h.update("").update(Buffer.alloc(0))),
+          copy: code(() => h.copy()),
+          digest: h.digest("hex") === expected,
+          digestAgain: code(() => h.digest("hex")),
+          updateEmptyAfterDigest: code(() => h.update("")),
+        };
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: Object.fromEntries(
+        algorithms.map(algo => [
+          algo,
+          {
+            streamed: true,
+            update: "ERR_CRYPTO_HASH_UPDATE_FAILED",
+            updateEmpty: "returned",
+            copy: "ERR_CRYPTO_HASH_FINALIZED",
+            digest: true,
+            digestAgain: "ERR_CRYPTO_HASH_FINALIZED",
+            updateEmptyAfterDigest: "ERR_CRYPTO_HASH_FINALIZED",
+          },
+        ]),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The reverse order: the readable's 'end' handler calls digest() and pipe()
+  // then ends the hash. Node's _flush pushes the cached digest without the
+  // finalized check; this used to emit ERR_CRYPTO_HASH_FINALIZED instead.
+  it("end() after digest() pushes the cached digest and keeps the hash finalized", async () => {
+    for (const algo of ["sha3-256", "sha256", "blake2b512"]) {
+      const expected = crypto.createHash(algo).update("abc").digest();
+      const hash = crypto.createHash(algo);
+      hash.update("abc");
+      expect(hash.digest()).toEqual(expected);
+
+      const chunks = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      hash.on("data", chunk => chunks.push(chunk));
+      hash.on("end", resolve);
+      hash.on("error", reject);
+      hash.end();
+      await promise;
+
+      expect(Buffer.concat(chunks)).toEqual(expected);
+      const finalized = expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" });
+      expect(() => hash.update("d")).toThrow(finalized);
+      expect(() => hash.update("")).toThrow(finalized);
+      expect(() => hash.copy()).toThrow(finalized);
+      expect(() => hash.digest()).toThrow(finalized);
+    }
+  });
+
   it("treats a view over a detached ArrayBuffer as empty input", () => {
     const detachedView = () => {
       const ab = new ArrayBuffer(8);
@@ -688,6 +767,39 @@ describe("DiffieHellman", () => {
       threw: true,
       value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     });
+  });
+
+  it.each([
+    [
+      "the main realm",
+      () =>
+        class MyDH extends crypto.DiffieHellman {
+          publicKeyHex() {
+            return this.getPublicKey("hex");
+          }
+        },
+    ],
+    [
+      "a node:vm context",
+      () =>
+        vm.runInContext(
+          `(class MyDH extends DiffieHellman { publicKeyHex() { return this.getPublicKey("hex"); } })`,
+          vm.createContext({ DiffieHellman: crypto.DiffieHellman }),
+        ),
+    ],
+  ])("a subclass declared in %s has the subclass prototype and working keys", (_realm, declare) => {
+    const MyDH = declare();
+    const bob = crypto.getDiffieHellman("modp5");
+
+    const alice = new MyDH(bob.getPrime(), bob.getGenerator());
+    expect(Object.getPrototypeOf(alice)).toBe(MyDH.prototype);
+    expect(alice).toBeInstanceOf(crypto.DiffieHellman);
+
+    expect(alice.verifyError).toBe(bob.verifyError);
+    alice.generateKeys();
+    bob.generateKeys();
+    expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
+    expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
   });
 });
 
@@ -1051,6 +1163,63 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
     stderr: "",
     exitCode: 0,
   });
+});
+
+// The child never writes to the 2 GiB buffer, so its pages are never committed.
+it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
+  const script = `
+    import crypto from "node:crypto";
+    let big;
+    try {
+      big = new Uint8Array(2 ** 31);
+    } catch {
+      console.log("SKIP");
+      process.exit(0);
+    }
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const results = {};
+    const record = (label, fn) => {
+      try {
+        fn();
+        results[label] = "returned";
+      } catch (e) {
+        results[label] = e.code + ": " + e.message;
+      }
+    };
+    record("createSecretKey", () => crypto.createSecretKey(big));
+    record("createSecretKey ArrayBuffer", () => crypto.createSecretKey(big.buffer));
+    record("createHmac", () => crypto.createHmac("sha256", big));
+    record("createCipheriv", () => crypto.createCipheriv("aes-128-gcm", big, Buffer.alloc(12)));
+    record("hkdfSync ikm", () => crypto.hkdfSync("sha256", big, "salt", "info", 16));
+    record("hkdfSync ikm ArrayBuffer", () => crypto.hkdfSync("sha256", big.buffer, "salt", "info", 16));
+    record("hkdfSync salt", () => crypto.hkdfSync("sha256", "key", big, "info", 16));
+    record("hkdfSync info", () => crypto.hkdfSync("sha256", "key", "salt", big, 16));
+    record("sign data", () => crypto.sign("sha256", big, privateKey));
+    record("verify signature", () => crypto.verify("sha256", Buffer.from("x"), publicKey, big));
+    record("publicEncrypt oaepLabel", () =>
+      crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepLabel: big }, Buffer.alloc(16)),
+    );
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  if (stdout.trim() !== "SKIP") {
+    expect(JSON.parse(stdout)).toEqual({
+      "createSecretKey": "ERR_OUT_OF_RANGE: key is too big",
+      "createSecretKey ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "createHmac": "ERR_OUT_OF_RANGE: key is too big",
+      "createCipheriv": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync salt": "ERR_OUT_OF_RANGE: salt is too big",
+      "hkdfSync info": "ERR_OUT_OF_RANGE: info is too big",
+      "sign data": "ERR_OUT_OF_RANGE: data is too big",
+      "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
+      "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+    });
+  }
+  expect(exitCode).toBe(0);
 });
 
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {

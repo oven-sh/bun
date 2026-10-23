@@ -25,12 +25,12 @@ impl IniTestingAPIs {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        use bun_api::BunInstall;
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
         use bun_dotenv as dotenv;
-        use bun_ini::{RegistryAuth, load_npmrc};
+        use bun_ini::load_npmrc;
         use bun_install::npm::Registry;
+        use bun_options_types::schema::api::{BunInstall, NpmRegistry};
 
         let arg = frame.argument(0);
         let npmrc_contents = arg.to_js_string_view(global)?;
@@ -80,9 +80,29 @@ impl IniTestingAPIs {
         };
 
         let mut install = Box::new(BunInstall::default());
-        let mut configs: Vec<RegistryAuth> = Vec::new();
-        if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
+        if load_npmrc(&mut install, env, &mut log, &source).is_err() {
             return log.to_js(global, format_args!("error"));
+        }
+        // The package manager applies `url_auth` in `Options::load`; the same walk reports what the default registry would get.
+        let default_url: Box<[u8]> = match install.default_registry.as_ref() {
+            Some(registry) => registry.url.clone(),
+            None => Registry::DEFAULT_URL.as_bytes().into(),
+        };
+        let found = bun_ini::RegistryKey::from_url(&default_url)
+            .walk()
+            .find_map(|key| install.url_auth.iter().find(|entry| *entry.key == *key))
+            .map(|entry| entry.credentials.clone());
+        if let Some(found) = found {
+            let registry = install.default_registry.get_or_insert_with(|| NpmRegistry {
+                url: default_url,
+                ..Default::default()
+            });
+            if !registry.has_credentials() || registry.declared_in_npmrc {
+                registry.token = found.token;
+                registry.auth = found.auth;
+                registry.username = found.username;
+                registry.password = found.password;
+            }
         }
 
         let (
@@ -90,7 +110,7 @@ impl IniTestingAPIs {
             default_registry_token,
             default_registry_username,
             default_registry_password,
-            default_registry_email,
+            default_registry_auth,
         ) = 'brk: {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
@@ -107,7 +127,7 @@ impl IniTestingAPIs {
                 BunString::from_bytes(&default_registry.token),
                 BunString::from_bytes(&default_registry.username),
                 BunString::from_bytes(&default_registry.password),
-                BunString::from_bytes(&default_registry.email),
+                BunString::from_bytes(&default_registry.auth),
             )
         };
         // Rust has no field reflection; mirror struct-literal object creation with
@@ -119,10 +139,17 @@ impl IniTestingAPIs {
             default_registry_token: BunString,
             default_registry_username: BunString,
             default_registry_password: BunString,
-            default_registry_email: BunString,
+            default_registry_auth: BunString,
+            ignore_scripts: Option<bool>,
+            link_workspace_packages: Option<bool>,
+            save_exact: Option<bool>,
+            hoist: Option<bool>,
+        }
+        fn optional_bool(b: Option<bool>) -> JSValue {
+            b.map_or(JSValue::UNDEFINED, JSValue::js_boolean)
         }
         impl bun_jsc::js_object::PojoFields for Pojo {
-            const FIELD_COUNT: usize = 5;
+            const FIELD_COUNT: usize = 9;
             fn put_fields(
                 &self,
                 global: &JSGlobalObject,
@@ -145,9 +172,16 @@ impl IniTestingAPIs {
                     self.default_registry_password.to_js(global)?,
                 )?;
                 put(
-                    b"default_registry_email",
-                    self.default_registry_email.to_js(global)?,
+                    b"default_registry_auth",
+                    self.default_registry_auth.to_js(global)?,
                 )?;
+                put(b"ignore_scripts", optional_bool(self.ignore_scripts))?;
+                put(
+                    b"link_workspace_packages",
+                    optional_bool(self.link_workspace_packages),
+                )?;
+                put(b"save_exact", optional_bool(self.save_exact))?;
+                put(b"hoist", optional_bool(self.hoist))?;
                 Ok(())
             }
         }
@@ -156,7 +190,11 @@ impl IniTestingAPIs {
             default_registry_token,
             default_registry_username,
             default_registry_password,
-            default_registry_email,
+            default_registry_auth,
+            ignore_scripts: install.ignore_scripts,
+            link_workspace_packages: install.link_workspace_packages,
+            save_exact: install.exact,
+            hoist: install.hoist,
         };
         Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }

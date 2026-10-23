@@ -165,11 +165,6 @@ JSPerformanceResourceTiming::JSPerformanceResourceTiming(Structure* structure, J
 {
 }
 
-Ref<PerformanceResourceTiming> JSPerformanceResourceTiming::protectedWrapped() const
-{
-    return wrapped();
-}
-
 // static_assert(!std::is_base_of<ActiveDOMObject, PerformanceResourceTiming>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
 JSObject* JSPerformanceResourceTiming::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

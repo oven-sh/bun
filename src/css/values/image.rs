@@ -390,7 +390,9 @@ impl ImageSetOption {
         {
             // SAFETY: see above — `url` borrows the parser's source/arena.
             let url: &[u8] = unsafe { crate::arena_str(url) };
-            let record_idx = input.add_import_record(url, start_position, ImportKind::Url)?;
+            let end_position = input.input.tokenizer.get_position();
+            let record_idx =
+                input.add_import_record(url, start_position, end_position, ImportKind::Url)?;
             Image::Url(Url {
                 import_record_idx: record_idx,
                 loc: css::dependencies::Location::from_source_location(loc),

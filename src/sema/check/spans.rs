@@ -938,9 +938,7 @@ impl<'a, 's> Spans<'a, 's> {
         token_end(self.text, at, self.is_jsx())
     }
 
-    /// `StringLiteralLike`: the string, or the template without substitutions, that starts at `pos`. It ends where
-    /// the parser's scanner ended it, and `parseJSDocComment` gives the scanner the text up to the `*/` of the
-    /// comment. Returns `pos` if there's no text.
+    /// The `StringLiteralLike` at `pos`. The scanner of a JSDoc comment only has the text up to its `*/`.
     pub(crate) fn string(self, pos: u32) -> u32 {
         let comments = &self.hir.jsdoc_comments;
         let started = comments.partition_point(|comment| comment.0 <= pos);

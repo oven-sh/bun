@@ -36,6 +36,30 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
     }
 }
 
+/// Splits a banner that starts with `#!` into its hashbang line and the rest.
+#[inline]
+fn split_banner_hashbang(banner: &[u8]) -> (&[u8], &[u8]) {
+    if !banner.starts_with(b"#!") {
+        return (b"", banner);
+    }
+    let newline_pos = strings::index_of_char_usize(banner, b'\n').unwrap_or(banner.len());
+    (
+        &banner[..newline_pos],
+        strings::trim_left(&banner[newline_pos..], b"\r\n"),
+    )
+}
+
+/// The banner after its hashbang comment, which ends at the first JS line break as in the lexer.
+fn banner_without_hashbang(banner: &[u8]) -> &[u8] {
+    if !banner.starts_with(b"#!") {
+        return banner;
+    }
+    match strings::find_js_line_break(banner) {
+        Some((at, len)) => strings::trim_left(&banner[at + len..], b"\r\n"),
+        None => b"",
+    }
+}
+
 /// `__chunks(import.meta.url, ids, nodes, 0)` for a browser entry chunk of a
 /// split bundle: the chunk graph `__preload` walks (see runtime.js).
 fn module_preload_registration(
@@ -397,35 +421,22 @@ pub(crate) fn post_process_js_chunk(
     let mut newline_before_comment = false;
     let mut is_executable = false;
 
-    // Extract hashbang and banner for entry points
-    let (hashbang, banner): (&[u8], &[u8]) = if chunk.is_entry_point() {
-        'brk: {
-            let source_hashbang =
-                c.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
+    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
 
-            // If source file has a hashbang, use it
-            if !source_hashbang.is_empty() {
-                break 'brk (source_hashbang.slice(), c.options.banner);
-            }
-
-            // Otherwise check if banner starts with hashbang
-            if !c.options.banner.is_empty() && c.options.banner.starts_with(b"#!") {
-                let newline_pos = strings::index_of_char(c.options.banner, b'\n')
-                    .map(|n| n as usize)
-                    .unwrap_or(c.options.banner.len());
-                let banner_hashbang = &c.options.banner[..newline_pos];
-
-                break 'brk (
-                    banner_hashbang,
-                    strings::trim_left(&c.options.banner[newline_pos..], b"\r\n"),
-                );
-            }
-
-            // No hashbang anywhere
-            break 'brk (b"", c.options.banner);
-        }
+    let (banner_hashbang, banner_rest) = split_banner_hashbang(c.options.banner);
+    let source_hashbang: &[u8] = if chunk.is_entry_point() {
+        c.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize].slice()
     } else {
-        (b"", c.options.banner)
+        b""
+    };
+    // The entry's own hashbang wins. esbuild writes both lines, which does not parse.
+    let hashbang: &[u8] = if !source_hashbang.is_empty() {
+        source_hashbang
+    } else if chunk.is_entry_point() || is_bun {
+        banner_hashbang
+    } else {
+        // Nothing is written ahead of the banner, so it is pushed whole below.
+        b""
     };
 
     // Start with the hashbang if there is one. This must be done before the
@@ -434,13 +445,15 @@ pub(crate) fn post_process_js_chunk(
         j.push_static(hashbang);
         j.push_static(b"\n");
         line_offset.advance(hashbang);
-        line_offset.advance(b"\n");
+        // The CR that a CRLF banner leaves on the hashbang already counted as this line break.
+        if !strings::ends_with_char(hashbang, b'\r') {
+            line_offset.advance(b"\n");
+        }
         newline_before_comment = true;
-        is_executable = true;
+        is_executable = chunk.is_entry_point();
     }
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
-    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             const INPUT: &[u8] =
@@ -461,7 +474,14 @@ pub(crate) fn post_process_js_chunk(
         }
     }
 
-    // Add the banner (excluding any hashbang part) for all chunks
+    // Add the banner for all chunks. Its hashbang is only valid as the first bytes of the file.
+    let banner = if j.len == 0 {
+        c.options.banner
+    } else if source_hashbang.is_empty() {
+        banner_rest
+    } else {
+        banner_without_hashbang(c.options.banner)
+    };
     if !banner.is_empty() {
         j.push_static(banner);
         line_offset.advance(banner);

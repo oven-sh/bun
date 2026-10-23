@@ -486,13 +486,16 @@ fn places_of(
     rows: &[DependencyIDList],
     dependencies: &[Dependency],
     resolutions: &[PackageID],
+    kept: &RowMap,
 ) -> Vec<(u64, PackageID)> {
     let folders = folder_keys(trees, dependencies);
     let mut places = Vec::with_capacity(rows.iter().map(Vec::len).sum());
-    for (&folder, rows) in folders.iter().zip(rows) {
+    for ((&folder, rows), tree) in folders.iter().zip(rows).zip(trees) {
         places.extend(rows.iter().map(|&row| {
             let name_hash = dependencies[row as usize].name_hash;
-            (place_key(folder, name_hash), resolutions[row as usize])
+            let edge = kept.get(tree.id, row);
+            let pkg_id = edge.map_or(invalid_package_id, |edge| resolutions[edge as usize]);
+            (place_key(folder, name_hash), pkg_id)
         }));
     }
     places
@@ -558,8 +561,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// Builds the `Filter` tree as Bun 1.4.3 and earlier did: skipped dependencies are not placed
     /// at all, so other packages hoist higher. See `prune::remove_copies_of_the_older_layout`.
     pub(crate) older_layout: bool,
-    /// The `place_key` of every row, with the package placed there. Left empty when `older_layout`
-    /// would place every row that this install keeps exactly where it is now.
+    /// The `place_key` of every row, with the package that this install places there, if any. Left
+    /// empty when `older_layout` would place every row that this install keeps exactly where it is
+    /// now.
     pub(crate) places: Vec<(u64, PackageID)>,
     pub(crate) linked: reachable::Linked,
 }
@@ -954,15 +958,16 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             return;
         };
         let (kept, older_layout_can_differ) = rows.walk();
-        self.kept = kept;
-        if older_layout_can_differ {
+        if older_layout_can_differ && let Some(kept) = &kept {
             self.places = places_of(
                 self.list.items_tree(),
                 self.list.items_dependencies(),
                 self.dependencies,
                 &*self.resolutions,
+                kept,
             );
         }
+        self.kept = kept;
     }
 }
 
@@ -1086,8 +1091,9 @@ impl LinkedRows<'_> {
             )
     }
 
-    /// Returns the rows that the root reaches without a skipped dependency (`None` means all rows)
-    /// and `older_layout_can_differ`. Names are resolved as Node does, so this runs after hoisting.
+    /// Returns the rows that the root reaches without a skipped dependency or an optional peer that
+    /// loads one of the `reachable::foreign_packages` (`None` means all rows), and
+    /// `older_layout_can_differ`. Names are resolved as Node does, so this runs after hoisting.
     fn walk(&mut self) -> (Option<RowMap>, bool) {
         let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
 
@@ -1184,8 +1190,19 @@ impl LinkedRows<'_> {
                 {
                     continue;
                 }
-                kept.insert(tree_id, row, if follows { dep_id } else { row });
                 let filler_pkg_id = self.resolutions[filler as usize];
+                if self.linked.is_foreign_peer(
+                    dep.behavior,
+                    filler_pkg_id,
+                    self.workspace_filters,
+                    self.install_root_dependencies,
+                    self.manager,
+                    self.lockfile,
+                    self.resolutions,
+                ) {
+                    continue;
+                }
+                kept.insert(tree_id, row, if follows { dep_id } else { row });
                 if filler_pkg_id != invalid_package_id {
                     let own = own_folder.get(tree_id, filler);
                     let shipped = self.shipped_rows.contains_key(&(tree_id, row));
@@ -1198,9 +1215,9 @@ impl LinkedRows<'_> {
         (Some(kept), can_differ)
     }
 
-    /// Returns true if `older_layout` could place a kept row somewhere else. That layout only
-    /// hoists the dependencies that this install keeps, so it only differs if a skipped one moved a
-    /// kept row.
+    /// Returns true if `older_layout` could place a kept row somewhere else. Besides the
+    /// `reachable::foreign_packages` that optional peers load, that layout only hoists the
+    /// dependencies that this install keeps, so it only differs if a skipped one moved a kept row.
     fn older_layout_can_differ(&self, kept: &RowMap, mut idle: Vec<bool>, walked: &[bool]) -> bool {
         if self.replaced_row || !self.contested.is_empty() {
             return true;

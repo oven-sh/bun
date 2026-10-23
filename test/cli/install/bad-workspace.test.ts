@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
 import { dirname, join } from "path";
 
 let cwd: string;
@@ -79,6 +79,53 @@ test.concurrent.skipIf(isWindows || isRoot).each([
   } finally {
     chmodSync(secret, 0o755);
   }
+});
+
+// Mode 111: the directory can be entered and cannot be listed. npm finds this workspace too. Not concurrent:
+// `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+test.skipIf(isWindows)("glob entry finds a workspace in a directory that cannot be listed", async () => {
+  using dir = tempDir("bad-workspace-glob-search-only", {
+    "project/package.json": rootPackageJson(["pkgs/*"]),
+    "project/pkgs/pkg1/package.json": JSON.stringify({ name: "pkg1" }),
+    "project/pkgs/secret/package.json": JSON.stringify({ name: "secret" }),
+    "home/.keep": "",
+    "cache/.keep": "",
+  });
+  const project = join(String(dir), "project");
+  const secret = join(project, "pkgs", "secret");
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+  chmodSync(secret, 0o111);
+  try {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: project,
+      env: { ...bunEnv, HOME: join(String(dir), "home"), BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(Object.values(install_test_helpers.parseLockfile(project).workspace_paths).sort()).toEqual([
+      "pkgs/pkg1",
+      "pkgs/secret",
+    ]);
+  } finally {
+    chmodSync(secret, 0o755);
+  }
+});
+
+// The walker does not enter `node_modules`, whether a wildcard matches it or the entry names it.
+test.concurrent.each(["node_modules/*", "*/*"])("glob entry %s finds no workspace in node_modules", async entry => {
+  using dir = tempDir("bad-workspace-glob-node-modules", {
+    "package.json": rootPackageJson(["pkgs/*", entry]),
+    ...PKG1,
+    "node_modules/stray/package.json": JSON.stringify({ name: "stray" }),
+  });
+
+  await expectOnlyPkg1Found(String(dir));
 });
 
 // `bun add` walks the glob again when it writes package.json back. The registry removes the

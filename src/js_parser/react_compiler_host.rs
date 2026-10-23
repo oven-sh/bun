@@ -164,6 +164,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
+/// `react_compiler_claimed_body` when no function holds the candidate name.
+pub(crate) const UNCLAIMED_BODY: bun_ast::Loc = bun_ast::Loc { start: i32::MIN };
+
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
@@ -195,12 +198,17 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         name: Option<js_ast::Ref>,
         has_react_hooks_suppression: bool,
         body: &[js_ast::Stmt],
+        body_loc: bun_ast::Loc,
     ) -> bool {
         let prev = self.react_compiler_may_replace_body;
-        if !prev
-            && let Some(candidate) = self.react_compiler_candidate_name
-            && let Some(rc) = self.react_compiler.as_deref()
-        {
+        let Some(candidate) = self.react_compiler_candidate_name else {
+            return prev;
+        };
+        // Taken before the parameters are visited, so no function in them can take it.
+        self.react_compiler_candidate_name = None;
+        self.react_compiler_claimed_body = body_loc;
+        self.react_compiler_claimed_name = candidate;
+        if !prev && let Some(rc) = self.react_compiler.as_deref() {
             let name = name
                 .filter(|r| r.is_valid())
                 .or(Some(candidate))
@@ -214,6 +222,19 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             );
         }
         prev
+    }
+
+    /// After the parameters are visited: the candidate name, for the function that took it at its entry.
+    #[inline]
+    pub(crate) fn take_react_compiler_claim(
+        &mut self,
+        body_loc: bun_ast::Loc,
+    ) -> Option<js_ast::Ref> {
+        if self.react_compiler_claimed_body != body_loc {
+            return None;
+        }
+        self.react_compiler_claimed_body = UNCLAIMED_BODY;
+        Some(self.react_compiler_claimed_name)
     }
 
     /// Port of upstream `findFunctionDeclarationOrExpression` for the

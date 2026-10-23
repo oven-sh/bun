@@ -4118,6 +4118,411 @@ describe("bundler", () => {
       });
     },
   });
+
+  // The fake `c` counts its calls in a render and throws outside of one, as
+  // the cache hook of React does.
+  const stubReactThatCountsCacheHooks = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      export const memo = component => component;
+      export const useState = initial => [initial, () => {}];
+    `,
+    "/node_modules/react/jsx-runtime.js": /* js */ `
+      export const jsx = (type, props) => ({ type, props });
+      export const jsxs = jsx;
+    `,
+    "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      export const jsxDEV = (type, props) => ({ type, props });
+    `,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      let rendering = false;
+      let cacheHooks = 0;
+      export function c(size) {
+        if (!rendering) throw new Error("Invalid hook call");
+        cacheHooks++;
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      }
+      export function render(component, props) {
+        rendering = true;
+        cacheHooks = 0;
+        try {
+          return { element: component(props), cacheHooks };
+        } finally {
+          rendering = false;
+        }
+      }
+    `,
+  };
+
+  // A function in the parameter list of a component or hook is part of that
+  // component. It took the candidate name that the statement set for the
+  // component, so it was compiled in place of the component. One that returns
+  // JSX then read a memo cache on each call, also outside a render, and the
+  // component stayed as written.
+  //
+  // Each form passes its function to `onClick`, and the run calls it after the
+  // render.
+  for (const [minifySyntax, minifyIdentifiers] of [
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ] as const) {
+    itBundled(`react-compiler/FunctionInAParameterList-syntax=${minifySyntax}-identifiers=${minifyIdentifiers}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { memo, useState } from "react";
+          import { render } from "react/compiler-runtime";
+
+          const noop = () => {};
+          function NoFunction({ label, onClick = noop }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+
+          // The compiler moves these defaults into the body.
+          function DefaultInAPattern({ label, onClick = () => {} }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function DefaultOfAParameter(onClick = () => {}) {
+            const style = { color: "a" };
+            return <button style={style} onClick={onClick} />;
+          }
+          const ArrowComponent = ({ label, onClick = () => {} }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          const FunctionExpression = function ({ label, onClick = () => {} }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          };
+          const MemoCallback = memo(({ label, onClick = () => {} }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          });
+          function useHook(onClick = () => {}) {
+            const [label] = useState("a");
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+
+          // The compiler does not move these defaults, so it leaves the
+          // component as written.
+          function JsxInAnArrow({ label, onClick = text => <b>{text}</b> }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function JsxInAnArrowCalledInTheRender({ items, onClick = text => <b>{text}</b> }) {
+            return <button onClick={onClick}>{items.map(onClick)}</button>;
+          }
+          function JsxInAFunctionExpression({ label, onClick = function (text) { return <b>{text}</b>; } }) {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          }
+          function JsxInAnObjectMethod({ label, handlers = { onClick(text) { return <b>{text}</b>; } } }) {
+            const style = { color: label };
+            return <button style={style} onClick={handlers.onClick}>{label}</button>;
+          }
+          function JsxInAClassMethod({ label, Handlers = class { static onClick(text) { return <b>{text}</b>; } } }) {
+            const style = { color: label };
+            return <button style={style} onClick={Handlers.onClick}>{label}</button>;
+          }
+          const JsxInAnArrowOfAMemoCallback = memo(({ label, onClick = text => <b>{text}</b> }) => {
+            const style = { color: label };
+            return <button style={style} onClick={onClick}>{label}</button>;
+          });
+
+          // Only a function that a module-scope statement binds is a candidate,
+          // so "use memo" in a nested function has no effect. The one in the
+          // parameter list was compiled under the name of the outer function.
+          // Upstream compiles a nested function that has the directive.
+          function withUseMemoInTheParameterList(onClick = text => { "use memo"; return <b>{text}</b>; }) {
+            return <button onClick={onClick} />;
+          }
+          function withUseMemoInTheBody() {
+            const onClick = text => { "use memo"; return <b>{text}</b>; };
+            return <button onClick={onClick} />;
+          }
+
+          const forms = {
+            NoFunction,
+            DefaultInAPattern,
+            DefaultOfAParameter,
+            ArrowComponent,
+            FunctionExpression,
+            MemoCallback,
+            useHook,
+            JsxInAnArrow,
+            JsxInAnArrowCalledInTheRender,
+            JsxInAFunctionExpression,
+            JsxInAnObjectMethod,
+            JsxInAClassMethod,
+            JsxInAnArrowOfAMemoCallback,
+            withUseMemoInTheParameterList,
+            withUseMemoInTheBody,
+          };
+          // These take the function as their first parameter, or take nothing.
+          const withoutProps = [DefaultOfAParameter, useHook, withUseMemoInTheParameterList, withUseMemoInTheBody];
+          for (const [name, form] of Object.entries(forms)) {
+            const props = withoutProps.includes(form) ? undefined : { label: "a", items: [1, 2, 3] };
+            const { element, cacheHooks } = render(form, props);
+            let returned;
+            try {
+              returned = JSON.stringify(element.props.onClick("x") ?? null);
+            } catch (e) {
+              returned = "an error: " + e.message;
+            }
+            console.log(name + ": " + cacheHooks + " cache hooks in a render, the function returns " + returned);
+          }
+        `,
+        ...stubReactThatCountsCacheHooks,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target: "browser",
+      minifySyntax,
+      minifyIdentifiers,
+      onAfterBundle(api) {
+        // A name of the compiler that is left after the rename has no declaration.
+        if (minifyIdentifiers) expect(api.readFile("/out.js")).not.toMatch(/\b_temp\d*\b/);
+      },
+      run: {
+        stdout: `
+          NoFunction: 1 cache hooks in a render, the function returns null
+          DefaultInAPattern: 1 cache hooks in a render, the function returns null
+          DefaultOfAParameter: 1 cache hooks in a render, the function returns null
+          ArrowComponent: 1 cache hooks in a render, the function returns null
+          FunctionExpression: 1 cache hooks in a render, the function returns null
+          MemoCallback: 1 cache hooks in a render, the function returns null
+          useHook: 1 cache hooks in a render, the function returns null
+          JsxInAnArrow: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+          JsxInAnArrowCalledInTheRender: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+          JsxInAFunctionExpression: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+          JsxInAnObjectMethod: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+          JsxInAClassMethod: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+          JsxInAnArrowOfAMemoCallback: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+          withUseMemoInTheParameterList: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+          withUseMemoInTheBody: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+        `,
+      },
+    });
+  }
+
+  // A react-hooks eslint suppression stops the compile of the top-level
+  // function it is above or inside. A function in the parameter list closes
+  // first. It consumed the suppression, so the component had none. Each
+  // component is followed by the same component without the comment.
+  //
+  // A comment right below a function declaration marks that declaration, so
+  // each comment above a component follows a statement that ends in `;`.
+  itBundled("react-compiler/SuppressionAheadOfAFunctionInAParameterList", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { memo } from "react";
+        import { render } from "react/compiler-runtime";
+
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        function Above({ label, onClick = () => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+        function AfterAbove({ label, onClick = () => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        function Inside({
+          label,
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          onClick = () => {},
+        }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+        function AfterInside({ label, onClick = () => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        const ArrowInside = ({
+          label,
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          onClick = () => {},
+        }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const AfterArrowInside = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+
+        const FunctionExpressionInside = function ({
+          label,
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          onClick = () => {},
+        }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const AfterFunctionExpressionInside = function ({ label, onClick = () => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const ArrowAbove = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const AfterArrowAbove = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const MemoAbove = memo(({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        });
+        const AfterMemoAbove = memo(({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        });
+
+        // The function is in the parameter list of a function in the parameter list.
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        function AboveTwoLists({ label, onClick = (inner = () => {}) => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+        function AfterAboveTwoLists({ label, onClick = (inner = () => {}) => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        // The function in the parameter list closes ahead of the comment.
+        function InTheBody({ label, onClick = () => {} }) {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+        function AfterInTheBody({ label, onClick = () => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        // Parentheses that are not a parameter list: the comment stays with the function in them.
+        const inParentheses = (function () {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          return 1;
+        })();
+        const AfterParentheses = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const inParenthesesAgain = (function () {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          return 1;
+        })();
+        const InsideAfterParentheses = ({
+          label,
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          onClick = () => {},
+        }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const AfterInsideAfterParentheses = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+
+        const forms = {
+          Above,
+          AfterAbove,
+          Inside,
+          AfterInside,
+          ArrowInside,
+          AfterArrowInside,
+          FunctionExpressionInside,
+          AfterFunctionExpressionInside,
+          ArrowAbove,
+          AfterArrowAbove,
+          MemoAbove,
+          AfterMemoAbove,
+          AboveTwoLists,
+          AfterAboveTwoLists,
+          InTheBody,
+          AfterInTheBody,
+          AfterParentheses,
+          InsideAfterParentheses,
+          AfterInsideAfterParentheses,
+        };
+        for (const [name, form] of Object.entries(forms)) {
+          console.log(name + ": " + render(form, { label: "a" }).cacheHooks + " cache hooks in a render");
+        }
+      `,
+      ...stubReactThatCountsCacheHooks,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: `
+        Above: 0 cache hooks in a render
+        AfterAbove: 1 cache hooks in a render
+        Inside: 0 cache hooks in a render
+        AfterInside: 1 cache hooks in a render
+        ArrowInside: 0 cache hooks in a render
+        AfterArrowInside: 1 cache hooks in a render
+        FunctionExpressionInside: 0 cache hooks in a render
+        AfterFunctionExpressionInside: 1 cache hooks in a render
+        ArrowAbove: 0 cache hooks in a render
+        AfterArrowAbove: 1 cache hooks in a render
+        MemoAbove: 0 cache hooks in a render
+        AfterMemoAbove: 1 cache hooks in a render
+        AboveTwoLists: 0 cache hooks in a render
+        AfterAboveTwoLists: 1 cache hooks in a render
+        InTheBody: 0 cache hooks in a render
+        AfterInTheBody: 1 cache hooks in a render
+        AfterParentheses: 1 cache hooks in a render
+        InsideAfterParentheses: 0 cache hooks in a render
+        AfterInsideAfterParentheses: 1 cache hooks in a render
+      `,
+    },
+  });
+
+  // TypeScript parses `(a) : b` behind a `?` as the start of an arrow and then
+  // goes back. The suppression that the function in parentheses left behind
+  // still covers only a function that starts before the close of that function.
+  itBundled("react-compiler/SuppressionAheadOfATypeScriptBacktrack", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { render } from "react/compiler-runtime";
+
+        const inParentheses = (function () {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          return 1;
+        })();
+        const picked = inParentheses ? (inParentheses) : 0;
+        function AfterABacktrack({ label, onClick = () => {} }: { label: string; onClick?: () => void }) {
+          const style = { color: label + picked };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        console.log("AfterABacktrack: " + render(AfterABacktrack, { label: "a" }).cacheHooks + " cache hooks in a render");
+      `,
+      ...stubReactThatCountsCacheHooks,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: "AfterABacktrack: 1 cache hooks in a render",
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

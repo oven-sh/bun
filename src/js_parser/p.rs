@@ -460,6 +460,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// statement currently being visited. Set in `visit_stmt`, consumed by
     /// `visit_func` / arrow-visit one frame down.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
+    /// The body of the function that took `react_compiler_candidate_name` at its entry, and the name it took.
+    pub(crate) react_compiler_claimed_body: bun_ast::Loc,
+    pub(crate) react_compiler_claimed_name: js_ast::Ref,
     /// Set alongside `react_compiler_candidate_name` when the candidate
     /// expression is a `memo(...)` / `forwardRef(...)` call.
     pub(crate) react_compiler_in_react_hoc: bool,
@@ -9768,6 +9771,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_refresh: ReactRefresh::default(),
             react_compiler: None,
             react_compiler_candidate_name: None,
+            react_compiler_claimed_body: crate::react_compiler_host::UNCLAIMED_BODY,
+            react_compiler_claimed_name: js_ast::Ref::NONE,
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
             react_compiler_result: None,

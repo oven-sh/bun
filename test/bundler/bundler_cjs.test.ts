@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isLinux } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -1233,6 +1234,289 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function/undefined",
+    },
+  });
+
+  // ============================================================================
+  // Non-enumerable properties of module.exports. The namespace has a getter for
+  // each one, so a read by name works. The getter of a non-enumerable getter is
+  // non-enumerable: nothing that enumerates the namespace calls it, as in
+  // `bun run`, Node and esbuild. A non-enumerable data property stays listed,
+  // as in `bun run`.
+  // ============================================================================
+
+  const hiddenDep = /* js */ `
+    exports.shown = 1;
+    Object.defineProperty(exports, "hidden", { value: 2 });
+    Object.defineProperty(exports, "legacy", {
+      get() {
+        globalThis.legacyCalls = (globalThis.legacyCalls || 0) + 1;
+        return 3;
+      },
+    });
+  `;
+  // Each statement between `keys` and `afterEnumeration` reads every listed
+  // name. No statement names "legacy" before `byName`.
+  const describeNamespace = /* js */ `
+    const legacyCalls = () => globalThis.legacyCalls || 0;
+    export function describeNamespace(ns) {
+      const keys = Object.keys(ns).join();
+      ({ ...ns });
+      Object.assign({}, ns);
+      Object.values(ns);
+      Object.entries(ns);
+      JSON.stringify(ns);
+      for (const key in ns) ns[key];
+      const afterEnumeration = legacyCalls();
+      const byName = [ns.hidden, "legacy" in ns, ns.legacy, ns.legacy].join();
+      return JSON.stringify({ keys, afterEnumeration, byName, afterTwoReads: legacyCalls() });
+    }
+  `;
+  const describeStarImport = /* js */ `
+    import * as ns from "./dep.cjs";
+    import { describeNamespace } from "./describe.mjs";
+    console.log(describeNamespace(ns));
+  `;
+  const starImportDescription =
+    '{"keys":"default,shown,hidden","afterEnumeration":0,"byName":"2,true,3,3","afterTwoReads":2}';
+  const reExportDescription = '{"keys":"shown,hidden","afterEnumeration":0,"byName":"2,true,3,3","afterTwoReads":2}';
+
+  // Test 63: `import *` of a wrapped CommonJS module, `.mjs` importer
+  itBundled("cjs/__toESM_non_enumerable_getter_import_star", {
+    files: {
+      "/entry.mjs": describeStarImport,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    run: {
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 64: the same through the CLI, in minified CommonJS output
+  itBundled("cjs/__toESM_non_enumerable_getter_import_star_minified_cjs", {
+    files: {
+      "/entry.js": describeStarImport,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    backend: "cli",
+    format: "cjs",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: {
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 65: import() of a wrapped CommonJS module in the same chunk
+  itBundled("cjs/__toESM_non_enumerable_getter_dynamic_import", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { describeNamespace } from "./describe.mjs";
+        console.log(describeNamespace(await import("./dep.cjs")));
+      `,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    run: {
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 66: import() of a wrapped CommonJS module in its own chunk
+  itBundled("cjs/__toESM_non_enumerable_getter_split_dynamic_import", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { describeNamespace } from "./describe.mjs";
+        console.log(describeNamespace(await import("./dep.cjs")));
+      `,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__toESM(m.default,1))");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 67: `export * from` a wrapped CommonJS module goes through
+  // __reExport. A named import through it still reads the non-enumerable names.
+  itBundled("cjs/__reExport_non_enumerable_getter", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as re from "./re.mjs";
+        import { hidden, legacy } from "./re.mjs";
+        import { describeNamespace } from "./describe.mjs";
+        console.log(describeNamespace(re), hidden, legacy);
+      `,
+      "/re.mjs": /* js */ `export * from "./dep.cjs";`,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__reExport(exports_re, ");
+    },
+    run: {
+      stdout: reExportDescription + " 2 3",
+    },
+  });
+
+  // Test 68: a CommonJS entry point copies the names of `export *` to
+  // module.exports too (the third argument of __reExport). `bun run` exports a
+  // non-enumerable data property of that bundle by name and does not call the
+  // non-enumerable getter when it imports the bundle.
+  itBundled("cjs/__reExport_non_enumerable_getter_cjs_entry_point", {
+    files: {
+      "/entry.mjs": /* js */ `export * from "./dep.cjs";`,
+      "/dep.cjs": hiddenDep,
+    },
+    runtimeFiles: {
+      "/describe.mjs": describeNamespace,
+      "/run.mjs": /* js */ `
+        import { hidden } from "./out.cjs";
+        import { createRequire } from "node:module";
+        import { describeNamespace } from "./describe.mjs";
+        const callsAtImport = globalThis.legacyCalls || 0;
+        console.log(hidden, callsAtImport, describeNamespace(createRequire(import.meta.url)("./out.cjs")));
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").toContain(", module.exports);");
+    },
+    run: {
+      file: "/run.mjs",
+      stdout: "2 0 " + reExportDescription,
+    },
+  });
+
+  // Test 69: an external package in CommonJS output. `import *` prints
+  // __toESM(require("ext"), 1) and `export *` prints
+  // __reExport(exports, require("ext"), module.exports).
+  itBundled("cjs/__toESM_and___reExport_non_enumerable_getter_external", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "ext";
+        import { describeNamespace } from "./describe.mjs";
+        export * from "ext";
+        console.log(describeNamespace(ns));
+        globalThis.legacyCalls = 0;
+      `,
+      "/describe.mjs": describeNamespace,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": hiddenDep,
+      "/run.cjs": /* js */ `
+        const bundle = require("./out.cjs");
+        console.log(require("./describe.cjs").describeNamespace(bundle));
+      `,
+      "/describe.cjs": describeNamespace.replace("export function", "exports.describeNamespace = function"),
+    },
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").toContain('__toESM(require("ext"), 1)');
+      api.expectFile("/out.cjs").toContain('require("ext"), module.exports);');
+    },
+    run: {
+      file: "/run.cjs",
+      stdout: starImportDescription + "\n" + reExportDescription,
+    },
+  });
+
+  // Test 70: require() of an ES module that has `export *` of a CommonJS
+  // module. __toCommonJS keeps the flags that __reExport wrote.
+  itBundled("cjs/__toCommonJS_non_enumerable_getter_through_reExport", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const { describeNamespace } = require("./describe.mjs");
+        console.log(describeNamespace(require("./re.mjs")));
+      `,
+      "/re.mjs": /* js */ `export * from "./dep.cjs";`,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toCommonJS(exports_re)");
+    },
+    run: {
+      stdout: reExportDescription,
+    },
+  });
+
+  // Test 71: "module.exports" can be a module namespace object. Object.keys()
+  // of one throws while a binding is uninitialized, and the conversion must
+  // not. `host.mjs` imports the bundle first, so the bundle runs before
+  // `late` has a value.
+  itBundled("cjs/__toESM_module_namespace_with_uninitialized_binding", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./share.mjs";
+        import * as ns from "./dep.cjs";
+        export const describe = () => Object.keys(ns).join() + " " + ns.late;
+      `,
+      "/share.mjs": /* js */ `
+        import * as host from "./host.mjs";
+        globalThis.hostNamespace = host;
+      `,
+      "/dep.cjs": /* js */ `module.exports = globalThis.hostNamespace;`,
+    },
+    runtimeFiles: {
+      "/host.mjs": /* js */ `
+        import { describe } from "./out.mjs";
+        export const late = 1;
+        console.log(describe());
+      `,
+    },
+    external: ["./host.mjs"],
+    target: "node",
+    outfile: "/out.mjs",
+    run: {
+      file: "/host.mjs",
+      stdout: "default,late 1",
+    },
+  });
+
+  // Test 72: the conversion must not read a property of "module.exports" by
+  // name. A read builds a lazy property of a host object: `process.stdout`
+  // makes a pipe on fd 1 non-blocking. CommonJS output for Bun (the default of
+  // `--bytecode`) converts `process` for this import.
+  (isLinux ? itBundled : itBundled.skip)("cjs/__toESM_does_not_build_lazy_host_properties", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./before.cjs";
+        import process from "node:process";
+        import "./after.cjs";
+        console.log(typeof process.pid, globalThis.stdoutIsNonBlocking.join());
+      `,
+      "/before.cjs": /* js */ `globalThis.stdoutIsNonBlocking = [require("./flags.cjs")()];`,
+      "/after.cjs": /* js */ `globalThis.stdoutIsNonBlocking.push(require("./flags.cjs")());`,
+      "/flags.cjs": /* js */ `
+        const O_NONBLOCK = 0o4000;
+        module.exports = () => {
+          const fdinfo = require("fs").readFileSync("/proc/self/fdinfo/1", "utf8");
+          return (parseInt(/^flags:\\s*(\\d+)/m.exec(fdinfo)[1], 8) & O_NONBLOCK) !== 0;
+        };
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("process"), 1)');
+    },
+    run: {
+      stdout: "number false,false",
     },
   });
 });

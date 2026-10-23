@@ -1565,6 +1565,51 @@ devTest("require() of a built-in module in server code returns what require() re
     });
   },
 });
+devTest("a non-enumerable getter of a CommonJS module is not called by `export *` or by a spread of `import *`", {
+  framework: minimalFramework,
+  files: {
+    "dep.cjs": `
+      exports.shown = 1;
+      Object.defineProperty(exports, "hidden", { value: 2 });
+      Object.defineProperty(exports, "legacy", {
+        get() {
+          globalThis.legacyCalls = (globalThis.legacyCalls || 0) + 1;
+          return 3;
+        },
+      });
+    `,
+    // The dev server spreads the namespace of dep.cjs when this module loads.
+    "re.ts": `export * from "./dep.cjs";`,
+    "routes/index.ts": `
+      import * as ns from "../dep.cjs";
+      import * as re from "../re";
+      const legacyCalls = () => globalThis.legacyCalls || 0;
+      export default function () {
+        const afterLoad = legacyCalls();
+        ({ ...ns });
+        const afterSpread = legacyCalls();
+        return Response.json({
+          keys: Object.keys(ns).join(),
+          afterLoad,
+          afterSpread,
+          reExported: [re.shown, re.hidden],
+          byName: ns.legacy,
+          afterRead: legacyCalls(),
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({
+      keys: "default,shown,hidden",
+      afterLoad: 0,
+      afterSpread: 0,
+      reExported: [1, 2],
+      byName: 3,
+      afterRead: 1,
+    });
+  },
+});
 devTest("a route whose import throws on load throws that error again on the next request", {
   framework: minimalFramework,
   files: {

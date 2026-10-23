@@ -892,15 +892,33 @@ function toCommonJS(from: any) {
   return entry;
 }
 
+/**
+ * The `enumerable` rule is `__copyProps` in `runtime.js`. `export * from` a
+ * CommonJS module spreads this object when the re-exporting module loads.
+ */
 function toESM(mod: any) {
   const to = Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true });
-  if ((mod && typeof mod === "object") || typeof mod === "function")
-    for (let key of Object.getOwnPropertyNames(mod))
+  if ((mod && typeof mod === "object") || typeof mod === "function") {
+    const names = Object.getOwnPropertyNames(mod);
+    let enumerableKeys: string[],
+      i = 0,
+      desc: PropertyDescriptor | undefined;
+    try {
+      enumerableKeys = Object.keys(mod);
+    } catch {
+      enumerableKeys = names;
+    }
+    for (let key of names) {
+      let enumerable = key === enumerableKeys[i];
+      if (enumerable) i++;
+      else enumerable = !(desc = Object.getOwnPropertyDescriptor(mod, key)) || desc.enumerable || "value" in desc;
       if (!Object.prototype.hasOwnProperty.call(to, key))
         Object.defineProperty(to, key, {
           get: () => mod[key],
-          enumerable: true,
+          enumerable,
         });
+    }
+  }
   return to;
 }
 

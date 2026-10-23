@@ -11,7 +11,11 @@ use bun_lint::utils::ts_utils::{
 use smallvec::SmallVec;
 
 /// Disallow unnecessary template expressions.
-pub struct NoUnnecessaryTemplateExpression;
+pub struct NoUnnecessaryTemplateExpression {
+    /// It runs as `no-useless-template-literals`, which typescript-eslint had up to version 7. That rule reports the
+    /// expression and not the `${}` around it, doesn't mind comments, and doesn't look at types.
+    has_old_name: bool,
+}
 
 const NO_UNNECESSARY_TEMPLATE_EXPRESSION: Message = Message::new(
     "noUnnecessaryTemplateExpression",
@@ -227,7 +231,7 @@ fn is_trivial_interpolation<'a>(
     }
     template.raw_of_quasi(0).is_empty()
         && template.raw_of_quasi(1).is_empty()
-        && !cx.file().comments_exist_between(head, tail)
+        && (cx.state || !cx.file().comments_exist_between(head, tail))
 }
 
 /// typescript-go's `GetExpressionPrecedence` for an unparenthesized expression, where it differs from
@@ -355,7 +359,11 @@ fn report_single_interpolation<'a>(
 ) {
     if !cx.language().is_oxlint {
         let span = interpolation.span();
-        cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+        let reported = match cx.state {
+            true => span,
+            false => Span::new(span.start.saturating_sub(2), span.end + 1),
+        };
+        cx.report(reported, NO_UNNECESSARY_TEMPLATE_EXPRESSION)
             .fix_where_safe(
                 || !is_coercion(node, interpolation),
                 |fixer| fixer.replace(node, get_moved_node_code(node, interpolation)),
@@ -403,7 +411,7 @@ fn report_interpolations<'a>(
                 cx.file().comments_exist_between(prev_quasi, interpolation)
                     || cx.file().comments_exist_between(interpolation, next_quasi)
             }
-            false => cx.file().comments_exist_between(prev_quasi, next_quasi),
+            false => !cx.state && cx.file().comments_exist_between(prev_quasi, next_quasi),
         };
         if has_comments {
             continue;
@@ -485,7 +493,11 @@ fn report_infos<'a>(infos: &[InterpolationInfo<'a>], cx: &Context<'a>) {
             });
         }
 
-        cx.report(Span::new(warn_loc_start, warn_loc_end), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+        let reported = match cx.state {
+            true => interpolation,
+            false => Span::new(warn_loc_start, warn_loc_end),
+        };
+        cx.report(reported, NO_UNNECESSARY_TEMPLATE_EXPRESSION)
             .fix(|_| fixes);
     }
 }
@@ -545,10 +557,17 @@ impl Rule for NoUnnecessaryTemplateExpression {
     const ON: On = On::new()
         .exprs(&[ExprTag::Template])
         .types(&[TypeTag::Template]);
-    no_state!();
+    /// [`NoUnnecessaryTemplateExpression::has_old_name`]
+    type State<'a> = bool;
 
-    fn new(_: &Options) -> Self {
-        NoUnnecessaryTemplateExpression
+    fn new(options: &Options) -> Self {
+        NoUnnecessaryTemplateExpression {
+            has_old_name: options.object(1).bool_or("hasOldName", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<bool> {
+        Some(self.has_old_name)
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -556,6 +575,9 @@ impl Rule for NoUnnecessaryTemplateExpression {
     }
 
     fn ty<'a>(&self, node: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has_old_name {
+            return;
+        }
         self.check_template_literal_type(node, cx);
     }
 }

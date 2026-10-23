@@ -6871,6 +6871,59 @@ h();
       expect(found).toEqual(expected);
     });
 
+    // ESLint 8.57.1 reports nothing in any of these, and 9.39.5 the `e`.
+    describe("ESLint 8's default options apply however a rule is turned on", () => {
+      const project = (version: string, rules: string) => ({
+        "eslint.config.mjs": `export default [{ rules: ${rules} }];`,
+        "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+        "a.js": "try { f(); } catch (e) {}\nfunction f() {}\n",
+      });
+      const on = `{ "no-unused-vars": "error" }`;
+      const routes: [string, (version: string) => Record<string, string>, string[]][] = [
+        ["the config file", version => project(version, on), []],
+        ["--rule", version => project(version, "{}"), ["--rule", "no-unused-vars: error"]],
+        [
+          "--rule with options",
+          version => project(version, "{}"),
+          ["--rule", `no-unused-vars: [error, { args: all }]`],
+        ],
+        [
+          "a comment",
+          version => ({
+            ...project(version, "{}"),
+            "a.js": `/* eslint no-unused-vars: "error" */ ${project(version, "{}")["a.js"]}`,
+          }),
+          [],
+        ],
+        [
+          "a comment with options",
+          version => ({
+            ...project(version, "{}"),
+            "a.js": `/* eslint no-unused-vars: ["error", { "args": "all" }] */ ${project(version, "{}")["a.js"]}`,
+          }),
+          [],
+        ],
+        [
+          "bunfig.toml",
+          version => ({ ...project(version, "{}"), "bunfig.toml": `[lint.rules]\n"no-unused-vars" = "error"\n` }),
+          [],
+        ],
+      ];
+      test("--print-config doesn't list the rules that nothing turns on", async () => {
+        const { raw } = await lint(project("8.57.1", `{ "no-var": "error" }`), ["--print-config", "a.js"]);
+        expect(JSON.parse(raw).rules).toEqual({ "no-var": [2] });
+      });
+
+      test.each(routes)("%s", async (_, files, flags) => {
+        const reports = async (version: string) =>
+          (JSON.parse((await lint(files(version), ["-f", "json", ...flags, "a.js"])).raw)[0].messages as any[]).map(
+            it => it.message,
+          );
+        expect(await reports("8.57.1")).toEqual([]);
+        expect(await reports("9.39.5")).toEqual(["'e' is defined but never used."]);
+      });
+    });
+
     // From ESLint 8.57.1 too. In version 9 the location changed with 9.38.
     test.each([
       ["8.57.1", ["1:1-3:2 4", "5:9-5:37 2", "6:3-6:43 3", "7:11-7:23 2", "9:11-9:68 2", "10:14-10:45 3"]],
@@ -9654,6 +9707,20 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(exitCode).toBe(1);
       },
     );
+
+    // Same as ESLint 10.12.0 with typescript-eslint 8.71.1.
+    test("a rule that only a comment turns on gets types too", async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          ...files,
+          "eslint.config.js": files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`),
+          "a.ts": `/* eslint @typescript-eslint/no-floating-promises: "error" */\n${files["a.ts"]}`,
+        },
+        ["-f", "unix", "a.ts", "b.ts"],
+      );
+      expect(stdout).toContain("a.ts:3:1: Promises must be awaited");
+      expect(exitCode).toBe(1);
+    });
 
     test("without a config file, a script and a module get the same libraries", async () => {
       const { stdout, exitCode } = await lint(

@@ -242,9 +242,9 @@ fn with_default(default: &Json, option: &Json) -> Json {
     }
 }
 
-/// The options that make today's rule `id` behave like ESLint 8's rule with `options`, which aren't empty. `defaults`
-/// is [`Legacy::defaults`].
-fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
+/// The options that make today's rule `id` behave like ESLint 8's rule with `options`. `defaults` is
+/// [`Legacy::defaults`].
+pub(super) fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
     let Some(defaults) = defaults.get(id).and_then(Json::as_array) else {
         return options.to_vec();
     };
@@ -262,12 +262,10 @@ fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
         .collect()
 }
 
-/// [`migrate_options`] for an `eslint.config.js` that ESLint 8 reads. `None` if the rule's defaults haven't changed.
-pub(super) fn options_for_eslint_8(id: &[u8], options: &[Json]) -> Option<Vec<Json>> {
+/// [`ESLINT_8_DEFAULTS`], for an `eslint.config.js` that ESLint 8 reads.
+pub(super) fn default_options_of_eslint_8() -> &'static Json {
     static DEFAULTS: OnceLock<Json> = OnceLock::new();
-    let defaults = DEFAULTS.get_or_init(eslint_8_defaults);
-    defaults.get(id)?;
-    Some(migrate_options(defaults, id, options))
+    DEFAULTS.get_or_init(eslint_8_defaults)
 }
 
 /// An environment's `parserOptions.ecmaVersion`.
@@ -2125,7 +2123,10 @@ impl ResolvedConfig {
         let id = RuleId::Known(rule.entry.meta).to_vec();
         let eslint_8 = self.language.eslint_8.as_ref();
         let defaults = eslint_8.and_then(|it| it.defaults.get(&id)?.as_array());
-        matches!(rule.severity, Severity::Off) && defaults.is_some_and(|it| *it == *rule.options)
+        let is_implied = rule.name().is_some() || self.language.eslint_major == 8;
+        is_implied && rule.is_only_defaults()
+            || matches!(rule.severity, Severity::Off)
+                && defaults.is_some_and(|it| *it == *rule.options)
     }
 
     /// True if the config is an ESLint 8 config that has no definition for the rule that it or a comment calls `id`.

@@ -1431,6 +1431,34 @@ impl Config {
         }
     }
 
+    /// Adds what holds for a rule however it's turned on. The config file, `--rule` and bunfig.toml end up in `rules`. A
+    /// comment in a file starts from what the config has for the rule, so a setting that's off takes it there.
+    fn add_implied_settings(&self, rules: &mut Vec<RuleSetting>) {
+        fn setting_of<'r>(
+            rules: &'r mut Vec<RuleSetting>,
+            id: &[u8],
+        ) -> Option<&'r mut RuleSetting> {
+            let at = rules.iter().position(|it| *it.id == *id).or_else(|| {
+                rules.extend(RuleSetting::new(id, &Json::Number(0.0)));
+                rules.len().checked_sub(1)
+            });
+            rules.get_mut(at?)
+        }
+        for id in Registry::RENAMED {
+            setting_of(rules, id.as_bytes());
+        }
+        // An `.eslintrc` has them already.
+        if self.eslint_major == 8 && !self.is_legacy {
+            let all = eslintrc::default_options_of_eslint_8();
+            for (id, defaults) in all.as_object().unwrap_or_default() {
+                if let Some(setting) = setting_of(rules, id) {
+                    setting.options = eslintrc::migrate_options(all, id, &setting.options);
+                    setting.defaults = defaults.as_array().unwrap_or_default().to_vec();
+                }
+            }
+        }
+    }
+
     /// Configures `rule`, a JavaScript plugin's rule, with `options`. `config` keeps the first error.
     fn js_rule(
         &self,
@@ -1662,14 +1690,8 @@ impl Config {
             })
             .map(Arc::new);
         }
+        self.add_implied_settings(&mut rules);
         for mut setting in rules {
-            // An `.eslintrc` has them already.
-            if self.eslint_major == 8
-                && !self.is_legacy
-                && let Some(options) = eslintrc::options_for_eslint_8(&setting.id, &setting.options)
-            {
-                setting.options = options;
-            }
             // ESLint's `throwRuleNotFoundError`, where it's certain that ESLint has no such rule.
             if setting.severity != Severity::Off
                 && !self.accepts_all_plugins
@@ -1746,22 +1768,39 @@ impl Config {
             };
             // An extra instance of a rule, under a name. If one of the config's plugins has the prefix, the name
             // belongs to that plugin instead.
-            let is_free = native.is_none()
-                && js.is_none()
-                && !config.foreign_plugins.iter().any(|it| **it == *prefix);
-            let base = match (is_free, native, js) {
-                (true, ..) => registry.base_of(&setting.id),
-                // The installed package still has the rule under its old name, which stays its name here.
-                (false, None, Some(Some(_))) => registry.renamed(&setting.id),
+            let is_foreign = config.foreign_plugins.iter().any(|it| **it == *prefix);
+            let is_free = native.is_none() && js.is_none() && !is_foreign;
+            // The installed package still has the rule under its old name, which stays its name here.
+            let is_of_package = || {
+                let location = js_locations.iter().find(|it| *it.0 == *prefix);
+                let module = || location?.1.get(b"module")?.as_str().map(paths::package_of);
+                let plugin = js_plugins.iter().find(|it| *it.name == *prefix);
+                plugin.and_then(|it| it.package()).or_else(module)
+                    == Some(b"@typescript-eslint/eslint-plugin")
+            };
+            let renamed = match (native, js) {
+                (None, Some(Some(old))) if !is_foreign && is_of_package() => {
+                    registry.renamed(&setting.id).map(|new| (new, old))
+                }
                 _ => None,
             };
-            if !is_free && base.is_some_and(|it| it.meta.name == "only-throw-error") {
-                // The option is newer than the old name.
-                let off = (b"allowRethrowing".to_vec(), Json::Bool(false));
-                match setting.options.first_mut() {
-                    Some(Json::Object(options)) => options.push(off),
-                    _ => setting.options = vec![Json::Object(vec![off])],
+            let base = match is_free {
+                true => registry.base_of(&setting.id),
+                false => renamed.map(|it| it.0),
+            };
+            if let Some((_, old)) = renamed {
+                // The options are the old rule's. ESLint 8 has already validated them.
+                if !self.is_legacy
+                    && setting.severity != Severity::Off
+                    && config.error.is_none()
+                    && let Err(lines) = schema::validate_js(old, &setting.options)
+                {
+                    config.error = Some(self.js_options_error(old, &setting.options, &lines));
                 }
+                // No schema allows a second option. It tells the rule which name it runs under.
+                let mark = Json::Object(vec![(b"hasOldName".to_vec(), Json::Bool(true))]);
+                setting.defaults = vec![Json::Object(Vec::new()), mark];
+                setting.options = schema::deep_merge_arrays(&setting.defaults, &setting.options);
             }
             let name: Option<Arc<[u8]>> = base.map(|_| Arc::from(&setting.id[..]));
             let entry = match (native.or(base), js) {
@@ -1788,10 +1827,15 @@ impl Config {
             let (options, defaults): (Arc<[Json]>, _) = (setting.options.into(), setting.defaults);
             // Many configs have the same options for a rule. A config that has an error, or has the rule off, doesn't
             // validate anything.
-            let is_validated =
-                !options.is_empty() && config.error.is_none() && setting.severity != Severity::Off;
+            let is_validated = !options.is_empty()
+                && config.error.is_none()
+                && setting.severity != Severity::Off
+                && renamed.is_none();
             let index = is_validated.then(|| registry.index_of(entry)).flatten();
-            if !self.is_legacy && !index.is_some_and(|it| self.cache.is_valid(it, &options)) {
+            if !self.is_legacy
+                && renamed.is_none()
+                && !index.is_some_and(|it| self.cache.is_valid(it, &options))
+            {
                 config.validate(entry, name.as_deref(), setting.severity, &options);
                 if let Some(index) = index.filter(|_| config.error.is_none()) {
                     self.cache.set_valid(index, &options);

@@ -391,6 +391,12 @@ impl Registry {
         }
     }
 
+    /// The rules that [`Registry::renamed`] knows, with the plugin's usual prefix.
+    pub(crate) const RENAMED: [&'static str; 2] = [
+        "@typescript-eslint/no-throw-literal",
+        "@typescript-eslint/no-useless-template-literals",
+    ];
+
     /// If `id` is a rule that typescript-eslint 8 renamed, returns the rule under its new name. Both of these need types,
     /// so the one in an older package can't run.
     pub fn renamed(&self, id: &[u8]) -> Option<&'static RuleEntry> {

@@ -12,6 +12,8 @@ pub struct OnlyThrowError {
     allow_rethrowing: bool,
     allow_throwing_any: bool,
     allow_throwing_unknown: bool,
+    /// It runs as `no-throw-literal`, which typescript-eslint had up to version 7.
+    has_old_name: bool,
 }
 
 const OBJECT: Message = Message::new("object", "Expected an error object to be thrown.");
@@ -136,6 +138,9 @@ impl OnlyThrowError {
         if !is_oxlint && self.allow_rethrowing && is_rethrown_error(node) {
             return;
         }
+        if self.has_old_name && matches!(node.tag(), ExprTag::Await | ExprTag::Yield) {
+            return;
+        }
         let ty = node.ty();
         if ty.is_unresolved() || type_matches_some_specifier(ty, &self.allow) {
             return;
@@ -156,7 +161,8 @@ impl OnlyThrowError {
         if is_oxlint && self.allow_rethrowing && is_rethrown_error_tsgolint(node) {
             return;
         }
-        if is_error_like(ty) {
+        // The old rule doesn't look at a type parameter's constraint.
+        if is_error_like(ty) && !(self.has_old_name && ty.is_type_parameter()) {
             return;
         }
         if is_oxlint {
@@ -177,10 +183,12 @@ impl Rule for OnlyThrowError {
     no_state!();
 
     fn new(options: &Options) -> Self {
+        let has_old_name = options.object(1).bool_or("hasOldName", false);
         let options = options.object(0);
         OnlyThrowError {
+            has_old_name,
             allow: parse_type_or_value_specifiers(options.array("allow")),
-            allow_rethrowing: options.bool_or("allowRethrowing", true),
+            allow_rethrowing: !has_old_name && options.bool_or("allowRethrowing", true),
             allow_throwing_any: options.bool_or("allowThrowingAny", true),
             allow_throwing_unknown: options.bool_or("allowThrowingUnknown", true),
         }

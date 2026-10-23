@@ -184,8 +184,8 @@ pub struct LintResult {
     /// The file [may be misread](may_be_misread), or a comment in a non-JavaScript file turns on a rule that isn't for
     /// its language, and the caller has another tool that can lint it. The rest of the result is empty.
     pub needs_another_linter: bool,
-    /// A JavaScript rule asks for types, the file has none, and [`LintOptions::can_lint_with_types`] is set. The rest
-    /// of the result is empty.
+    /// A JavaScript rule asks for types, or a comment turns on a rule that needs them. The file has none, and
+    /// [`LintOptions::can_lint_with_types`] is set. The rest of the result is empty.
     pub needs_types: bool,
     /// ESLint throws this while linting the file, which ends the run with exit code 2. Either a rule rejects options
     /// that its schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a JavaScript plugin's rule throws.
@@ -719,6 +719,19 @@ impl<S: RuleSet> Linter<S> {
         if let Some(options_error) = options_error {
             return LintResult {
                 thrown: Some([options_error, b"\nOccurred while linting ", file.path()].concat()),
+                ..LintResult::default()
+            };
+        }
+        // A comment turns on a rule that needs types. The file came without them because no rule of the config does.
+        if !is_plain
+            && file.types.is_none()
+            && options.can_lint_with_types
+            && js_plugin::Host::hands_out_types(file)
+            && (running.iter())
+                .any(|it| it.severity != Severity::Off && it.entry.meta.requires_types)
+        {
+            return LintResult {
+                needs_types: true,
                 ..LintResult::default()
             };
         }
@@ -1621,7 +1634,13 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 self.configured.retain(|it| !it.is(rule));
             }
             // In ESLint 8 a comment fully replaces a rule's setting, and the last comment wins.
-            let value = match eslint_8.map(|it| it.inline_setting(&id, &value, rule.js())) {
+            // A rule that runs under its old name has the options of the package's rule.
+            let old = match rule {
+                Named::Instance(_, name) => self.config.find_js_rule(name).flatten(),
+                _ => None,
+            };
+            let js = rule.js().or(old.map(|it| &**it));
+            let value = match eslint_8.map(|it| it.inline_setting(&id, &value, js)) {
                 Some(Ok(setting)) => Json::Array(setting),
                 Some(Err(message)) => {
                     self.error(comment, Some(rule.id()), message);
@@ -1697,22 +1716,24 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             // ESLint only skips a rule that's off if that's written as `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
             let has_no_foreign_config = self.file.language().has_no_foreign_config;
-            let validated = match is_validated || is_zero {
-                true => None,
+            let validated = match (is_validated || is_zero, old) {
+                (true, _) => None,
+                (false, Some(old)) => {
+                    Some(schema::validate_js(old, &inline[1..]).map(|_| Vec::new()))
+                }
                 // Options are valid for a pair if either rule accepts them.
-                false => Some(
-                    rule.validate(options, has_no_foreign_config)
-                        .or_else(|lines| {
-                            let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
-                            let mut pair = pair.iter().flatten();
-                            match pair.any(|it| {
-                                schema::validate(it.meta, options, has_no_foreign_config).is_ok()
-                            }) {
-                                true => Ok(Vec::new()),
-                                false => Err(lines),
-                            }
-                        }),
-                ),
+                (false, None) => Some(rule.validate(options, has_no_foreign_config).or_else(
+                    |lines| {
+                        let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
+                        let mut pair = pair.iter().flatten();
+                        match pair.any(|it| {
+                            schema::validate(it.meta, options, has_no_foreign_config).is_ok()
+                        }) {
+                            true => Ok(Vec::new()),
+                            false => Err(lines),
+                        }
+                    },
+                )),
             };
             if let Some(Err(lines)) = &validated {
                 let message = quoted(&[

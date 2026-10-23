@@ -95,6 +95,26 @@ impl ConfiguredRule {
         self.reported_as
     }
 
+    /// The options without the mark of a rule that runs under its old name.
+    pub fn written_options(&self) -> &[Json] {
+        match &self.options[..] {
+            [Json::Object(first), _] if self.has_old_name() && first.is_empty() => &[],
+            [first @ .., _] if self.has_old_name() => first,
+            all => all,
+        }
+    }
+
+    fn has_old_name(&self) -> bool {
+        self.name.is_some() && !self.defaults.is_empty()
+    }
+
+    /// True if it's off and only there for its default options.
+    pub(crate) fn is_only_defaults(&self) -> bool {
+        self.severity == Severity::Off
+            && !self.defaults.is_empty()
+            && self.options[..] == self.defaults[..]
+    }
+
     pub(crate) fn with_defaults(mut self, defaults: Vec<Json>) -> Self {
         self.defaults = defaults;
         self

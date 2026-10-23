@@ -1902,7 +1902,7 @@ impl<'a> PackageInstaller<'a> {
 
                 // transitive folder dependencies are not hoisted
                 let is_transitive =
-                    !is_workspace && !self.lockfile().is_workspace_tree_id(self.current_tree_id);
+                    !is_workspace && !self.lockfile().is_importer_tree_id(self.current_tree_id);
                 if folder.len() >= self.folder_path_buf.len() {
                     if log_level != Options::LogLevel::Silent {
                         Output::err(
@@ -2225,7 +2225,7 @@ impl<'a> PackageInstaller<'a> {
 
                     if resolution.tag == resolution::Tag::Root
                         || (resolution.tag == resolution::Tag::Folder
-                            && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
+                            && !self.lockfile().is_importer_tree_id(self.current_tree_id))
                     {
                         // This is a transitive folder dependency. It is not hoisted.
                         //

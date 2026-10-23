@@ -1258,7 +1258,7 @@ impl<'a> PackageInstall<'a> {
             }
             resolution::Tag::Folder => {
                 let tree_id = self.node_modules.tree_id;
-                if self.lockfile.is_workspace_tree_id(tree_id)
+                if self.lockfile.is_importer_tree_id(tree_id)
                     || self.lockfile.is_folder_tree_id(tree_id)
                 {
                     self.verify_folder()

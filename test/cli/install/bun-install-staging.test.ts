@@ -702,11 +702,11 @@ for (const [linker, aliasLinkDir] of Object.entries(aliasLinkDirs)) {
   );
 }
 
-// In that layout a lifecycle script of the nested package starts as soon as the
-// first walk is done, so it is running when the second walk installs the package
-// again. The script runs once per walk; the first run waits for the second to
-// start (the deadline only keeps it from hanging should there be no second run),
-// then checks that it still is where the package lives.
+// In that layout a lifecycle script of the nested package starts when both walks
+// are done, because the second walk installs the package again. The script runs
+// once per walk; the first run waits for the second to start (the deadline only
+// keeps it from hanging should there be no second run), then checks that it
+// still is where the package lives.
 const keepsItsDirectory = [
   `if mkdir "$STAGING_TEST_MARKERS/first" 2>/dev/null`,
   `then deadline=$(($(date +%s) + 3))`,
@@ -718,7 +718,7 @@ const keepsItsDirectory = [
 
 // The script is POSIX sh; on Windows lifecycle scripts run in bun's own shell.
 test.concurrent.skipIf(isWindows)(
-  "hoisted linker: the second install of a doubly aliased package leaves a running lifecycle script its directory",
+  "hoisted linker: the lifecycle script of a doubly aliased package runs once per walk, in its directory",
   async () => {
     const depTarball = await new Bun.Archive(
       {
@@ -765,6 +765,202 @@ test.concurrent.skipIf(isWindows)(
     expect(readdirSync(join(root, "markers")).sort()).toEqual([".keep", "first", "second"]);
   },
 );
+
+// The path of a `file:` folder that a workspace depends on starts at the project. That holds on every walk of the
+// workspace's node_modules, whichever dependency the walk reached the workspace through.
+describe("hoisted linker: a file: folder nested in a workspace", () => {
+  const json = (value: object) => JSON.stringify(value);
+  const bunfig =
+    (more: object = {}) =>
+    ({ root }: { root: string }) =>
+      Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker: "hoisted", ...more } });
+  // `held` is nested in `packages/b`, because the root has another `dep`. Its script leaves a file where it ran.
+  const files = (root: object, more: Record<string, string | ReturnType<typeof bunfig>> = {}) => ({
+    "package.json": json({
+      name: "app",
+      workspaces: ["packages/*"],
+      dependencies: { dep: "file:./other" },
+      trustedDependencies: ["dep"],
+      ...root,
+    }),
+    "packages/b/package.json": json({ name: "b", version: "1.0.0", dependencies: { dep: "file:../../held" } }),
+    "held/package.json": json({ name: "held", version: "1.0.0", scripts: { postinstall: "echo built > built.txt" } }),
+    "other/package.json": json({ name: "other", version: "1.0.0" }),
+    "bunfig.toml": bunfig(),
+    ...more,
+  });
+  const secondName = (bb: string) => ({ dependencies: { bb, dep: "file:./other" } });
+  const a = (dependencies: object) => ({
+    "packages/a/package.json": json({ name: "a", version: "1.0.0", dependencies }),
+  });
+
+  // A link there would lead to some other folder.
+  const placed = (root: string, dir = "packages/b/node_modules/dep") =>
+    lstatSync(join(root, dir), { throwIfNoEntry: false })?.isDirectory()
+      ? {
+          name: JSON.parse(readFileSync(join(root, dir, "package.json"), "utf8")).name,
+          files: readdirSync(join(root, dir)).sort(),
+          source: readdirSync(join(root, "held")),
+        }
+      : "not a directory";
+  const held = { name: "held", files: ["built.txt", "package.json"], source: ["package.json"] };
+
+  const filter = ["--filter", "./packages/a"];
+  test.concurrent.each<{ via: string; root?: object; more?: Record<string, string>; args?: string[] }>([
+    { via: "a second name, workspace:<name>@<range>", root: secondName("workspace:b@*") },
+    { via: "a second name, npm:<name>@<version>", root: secondName("npm:b@1.0.0") },
+    { via: "a second name, file:<path>", root: secondName("file:packages/b") },
+    { via: "a second name that another workspace gives it", more: a({ bb: "workspace:../b" }) },
+    // The root's own entry for `b` is left out, so a's dependency is the only one that leads to `b`.
+    { via: "--filter, under its own name", more: a({ b: "workspace:*" }), args: filter },
+    { via: "--filter, under a second name", more: a({ bb: "workspace:../b" }), args: filter },
+    {
+      via: "the link below a self-contained workspace",
+      root: { workspaces: { packages: ["packages/*"], selfContained: ["packages/a"] } },
+      more: a({ b: "workspace:*" }),
+    },
+    // This is where the path would lead if it started at the link to `b`.
+    {
+      via: "a second name, and a folder at that path inside the workspace",
+      root: secondName("workspace:packages/b"),
+      more: { "packages/b/held/package.json": json({ name: "decoy", version: "9.9.9" }) },
+    },
+  ])("is placed when this leads to the workspace: $via", async ({ root = {}, more, args }) => {
+    using dir = tempDir("nested-folder", files(root, more));
+
+    const { stderr, exitCode } = await install(String(dir), args);
+    expect(stderr).not.toContain("error");
+    expect({ dep: placed(String(dir)), exitCode }).toEqual({ dep: held, exitCode: 0 });
+  });
+
+  // What a self-contained workspace depends on is copied, so that nothing in there shares its files with another folder.
+  test.concurrent.each<{ via: string; root?: object; more?: Record<string, string>; args?: string[] }>([
+    { via: "a second name", root: secondName("workspace:packages/b") },
+    { via: "--filter, through another workspace", more: a({ b: "workspace:*" }), args: filter },
+  ])("is a copy in a self-contained workspace that this leads to: $via", async ({ root, more, args }) => {
+    const workspaces = { packages: ["packages/*"], selfContained: ["packages/b"] };
+    using dir = tempDir("nested-folder-copy", files({ ...root, workspaces }, more));
+
+    const { stderr, exitCode } = await install(String(dir), args);
+    expect(stderr).not.toContain("error");
+    expect({
+      dep: placed(String(dir)),
+      // POSIX only, like the link counts in bun-workspaces-self-contained.test.ts.
+      links: isWindows ? 1 : lstatSync(join(String(dir), "held/package.json")).nlink,
+      exitCode,
+    }).toEqual({ dep: held, links: 1, exitCode: 0 });
+  });
+
+  // The script's file makes the copy differ from `held`, so the warm install places it again too.
+  test.concurrent("a second name: fresh, warm, --force, from bun.lock, without the root's node_modules", async () => {
+    using dir = tempDir("nested-folder-steps", files(secondName("workspace:packages/b")));
+    const root = String(dir);
+    const remove = (...dirs: string[]) => dirs.forEach(at => rmSync(join(root, at), { recursive: true }));
+
+    const steps: [string, string[], () => void][] = [
+      ["fresh", [], () => {}],
+      ["warm", [], () => {}],
+      ["--force", ["--force"], () => {}],
+      ["from bun.lock", [], () => remove("node_modules", "packages/b/node_modules")],
+      ["without the root's node_modules", [], () => remove("node_modules")],
+    ];
+    for (const [step, args, prepare] of steps) {
+      prepare();
+      const { stderr, exitCode } = await install(root, args);
+      expect({ step, stderr }).toEqual({ step, stderr: expect.not.stringContaining("error") });
+      expect({ step, dep: placed(root), inB: entriesOf(join(root, "packages/b/node_modules")), exitCode }).toEqual({
+        step,
+        dep: held,
+        inB: ["dep"],
+        exitCode: 0,
+      });
+    }
+  });
+
+  // Nothing below the root is placed before the root's `slow` is there. Both rows for `dep` wait for it, and then each
+  // replaces what it finds.
+  test.concurrent("a second name, while the root waits for a download", async () => {
+    const tgz = await new Bun.Archive(
+      { "package/package.json": json({ name: "slow", version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+    using registry = serveRegistry({ slow: { tgz } });
+    using dir = tempDir(
+      "nested-folder-waits",
+      files(
+        { dependencies: { bb: "workspace:packages/b", dep: "file:./other", slow: "1.0.0" } },
+        { "bunfig.toml": bunfig({ registry: registry.url.href }) },
+      ),
+    );
+    const root = String(dir);
+
+    const fresh = await install(root);
+    expect(fresh.stderr).not.toContain("error");
+    expect({ dep: placed(root), exitCode: fresh.exitCode }).toEqual({ dep: held, exitCode: 0 });
+
+    for (const gone of ["node_modules/slow", ".bun-cache", "packages/b/node_modules/dep"]) {
+      rmSync(join(root, gone), { recursive: true });
+    }
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).not.toContain("error");
+    expect({ dep: placed(root), exitCode }).toEqual({ dep: held, exitCode: 0 });
+  });
+
+  test.concurrent("a second name, and nothing is trusted: fresh, warm", async () => {
+    using dir = tempDir(
+      "nested-folder-untrusted",
+      files({ ...secondName("workspace:packages/b"), trustedDependencies: [] }),
+    );
+    const root = String(dir);
+    const notBuilt = { ...held, files: ["package.json"] };
+
+    const fresh = await install(root);
+    expect(fresh.stderr).not.toContain("error");
+    expect({ dep: placed(root), exitCode: fresh.exitCode }).toEqual({ dep: notBuilt, exitCode: 0 });
+
+    const warm = await install(root);
+    expect(warm.stdout).toContain("(no changes)");
+    expect({ dep: placed(root), exitCode: warm.exitCode }).toEqual({ dep: notBuilt, exitCode: 0 });
+  });
+
+  // The link's node_modules is the project's own.
+  test.concurrent.each([
+    ["file:.", { self: "file:." }],
+    ["workspace:*", { app: "workspace:*" }],
+  ])("the project as its own dependency, %s", async (_, self) => {
+    using dir = tempDir(
+      "nested-folder-self",
+      files({ version: "1.0.0", workspaces: undefined, dependencies: { ...self, dep: "file:./held" } }),
+    );
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error");
+    expect({ dep: placed(String(dir), "node_modules/dep"), exitCode }).toEqual({ dep: held, exitCode: 0 });
+  });
+
+  // The root has another `app2`, so b's link to the project is nested in `packages/b`. That link leads to `packages/b`,
+  // and the project's packages don't belong behind it. Only the second install gets this layout right.
+  test.concurrent("a link to the project that is nested in the workspace", async () => {
+    const dependencies = { dep: "file:../../held", app2: "file:../.." };
+    using dir = tempDir(
+      "nested-folder-project-link",
+      files(
+        { version: "1.0.0", dependencies: { dep: "file:./other", app2: "file:./other" }, trustedDependencies: [] },
+        { "packages/b/package.json": json({ name: "b", version: "1.0.0", dependencies }) },
+      ),
+    );
+    const root = String(dir);
+
+    await install(root);
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).not.toContain("error");
+    expect({
+      dep: placed(root),
+      isLink: lstatSync(join(root, "packages/b/node_modules/app2")).isSymbolicLink(),
+      exitCode,
+    }).toEqual({ dep: { ...held, files: ["package.json"] }, isLink: true, exitCode: 0 });
+  });
+});
 
 // An alias may already be as long as a file name can be, so the staging
 // directory's name cannot be derived from it by adding to it.

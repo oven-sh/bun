@@ -953,6 +953,76 @@ describe("pathological inline HTML inputs", () => {
   });
 });
 
+// The description of an image is the value of `alt`: a raw tag that is written there as it is
+// ends the attribute at its first `"`. md4c: https://github.com/mity/md4c/pull/376
+describe("raw HTML in the description of an image", () => {
+  const image = (alt: string) => `<p><img src="i.png" alt="${alt}" /></p>\n`;
+
+  test.each([
+    // Every kind of raw HTML.
+    ['![x <a href="u">y</a> z](i.png)', "x &lt;a href=&quot;u&quot;&gt;y&lt;/a&gt; z"],
+    ['![<a title="x" onerror="alert(1)">](i.png)', "&lt;a title=&quot;x&quot; onerror=&quot;alert(1)&quot;&gt;"],
+    ['![a <b\nc="d"> e](i.png)', "a &lt;b\nc=&quot;d&quot;&gt; e"],
+    ['![a <i c="&amp;"> b](i.png)', "a &lt;i c=&quot;&amp;amp;&quot;&gt; b"],
+    ['![a <!-- "q" --> b](i.png)', "a &lt;!-- &quot;q&quot; --&gt; b"],
+    ['![a <?php "q" ?> b](i.png)', "a &lt;?php &quot;q&quot; ?&gt; b"],
+    ['![a <![CDATA[ "q" ]]> b](i.png)', "a &lt;![CDATA[ &quot;q&quot; ]]&gt; b"],
+    ['![a <!DOCTYPE "q"> b](i.png)', "a &lt;!DOCTYPE &quot;q&quot;&gt; b"],
+    // An apostrophe stays: the attribute is in double quotes.
+    ["![a <i c='d'> b](i.png)", "a &lt;i c='d'&gt; b"],
+    // A tag that the tag filter knows.
+    [
+      '![<script title="x" onerror="alert(1)">](i.png)',
+      "&lt;script title=&quot;x&quot; onerror=&quot;alert(1)&quot;&gt;",
+    ],
+    // Every kind of image.
+    ['![a <i c="d">][r]\n\n[r]: i.png', "a &lt;i c=&quot;d&quot;&gt;"],
+    ['![a <i c="d">][]\n\n[a <i c="d">]: i.png', "a &lt;i c=&quot;d&quot;&gt;"],
+    ['![a <i c="d">]\n\n[a <i c="d">]: i.png', "a &lt;i c=&quot;d&quot;&gt;"],
+    ['![a ![b <i c="d">](j.png) e](i.png)', "a b &lt;i c=&quot;d&quot;&gt; e"],
+    ['![a [b <i c="d">](u) e](i.png)', "a b &lt;i c=&quot;d&quot;&gt; e"],
+  ])("%j", (markdown, alt) => {
+    expect(Markdown.html(markdown + "\n")).toBe(image(alt));
+    // Nothing is left for the tag filter: its `&lt;` is not escaped once more.
+    expect(Markdown.html(markdown + "\n", { tagFilter: true })).toBe(image(alt));
+  });
+
+  test("the same tag behind the image stays HTML", () => {
+    expect(Markdown.html('[![a <i c="d">](i.png) <i c="d">](u)\n')).toBe(
+      '<p><a href="u"><img src="i.png" alt="a &lt;i c=&quot;d&quot;&gt;" /> <i c="d"></a></p>\n',
+    );
+    // In a cell of a table, the tag filter still takes the `<` of the tag behind the image.
+    expect(Markdown.html('| h |\n| - |\n| ![<title c="d">](i.png) <title c="d"> |\n', { tagFilter: true })).toBe(
+      "<table>\n<thead>\n<tr><th>h</th></tr>\n</thead>\n<tbody>\n" +
+        '<tr><td><img src="i.png" alt="&lt;title c=&quot;d&quot;&gt;" /> &lt;title c="d"></td></tr>\n' +
+        "</tbody>\n</table>\n",
+    );
+  });
+
+  test("the id of a heading has the text around the tag, as before", () => {
+    expect(Markdown.html('# t ![x <a href="u">y</a> z](i.png)\n', { headings: { ids: true } })).toBe(
+      '<h1 id="t-x-y-z">t <img src="i.png" alt="x &lt;a href=&quot;u&quot;&gt;y&lt;/a&gt; z" /></h1>\n',
+    );
+  });
+
+  test("react(), render() and ansi() get the tag as it is written", () => {
+    const markdown = '![a <i c="d"> b](i.png)\n';
+    expect(Markdown.html(markdown)).toBe(image("a &lt;i c=&quot;d&quot;&gt; b"));
+    expect(Markdown.html(Buffer.from(markdown))).toBe(image("a &lt;i c=&quot;d&quot;&gt; b"));
+    // React escapes the value of the attribute by itself.
+    expect(renderToString(Markdown.react(markdown, undefined, { reactVersion: 18 }))).toBe(
+      '<p><img src="i.png" alt="a &lt;i c=&quot;d&quot;&gt; b"/></p>',
+    );
+    const texts: string[] = [];
+    const rendered = Markdown.render(markdown, {
+      text: text => (texts.push(text), text),
+      image: (children, { src }) => `[${children}](${src})`,
+    });
+    expect({ rendered, texts }).toEqual({ rendered: '[a <i c="d"> b](i.png)', texts: ["a ", '<i c="d">', " b"] });
+    expect(Markdown.ansi(markdown, { colors: false })).toBe('[img] a <i c="d"> b\n');
+  });
+});
+
 // ============================================================================
 // Pathological inputs: deep nesting through `Bun.markdown.render()`. Two
 // separate O(depth²) costs, both found by fuzzing, while html() and react()
@@ -1842,6 +1912,41 @@ describe.concurrent("importing .md modules", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Missing 'default' export");
     expect(exitCode).not.toBe(0);
+  });
+
+  // The module loader and the bundler render with the HTML renderer of Bun.markdown.html().
+  test.each([
+    ["imported", "entry.ts"],
+    ["bundled", "bundle.ts"],
+  ])("%s: raw HTML in the description of an image is text of alt", async (_, script) => {
+    const markdown = '![x <a href="u">y</a> z](i.png)\n';
+    using dir = tempDir("md-import-alt", {
+      "doc.md": markdown,
+      "doc.txt": markdown,
+      "entry.ts": `
+        import html from "./doc.md";
+        import typed from "./doc.txt" with { type: "md" };
+        console.log(JSON.stringify([html, typed]));
+      `,
+      "bundle.ts": `
+        const built = await Bun.build({ entrypoints: ["./entry.ts"], outdir: "./out", target: "bun" });
+        if (!built.success) throw new AggregateError(built.logs);
+        await import("./out/entry.js");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), script],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const rendered = '<p><img src="i.png" alt="x &lt;a href=&quot;u&quot;&gt;y&lt;/a&gt; z" /></p>\n';
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([rendered, rendered]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

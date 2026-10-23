@@ -12,6 +12,7 @@ about five minutes, one takes a second. The real test is `bun test test/aot`, wh
 
 Other environment variables:
     PROGRAMS        the folder of programs (default: ../programs)
+    WRITTEN         a second folder of programs, for those that a script writes and nobody keeps: `bun test/aot/generate.ts all <folder>`. `all` takes what lies there too
     WORK            where intermediate files go (default: <temporary directory>/aot-quick); the files of a failure are not deleted
     WORDS           option words added to every compile, after the program's own, separated by blanks (`testaot list options`)
     RUN_OPTIONS     options of `jsc` for the run of an image, separated by blanks
@@ -33,6 +34,7 @@ sys.path.insert(0, HERE)
 import toolchain
 
 PROGRAMS = os.path.realpath(os.environ.get("PROGRAMS", HERE + "/../programs"))
+WRITTEN = os.path.realpath(os.environ["WRITTEN"]) if os.environ.get("WRITTEN") else None
 WORK = os.path.abspath(os.environ.get("WORK", os.path.join(tempfile.gettempdir(), "aot-quick")))
 EXTENSIONS = ("ts", "tsx", "js", "mts", "cts", "mjs", "cjs")
 MAIN_EXTENSIONS = ("cjs", "cts", "js", "mjs", "mts", "ts", "tsx")
@@ -46,7 +48,7 @@ HELPERS = (
 )
 
 
-def all_programs():
+def all_programs(root=PROGRAMS):
     found = set()
 
     # As `find` in ../run-programs.ts: a folder with a main.<ext> is one program, any other folder holds programs.
@@ -60,10 +62,15 @@ def all_programs():
             elif extension in EXTENSIONS and not re.search(r"\.d\.[cm]?ts$", entry) and f"{name}/{entry}" not in HELPERS:
                 found.add(f"{name}/{stem}")
 
-    for topic in sorted(os.listdir(PROGRAMS)):
-        if os.path.isdir(os.path.join(PROGRAMS, topic)):
-            find(os.path.join(PROGRAMS, topic), topic)
+    for topic in sorted(os.listdir(root)):
+        if os.path.isdir(os.path.join(root, topic)):
+            find(os.path.join(root, topic), topic)
     return sorted(found)
+
+
+def written_programs():
+    """Those of $WRITTEN that ../programs does not have."""
+    return sorted(set(all_programs(WRITTEN)) - set(all_programs())) if WRITTEN else []
 
 
 def first_existing(paths):
@@ -93,9 +100,12 @@ def skip_reason(base, options, compiler_options):
 
 
 def run_program(program):
-    base = os.path.join(PROGRAMS, program)
-    entry = first_existing([f"{base}.{x}" for x in EXTENSIONS] + [f"{base}/main.{x}" for x in MAIN_EXTENSIONS])
-    if entry is None:
+    for root in filter(None, (PROGRAMS, WRITTEN)):
+        base = os.path.join(root, program)
+        entry = first_existing([f"{base}.{x}" for x in EXTENSIONS] + [f"{base}/main.{x}" for x in MAIN_EXTENSIONS])
+        if entry is not None:
+            break
+    else:
         return "NO IR: there is no such program"
     # main.<ext> of such a program only imports jsc-shell-functions.ts first, and the shell has those functions itself.
     source = first_existing([f"{base}/program.{x}" for x in EXTENSIONS]) or entry
@@ -155,7 +165,7 @@ if __name__ == "__main__":
     PLAIN = toolchain.tool("PLAIN")
     os.environ["TZ"] = "Etc/UTC"
     os.makedirs(WORK, exist_ok=True)
-    programs = all_programs() if arguments == ["all"] else arguments
+    programs = all_programs() + written_programs() if arguments == ["all"] else arguments
     failed = 0
     with ThreadPoolExecutor(jobs) as pool:
         for program, verdict in zip(programs, pool.map(run_program, programs)):

@@ -1356,8 +1356,13 @@
     "jit": 341.7
   },
   "built-in/fs-read-sync-at-a-position": {
-    "typed": 885,
-    "untyped": 876,
-    "jit": 720
+    "typed": 759,
+    "untyped": 759.1,
+    "jit": 718
+  },
+  "built-in/require-of-a-node-module-inside-a-function": {
+    "typed": 7,
+    "untyped": 7,
+    "jit": 2693.5
   }
 }

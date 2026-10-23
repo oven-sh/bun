@@ -240,5 +240,6 @@
   "bytes/sum-the-bytes-of-a-view": 100000,
   "bytes/the-three-lengths-of-a-buffer": 400000,
   "bytes/write-words-into-a-buffer": 100000,
-  "built-in/fs-read-sync-at-a-position": 200000
+  "built-in/fs-read-sync-at-a-position": 200000,
+  "built-in/require-of-a-node-module-inside-a-function": 400000
 }

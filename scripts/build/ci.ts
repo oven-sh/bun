@@ -251,6 +251,7 @@ const TIMINGS_META_DATA = "timings:";
 //           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
 //           ├── aot-engine/              (the engine's generators and its schema, for the tests that import them)
 //           ├── verified-overloads.txt   (the engine's list for test/aot/builtins/differential.test.ts)
+//           ├── aot_builtin_table.json   (the table of built-ins this Bun was built with: test/aot/generate.ts writes programs from it)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
 //           ├── bun-profile.map          (windows; with the above, what the
@@ -367,6 +368,8 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   }
   const verifiedOverloads = webkitAotFile(cfg, "verified-overloads.txt");
   if (existsSync(verifiedOverloads)) files.push(verifiedOverloads);
+  const builtinTable = resolve(cfg.codegenDir, "aot_builtin_table.json");
+  if (existsSync(builtinTable)) files.push(builtinTable);
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);

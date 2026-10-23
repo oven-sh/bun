@@ -24,7 +24,7 @@ function defineCases(part: number, parts: number) {
     const main = "main" + extname(file);
     for (const [at, line] of lines.entries()) {
       const name = nameOfCase(line);
-      if (name === undefined || Number(BigInt(Bun.hash(file + ": " + name)) % BigInt(parts)) !== part - 1 || !inShare(file + ": " + name, 10)) continue;
+      if (name === undefined || Number(BigInt(Bun.hash(file + ": " + name)) % BigInt(parts)) !== part - 1 || !inShare(file + ": " + name, 10, true)) continue;
       test(
         `${file.slice(0, -extname(file).length)}: ${name}`,
         () =>

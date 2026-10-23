@@ -94,6 +94,7 @@ JSC_DEFINE_HOST_FUNCTION(callWebView, (JSGlobalObject * globalObject, CallFrame*
 // ESRCH, discarded).
 JSC_DEFINE_HOST_FUNCTION(jsWebViewConstructorCloseAll, (JSGlobalObject*, CallFrame*))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewConstructorCloseAll);
     Bun__WebView__closeAllForTermination();
     return JSValue::encode(jsUndefined());
 }

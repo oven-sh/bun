@@ -2,8 +2,10 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { isMusl, tempDir } from "harness";
 import { closeSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ArchiveCache } from "../../../scripts/build/trim/archive.ts";
 import { openElf } from "../../../scripts/build/trim/elf-file.ts";
 import { readElfGraph } from "../../../scripts/build/trim/elf-graph.ts";
+import { readElfObject } from "../../../scripts/build/trim/elf-objects.ts";
 import { readEntryPoints } from "../../../scripts/build/trim/entry-points.ts";
 import { findEdge, type SectionGraph } from "../../../scripts/build/trim/graph.ts";
 import { relocationLinkArguments } from "../../../scripts/build/trim/link.ts";
@@ -57,6 +59,21 @@ else {
 }
 
 compileFeatureCodeOnce();
+
+test.skipIf(!canLink)("the symbols with which AArch64 marks code and data name no section", async () => {
+  using dir = tempDir("trim-elf-mapping-symbols", {
+    "marked.c": `static const int table[] = { 1, 2, 3, 5 }; int marked(int at) { return table[at & 3]; }`,
+  });
+  const folder = String(dir);
+  const flags = ["--target=aarch64-unknown-linux-gnu", "-O1", "-ffunction-sections", "-fdata-sections", "-ffreestanding"];
+  const compiled = await run([tools.clang!, ...flags, "-c", "marked.c", "-o", "marked.o"], folder);
+  if (compiled.exitCode !== 0) return skipNotice(testFile, "clang has no AArch64 target: the case with mapping symbols does not run");
+  expect((await run([tools["llvm-nm"]!, "--special-syms", "marked.o"], folder)).stdout).toContain(" $x");
+  const read = readElfObject(join(folder, "marked.o"), new Set([".text.marked", ".rodata.table"]), new ArchiveCache());
+  if (typeof read === "string") throw new Error(`marked.o was not read: ${read}`);
+  expect(read.named).toContainEqual(["marked", ".text.marked"]);
+  expect(read.named.filter(([name]) => name.startsWith("$"))).toEqual([]);
+});
 
 const symbolBytes = 24;
 

@@ -10,7 +10,7 @@ import {
   type Flavor,
 } from "./samples";
 import { auditPlan } from "./audit";
-import { describedRows, type Overload, type Row, type Table } from "./table";
+import type { Overload, Row, Table } from "./table";
 import { Walker } from "./walker";
 
 export const neverEvaluated = [
@@ -44,6 +44,8 @@ export const neverEvaluated = [
   /^performance\.measure/,
   /^Performance\.prototype\.measure/,
   /^%Timeout%\.prototype\._repeat/,
+  // An executable is started with other variables than plain Bun.
+  /^(Bun|process)\.env$/,
 ];
 
 export const volatileRows = [
@@ -1665,38 +1667,58 @@ async function holderSubclassPrograms(collection: Collection, plan: Plan, isVola
 
 export const withoutProgram = new Map<string, string>();
 
-export async function tablePrograms(table: Table): Promise<Program[]> {
-  const collection = new Collection();
+/**
+ * The rows of the table that get programs, by the words with which the names of their programs begin. What is written for one group hangs on no other group,
+ * so whoever wants the programs of a few rows writes those alone.
+ */
+export function groupsOfRows(described: Row[]): Map<string, Row[]> {
   const only = process.env.ONLY_ROWS === undefined ? null : new RegExp(process.env.ONLY_ROWS);
-  for (const row of describedRows(table)) {
+  const groups = new Map<string, Row[]>();
+  for (const row of described) {
     if (only !== null && !only.test(row.path)) continue;
     if (matches(neverEvaluated, row.path)) {
       withoutProgram.set(row.path, "not called while the programs are written");
       continue;
     }
-    const isVolatile = matches(volatileRows, row.path);
-    const before = collection.programs.length;
-    for (const overload of row.trusted) {
-      if (overload.mode === "Set" && !shapeOf(row.path).isOnPrototype) continue;
-      collection.overload = overload.token;
-      if (process.env.ONLY_DOUBTS !== undefined) {
-        for (const flavor of ["mixed", "items"] as const)
-          for (const plan of await plansOf(row, overload, flavor)) await auditPlan(plan, table);
-        continue;
-      }
-      for (const plan of await answerPrograms(collection, row, overload, isVolatile)) {
-        await auditPlan(plan, table);
-        for (const write of [hookPrograms, contentPrograms, subclassPrograms, holderSubclassPrograms]) {
-          try {
-            await write(collection, plan, isVolatile);
-          } catch (error) {
-            if (!(error instanceof CannotDescribe)) throw error;
+    const words = wordsOf(row.path);
+    const rows = groups.get(words);
+    if (rows === undefined) groups.set(words, [row]);
+    else rows.push(row);
+  }
+  return groups;
+}
+
+/** The programs of each group. `audited`: what a built-in does while its programs are written is held against its row in that table, for `doubts` in audit.ts. */
+export async function tablePrograms(groups: Map<string, Row[]>, audited: Table | null): Promise<Map<string, Program[]>> {
+  const programs = new Map<string, Program[]>();
+  for (const [words, rows] of groups) {
+    const collection = new Collection();
+    for (const row of rows) {
+      const isVolatile = matches(volatileRows, row.path);
+      const before = collection.programs.length;
+      for (const overload of row.trusted) {
+        if (overload.mode === "Set" && !shapeOf(row.path).isOnPrototype) continue;
+        collection.overload = overload.token;
+        if (audited !== null && process.env.ONLY_DOUBTS !== undefined) {
+          for (const flavor of ["mixed", "items"] as const)
+            for (const plan of await plansOf(row, overload, flavor)) await auditPlan(plan, audited);
+          continue;
+        }
+        for (const plan of await answerPrograms(collection, row, overload, isVolatile)) {
+          if (audited !== null) await auditPlan(plan, audited);
+          for (const write of [hookPrograms, contentPrograms, subclassPrograms, holderSubclassPrograms]) {
+            try {
+              await write(collection, plan, isVolatile);
+            } catch (error) {
+              if (!(error instanceof CannotDescribe)) throw error;
+            }
           }
         }
       }
+      if (collection.programs.length === before)
+        withoutProgram.set(row.path, "no call of it with sample operands succeeds");
     }
-    if (collection.programs.length === before)
-      withoutProgram.set(row.path, "no call of it with sample operands succeeds");
+    programs.set(words, collection.programs);
   }
-  return collection.programs;
+  return programs;
 }

@@ -22,6 +22,7 @@
 #include "JSSocketAddressDTO.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
+#include "wtf/SIMDUTF.h"
 namespace Bun {
 
 using namespace JSC;
@@ -800,6 +801,29 @@ static bool tryWriteHeadAtOnce(uWS::HttpResponse<isSSL>* response, std::string_v
         append("\r\n"sv);
         append(*body);
     }
+    return true;
+}
+
+extern "C" bool NodeHTTPServer__bytesOfChunk(EncodedJSValue encodedChunk, const uint8_t** bytes, size_t* length)
+{
+    JSValue chunk = JSValue::decode(encodedChunk);
+    std::span<const uint8_t> found;
+    if (chunk.isString()) {
+        const WTF::StringImpl* impl = asString(chunk)->tryGetValueImpl();
+        if (!impl || !impl->is8Bit())
+            return false;
+        found = byteCast<uint8_t>(impl->span8());
+        bool isAllASCII = found.size() < 64 ? WTF::charactersAreAllASCII(impl->span8()) : simdutf::validate_ascii(reinterpret_cast<const char*>(found.data()), found.size());
+        if (!isAllASCII)
+            return false;
+    } else if (auto* view = dynamicDowncast<JSC::JSUint8Array>(chunk))
+        found = view->span();
+    else
+        return false;
+    if (found.empty())
+        return false;
+    *bytes = found.data();
+    *length = found.size();
     return true;
 }
 

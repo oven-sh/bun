@@ -87,7 +87,7 @@ export function testTrimmedMatchesUntrimmed(part: number, parts: number) {
     .sort()
     .flatMap(programsOf)
     .filter((_, index) => index % parts === part - 1)
-    .filter(program => inShare(`trimmed matches untrimmed ${program.group}: ${program.name}`, 4));
+    .filter(program => inShare(`trimmed matches untrimmed ${program.group}: ${program.name}`, 4, true));
 
   (!canTrim || unsupported || isWindows ? describe.skip : describe.concurrent)("an executable built with --trim behaves like one built without it", () => {
     for (const program of programs) {

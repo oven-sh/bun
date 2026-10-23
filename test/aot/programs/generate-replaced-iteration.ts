@@ -1,7 +1,7 @@
-// Writes ./built-ins-on-written-structure/lists-whose-iteration-is-replaced.js: `bun generate-replaced-iteration.ts`.
+// One program of built-ins-on-written-structure, lists-whose-iteration-is-replaced.js: `bun test/aot/generate.ts built-ins-on-written-structure <where>` writes it.
 // Whatever iterates a list asks the list for its iterator. Each way to iterate meets each way to give a written list another iterator, in place:
 // once on a list of the function that iterates it, once on a list that a variable of the module holds.
-import { writeFileSync } from "node:fs";
+import type { WrittenProgram } from "../generate";
 
 // L stands for the list.
 const consumers: readonly string[] = [
@@ -71,4 +71,5 @@ for (const consumer of consumers) {
     lines.push(`await read${late}(); ${way.replaceAll("L", late)} await read${late}();`);
   }
 }
-writeFileSync(`${import.meta.dir}/built-ins-on-written-structure/lists-whose-iteration-is-replaced.js`, lines.join("\n") + "\n");
+
+export const programs = (): WrittenProgram[] => [{ entry: "lists-whose-iteration-is-replaced.js", files: { "lists-whose-iteration-is-replaced.js": lines.join("\n") + "\n" } }];

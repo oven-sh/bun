@@ -1,4 +1,0 @@
-const subject = Buffer.alloc(0);
-const first = new Uint8Array(0);
-const result = subject.indexOf(first, 2.5, 3.5, 4.5);
-console.log(typeof result, result + 1, 1 / result);

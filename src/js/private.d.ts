@@ -2414,6 +2414,17 @@ declare namespace $Node {
       autoHeaderBits: number,
       keepAliveTimeoutSecs: number,
     ): number;
+    /** `writeHeadAndEnd` where the arguments are the usual ones. `undefined`: nothing was written. */
+    writeWholeResponse(
+      statusCode: number,
+      statusMessage: string | undefined,
+      headers: string[],
+      chunk: HttpChunk | null | undefined,
+      encoding: string | null | undefined,
+      strictContentLength: number | undefined,
+      autoHeaderBits: number,
+      keepAliveTimeoutSecs: number,
+    ): number | undefined;
     /** Negative when the socket did not take all of it: `callback` runs once it has drained. */
     write(
       chunk: HttpChunk | null | undefined,

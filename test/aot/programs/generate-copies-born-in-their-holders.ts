@@ -1,9 +1,7 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+// The programs of copies-born-in-their-holders: `bun test/aot/generate.ts copies-born-in-their-holders <where>` writes them.
+import type { WrittenProgram } from "../generate";
 
-const out = join(import.meta.dir, "copies-born-in-their-holders");
-rmSync(out, { recursive: true, force: true });
-mkdirSync(out, { recursive: true });
+const written: WrittenProgram[] = [];
 
 type RecordKind = { type: string; literal: string; other: string };
 type Source = { needs: (name: string, record: RecordKind) => string; next: string };
@@ -70,7 +68,6 @@ const holders: { [name: string]: Holder } = {
 
 const spelled = (name: string) => name.replace(/[A-Z]/g, letter => "-" + letter.toLowerCase());
 
-let count = 0;
 for (const [record, r] of Object.entries(records))
   for (const [sourceName, source] of Object.entries(sources))
     for (const [holderName, holder] of Object.entries(holders)) {
@@ -121,11 +118,9 @@ console.log(bystanders.filter((each, index) => each.before !== index || each.tex
 console.log(show(holdersKept[holdersKept.length - 1]), Object.keys(innersKept[3]).join());
 `;
       const name = `${record}-${spelled(sourceName)}-${spelled(holderName)}`;
-      if (sourceName === "constantOfAnotherModule") {
-        mkdirSync(join(out, name));
-        writeFileSync(join(out, name, "main.ts"), text);
-        writeFileSync(join(out, name, "constants.ts"), `export const constant: ${r.type} = ${r.literal};\n`);
-      } else writeFileSync(join(out, name + ".ts"), text);
-      count++;
+      if (sourceName === "constantOfAnotherModule")
+        written.push({ entry: `${name}/main.ts`, files: { [`${name}/main.ts`]: text, [`${name}/constants.ts`]: `export const constant: ${r.type} = ${r.literal};\n` } });
+      else written.push({ entry: `${name}.ts`, files: { [`${name}.ts`]: text } });
     }
-console.log(count + " programs");
+
+export const programs = (): WrittenProgram[] => written;

@@ -9,7 +9,7 @@ a large program is neither, and `neither` compiles every function that way. A fo
 
     JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> python3 test/aot/shell/heat.py [-j <jobs>] [--part <i>/<n>] hot | cold | neither <program>... | all
 
-    --part <i>/<n>  with `all`: every n-th program, starting at the i-th. ../heat/*.test.ts split the programs this way
+    --part <i>/<n>  with `all`: every n-th program, starting at the i-th, and all of $WRITTEN (quick.py). ../heat/*.test.ts split the programs this way
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
 Prints one line per program that is `same` normally and not at that heat, and exits with 1 if there is one. Not counted: the programs in
@@ -46,7 +46,7 @@ if __name__ == "__main__":
         toolchain.tool(name)
     heat, programs = arguments[0], arguments[1:]
     if programs == ["all"]:
-        programs = quick.all_programs()[part - 1::parts]
+        programs = quick.all_programs()[part - 1::parts] + quick.written_programs()
     known = {line.split()[0] for line in open(HERE + "/heat-known.txt") if line.strip() and not line.startswith("#") and line.split()[1] in (heat, "both")}
     with tempfile.TemporaryDirectory(prefix="aot-heat") as folder:
         forced = verdicts([*jobs, *programs], folder + "/forced", HEATS[heat])

@@ -77,5 +77,14 @@ export const NodeHTTPResponse = b.class({
       throws: true,
       length: 1,
     },
+    /** `writeHeadAndEnd` for the usual arguments, read as they are. `undefined`: nothing was written. */
+    writeWholeResponse: {
+      ...method,
+      args: { args: b.any.variadic },
+      returns: b.any.returning("number", "undefined"),
+      passThis: true,
+      rustName: "write_whole_response_as_given",
+      length: 8,
+    },
   },
 });

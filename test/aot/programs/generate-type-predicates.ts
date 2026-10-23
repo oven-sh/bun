@@ -1,8 +1,10 @@
-// Writes the programs of ./type-predicates: `bun generate-type-predicates.ts`. Each predicate on types is asked of each kind of value, twice:
+// The programs of type-predicates that are not written by hand: `bun test/aot/generate.ts type-predicates <where>` writes them. Each predicate on types is asked of each kind of value, twice:
 // of the value where it is written, so that the compiler knows its type; and of the same value out of a box that has held every kind, so that it knows nothing,
 // with a look at the value in both arms, which goes by whatever the test is taken to have proven.
 // Every question stands in place: a function that all the values went through would ask each of them about a value nobody knows.
-import { writeFileSync } from "node:fs";
+import type { WrittenProgram } from "../generate";
+
+const written: WrittenProgram[] = [];
 
 const prelude = `import { types } from "node:util";
 class Animal { constructor(name) { this.name = name; } }
@@ -71,6 +73,9 @@ const groups: Readonly<Record<string, readonly string[]>> = {
 
 const look = '`${typeof x} ${t(() => x.length)} ${t(() => x.name)} ${t(() => x.size)} ${t(() => x.message)} ${t(() => x.getTime)} ${t(() => typeof (x + 1))} ${t(() => x[0])}`';
 
+const whySkipped = "a generated file of over a megabyte: a validating build of it takes over eight minutes and six gigabytes";
+const options = JSON.stringify({ skipInVariant: { validate: whySkipped, "validate-collecting": whySkipped, validated: whySkipped } }, null, 2) + "\n";
+
 for (const [group, predicates] of Object.entries(groups)) {
   const lines = [`// ${group.replaceAll("-", " ")}: each asked of each kind of value, where the compiler knows the value's type and where it does not, there with a look at the value behind the test. Written by ../generate-type-predicates.ts.`, prelude];
   for (const value of values) lines.push(`mix(${value});`);
@@ -81,5 +86,7 @@ for (const [group, predicates] of Object.entries(groups)) {
       lines.push(`try { const x = mix(${value}); if (${predicate.replaceAll("X", "x")}) out("  yes", ${look}); else out("  no", ${look}); } catch (error) { out("  neither", error.constructor.name); }`);
     }
   }
-  writeFileSync(`${import.meta.dir}/type-predicates/${group}.js`, lines.join("\n") + "\n");
+  written.push({ entry: `${group}.js`, files: { [`${group}.js`]: lines.join("\n") + "\n", [`${group}.json`]: options } });
 }
+
+export const programs = (): WrittenProgram[] => written;

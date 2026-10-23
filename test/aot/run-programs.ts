@@ -36,7 +36,9 @@
 //   programs/generate-copies-born-in-their-holders.ts  writes the programs of copies-born-in-their-holders
 //   programs/generate-nothing-throws-because-of-a-type.ts  writes the generated programs of nothing-throws-because-of-a-type
 //   programs/generate-replaced-iteration.ts  writes built-ins-on-written-structure/lists-whose-iteration-is-replaced.js
-//   programs/generate-type-predicates.ts  writes the programs of type-predicates
+//   programs/generate-type-predicates.ts  writes the generated programs of type-predicates
+//                                         What a script writes is not kept here. Each test file writes what it runs of it into a temporary folder, under the names it would have in ./programs.
+//                                         generate.ts lists the scripts and writes a folder out for whoever wants to read it: `bun test/aot/generate.ts type-predicates <where>`
 //   programs/commonjs/describe-object.cjs prints everything a program can observe about the own properties of an object, for the programs about the exports object of a CommonJS module
 //   programs/strings/regexps-built-at-start.cjs  the tokens that regexps-built-at-start.ts and its twin put together
 //   programs/untyped-speed/commonjs-package/lib/*.js  the modules that index.js of the package requires
@@ -82,7 +84,9 @@ import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { availableParallelism, tmpdir } from "os";
-import { join, relative } from "path";
+import { join, relative, sep } from "path";
+import { describedRows, readTable, type Row } from "./built-ins-alone/table";
+import { findBuiltinTable, generators, writeGroups, writeProgram, type WrittenProgram } from "./generate";
 
 const root = join(import.meta.dir, "programs");
 // A debug or ASAN build of Bun is many times slower, so it runs the quick subset unless told otherwise.
@@ -92,18 +96,20 @@ const updates = !!process.env.AOT_PROGRAMS_UPDATE;
 // CI has four cores for five minutes a file, and every program in every way would take it a day for each commit. So a run that is told nothing takes a share of the programs, and which
 // share follows from the revision of the Bun under test: each commit takes others, and in time all are taken. A test is named after its program, so AOT_PROGRAMS=<name> runs a red again.
 const seedOfShare = process.env.AOT_SHARE ?? Bun.revision;
-const takesEverything = seedOfShare === "all" || process.env.AOT_PROGRAMS !== undefined || wanted === "quick" || updates;
+const isToldWhatToTake = seedOfShare === "all" || process.env.AOT_PROGRAMS !== undefined || updates;
+// Most helpers have a rule of their own for the quick subset. One that has none passes `alsoOfQuickSubset`, or a debug or ASAN build would take everything.
+const takesEverything = (alsoOfQuickSubset: boolean) => isToldWhatToTake || (wanted === "quick" && !alsoOfQuickSubset);
 let hasSaidShare = false;
 
 /** For a tool that takes every n-th program, starting at the i-th, as `<i>/<n>`: part `part` of `parts`, or, in a run that takes a share, one of `oneIn` pieces of that part. */
-export function partInShare(part: number, parts: number, oneIn: number): string {
-  if (takesEverything) return `${part}/${parts}`;
+export function partInShare(part: number, parts: number, oneIn: number, alsoOfQuickSubset = false): string {
+  if (takesEverything(alsoOfQuickSubset)) return `${part}/${parts}`;
   return `${part + parts * Number(BigInt(Bun.hash(seedOfShare)) % BigInt(oneIn))}/${parts * oneIn}`;
 }
 
 /** Whether this run takes the program, the case or the pair `name`, of whose kind a run takes one in `oneIn`. */
-export function inShare(name: string, oneIn: number): boolean {
-  if (takesEverything) return true;
+export function inShare(name: string, oneIn: number, alsoOfQuickSubset = false): boolean {
+  if (takesEverything(alsoOfQuickSubset)) return true;
   if (!hasSaidShare) console.error(`SHARE: this run takes a part of the programs. AOT_SHARE=${seedOfShare} takes the same part, AOT_SHARE=all takes all of them`);
   hasSaidShare = true;
   return BigInt(Bun.hash(seedOfShare + " " + name.replaceAll("\\", "/"))) % BigInt(oneIn) === 0n;
@@ -127,15 +133,118 @@ const helpers = new Set([
   "untyped-speed/commonjs-package/lib/util.js",
 ]);
 
-function find(folder: string, into: string[]) {
+function findKept(folder: string, into: string[]) {
   const entries = readdirSync(folder, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
   const main = entries.find(entry => entry.isFile() && /^main\.([cm]?[jt]s|tsx)$/.test(entry.name));
   if (main) return void into.push(join(folder, main.name));
   for (const entry of entries) {
     const path = join(folder, entry.name);
-    if (entry.isDirectory()) find(path, into);
+    if (entry.isDirectory()) findKept(path, into);
     else if (/\.([cm]?[jt]s|tsx)$/.test(entry.name) && !/\.d\.[cm]?ts$/.test(entry.name) && !helpers.has(relative(root, path).replaceAll("\\", "/"))) into.push(path);
   }
+}
+
+// What a script writes (generate.ts) is written below a temporary folder that stands for ./programs: <that folder>/<topic>/<name>.ts. First the programs are only listed, under the paths they
+// would have there. Which of them a run takes goes by those paths, as for a program that is kept, so only what is taken is written.
+let writtenRoot: string | undefined;
+const notYetWritten = new Map<string, { topic: string; program: WrittenProgram }>();
+// The programs that follow from the table of built-ins have to be made before anybody knows their names, a group at a time. What is listed is the group: <that folder>/<topic>/<group>.
+// The part of a folder, and in a variant the share, go by that path. The rest is asked of each program of a group that is made, as of any other program.
+const groups = new Map<string, { topic: string; group: string; rows: Row[]; programs?: string[] }>();
+let rowsOfBuiltinTable: Row[] | undefined;
+
+/** The path of a program below ./programs, kept there or not. It names the program, and the parts of a folder, the quick subset and the share go by it. */
+export const inPrograms = (path: string) => relative(writtenRoot !== undefined && path.startsWith(writtenRoot + sep) ? writtenRoot : root, path);
+
+function findWritten(topic: string, into: string[]) {
+  const generator = generators[topic]();
+  if (writtenRoot === undefined) {
+    const folder = (writtenRoot = String(tempDir("aot-written-programs", { "tsconfig.json": JSON.stringify({ extends: join(root, "tsconfig.json") }) })));
+    // `bun test test/aot` is one process for all files: the next one begins anew.
+    afterAll(() => {
+      rmSync(folder, { recursive: true, force: true });
+      writtenRoot = undefined;
+      notYetWritten.clear();
+      groups.clear();
+    });
+  }
+  for (const program of generator.programs()) {
+    const path = join(writtenRoot, topic, program.entry);
+    notYetWritten.set(path, { topic, program });
+    into.push(path);
+  }
+  if (!generator.fromTable || unsupported) return;
+  if (rowsOfBuiltinTable === undefined) {
+    const path = findBuiltinTable(bunExe());
+    rowsOfBuiltinTable = path === undefined ? [] : describedRows(readTable(path));
+    if (path === undefined) console.error(`SKIPPED: the programs that follow from the table of built-ins: there is no aot_builtin_table.json in $AOT_BUILTIN_TABLE, beside ${bunExe()} or in the folder codegen beside it`);
+  }
+  for (const [group, rows] of generator.fromTable.groups(rowsOfBuiltinTable)) {
+    const path = join(writtenRoot, topic, group);
+    if (!groups.has(path)) groups.set(path, { topic, group, rows });
+    into.push(path);
+  }
+}
+
+/** What the scripts write, listed for `taken`: for whoever walks ./programs by himself. `files`: only the programs whose entry point matches. */
+export function listWrittenPrograms(files = /./): string[] {
+  const all: string[] = [];
+  for (const topic of Object.keys(generators)) findWritten(topic, all);
+  return all.filter(path => files.test(groups.has(path) ? `${path}.${generators[groups.get(path)!.topic]().fromTable!.extension}` : path));
+}
+
+/** Stands the path, out of such a list, for a group of programs that have yet to be made? */
+export const isGroup = (path: string) => groups.has(path);
+
+/** The programs of one topic, or of all. */
+function find(topic?: string): string[] {
+  const all: string[] = [];
+  if (topic === undefined || existsSync(join(root, topic))) findKept(join(root, topic ?? ""), all);
+  for (const each of topic === undefined ? Object.keys(generators) : topic in generators ? [topic] : []) findWritten(each, all);
+  return all;
+}
+
+/** Whether AOT_PROGRAMS=<text> selects the program. */
+const isWanted = (path: string) => inPrograms(path).includes(wanted);
+/** No group is made of which AOT_PROGRAMS=<text> selects nothing. The names of its programs are <group> or <group>-<more words>. */
+export const mayHoldWhatIsWanted = (path: string) => !groups.has(path) || wanted === "quick" || isWanted(path) || wanted.includes(groups.get(path)!.group + "-");
+
+/** Those of `listed` for which `takes` holds, written where a script writes them. A group is made, and `takes` is asked of its programs. */
+export function taken(listed: string[], takes: (path: string) => boolean): string[] {
+  const paths = listed.filter(path => groups.has(path) || takes(path));
+  for (const path of paths) {
+    const unwritten = notYetWritten.get(path);
+    if (unwritten) writeProgram(join(writtenRoot!, unwritten.topic), unwritten.program);
+    notYetWritten.delete(path);
+  }
+  const notYetMade = paths.flatMap(path => groups.get(path) ?? []).filter(group => !group.programs);
+  for (const [topic, some] of Map.groupBy(notYetMade, group => group.topic)) {
+    // A process that makes programs waits for timers most of the time.
+    const jobs = Math.min(64, 4 * Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()));
+    // It is a tool and not what is tested: no collection at every turn of the event loop, no audit of the heap. It exits in the middle of whatever the built-ins have begun, which LeakSanitizer would report.
+    const env = {
+      ...bunEnv,
+      BUN_GARBAGE_COLLECTOR_LEVEL: undefined,
+      BUN_JSC_randomIntegrityAuditRate: undefined,
+      ASAN_OPTIONS: isASAN ? [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") : bunEnv.ASAN_OPTIONS,
+    };
+    const entries = writeGroups(bunExe(), topic, new Map(some.map(({ group, rows }) => [group, rows])), writtenRoot!, jobs, env);
+    for (const group of some) group.programs = entries.get(group.group)!.map(entry => join(writtenRoot!, topic, entry));
+  }
+  return paths.flatMap(path => groups.get(path)?.programs!.filter(takes) ?? [path]);
+}
+
+/**
+ * For a tool that walks ./programs itself and takes every n-th program, starting at the i-th (`<i>/<n>`, as `partInShare` says it): writes as large a share of what the scripts write.
+ * Answers the folder, which stands for ./programs: the tool takes all that lies there.
+ */
+export function writeShareOfWrittenPrograms(share: string): string {
+  const [index, of] = share.split("/").map(Number);
+  taken(
+    listWrittenPrograms().filter(path => Number((hash(path) >> 16n) % BigInt(of)) === index - 1),
+    () => true,
+  );
+  return writtenRoot!;
 }
 
 // Each build keeps one core busy for about a second and writes an executable the size of Bun.
@@ -402,7 +511,7 @@ async function run(path: string, beside: string, setup: Setup) {
   }
 }
 
-const hash = (path: string) => BigInt(Bun.hash(relative(root, path).replaceAll("\\", "/")));
+const hash = (path: string) => BigInt(Bun.hash(inPrograms(path).replaceAll("\\", "/")));
 const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
 const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
 const runsWithASAN = (path: string) => isASAN && existsSync(besideOf(path) + ".json") && !!JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).runWithASAN;
@@ -418,7 +527,7 @@ function define(title: string, chosen: string[], settings: Omit<Setup, "folder" 
     if (chosen.length === 0) test.skip("no program selected", () => {});
     for (const path of chosen) {
       const beside = besideOf(path);
-      const name = relative(root, beside).replaceAll("\\", "/");
+      const name = inPrograms(beside).replaceAll("\\", "/");
       const skipWithASAN: string | undefined = isASAN && existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")).skipWithASAN : undefined;
       if (existsSync(beside + ".todo.txt")) test.todo(name);
       else if (skipWithASAN) {
@@ -433,14 +542,14 @@ function define(title: string, chosen: string[], settings: Omit<Setup, "folder" 
 
 /** Defines one test per program in a folder. A large folder is split into `parts` by a hash of the path. */
 export function programs(topic: string, part = 1, parts = 1) {
-  const all: string[] = [];
-  find(join(root, topic), all);
   define(
     `compile/aot/${topic}`,
-    all
-      .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
-      .filter(path => (wanted === "quick" ? isQuick(path) || runsWithASAN(path) : relative(root, path).includes(wanted)))
-      .filter(path => inShare(relative(root, path), 10)),
+    taken(
+      find(topic)
+        .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
+        .filter(mayHoldWhatIsWanted),
+      path => (wanted === "quick" ? isQuick(path) || runsWithASAN(path) : isWanted(path)) && inShare(inPrograms(path), 10),
+    ),
     { buildFlags: [], runEnv: {}, erasesTypes: true },
   );
 }
@@ -452,19 +561,23 @@ export function programs(topic: string, part = 1, parts = 1) {
  * `only` names the programs of the folder that are run, without the folder and without an extension; a name that is not there fails.
  */
 export function programsBuiltWith(topic: string, label: string, buildFlags: string[], runEnv: Record<string, string> = {}, part = 1, parts = 1, only?: readonly string[]) {
-  const all: string[] = [];
-  find(join(root, topic), all);
-  const nameOf = (path: string) => besideOf(relative(join(root, topic), path)).replaceAll("\\", "/");
-  const missing = only?.filter(name => !all.some(path => nameOf(path) === name)) ?? [];
+  const all = find(topic);
+  const nameOf = (path: string) => besideOf(relative(topic, inPrograms(path))).replaceAll("\\", "/");
+  const isNamed = (path: string, name: string) => (groups.has(path) ? `${name}-`.startsWith(`${nameOf(path)}-`) : name === nameOf(path));
+  const missing = only?.filter(name => !all.some(path => isNamed(path, name))) ?? [];
   if (missing.length) throw new Error(`no such program in ${topic}: ${missing.join(", ")}`);
   define(
     `compile/aot/${topic}/${label}`,
-    all
-      .filter(path => !only || only.includes(nameOf(path)))
-      .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
-      .filter(path => (wanted === "quick" ? isQuick(path) || runsWithASAN(path) : relative(root, path).includes(wanted)))
-      // A list of names is a list of programs that once went wrong so: all of them are taken.
-      .filter(path => !!only || inShare(label + " " + relative(root, path), 10))
+    taken(
+      all
+        .filter(path => !only || only.some(name => isNamed(path, name)))
+        .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
+        .filter(mayHoldWhatIsWanted),
+      path =>
+        (wanted === "quick" ? isQuick(path) || runsWithASAN(path) : isWanted(path)) &&
+        // A list of names is a list of programs that once went wrong so: all of them are taken.
+        (only ? only.includes(nameOf(path)) : inShare(label + " " + inPrograms(path), 10)),
+    )
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt"))
       // As in variant(): <program>.json may say why the program is left out under this label.
       .filter(path => !existsSync(besideOf(path) + ".json") || !JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipInVariant?.[label]),
@@ -480,21 +593,21 @@ export function programsBuiltWith(topic: string, label: string, buildFlags: stri
  * `stubCopies`: each program is laid out so that it needs about that many copies of the shared stubs.
  */
 export function variant(label: string, buildFlags: string[], runEnv: Record<string, string> = {}, part = 1, parts = 1, always: string | string[] = [], stubCopies?: number) {
-  const all: string[] = [];
-  find(root, all);
+  const isAlwaysTaken = (path: string) => [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
   define(
     `compile/aot/variant/${label}`,
-    all
-      // A file directly in ./programs is a helper, not a program.
-      .filter(path => /[\\/]/.test(relative(root, path)))
-      .filter(
-        path =>
-          [always].flat().includes(besideOf(relative(root, path)).replaceAll("\\", "/")) ||
-          ((wanted === "" || wanted === "quick" ? isQuick(path) : relative(root, path).includes(wanted)) &&
-            inShare(label + " " + relative(root, path), 40) &&
-            Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 &&
-            (!isASAN || (hash(path) >> 32n) % 3n === 0n)),
-      )
+    taken(
+      find()
+        // A file directly in ./programs is a helper, not a program.
+        .filter(path => /[\\/]/.test(inPrograms(path)))
+        .filter(mayHoldWhatIsWanted)
+        .filter(
+          path =>
+            isAlwaysTaken(path) ||
+            (inShare(label + " " + inPrograms(path), 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || (hash(path) >> 32n) % 3n === 0n)),
+        ),
+      path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? isQuick(path) : isWanted(path)),
+    )
       // Nothing is compiled for a program that the build rejects.
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt"))
       .filter(path => {

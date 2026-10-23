@@ -1710,7 +1710,7 @@
   },
   "aot/each-case-alone-1.test.ts": {
     "default": 9303,
-    "asan": 423358,
+    "asan": 60000,
     "musl": 9528
   },
   "aot/each-case-alone-10.test.ts": {
@@ -1719,7 +1719,7 @@
   },
   "aot/each-case-alone-11.test.ts": {
     "default": 7707,
-    "asan": 445395,
+    "asan": 60000,
     "musl": 6944
   },
   "aot/each-case-alone-12.test.ts": {
@@ -1728,17 +1728,17 @@
   },
   "aot/each-case-alone-13.test.ts": {
     "default": 8975,
-    "asan": 452020,
+    "asan": 60000,
     "musl": 11093
   },
   "aot/each-case-alone-14.test.ts": {
     "default": 6124,
-    "asan": 456877,
+    "asan": 60000,
     "musl": 6247
   },
   "aot/each-case-alone-15.test.ts": {
     "default": 8990,
-    "asan": 446220,
+    "asan": 60000,
     "musl": 9383
   },
   "aot/each-case-alone-16.test.ts": {
@@ -1747,22 +1747,22 @@
   },
   "aot/each-case-alone-17.test.ts": {
     "default": 6255,
-    "asan": 481449,
+    "asan": 60000,
     "musl": 7159
   },
   "aot/each-case-alone-18.test.ts": {
     "default": 7810,
-    "asan": 453228,
+    "asan": 60000,
     "musl": 9203
   },
   "aot/each-case-alone-19.test.ts": {
     "default": 10313,
-    "asan": 426730,
+    "asan": 60000,
     "musl": 12543
   },
   "aot/each-case-alone-2.test.ts": {
     "default": 12985,
-    "asan": 380503,
+    "asan": 60000,
     "musl": 13382
   },
   "aot/each-case-alone-20.test.ts": {
@@ -1771,17 +1771,17 @@
   },
   "aot/each-case-alone-3.test.ts": {
     "default": 5609,
-    "asan": 452486,
+    "asan": 60000,
     "musl": 6360
   },
   "aot/each-case-alone-4.test.ts": {
     "default": 3766,
-    "asan": 450028,
+    "asan": 60000,
     "musl": 3769
   },
   "aot/each-case-alone-5.test.ts": {
     "default": 12060,
-    "asan": 429904,
+    "asan": 60000,
     "musl": 11720
   },
   "aot/each-case-alone-6.test.ts": {

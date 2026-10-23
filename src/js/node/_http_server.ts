@@ -4702,16 +4702,27 @@ ServerResponse.prototype.end = function (
     const keepAliveSecs = renderedKeepAliveSecs;
     let contentLength: number;
     try {
-      contentLength = handle.writeHeadAndEnd(
-        statusCode,
-        statusMessage,
-        renderedHeaders,
-        chunk,
-        encoding,
-        strict,
-        autoHeaders,
-        keepAliveSecs,
-      );
+      contentLength =
+        handle.writeWholeResponse(
+          statusCode,
+          statusMessage,
+          renderedHeaders,
+          chunk,
+          encoding,
+          strict,
+          autoHeaders,
+          keepAliveSecs,
+        ) ??
+        handle.writeHeadAndEnd(
+          statusCode,
+          statusMessage,
+          renderedHeaders,
+          chunk,
+          encoding,
+          strict,
+          autoHeaders,
+          keepAliveSecs,
+        );
     } catch (error) {
       return endAfterNativeThrow(this, exchange, handle, error, countsAsSent);
     }

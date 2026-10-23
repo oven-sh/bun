@@ -1,1 +1,0 @@
-console.log(new Intl.NumberFormat("en-US").format(1234.5), new Intl.NumberFormat("en-US").formatToParts(1.5)[0].type, new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).format(0), new Intl.PluralRules("en-US").select(1));

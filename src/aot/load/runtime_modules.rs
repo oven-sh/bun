@@ -5,7 +5,7 @@ use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
-use bun_resolve_builtins::{Alias, Cfg};
+use bun_resolve_builtins::{Alias, Cfg, Module};
 use bun_sema::program::HostModuleId;
 use bun_sema::resolve::{HostResolution, ancestors};
 use bun_sema::util::{FxHashMap, SharedSort};
@@ -43,6 +43,7 @@ struct DirectoryEntries {
 pub(crate) struct RuntimeModules {
     archive: &'static Archive,
     omits_builtin_modules: bool,
+    answers_modules_of_own_tests: bool,
     aliases: Cfg,
     files: FxHashMap<Vec<u8>, RuntimeFile>,
     directories: FxHashMap<Vec<u8>, DirectoryEntries>,
@@ -59,6 +60,7 @@ impl RuntimeModules {
         RuntimeModules {
             archive,
             omits_builtin_modules,
+            answers_modules_of_own_tests: runs_own_tests(),
             aliases: Cfg::default(),
             directories: collect_directories(&files),
             files,
@@ -129,6 +131,7 @@ impl RuntimeModules {
             .and_then(|file| manifest.resolve(specifier, &file.archive_name));
         let resolution = match internal_module {
             Some(id) => RuntimeResolution::Module(HostModuleId(id)),
+            None if self.refuses(specifier, importer) => return None,
             None => resolve_alias(manifest, specifier, self.aliases)?,
         };
         Some(match resolution {
@@ -137,6 +140,12 @@ impl RuntimeModules {
             }
             RuntimeResolution::Module(_) | RuntimeResolution::HostValue => resolution,
         })
+    }
+
+    fn refuses(&self, specifier: &[u8], importer: &[u8]) -> bool {
+        !self.answers_modules_of_own_tests
+            && !self.files.contains_key(importer)
+            && is_module_of_own_tests(specifier, self.aliases)
     }
 
     /// Every name under which a program imports a module of Bun's own.
@@ -223,6 +232,33 @@ fn virtual_path(archive_name: &[u8]) -> Vec<u8> {
 
 fn prelude_archive_name(name: &str) -> Vec<u8> {
     [&b"prelude/"[..], name.as_bytes()].concat()
+}
+
+// As `bun run` decides it: `load_env` in src/jsc/VirtualMachine.rs.
+fn runs_own_tests() -> bool {
+    bun_core::env::IS_DEBUG
+        || (bun_core::getenv_z(bun_core::zstr!("BUN_GARBAGE_COLLECTOR_LEVEL")).is_some()
+            && bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING"))
+                .is_some())
+}
+
+// The names that `bun run` answers to Bun's own tests alone: `fetch_builtin_module` in src/runtime/jsc_hooks.rs.
+fn is_module_of_own_tests(specifier: &[u8], aliases: Cfg) -> bool {
+    let Some(alias) = Alias::get(specifier, Target::Bun, aliases) else {
+        return false;
+    };
+    matches!(
+        Module::MAP.get(alias.path.as_bytes()),
+        Some(
+            Module::BunInternalForTesting
+                | Module::InternalClusterRoundRobinHandle
+                | Module::NodeInternalRepl
+                | Module::NodeInternalReplAwait
+                | Module::NodeInternalReplHistory
+                | Module::NodeInternalUtilInspect
+                | Module::InternalTestBinding
+        )
+    )
 }
 
 fn resolve_alias(manifest: &Manifest, specifier: &[u8], aliases: Cfg) -> Option<RuntimeResolution> {

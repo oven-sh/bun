@@ -1,4 +1,0 @@
-const held = Array.of(7, 1.5);
-const list = held.splice(0);
-console.log(list.length);
-console.log(list[0] + 1, list[1] + 1);

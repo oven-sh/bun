@@ -11,26 +11,23 @@ pub(crate) fn resolve_wanted_groups(
     }
 
     let mut groups = Vec::new();
-    for tag in requested.unwrap_or_default() {
-        let group = find_tag_group(languages, tag)
-            .ok_or_else(|| TrimRequestError::UnknownLocale(tag.clone()))?;
-        groups.push(group);
-    }
-
-    let mut can_use_any_locale = false;
-    match used {
-        UsedLocales::Unknown(_) => can_use_any_locale = true,
-        UsedLocales::Listed(tags) => {
+    match (requested, used) {
+        (Some(tags), _) => {
             for tag in tags {
-                match find_tag_group(languages, &tag.0) {
-                    Some(group) => groups.push(group),
-                    None => can_use_any_locale = true,
-                }
+                let group = find_tag_group(languages, tag)
+                    .ok_or_else(|| TrimRequestError::UnknownLocale(tag.clone()))?;
+                groups.push(group);
             }
         }
-    }
-    if can_use_any_locale && requested.is_none() {
-        return Ok(WantedLocaleGroups::All);
+        (None, UsedLocales::Unknown(_)) => return Ok(WantedLocaleGroups::All),
+        (None, UsedLocales::Listed(tags)) => {
+            for tag in tags {
+                let Some(group) = find_tag_group(languages, &tag.0) else {
+                    return Ok(WantedLocaleGroups::All);
+                };
+                groups.push(group);
+            }
+        }
     }
 
     groups.sort_unstable();
@@ -155,8 +152,10 @@ mod tests {
     }
 
     #[test]
-    fn listed_use_adds_to_requested_groups() {
-        assert_eq!(resolve(&listed(&["fil"]), Some(&["en"])), wanted(&[1, 2]));
+    fn request_replaces_listed_use() {
+        assert_eq!(resolve(&listed(&["fil"]), Some(&["en"])), wanted(&[1]));
+        assert_eq!(resolve(&listed(&["xx", "de"]), Some(&["en"])), wanted(&[1]));
+        assert_eq!(resolve(&listed(&["de"]), Some(&[])), wanted(&[]));
     }
 
     #[test]
@@ -166,20 +165,10 @@ mod tests {
     }
 
     #[test]
-    fn used_tag_without_data_is_skipped_with_request() {
-        assert_eq!(
-            resolve(&listed(&["xx", "de"]), Some(&["en"])),
-            wanted(&[0, 1])
-        );
-    }
-
-    #[test]
     fn wanted_groups_are_sorted_and_unique() {
-        let used = listed(&["zh", "no", "de", "nb"]);
-        assert_eq!(
-            resolve(&used, Some(&["nb-NO", "zh_TW"])),
-            wanted(&[0, 3, 4])
-        );
+        let tags = ["zh", "no", "de", "nb"];
+        assert_eq!(resolve(&listed(&tags), None), wanted(&[0, 3, 4]));
+        assert_eq!(resolve(&UNKNOWN, Some(&tags)), wanted(&[0, 3, 4]));
     }
 
     #[test]

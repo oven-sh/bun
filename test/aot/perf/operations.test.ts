@@ -1,13 +1,13 @@
-// What ONE OPERATION of the language costs in compiled code: a field read, a store, a call, a closure made, a string compared .. : the rows of ./operations/rows.tsv.
+// What ONE OPERATION of the language costs in compiled code: a field read, a store, a call, a closure made, a string compared .. : the rows of ./operations/generate.py.
 //
-// One method for every row (./operations/generate.py writes the programs, and the same rows in Go and C++ for whoever wants to compare): a function with 12 sites of the operation and
+// One method for every row (./operations/generate.py writes the programs into a temporary folder when this file starts, and the same rows in Go and C++ for whoever wants to compare): a function with 12 sites of the operation and
 // one with 4, the same but for the number of sites; a site's result is the next site's operand, and nothing the rows work on is a constant of the program text.
 //
 //   instructions a site = (executed by N calls of the function with 12 sites - executed by N calls of the one with 4) / (8 N)
 //
 // each as the difference of a run with many calls and a run with few, so that start-up cancels out. Instructions are counted in user mode around the whole process: no clock, the same at any load.
 //
-// Every row is counted twice. ./operations/rows: the whole program is in sight, and the compiler may prove what the values are. ./operations/opened: the same texts, but every object, array, closure and
+// Every row is counted twice. `alone`: the whole program is in sight, and the compiler may prove what the values are. `opened`: the same texts, but every object, array, closure and
 // string that the row works on has been handed once to text that is evaluated at run time, and has come back: nothing is left but the written types, which is the state of most accesses of a large program.
 // Held against ./operations.<os>-<arch>.json and ./operations-opened.<os>-<arch>.json, which only go down:
 //
@@ -24,12 +24,20 @@ import { withSteadyCollections } from "../harness/counted-run";
 import { slot, spawned, withoutDebugInformation } from "../run-programs";
 import { describe, test } from "../supported";
 
-const root = join(import.meta.dir, "operations");
+const python = Bun.which("python3");
+const root = String(
+  tempDir("aot-operations", { "tsconfig.json": JSON.stringify({ extends: join(import.meta.dir, "operations", "tsconfig.json") }) }),
+);
+afterAll(() => rmSync(root, { recursive: true, force: true }));
+if (python) {
+  const generated = Bun.spawnSync({ cmd: [python, join(import.meta.dir, "operations", "generate.py"), root], env: bunEnv, stdout: "ignore", stderr: "pipe" });
+  if (generated.exitCode !== 0) throw new Error(`generate.py ended with ${generated.exitCode}:\n${generated.stderr}`);
+}
 const mode = process.env.AOT_PERF;
 const columns = [
   {
     title: "compile/aot/perf/operations",
-    programs: "rows",
+    programs: "alone",
     pinsPath: join(import.meta.dir, `operations.${process.platform}-${process.arch}.json`),
   },
   {
@@ -39,7 +47,7 @@ const columns = [
   },
 ];
 
-const rows = readFileSync(join(root, "rows.tsv"), "utf8")
+const rows = (python ? readFileSync(join(root, "rows.tsv"), "utf8") : "")
   .split("\n")
   .filter(line => line !== "")
   .map(line => line.split("\t"))
@@ -57,6 +65,8 @@ for (const { title, programs, pinsPath } of columns) {
       ? "a debug or ASAN build counts other instructions"
       : isWindows
         ? "it counts with perf_event_open or /usr/bin/time -l"
+        : !python
+          ? "python3 is not installed"
         : !existsSync(pinsPath) && mode !== "update"
           ? `there is no ${pinsPath}`
           : undefined;
@@ -123,7 +133,7 @@ for (const { title, programs, pinsPath } of columns) {
                     10,
                 ) / 10;
               const pin = pins[name];
-              console.error(`OPERATION ${programs === "rows" ? "" : programs + " "}${name}\t${now}\t| the pin\t${pin}`);
+              console.error(`OPERATION ${programs === "alone" ? "" : programs + " "}${name}\t${now}\t| the pin\t${pin}`);
               if (mode === "update") return void (pins[name] = now);
               expect(pin).toBeDefined();
               if (mode === "lower") pins[name] = Math.min(pin, now);

@@ -6,8 +6,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN } from "harness";
-import { join, relative } from "path";
-import { inShare, slot, spawned, told, unsupported, wanted } from "./run-programs";
+import { join } from "path";
+import { inPrograms, inShare, listWrittenPrograms, mayHoldWhatIsWanted, slot, spawned, taken, told, unsupported, wanted } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 
@@ -31,7 +31,7 @@ function findPrograms(folder: string, into: string[]) {
   }
 }
 
-const hash = (path: string) => BigInt(Bun.hash(relative(root, path).replaceAll("\\", "/")));
+const hash = (path: string) => BigInt(Bun.hash(inPrograms(path).replaceAll("\\", "/")));
 const withoutExtension = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
 
 const knownDifferences = new Set(
@@ -44,19 +44,21 @@ const knownDifferences = new Set(
 export function eagerTierUpSweep(part: number, parts: number) {
   const all: string[] = [];
   findPrograms(root, all);
-  const chosen = all
-    .filter(path => /[\\/]/.test(relative(root, path)))
-    .filter(path => (wanted === "" || wanted === "quick" ? (hash(path) >> 8n) % 10n === 0n : relative(root, path).includes(wanted)))
-    .filter(path => inShare("eager tier-up " + relative(root, path), 10))
-    .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
-    .filter(path => !isASAN || (hash(path) >> 32n) % 3n === 0n)
-    .filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt"));
+  const chosen = taken(
+    [...all, ...listWrittenPrograms(/\.(ts|tsx|js)$/)]
+      .filter(path => /[\\/]/.test(inPrograms(path)))
+      .filter(mayHoldWhatIsWanted)
+      .filter(path => inShare("eager tier-up " + inPrograms(path), 10, true))
+      .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
+      .filter(path => !isASAN || (hash(path) >> 32n) % 3n === 0n),
+    path => (wanted === "" || wanted === "quick" ? (hash(path) >> 8n) % 10n === 0n : inPrograms(path).includes(wanted)),
+  ).filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt"));
 
   describe.concurrent("run --aot with eager tier-up", () => {
     if (unsupported) return void test.skip(unsupported, () => {});
     if (chosen.length === 0) test.skip("no program selected", () => {});
     for (const path of chosen) {
-      const name = relative(root, withoutExtension(path)).replaceAll("\\", "/");
+      const name = inPrograms(withoutExtension(path)).replaceAll("\\", "/");
       if (knownDifferences.has(name)) {
         test.todo(name);
         continue;

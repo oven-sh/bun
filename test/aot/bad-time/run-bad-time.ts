@@ -3,24 +3,26 @@
 // right, so no other test sees it. shell/bad-time-known.txt lists the programs that mean it.
 //
 // All programs take three quarters of an hour of one processor, so they are dealt out to eight files. ../shell/tools.ts says what
-// it needs. A sanitizer or debug build takes a tenth of each file's programs.
+// it needs.
 //   JSC=.. TESTAOT=.. FRONT_END=.. PLAIN=.. python3 test/aot/shell/bad-time.py arrays/holes     one program
 import { expect, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { partInShare, unsupported } from "../run-programs";
+import { partInShare, unsupported, writeShareOfWrittenPrograms } from "../run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
 
 export function badTime(part: number, parts: number) {
   if (scriptSkipReason && !unsupported) console.error(`SKIPPED: test/aot/bad-time/bad-time-${part}.test.ts: ${scriptSkipReason}`);
 
+  const share = partInShare(part, parts, 40, true);
+  const written = scriptSkipReason ? undefined : writeShareOfWrittenPrograms(share);
+
   test.skipIf(!!scriptSkipReason)(
     `no program ends with a bad time unless it means it (part ${part} of ${parts})`,
     async () => {
       await using script = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", isASAN || isDebug ? `${part}/${parts * 10}` : partInShare(part, parts, 40), "all"],
-        env: scriptEnvironment(),
+        cmd: [python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", share, "all"],
+        env: { ...scriptEnvironment(), WRITTEN: written },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

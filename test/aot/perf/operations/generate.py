@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""generate.py <folder> [row,row,.. to leave out of the TypeScript]: writes alone/<row>.ts and opened/<row>.ts (what ./rows and ./opened hold: `python3 generate.py /tmp/out && cp /tmp/out/alone/*.ts rows/ && cp /tmp/out/opened/*.ts opened/ && cp /tmp/out/rows.tsv .`), typed.ts (all rows in one program), and the same rows in Go and C++ for comparison: main.go, kit.h, rows.cc, main.cc; rows.tsv.
+"""generate.py <folder> [row,row,.. to leave out of the TypeScript]: writes alone/<row>.ts and opened/<row>.ts (what ../operations.test.ts builds and counts: it runs this script itself), typed.ts (all rows in one program), and the same rows in Go and C++ for comparison: main.go, kit.h, rows.cc, main.cc; rows.tsv.
 One method for every column: a function with 12 sites of the operation and one with 4, the same but for the number of sites; a site's result is the next site's operand.
   bytes a site        = (bytes of f12 - bytes of f4) / 8
   instructions a site = (executed by N calls of f12 - executed by N calls of f4) / (8 N), each as a difference of two runs (perf stat -e instructions:u), callees included

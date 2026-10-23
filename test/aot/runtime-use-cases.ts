@@ -159,14 +159,26 @@ group("code from strings", () => {
   });
 
   const input = `declare const input: any;\n`;
+  // What has been through native memory is a value nobody knows.
+  const unknownFunction = `declare const CustomEvent: any;\nfunction mine() {}\nconst unknown: any = new CustomEvent("x", { detail: mine }).detail;\n`;
 
   test.each([
-    ["the constructor of an unknown value", `console.log(input.constructor("return 1"));`],
+    ["the constructor of an unknown value", unknownFunction + `console.log(unknown.constructor("return 1"));`],
     ["a computed name, read from an unknown value and called", `console.log(input[process.argv[2]]("return 1"));`],
-    ["a computed name, read from a function", `function mine() {}\nconsole.log((mine as any)[process.argv[2]]);`],
-  ])("%s leaves the report closed: Function may be found that way, and works", async (_, text) => {
+    ["a computed name, read from a function and called", `function mine() {}\nconsole.log((mine as any)[process.argv[2]]("return 1"));`],
+  ])("%s leaves the report closed and keeps the interpreter: Function may be found that way", async (_, text) => {
     const use = await of(input + text);
     expect({ ...completeness(use), allowed: retainsFeature(use.lines, "Interpreter") }).toEqual({ ...closed, allowed: true });
+  });
+
+  test.each([
+    // It prints `[class Function]`.
+    ["a computed name, read from a function and only printed", `function mine() {}\nconsole.log((mine as any)[process.argv[2]]);`],
+    // The read throws a ReferenceError, so the call is never reached.
+    ["the constructor of a global that nothing defines", `console.log(input.constructor("return 1"));`],
+  ])("%s leaves the report closed and keeps no interpreter: nothing calls Function", async (_, text) => {
+    const use = await of(input + text);
+    expect({ ...completeness(use), allowed: retainsFeature(use.lines, "Interpreter") }).toEqual({ ...closed, allowed: false });
   });
 
   test("code from strings is allowed unless the build says --disallow-code-generation-from-strings", async () => {

@@ -1,6 +1,6 @@
-// Writes test/aot/programs/relations-at-random/: programs made by chance, one for each seed, the same ones every time.
+// The programs of relations-at-random: made by chance, one for each seed, the same ones every time. `bun test/aot/generate.ts relations-at-random <where>` writes those of the seeds 1 to 80.
 //
-//   bun test/aot/generate-relations-at-random.ts [--seeds <n>] [--first <seed>] [--folder <folder>] [--who-keeps]
+//   bun test/aot/generate-relations-at-random.ts --folder <folder> [--seeds <n>] [--first <seed>] [--who-keeps]      other seeds, or more of them
 //
 // programs/relational-summaries/ has one program, written by hand, for each thing that a function can do with what it is handed. These
 // mix them: some ten helpers that read, write, link, keep, return, throw, wrap, compare and hand on their parameters, call each other,
@@ -16,15 +16,9 @@
 // the stack conservatively: a count of one or two may be chance. Such programs are no tests: the counts are not the same every time.)
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import type { WrittenProgram } from "./generate";
 
-function option(name: string, otherwise: string): string {
-  const index = process.argv.indexOf(name);
-  return index === -1 ? otherwise : (process.argv[index + 1] ?? otherwise);
-}
-const numberOfSeeds = Number(option("--seeds", "120"));
-const firstSeed = Number(option("--first", "1"));
-const folder = option("--folder", join(import.meta.dir, "programs", "relations-at-random"));
-const asksWhoKeeps = process.argv.includes("--who-keeps");
+const asksWhoKeeps = import.meta.main && process.argv.includes("--who-keeps");
 
 function randomNumbers(seed: number) {
   let state = seed >>> 0;
@@ -401,11 +395,31 @@ function program(seed: number, attempt: number): string | null {
   return out.join("\n") + "\n";
 }
 
-mkdirSync(folder, { recursive: true });
-for (const name of readdirSync(folder)) if (/^seed-\d+\.[jt]s$/.test(name)) rmSync(join(folder, name));
-for (let seed = firstSeed; seed < firstSeed + numberOfSeeds; seed++) {
-  let text: string | null = null;
-  for (let attempt = 0; text === null; attempt++) text = program(seed, attempt);
-  writeFileSync(join(folder, `seed-${String(seed).padStart(4, "0")}.${seed % 2 === 0 ? "ts" : "js"}`), text);
+export function programsOfSeeds(firstSeed: number, numberOfSeeds: number): WrittenProgram[] {
+  return Array.from({ length: numberOfSeeds }, (_, index) => {
+    const seed = firstSeed + index;
+    let text: string | null = null;
+    for (let attempt = 0; text === null; attempt++) text = program(seed, attempt);
+    const entry = `seed-${String(seed).padStart(4, "0")}.${seed % 2 === 0 ? "ts" : "js"}`;
+    return { entry, files: { [entry]: text } };
+  });
 }
-console.log(`${numberOfSeeds} programs in ${folder}`);
+
+export const programs = (): WrittenProgram[] => programsOfSeeds(1, 80);
+
+if (import.meta.main) {
+  const option = (name: string, otherwise: string): string => {
+    const index = process.argv.indexOf(name);
+    return index === -1 ? otherwise : (process.argv[index + 1] ?? otherwise);
+  };
+  const folder = option("--folder", "");
+  if (folder === "") {
+    console.error("bun test/aot/generate-relations-at-random.ts --folder <folder> [--seeds <n>] [--first <seed>] [--who-keeps]");
+    process.exit(1);
+  }
+  mkdirSync(folder, { recursive: true });
+  for (const name of readdirSync(folder)) if (/^seed-\d+\.[jt]s$/.test(name)) rmSync(join(folder, name));
+  const made = programsOfSeeds(Number(option("--first", "1")), Number(option("--seeds", "120")));
+  for (const { entry, files } of made) writeFileSync(join(folder, entry), files[entry]);
+  console.log(`${made.length} programs in ${folder}`);
+}

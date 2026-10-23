@@ -356,6 +356,18 @@ fn locale_line_lists_tags() {
 }
 
 #[test]
+fn locale_line_lists_requested_tags_alone() {
+    let mut fixture = ReportFixture::new(ResultRecords::default());
+    fixture.used_features.locales = UsedLocales::Listed(vec![LocaleTag((&b"fr"[..]).into())]);
+    fixture.options.trim.locales = Some(vec![(&b"de"[..]).into(), (&b"en-US"[..]).into()]);
+    let text = "locales: de, en-US: listed in compile.trim.locales";
+    assert_eq!(locale_text(&fixture), line(text, None));
+    fixture.options.trim.locales = Some(Vec::new());
+    let text = "locales: none: listed in compile.trim.locales";
+    assert_eq!(locale_text(&fixture), line(text, None));
+}
+
+#[test]
 fn unknown_locales_have_position() {
     let record = |kind, builtin| LocaleUseRecord {
         kind,

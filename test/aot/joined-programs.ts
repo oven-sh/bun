@@ -8,14 +8,16 @@
 // Left out: a program of several files; one with a file beside it (it needs flags, or differs from plain Bun on purpose); and whatever cannot share a process with others
 // or says something else each time: its own path or arguments, stack texts, the clock, random numbers, timers, files, sockets, processes, an exit, a change to a built-in.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { partInShare, slot, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
+import { inPrograms, isGroup, listWrittenPrograms, partInShare, slot, taken, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 // Of which about 250 can be joined.
 const namesInGroup = 300;
+// What a script makes from a few rows of the table of built-ins is listed under one name until it is made (run-programs.ts).
+const programsUnderOneName = 6;
 const groupsInShare = 3;
 const measure = ["--aot-heat=everything-is-hot"];
 
@@ -34,7 +36,9 @@ const cannotBeJoined = new RegExp(
 );
 const filesBeside = [".json", ".expected.txt", ".erased.txt", ".build-errors.txt", ".todo.txt"];
 
-/** By their names alone: what a program says is read only where its group is taken. */
+const isOneFile = (name: string) => /^[^/]+\/[^/]+(?<!\.d)\.(ts|tsx|js)$/.test(name);
+
+/** By their paths alone: what a program says is read only where its group is taken, and what a script writes is written there. */
 function programsOfOneFile(): string[] {
   const chosen: string[] = [];
   for (const topic of readdirSync(root, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
@@ -43,10 +47,26 @@ function programsOfOneFile(): string[] {
     const present = new Set(entries.map(entry => entry.name));
     for (const entry of entries) {
       const [, stem, extension] = /^(.*)\.(ts|tsx|js)$/.exec(entry.name) ?? [];
-      if (extension && entry.isFile() && !stem.endsWith(".d") && !filesBeside.some(suffix => present.has(stem + suffix))) chosen.push(`${topic.name}/${entry.name}`);
+      if (extension && entry.isFile() && !stem.endsWith(".d") && !filesBeside.some(suffix => present.has(stem + suffix))) chosen.push(join(root, topic.name, entry.name));
     }
   }
-  return chosen;
+  chosen.push(...listWrittenPrograms(/\.(ts|tsx|js)$/).filter(path => isGroup(path) || isOneFile(inPrograms(path).replaceAll("\\", "/"))));
+  return chosen
+    .map(path => [inPrograms(path), path])
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([, path]) => path);
+}
+
+/** About `namesInGroup` programs each. */
+function groupsOf(paths: string[]): string[][] {
+  const groups: string[][] = [[]];
+  let programs = 0;
+  for (const path of paths) {
+    if (programs >= namesInGroup) (groups.push([]), (programs = 0));
+    groups.at(-1)!.push(path);
+    programs += isGroup(path) ? programsUnderOneName : 1;
+  }
+  return groups;
 }
 
 function textOfGroup(names: string[]): string {
@@ -103,11 +123,20 @@ async function run(executable: string, cwd: string): Promise<Ran> {
   return { printed: byProgram(output), stopped };
 }
 
-async function compare(folder: string, carrier: string[], group: number, names: string[], flags: string[]) {
+async function compare(folder: string, carrier: string[], group: number | string, listed: string[], flags: string[]) {
   const cwd = join(folder, String(group));
-  names = names.filter(name => !cannotBeJoined.test(readFileSync(join(root, name), "utf8")));
+  const paths = taken(listed, () => true).filter(path => isOneFile(inPrograms(path).replaceAll("\\", "/")) && !filesBeside.some(suffix => existsSync(path.replace(/\.[a-z]+$/, suffix))));
+  // What was listed under one name may have come to many programs.
+  if (paths.length > 2 * namesInGroup) {
+    for (let from = 0; from < paths.length; from += namesInGroup) await compare(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), flags);
+    return;
+  }
+  const pathOf = new Map(paths.map(path => [inPrograms(path).replaceAll("\\", "/"), path]));
+  let names = [...pathOf.keys()].filter(name => !cannotBeJoined.test(readFileSync(pathOf.get(name)!, "utf8")));
+  // Nothing of the group can be joined, or the rows it was listed for came to no program.
+  if (names.length === 0) return;
   for (const name of names) {
-    const text = readFileSync(join(root, name), "utf8");
+    const text = readFileSync(pathOf.get(name)!, "utf8");
     mkdirSync(dirname(join(cwd, "programs", name)), { recursive: true });
     // A TypeScript file without an import or an export is a script, whose declarations would meet those of the other programs.
     writeFileSync(join(cwd, "programs", name), name.endsWith(".js") || /^\s*(import|export)\b/m.test(text) ? text : text + "\nexport {};\n");
@@ -155,16 +184,14 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
   describe.concurrent(`compile/aot/joined/${label}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
     if (isWindows || isASAN) return void test.skip("no code is generated directly on Windows or by a Bun built with AddressSanitizer", () => {});
-    const all = programsOfOneFile();
+    const groups = groupsOf(programsOfOneFile());
     const carrier = withoutDebugInformation();
-    const groups = Math.ceil(all.length / namesInGroup);
-    const [first, step] = partInShare(part, parts, Math.ceil(groups / parts / groupsInShare)).split("/").map(Number);
-    let taken = 0;
-    for (let group = first - 1; group < groups; group += step) {
-      taken++;
-      const names = all.slice(group * namesInGroup, (group + 1) * namesInGroup);
-      test(`group ${group}: ${names[0]} to ${names.at(-1)}`, () => slot(() => compare(folder, carrier, group, names, flags)), 900_000);
+    const [first, step] = partInShare(part, parts, Math.ceil(groups.length / parts / groupsInShare)).split("/").map(Number);
+    for (let group = first - 1; group < groups.length; group += step) {
+      const listed = groups[group];
+      const nameOf = (path: string) => inPrograms(path).replaceAll("\\", "/");
+      test(`group ${group}: ${nameOf(listed[0])} to ${nameOf(listed.at(-1)!)}`, () => slot(() => compare(folder, carrier, group, listed, flags)), 900_000);
     }
-    if (!taken) test.skip("no group selected", () => {});
+    if (first > groups.length) test.skip("no group selected", () => {});
   });
 }

@@ -17,20 +17,22 @@ import { expect, test } from "bun:test";
 import { isASAN, isDebug, isLinux } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { partInShare, unsupported } from "../run-programs";
+import { partInShare, unsupported, writeShareOfWrittenPrograms } from "../run-programs";
 import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
 
 export function collectorStress(collections: "full" | "young", part: number, parts: number) {
   const skipReason = scriptSkipReason ?? (isLinux && process.arch === "x64" ? undefined : "it is run on Linux x64, which shows the most");
   if (skipReason && !unsupported) console.error(`SKIPPED: test/aot/collector-stress/${collections}-${part}.test.ts: ${skipReason}`);
 
+  const share = isDebug || isASAN ? `${part}/${parts * (isDebug ? 10 : 3)}` : partInShare(part, parts, 40);
+  const written = skipReason ? undefined : writeShareOfWrittenPrograms(share);
+
   test.skipIf(!!skipReason)(
     `the programs answer the same under ${collections} collections all the time (part ${part} of ${parts})`,
     async () => {
-      const share = isDebug || isASAN ? `${part}/${parts * (isDebug ? 10 : 3)}` : partInShare(part, parts, 40);
       await using script = Bun.spawn({
         cmd: [python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--part", share, "all"],
-        env: scriptEnvironment(),
+        env: { ...scriptEnvironment(), WRITTEN: written },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

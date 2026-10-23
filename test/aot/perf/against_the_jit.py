@@ -14,7 +14,7 @@ some loops away whole, and a ratio to nothing says nothing. CPU time is judged o
 
 It needs Linux, `perf` and `taskset`. About two minutes on sixteen cores.
 """
-import argparse, json, os, queue, shutil, subprocess, tempfile, threading
+import argparse, json, os, queue, shutil, subprocess, sys, tempfile, threading
 
 parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
 parser.add_argument("aot")
@@ -30,6 +30,9 @@ aot, jit = os.path.abspath(options.aot), os.path.abspath(options.jit)
 first, _, last = options.cores.partition("-")
 cores = list(range(int(first), int(last or first) + 1))
 work = tempfile.mkdtemp(prefix="against-the-jit-")
+OPERATIONS = os.path.join(work, "operations")
+subprocess.run([sys.executable, os.path.join(HERE, "operations", "generate.py"), OPERATIONS], check=True, stdout=subprocess.DEVNULL)
+json.dump({"extends": os.path.join(HERE, "operations", "tsconfig.json")}, open(os.path.join(OPERATIONS, "tsconfig.json"), "w"))
 STEADY = {"BUN_GC_TIMER_DISABLE": "1", "BUN_JSC_percentCPUPerMBForEdenTimer": "0", "BUN_JSC_percentCPUPerMBForFullTimer": "0", "BUN_JSC_useConcurrentGC": "0", "BUN_JSC_numberOfGCMarkers": "1", "BUN_JSC_useConcurrentJIT": "0"}
 BASE = dict(os.environ, NO_COLOR="1", BUN_ENABLE_CRASH_REPORTING="0", DO_NOT_TRACK="1", BUN_DEBUG_QUIET_LOGS="1", **STEADY)
 
@@ -74,8 +77,8 @@ def idiom(core, name, turns):
 
 
 def operation(core, name, is_heavy):
-    root = os.path.join(HERE, "operations")
-    source = os.path.join(root, "rows", name + ".ts")
+    root = OPERATIONS
+    source = os.path.join(root, "alone", name + ".ts")
     few, many = (21000, 84000) if is_heavy else (400000, 1600000)
 
     def one_site(command):
@@ -98,7 +101,7 @@ for folder, _, files in sorted(os.walk(os.path.join(HERE, "idioms"))):
         name = os.path.relpath(os.path.join(folder, file), os.path.join(HERE, "idioms"))[:-3]
         if file.endswith(".ts") and name in turns and options.only in "idioms/" + name:
             jobs.put((idiom, name, turns[name]))
-for line in open(os.path.join(HERE, "operations", "rows.tsv")):
+for line in open(os.path.join(OPERATIONS, "rows.tsv")):
     fields = line.rstrip("\n").split("\t")
     if len(fields) > 4 and fields[4] == "1" and options.only in "operations/" + fields[0]:
         jobs.put((operation, fields[0], fields[3] == "1"))

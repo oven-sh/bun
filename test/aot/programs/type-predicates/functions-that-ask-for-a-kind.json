@@ -1,7 +1,0 @@
-{
-  "skipInVariant": {
-    "validate": "a generated file of over a megabyte: a validating build of it takes over eight minutes and six gigabytes",
-    "validate-collecting": "a generated file of over a megabyte: a validating build of it takes over eight minutes and six gigabytes",
-    "validated": "a generated file of over a megabyte: a validating build of it takes over eight minutes and six gigabytes"
-  }
-}

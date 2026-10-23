@@ -5,7 +5,7 @@
 // The questions also ask what the row denies: of what it calls an object, whether it is a string, a number, undefined.
 import { evaluate, printsTheSameTwice, within } from "./evaluate";
 import { lines, type Program } from "./program";
-import { describedRows, type Table } from "./table";
+import type { Row } from "./table";
 import { matches, neverEvaluated, plansOf, shapeOf, volatileRows, wordsOf, write, type Plan } from "./table-driven";
 
 const kinds = ["undefined", "boolean", "number", "string", "bigint", "symbol", "function", "object"];
@@ -178,10 +178,11 @@ async function blocksOf(plan: Plan, label: string, isVolatile: boolean): Promise
 export const rowsNotAsked = new Map<string, string>();
 const differsFromMachineToMachine = [/^(Bun|process)\.env$/, /^process\.(config|release|features|versions|report|argv|execArgv|execPath|argv0)$/, /^Bun\.(argv|main|which|cwd)$/, /^navigator\./];
 
-export async function inPlacePrograms(table: Table): Promise<Program[]> {
+/** The rows of the table that are asked about, by the holder of the built-in: the rows of one holder share their programs, which are named after it. */
+export function rowsByHolder(described: Row[]): Map<string, Row[]> {
   const only = process.env.ONLY_ROWS === undefined ? null : new RegExp(process.env.ONLY_ROWS);
-  const byHolder = new Map<string, { row: string; imports: string[]; text: string }[]>();
-  for (const row of describedRows(table)) {
+  const holders = new Map<string, Row[]>();
+  for (const row of described) {
     if (only !== null && !only.test(row.path)) continue;
     if (matches(neverEvaluated, row.path)) {
       rowsNotAsked.set(row.path, "not called while the programs are written");
@@ -191,9 +192,20 @@ export async function inPlacePrograms(table: Table): Promise<Program[]> {
       rowsNotAsked.set(row.path, "what it answers has other names on another machine");
       continue;
     }
-    const isVolatile = matches(volatileRows, row.path);
     const shape = shapeOf(row.path);
     const holder = wordsOf(shape.holder === "" ? "globals" : shape.holder) || "globals";
+    const rows = holders.get(holder);
+    if (rows === undefined) holders.set(holder, [row]);
+    else rows.push(row);
+  }
+  return holders;
+}
+
+/** The programs of each holder. */
+export async function inPlacePrograms(holders: Map<string, Row[]>): Promise<Map<string, Program[]>> {
+  const byHolder = new Map<string, { row: string; imports: string[]; text: string }[]>();
+  for (const [holder, row] of [...holders].flatMap(([holder, rows]) => rows.map(row => [holder, row] as const))) {
+    const isVolatile = matches(volatileRows, row.path);
     const texts = new Set<string>();
     for (const overload of row.trusted) {
       if (overload.mode === "Set") continue;
@@ -211,12 +223,13 @@ export async function inPlacePrograms(table: Table): Promise<Program[]> {
     }
     if (texts.size === 0) rowsNotAsked.set(row.path, "no call of it with sample operands succeeds and prints the same twice");
   }
-  const programs: Program[] = [];
+  const programs = new Map<string, Program[]>();
   for (const [holder, blocks] of [...byHolder].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const parts = Math.ceil(blocks.length / blocksInOneProgram);
+    programs.set(holder, []);
     for (let part = 0; part < parts; part++) {
       const some = blocks.slice(part * blocksInOneProgram, (part + 1) * blocksInOneProgram);
-      programs.push({
+      programs.get(holder)!.push({
         name: parts === 1 ? holder : `${holder}-${part + 1}`,
         rows: [...new Set(some.map(block => block.row))],
         extension: "mjs",

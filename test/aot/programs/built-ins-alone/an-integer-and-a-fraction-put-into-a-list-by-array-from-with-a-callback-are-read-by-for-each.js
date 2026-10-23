@@ -1,2 +1,0 @@
-const held = Array.from({ length: 2 }, (value, index) => (index === 0 ? 7 : 1.5));
-held.forEach(value => console.log(value + 1));

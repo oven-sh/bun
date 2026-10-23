@@ -71,6 +71,29 @@ describe.skipIf(probed.exitCode !== 0 || isDebug)("bun:internal-for-testing is i
         }
         const whole = await run([join(folder, "whole")], folder, allowed);
         expect(whole).toEqual({ stdout: expect.not.stringContaining("throws"), stderr: "", exitCode: 0 });
+        if (flags.length > 0) {
+          // What --aot refuses, it refuses at the build: the environment of the build decides, and a program that names the module uses it.
+          expect(await run([join(folder, "trimmed")], folder, allowed)).toEqual(whole);
+          for (const [outfile, trim] of [
+            ["refused", []],
+            ["refused-and-trimmed", ["--trim"]],
+          ] as const) {
+            const built = await run([bunExe(), "build", "--compile", ...flags, ...trim, entry, "--outfile", outfile], folder, notAllowed);
+            expect(built.stderr).toContain(`Could not resolve: "bun:internal-for-testing"`);
+            expect(built.exitCode).toBe(entry === "asks.js" ? 0 : 1);
+            if (entry !== "asks.js") continue;
+            const cannotFind = (name: string) => `throws Cannot find module '${name}'`;
+            for (const env of [allowed, notAllowed]) {
+              const ran = await run([join(folder, outfile)], folder, env);
+              expect({ ...ran, stdout: ran.stdout.replace(/ from '[^'\n]*'$/gm, "") }).toEqual({
+                stdout: `import ${cannotFind("bun:internal-for-testing")}\nrequire ${cannotFind("bun:internal-for-testing")}\nbinding ${cannotFind("internal/test/binding")}\ngetBuiltinModule undefined\n`,
+                stderr: "",
+                exitCode: 0,
+              });
+            }
+          }
+          return;
+        }
         const refused = await run([join(folder, "whole")], folder, notAllowed);
         expect(refused.exitCode).toBe(entry === "asks.js" ? 0 : 1);
         expect(refused.stdout + refused.stderr).toContain(`ENOENT reading "bun:internal-for-testing"`);

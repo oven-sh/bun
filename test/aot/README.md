@@ -9,7 +9,7 @@ groups of tests, the one command that runs each, what CI has to know, and where 
 | --- | --- | --- | --- |
 | **Fast**: what CI runs | `bun test test/aot` | Every `*.test.ts` in this folder. Of the programs under `programs/` a share, another for each commit of Bun ("The share", below): each runs three ways, which must agree: plain Bun, compiled, compiled with its types erased; of `packages/` one importer in ten; of `generated/` a quarter of the part of each generator's programs that is meant for every run | A Bun that includes the compiler, as every released build does. `python3` for `generated-by-python`, `external-sources-of-typed-objects` and `made-cases-three-ways`; `python3`, `jsc` and `testaot` beside the Bun for `generated-code`, `collector-stress/`, `heat/` and `bad-time/`; `testaot` and the folder `aot-tests` beside it for `engine-tests`; `python3`, ARM64 and a checkout of WebKit (`$BUN_WEBKIT_PATH` or `vendor/WebKit`) for `paired-returns`. A test that is skipped prints what is missing to stderr |
 | **Every program** | `AOT_SHARE=all bun test test/aot` | The same files with every program under `programs/`, each `variant-*` with its tenth of them, every case of `each-case-alone`, the whole of what each generator means for every run | The same, and a day of one four-core machine: 130 hours of one processor |
-| **A tenth of it** | `AOT_PROGRAMS=quick bun test test/aot` | One program in ten, the same ones every time. A debug or ASAN build of Bun chooses this by itself | The same |
+| **A tenth of it** | `AOT_PROGRAMS=quick bun test test/aot` | One program in ten, the same ones every time, and no share of anything else. A debug or ASAN build of Bun takes that tenth by itself, with the shares of `variant-*`, `each-case-alone`, `jit-mode-eager-tier-up`, `trimmed-matches-untrimmed`, `heat` and `bad-time` | The same |
 | **Slow**: everything | `AOT_PROGRAMS= AOT_GENERATED=all AOT_REPEATED_BUILDS=300 bun test test/aot` | All importers of `packages/`, every generated program, the long form of `repeated-builds` | The same, and hours |
 | **All of Bun's tests under `--aot`** | `bun test/aot/whole-suite.ts` | Every test file of the repository twice with `scripts/runner.node.ts`: as it is, and with `--aot` added to each `bun test` and `bun run`. It lists the files that pass only as they are | What the whole suite needs, twice the time |
 | **Needs `perf`** | `AOT_PERF=1 bun test test/aot/perf` | Instructions per iteration of everyday idioms against the pinned numbers in `perf/pins.<os>-<arch>.json` | Linux, `perf stat` with user-mode counters |
@@ -44,7 +44,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **Nothing has to be registered.** `scripts/runner.node.ts` runs every file under `test/` whose name contains `.test.` or `spec.`.
   For the same reason no program or helper below this folder may have such a name.
 - **This folder has steps of its own**, `<platform>-test-aot` (`getAotTests()` in `.buildkite/ci.ts`), and the `test-bun` shards leave
-  it out: it costs eight times the rest of `test/`. A pull request that touches a path in `aotSources` of `.buildkite/ci.ts` (`src/aot`,
+  it out: it costs twice the rest of `test/`. A pull request that touches a path in `aotSources` of `.buildkite/ci.ts` (`src/aot`,
   `src/sema`, `src/builtin_sources`, `src/bundler/aot`, `src/trim`, `src/exe_format`, `src/codegen/aot-schema`, `src/codegen/builtins`,
   `src/options_types/aot_options.rs`, `scripts/build/aot*`, `scripts/build/trim`, `packages/bun-sound`, this folder, the pinned WebKit,
   and the host's files for compiled programs: `src/resolver/compiled_program.rs`, `src/standalone_graph/executable_*`,
@@ -101,10 +101,16 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   10 for `programs()` and `programsBuiltWith()` (a list of names given to the second is taken whole), one in 400 for each
   `variant-*` (a fortieth of its tenth, another for each variant), one in 10 of `each-case-alone` and `typedness`, one in 100 for
   `jit-mode-eager-tier-up`, a quarter for `generated()`, one of forty pieces of each file's part for `collector-stress`, `heat` and
-  `bad-time`, three groups of each file's part for `joined()`. A file that takes a share says so once on stderr, with the seed. A test is named after its program:
   `AOT_PROGRAMS=<name> bun test test/aot/<file>` runs a red again, `AOT_SHARE=<revision>` the whole share of that commit,
   `AOT_SHARE=all` everything. A test with a body of its own in a `*.test.ts` is in no share: it runs every time. What grows with
   the suite belongs in a share.
+- **What a script writes is not kept.** Seven folders of `programs/` are written by a script, whole or in part: `generate.ts` lists
+  them. A test file writes the programs that it runs into a temporary folder when it starts, under the names they would have in
+  `programs/`, and treats them like any other program. `bun test/aot/generate.ts <folder> <where>` writes a folder out to be read. The programs of
+  `built-ins-alone` and `built-ins-asked-in-place` follow from the table of built-ins of the Bun under test, `aot_builtin_table.json`:
+  in `$AOT_BUILTIN_TABLE`, beside that Bun (CI packs it there) or in the folder `codegen` beside it. Their names are known only when they are
+  made, a group at a time (the rows of one built-in, or of one holder), so the part of a folder goes by the group; so does the share
+  wherever all folders are walked (`variant-*`, `joined()`, `jit-mode-eager-tier-up`, `collector-stress`, `heat`, `bad-time`).
 - **How many programs run at once** is `AOT_PROGRAMS_JOBS`, by default `os.availableParallelism()`. That is the number of cores of
   the machine, also in a container or under `taskset` that allows fewer: set the variable there.
 - **Disk.** Each program that is being run has an executable the size of Bun in the temporary directory, which is deleted
@@ -134,6 +140,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 | That an optimization ran on a host built-in (`Response`, `Headers`), which `testaot` does not have | `// STATISTIC: <StatisticId> (= \| >= \| <=) <n>` lines in the program's entry point. `run-programs.ts` builds such a program with the hidden `--explain=statistics` and checks the lines on the build that keeps the types, not in a variant that adds build flags |
 | One pass, analysis or lowering rule in isolation | IR text: `aot/tests/<folder>/<case>.ir` in WebKit, `test/aot/ir/<area>/<case>.ir` or `.ts` here |
 | Programs that import packages | a case in `packages/<topic>.ts` |
+| A folder of `programs/` that a script writes, whole or beside programs written by hand | a script that exports `programs()`, and a line in `generators` of `generate.ts`. Nothing that it writes is checked in |
 | Programs written by a generator | `generated/<name>.ts` and `generated-<name>.test.ts`: a part that always runs, chosen because it has failed before, and the whole under `AOT_GENERATED=all`. A generator in Python: `generated/python/<name>.py`, which prints the program of the seed it is given, and a line in `generated/python-generators.ts`. `generated/python-random.ts` produces Python's random numbers, so a port to TypeScript can be compared with its original |
 | A table of small cases, crossed from a few axes | `generated/<name>.ts` that returns files of cases, one case a line, for `programsOf` in `generated/case-files.ts`, and `generated-table-<name>.test.ts`: every file is compiled as one program, and a sample that covers every value of every axis is compiled case by case, each alone in its program. `AOT_GENERATED=all` compiles every case alone. `bun generated/<name>.ts <folder> [--sample=<n>] [--only=<regex>]` writes the files |
 | Cases written by hand, each of which must hold alone in a program | a line `t("<name>", ..)` in a file under `each-case-alone/`. `each-case-alone-<part>.test.ts` deal the cases out among themselves. A case that `--aot` may refuse with a TypeError stands in `<file>-and-may-be-refused.ts`, whose `t` also takes what plain Bun answers |

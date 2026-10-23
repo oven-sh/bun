@@ -233,6 +233,11 @@ unsafe extern "C" {
         response: *mut c_void,
     );
 
+    safe fn NodeHTTPServer__bytesOfChunk(
+        chunk: JSValue,
+        bytes: *mut *const u8,
+        length: *mut usize,
+    ) -> bool;
     safe fn NodeHTTPServer__writeWholeResponse(
         is_ssl: bool,
         response: *mut c_void,
@@ -1052,7 +1057,7 @@ impl NodeHTTPResponse {
             status_code,
             status_message,
             headers.to_js(),
-            chunk.as_ref(),
+            WholeBody::Converted(chunk.as_ref()),
             encoding.to_js(),
             strict_content_length,
             auto_header_bits,
@@ -1097,6 +1102,119 @@ impl NodeHTTPResponse {
 
         result
     }
+
+    pub(crate) fn write_whole_response_as_given(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        arguments: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        let &[
+            status_code,
+            status_message,
+            headers,
+            chunk,
+            encoding,
+            strict_content_length,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+        ] = arguments
+        else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let (status_code, auto_header_bits, keep_alive_timeout_secs) = (
+            status_code.to_js(),
+            auto_header_bits.to_js(),
+            keep_alive_timeout_secs.to_js(),
+        );
+        if !status_code.is_int32()
+            || !auto_header_bits.is_int32()
+            || !keep_alive_timeout_secs.is_int32()
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let (status_code, auto_header_bits, keep_alive_timeout_secs) = (
+            status_code.as_int32(),
+            auto_header_bits.as_int32(),
+            keep_alive_timeout_secs.as_int32(),
+        );
+        if !(100..=999).contains(&status_code) || auto_header_bits < 0 || keep_alive_timeout_secs < 0
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let status_message = status_message.to_js();
+        let status_message = if status_message.is_undefined_or_null() {
+            None
+        } else if !status_message.is_string() {
+            return Ok(JSValue::UNDEFINED);
+        } else {
+            match bytes_of_short_chunk(status_message) {
+                Some(bytes) => Some(bytes),
+                None => return Ok(JSValue::UNDEFINED),
+            }
+        };
+        let chunk = chunk.to_js();
+        let body: &[u8] = if chunk.is_undefined_or_null() {
+            &[]
+        } else {
+            match bytes_of_short_chunk(chunk) {
+                Some(bytes) => bytes,
+                None => return Ok(JSValue::UNDEFINED),
+            }
+        };
+        let strict_content_length = strict_content_length.to_js();
+        let strict_content_length = if strict_content_length.is_undefined() {
+            None
+        } else if strict_content_length.is_number() {
+            Some(strict_content_length.as_number())
+        } else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let flags = self.flags.get();
+        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            || flags.contains(Flags::SOCKET_CLOSED)
+            || flags.contains(Flags::UPGRADED)
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
+        let _guard = self.ref_guard();
+        Ok(this
+            .write_whole_response(
+                this_value.to_js(),
+                cx.global(),
+                status_code,
+                status_message,
+                headers.to_js(),
+                WholeBody::InPlace(body),
+                encoding.to_js(),
+                strict_content_length,
+                auto_header_bits as u32,
+                keep_alive_timeout_secs as u32,
+            )
+            .unwrap_or(JSValue::UNDEFINED))
+    }
+}
+
+enum WholeBody<'a, 'b> {
+    InPlace(&'a [u8]),
+    Converted(Option<&'a StringOrJsBytes<'b>>),
+}
+
+fn bytes_of_short_chunk<'a>(chunk: JSValue) -> Option<&'a [u8]> {
+    if !chunk.is_cell() {
+        return None;
+    }
+    let mut bytes: *const u8 = ptr::null();
+    let mut length: usize = 0;
+    if !NodeHTTPServer__bytesOfChunk(chunk, &raw mut bytes, &raw mut length)
+        || length > PINNED_WRITE_THRESHOLD
+    {
+        return None;
+    }
+    // SAFETY: the characters of a resolved string or the bytes of a Uint8Array that the caller's frame keeps alive; no JavaScript runs while they are read.
+    Some(unsafe { core::slice::from_raw_parts(bytes, length) })
 }
 
 impl NodeHTTPResponse {
@@ -1108,7 +1226,7 @@ impl NodeHTTPResponse {
         status_code: i32,
         status_message: Option<&[u8]>,
         headers: JSValue,
-        chunk: Option<&StringOrJsBytes<'_>>,
+        body: WholeBody<'_, '_>,
         encoding: JSValue,
         strict_content_length: Option<f64>,
         auto_header_bits: u32,
@@ -1157,13 +1275,14 @@ impl NodeHTTPResponse {
 
         let utf8;
         let buffer;
-        let bytes: &[u8] = match chunk {
-            None => &[],
-            Some(StringOrJsBytes::String(string)) => {
+        let bytes: &[u8] = match body {
+            WholeBody::InPlace(bytes) => bytes,
+            WholeBody::Converted(None) => &[],
+            WholeBody::Converted(Some(StringOrJsBytes::String(string))) => {
                 utf8 = string.to_utf8();
                 utf8.slice()
             }
-            Some(StringOrJsBytes::Bytes(bytes)) => {
+            WholeBody::Converted(Some(StringOrJsBytes::Bytes(bytes))) => {
                 buffer =
                     bun_jsc::MarkedArrayBuffer::from_array_buffer(global_object, bytes.to_js());
                 buffer.slice()

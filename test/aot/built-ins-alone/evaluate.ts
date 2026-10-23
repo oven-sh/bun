@@ -10,7 +10,7 @@ export function bodyOf(text: string): string {
   return `"use strict";\n${text.replace(importLine, "const { $1 } = load($2);")}`;
 }
 
-const turn = () => new Promise<void>(resolve => setTimeout(resolve, 3));
+const turn = () => new Promise<void>(resolve => setTimeout(resolve, 1));
 
 export async function within<T>(work: Promise<T>, otherwise: T, milliseconds = 200): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

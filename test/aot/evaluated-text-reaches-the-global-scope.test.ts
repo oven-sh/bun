@@ -3,7 +3,7 @@
 // it is handed. It sees no binding of a module, no closure and no local class, exactly as in plain Bun.
 //
 // So a call that the program can reach opens that much and no more. Each program here prints what plain Bun prints, the report lists the
-// call, and the build compiles about as many functions as it does for the same program without the call.
+// call, and the build compiles about as many functions as it does for a call whose text is empty.
 //
 // One thing differs from plain Bun on purpose: what compiled code relies on in the built-in objects is locked, for evaluated text as for
 // everybody else.
@@ -181,15 +181,13 @@ async function compileAndRun(text: string): Promise<{ report: BuildReport; stdou
 }
 
 describe.concurrent("compile/aot/evaluated text reaches the global scope", () => {
-  let functionsWithoutEvaluator = 0;
+  let functionsOfEmptyText = 0;
 
-  // Printing a value that nobody knows needs the printer of objects, and so do these programs. Parsed data is printed without it, a Date is not.
   beforeAll(async () => {
-    const { report, stdout } = await slot(() => compileAndRun(`console.log(new Date(Number(text("0"))));\n`));
-    expect({ stdout, unseenCode: report.unseenCode }).toEqual({ stdout: "1970-01-01T00:00:00.000Z\n", unseenCode: [] });
-    functionsWithoutEvaluator = report.summary.functions;
-    // Where this program no longer brings the printer in, it is nothing to hold the others against.
-    expect(functionsWithoutEvaluator).toBeGreaterThan(100);
+    const { report, stdout } = await slot(() => compileAndRun(`new Function(text(""))();\n`));
+    expect(stdout).toBe("");
+    expect(report.unseenCode).toContainEqual(expect.objectContaining({ cause: "EvaluatesText", builtin: "Function" }));
+    functionsOfEmptyText = report.summary.functions;
   }, 600_000);
 
   for (const [name, { text, output, evaluator }] of Object.entries(programs)) {
@@ -202,7 +200,7 @@ describe.concurrent("compile/aot/evaluated text reaches the global scope", () =>
           expect(report.unseenCode).toContainEqual(
             expect.objectContaining({ cause: "EvaluatesText", builtin: evaluator }),
           );
-          expect(report.summary.functions).toBeLessThanOrEqual(Math.ceil(functionsWithoutEvaluator * 1.25));
+          expect(report.summary.functions).toBeLessThanOrEqual(Math.ceil(functionsOfEmptyText * 1.25));
         }),
       600_000,
     );

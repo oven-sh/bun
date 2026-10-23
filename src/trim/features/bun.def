@@ -95,6 +95,9 @@ feature Libarchive "tar archive support"
   cxx-function archive_ ^_{0,2}archive_\w+$
 
 feature ServeHttp2 "HTTP/2 and HTTP/3 in Bun.serve"
+  cxx-function uws_h2_ ^uws_h2_(?!res_is_closed$|res_write_continue$)
+  cxx-function Http2 (^|\s)uWS::Http2\w*::
+  cxx-function H2 (^|\s)uWS::H2\w*::
 
 feature LibdeflateCompressor "gzip and deflate compression with libdeflate"
   c-function libdeflate_alloc_compressor libdeflate_alloc_compressor_ex libdeflate_free_compressor
@@ -127,6 +130,8 @@ feature Spawn "Bun.spawn and Bun.spawnSync"
 feature BunSpawn "Bun.spawn"
 
 feature ChildProcess "child process support"
+  c-function posix_spawn_bun
+  cxx-function spawn_process_posix ^bun_spawn_sys::spawn_process::spawn_process_posix\b
 
 feature Sockets "Bun.listen, Bun.connect and node:net"
 
@@ -157,6 +162,9 @@ feature BrotliDecoder "Brotli decompression"
 
 feature Http3 "HTTP/3 in Bun.serve and fetch"
   c-function us_quic_loop_process us_quic_loop_flush_if_pending
+  cxx-function uws_h3_ ^uws_h3_(?!app_clear_routes$|listen_socket_port$|listen_socket_local_address$|listen_socket_close$)
+  cxx-function Http3 (^|\s)uWS::Http3\w*::
+  cxx-function H3 (^|\s)uWS::H3\w*::
 
 feature TlsSockets "TLS sockets and servers"
   cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket|WebSocket|WebSocketContext|WebSocketContextData)<true[,>]

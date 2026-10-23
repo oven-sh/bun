@@ -11,7 +11,7 @@ such a value alive by accident.
     --every <n>     collect at every n-th slow-path allocation (default: 3). 1 and 2 find other bugs and take longer
     --young         run Eden collections. A full collection finds everything from the roots. An Eden collection relies on the write
                     barriers, so only this finds a store of a new cell into an old one that compiled code does without a barrier
-    --part <i>/<n>  with `all`: every n-th program, starting at the i-th. ../collector-stress/*.test.ts split the programs this way
+    --part <i>/<n>  with `all`: every n-th program, starting at the i-th, and all of $WRITTEN (quick.py). ../collector-stress/*.test.ts split the programs this way
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
 Prints one line per program that is `same` normally and not under stress, and exits with 1 if there is one. Not counted:
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         del arguments[at:at + 2]
     if "all" in arguments:
         slow = {line.split()[0] for line in open(HERE + "/collector-stress-slow.txt") if not line.startswith("#") and ("young" if young else "full") in line.split(None, 1)[1]}
-        arguments[arguments.index("all"):] = [name for name in quick.all_programs() if name not in slow][part - 1::parts]
+        arguments[arguments.index("all"):] = [name for name in quick.all_programs() if name not in slow][part - 1::parts] + quick.written_programs()
     if not arguments:
         sys.exit(__doc__)
     for name in ("JSC", "TESTAOT", "FRONT_END", "PLAIN"):

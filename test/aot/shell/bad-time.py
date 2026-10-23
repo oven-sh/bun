@@ -8,7 +8,7 @@ an object. The output stays correct, so no other test notices. This test finds a
 
     JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> python3 test/aot/shell/bad-time.py [-j <jobs>] [--part <i>/<n>] <program>... | all
 
-    --part <i>/<n>  with `all`: every n-th program, starting at the i-th. ../bad-time/*.test.ts split the programs this way
+    --part <i>/<n>  with `all`: every n-th program, starting at the i-th, and all of $WRITTEN (quick.py). ../bad-time/*.test.ts split the programs this way
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
 Prints one line per program that ends in that state and is not in bad-time-known.txt, which lists the programs that cause it on purpose,
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         at = arguments.index("--part")
         part, parts = map(int, arguments[at + 1].split("/"))
         del arguments[at:at + 2]
-        arguments[arguments.index("all"):] = quick.all_programs()[part - 1::parts]
+        arguments[arguments.index("all"):] = quick.all_programs()[part - 1::parts] + quick.written_programs()
     if not arguments:
         sys.exit(__doc__)
     jsc = toolchain.tool("JSC")

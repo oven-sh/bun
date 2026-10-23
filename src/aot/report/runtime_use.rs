@@ -169,6 +169,14 @@ fn write_item(line: &mut Vec<u8>, id: BuiltinId) -> bool {
 }
 
 fn locale_line(input: &ReportInput<'_>, positions: &mut Positions<'_>) -> ReportEntry {
+    if let Some(tags) = &input.options.trim.locales {
+        let tags = match tags.is_empty() {
+            true => b"none".to_vec(),
+            false => tags.join(&b", "[..]),
+        };
+        let line = line_from(&[b"locales: ", &tags, b": listed in compile.trim.locales"]);
+        return entry_at(line, None);
+    }
     match &input.used_features.locales {
         UsedLocales::Listed(tags) if tags.is_empty() => {
             entry_at(line_from(&[b"locales: none"]), None)

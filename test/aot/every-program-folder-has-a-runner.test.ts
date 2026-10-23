@@ -5,7 +5,10 @@
 // file names one by one. A runner that walks its folder needs no such check.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
+import { bunExe, isCI } from "harness";
 import { dirname, join } from "path";
+import { findBuiltinTable, generators } from "./generate";
+import { unsupported } from "./run-programs";
 
 const here = import.meta.dir;
 const read = (path: string) => readFileSync(join(here, path), "utf8");
@@ -61,13 +64,24 @@ for (const [file, text] of testFiles) {
   for (const [, folder] of text.matchAll(/^programs\("([^"]+)"[,)]/gm)) foldersRun.add(folder);
 }
 
-const folders = entriesOf("programs")
-  .filter(name => name.endsWith("/"))
-  .map(name => name.slice(0, -1));
+// A folder that a script writes whole is not there.
+const folders = [
+  ...new Set([
+    ...entriesOf("programs")
+      .filter(name => name.endsWith("/"))
+      .map(name => name.slice(0, -1)),
+    ...Object.keys(generators),
+  ]),
+];
 
 test("every folder of programs has a test file that runs it", () => {
   expect(folders.length).toBeGreaterThan(40);
   expect(folders.filter(folder => !foldersRun.has(folder))).toEqual([]);
+});
+
+// Without it the programs that follow from it are skipped, sixteen thousand of them, and nothing else would be red.
+test.skipIf(!isCI || !!unsupported)("CI has packed the table of built-ins beside the Bun under test", () => {
+  expect(findBuiltinTable(bunExe())).toBeDefined();
 });
 
 test("every folder that a test file runs is there", () => {

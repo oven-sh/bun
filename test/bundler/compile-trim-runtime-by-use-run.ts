@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } fr
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { slot, spawned, unsupported } from "../aot/run-programs";
-import { canTrim, featureNamed, featureOf, findFeature, libraries, modulesOf, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
+import { canTrim, featureNamed, featureOf, findFeature, libraries, modulesLoadedFor, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
 
 const bytesAt = (path: string) => readFileSync(path + (isWindows ? ".exe" : ""));
 
@@ -203,6 +203,10 @@ export interface ProgramOptions {
   posix?: boolean;
   says?: Record<string, string>;
   keptToday?: boolean;
+  // Known gaps. Forced out, the feature still runs: a feature that stays needs the same code, or the feature owns less than the smallest group of the link (scripts/build/trim/partition.ts).
+  runsToday?: string[];
+  // A known bug, in a sentence. The test is red as soon as the program runs.
+  failsToday?: string;
 }
 
 export const optionsAt = (path: string): ProgramOptions => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {});
@@ -506,8 +510,10 @@ export function testPrograms(part: number) {
       const options = optionsAt(join(programs, name + ".json"));
       const features = featuresOfProgram(name, options);
       const says = new Map(Object.entries(options.says ?? {}).map(([spelling, text]) => [findFeature(spelling), text]));
+      const runsToday = new Set((options.runsToday ?? []).map(featureNamed));
 
-      test.skipIf(isWindows && options.posix === true)(
+      const declare = isWindows && options.posix === true ? test.skip : options.failsToday !== undefined ? test.failing : test;
+      declare(
         `${name}: the program runs like the untrimmed one` + (features.length > 0 ? `; with ${features.join(", ")} forced out, the executable says so` : ""),
         () =>
           slot(async () => {
@@ -530,8 +536,12 @@ export function testPrograms(part: number) {
             expect(await built("kept", ["--trim"])).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
             for (const feature of features) {
               const failed = await built("forced-out", ["--trim"], [feature]);
+              if (runsToday.has(feature)) {
+                expect(failed, `${feature} says that it was removed: take it out of runsToday in ${name}.json`).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
+                continue;
+              }
               const sentence = `--trim removed ${textOf(feature)} from this executable`;
-              const importFailed = modulesOf([feature]).find(specifier => failed.stderr.includes(`Cannot load '${specifier}': it isn't in this executable.`) && failed.stderr.includes("ERR_MODULE_NOT_FOUND"));
+              const importFailed = modulesLoadedFor([feature]).find(specifier => failed.stderr.includes(`Cannot load '${specifier}': it isn't in this executable.`) && failed.stderr.includes("ERR_MODULE_NOT_FOUND"));
               const isCaughtByTheProgram = failed.stdout.includes("ERR_FEATURE_REMOVED") || failed.stdout.includes(`${textOf(feature)} was removed by --trim because your code never uses it.`);
               if (importFailed === undefined && !isCaughtByTheProgram && !saysFeatureWasRemoved(failed.stderr, feature)) expect(failed.stderr).toContain(says.get(feature) ?? sentence);
               expect(isCaughtByTheProgram ? [70, 1, 0] : [70, 1]).toContain(failed.exitCode);

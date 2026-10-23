@@ -65,6 +65,8 @@ The equivalent `bunfig.toml` option is [`install.registry`](/runtime/bunfig#inst
 install.registry = "http://localhost:4873/"
 ```
 
+If the registry is not npm's own and has no credentials and no CA, [lifecycle scripts](/pm/lifecycle#environment-variables) get it in `npm_config_registry`.
+
 ### Set the registry for a specific scope
 
 `@<scope>:registry` sets the registry for a specific scope:

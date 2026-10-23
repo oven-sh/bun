@@ -1014,6 +1014,8 @@ registry = { url = "https://registry.npmjs.org", token = "123456" }
 registry = "https://username:password@registry.npmjs.org"
 ```
 
+If the registry is not npm's own and has no credentials and no CA, [lifecycle scripts](/pm/lifecycle#environment-variables) get it in `npm_config_registry`.
+
 ### `install.linkWorkspacePackages`
 
 Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.

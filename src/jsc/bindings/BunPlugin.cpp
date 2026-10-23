@@ -645,8 +645,7 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
-        // A record still evaluating (top-level await) or one whose evaluation threw keeps its entry: a
-        // replacement would hand later importers its uninitialized bindings without waiting for it.
+        // A replacement of a record still evaluating would hand later importers uninitialized bindings.
         if (outgrown && isModuleEvaluated(moduleNamespaceObject->moduleRecord())) {
             replaceOutgrownESModule(globalObject, moduleNamespaceObject, newNames, newValues, specifier);
             RETURN_IF_EXCEPTION(scope, );

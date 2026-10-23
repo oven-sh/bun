@@ -1156,11 +1156,7 @@ for (let credentials of allCredentials) {
             }),
           );
         });
-        // Against the local server only. The R2 variant of this case sent its
-        // requests to s3.us-west-1.amazonaws.com, which is not a service under
-        // test. In about 1 CI build of 150, one of the three connections went
-        // silent there. The case then failed with ConnectionClosed after 0.1 s
-        // to 259 s, or it reached its time limit.
+        // Local server only: sent to Amazon S3 by the R2 group, it got no answer in about 1 CI build of 150 (#46609).
         it.skipIf(credentials.service !== "s3-server")("should error with a bucket in another region", async () => {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {

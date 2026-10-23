@@ -310,8 +310,6 @@ pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
 }
 
 // ─── ascii-lowercase helpers ──────────────────────────────────────────────
-// Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
-// them without a dep cycle (bun_core → bun_alloc, not the reverse).
 // `bun_core::strings` re-exports `copy_lowercase` and `ascii_lowercase_buf`.
 
 /// ASCII-lowercase
@@ -2002,52 +2000,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // process-lifetime mimalloc region); the slot was freshly reserved under
         // the mutex so no other writer aliases it, and reborrowing as shared is
         // always sound.
-        Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
-    }
-
-    /// Append `value` lowercased ASCII-wise.
-    ///
-    /// The previous port routed the lowercase scratch through a
-    /// `thread_local! { RefCell<Box<[u8; 4096]>> }`, which (a) heap-allocs 4 KiB
-    /// on first use per thread and (b) pays a `RefCell` flag check per call.
-    /// Filenames are overwhelmingly <256 bytes, so a stack scratch suffices for
-    /// the hot path; longer inputs (rare — full paths) fall through to a
-    /// one-shot heap temp. No TLS, no Box-on-first-use, no `RefCell`.
-    ///
-    /// SAFETY: see [`append`].
-    pub unsafe fn append_lower_case<'a>(
-        this: *mut Self,
-        value: &[u8],
-    ) -> core::result::Result<&'a [u8], AllocError> {
-        // SAFETY: see `append`.
-        let _guard = unsafe { (*this).mutex.lock() };
-
-        // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
-        // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
-        // pointing at that owned storage, not at `slice` — so the scratch
-        // buffer's borrow does not escape.
-        let (ptr, len) = if value.len() <= 256 {
-            let mut scratch = [0u8; 256];
-            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-            unsafe {
-                (*this).do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
-            }
-        } else {
-            // Slow path: input >256 bytes (rare). Use a one-shot heap temp via
-            // mimalloc directly (PORTING.md forbids `Vec` in hot allocators).
-            let p = mimalloc::mi_malloc(value.len()).cast::<u8>();
-            if p.is_null() {
-                return Err(AllocError);
-            }
-            // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
-            let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
-            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-            let r = unsafe { (*this).do_append(&crate::copy_lowercase(value, tmp)) };
-            // SAFETY: `p` was allocated by `mi_malloc` above.
-            unsafe { mimalloc::mi_free(p.cast()) };
-            r?
-        };
-        // SAFETY: see `append`.
         Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
     }
 

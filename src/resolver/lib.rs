@@ -156,17 +156,6 @@ pub mod fs {
                     unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
                         .map_err(|_| bun_alloc::AllocError)
                 }
-                /// Like `append`, but ASCII-lowercases `value` while copying
-                /// it into the store.
-                #[inline]
-                pub fn append_lower_case(
-                    &self,
-                    value: &[u8],
-                ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append`.
-                    unsafe { bun_alloc::BSSStringList::append_lower_case($backing(), value) }
-                        .map_err(|_| bun_alloc::AllocError)
-                }
             }
         };
     }

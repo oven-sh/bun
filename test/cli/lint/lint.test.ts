@@ -5411,6 +5411,10 @@ maybe(() => { return f; });
           "@returns {T | string}",
           "@returns {keyof T}",
           "@returns { T }",
+          "@returns {A extends B ? T : never}",
+          "@returns {A extends B ? never : T}",
+          "@returns {{ a?: T }}",
+          "@returns {T?}",
         ];
         const ignored = [
           "@enum {T}",
@@ -5425,6 +5429,9 @@ maybe(() => { return f; });
           "@returns {x.T}",
           "@returns {typeof T}",
           "@returns {{ T: string }}",
+          "@returns {{ T?: string }}",
+          "@returns {{ T(): void }}",
+          "@returns {(T: string) => void}",
           "@returns {'T'}",
           "@returns {TT}",
           "@returns {string} T",

@@ -70,8 +70,8 @@ fn is_identifier_of_type_node(reference: Reference) -> bool {
     }
 }
 
-/// Where `name` is a type in `text`, which starts at `offset`. Not the `T` in `T.Member`, `typeof T`, `{ T: string }` or
-/// `"T"`.
+/// Where `name` is a type in `text`, which starts at `offset`. Not the `T` in `T.Member`, `typeof T`, `"T"`, or a key as
+/// in `{ T: string }`.
 fn type_names_in<'a>(text: &'a [u8], offset: u32, name: &'a [u8]) -> impl Iterator<Item = Span> + 'a {
     let is_part_of_name = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
     let mut from = 0;
@@ -86,8 +86,16 @@ fn type_names_in<'a>(text: &'a [u8], offset: u32, name: &'a [u8]) -> impl Iterat
             return None;
         }
         let (before, after) = (before.trim_ascii_end(), after.trim_ascii_start());
+        let is_key = match after {
+            // `A extends B ? T : never`
+            [b':', ..] => before.last() != Some(&b'?'),
+            [b'?', rest @ ..] => rest.trim_ascii_start().starts_with(b":"),
+            [b'(', ..] => true,
+            _ => false,
+        };
         let is_type = (!matches!(before.last(), Some(b'.' | b'"' | b'\'')) || before.ends_with(b"..."))
-            && !matches!(after.first(), Some(b'.' | b':'))
+            && !after.starts_with(b".")
+            && !is_key
             && !before.ends_with(b"typeof");
         let start = offset + u32::try_from(at).ok()?;
         is_type.then(|| Span::new(start, start + name.len() as u32))

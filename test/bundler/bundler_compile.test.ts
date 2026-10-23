@@ -749,6 +749,44 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  // "[name].[ext]" keeps the name of a file with no extension, so a resolve of
+  // its source spelling finds the embedded file.
+  itBundled("compile/AssetNamingNoExtension", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { createRequire } from "module";
+        import "./LICENSE" with { type: "file" };
+        rmSync("./LICENSE", { force: true });
+        console.log(JSON.stringify(Bun.embeddedFiles.map(f => f.name)));
+        console.log(await Bun.file(createRequire(import.meta.url).resolve("./LICENSE")).text());
+        console.log(await Bun.file(import.meta.require.resolve("./LICENSE")).text());
+      `,
+      "/LICENSE": "abcd",
+    },
+    outfile: "dist/out",
+    run: { stdout: '["LICENSE"]\nabcd\nabcd', setCwd: true },
+  });
+  // https://github.com/oven-sh/bun/issues/44096
+  // One asset template names a file with an extension and a file without one.
+  itBundled("compile/AssetNamingDirNoExtension", {
+    compile: true,
+    assetNaming: "[dir]/[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import buildId from "./data/BUILD_ID" with { type: "file" };
+        import json from "./data/x.json" with { type: "file" };
+        console.log(JSON.stringify(Bun.embeddedFiles.map(f => f.name).sort()));
+        console.log(await Bun.file(buildId).text(), await Bun.file(json).text());
+      `,
+      "/data/BUILD_ID": "hi",
+      "/data/x.json": "{}",
+    },
+    outfile: "dist/out",
+    run: { stdout: '["data/BUILD_ID","data/x.json"]\nhi {}' },
+  });
   itBundled("compile/EmbeddedFileNamesPerThread", {
     compile: true,
     assetNaming: "[name].[ext]",

@@ -1544,6 +1544,7 @@ let assertEndpointIsNotBusy;
 let isQuicStream;
 let isQuicSession;
 let isQuicEndpoint;
+let sendRawHeadersForTesting;
 
 function maybeGetCloseError(context, status, pendingError) {
   switch (context) {
@@ -1694,6 +1695,13 @@ class QuicStream {
     getQuicStreamState = function (stream) {
       assertIsQuicStream(stream);
       return stream.#inner.state;
+    };
+
+    // For bun:internal-for-testing: `[name, value, ...]` goes out as one block that buildNgHeaderString did not check.
+    sendRawHeadersForTesting = function (stream, pairs: string[], kind: number, flags: number) {
+      let block = "";
+      for (let i = 0; i + 1 < pairs.length; i += 2) block += `${pairs[i]}\0${pairs[i + 1]}\0\0`;
+      return stream.#handle.sendHeaders(kind, [block, pairs.length >> 1], flags);
     };
   }
 
@@ -5569,4 +5577,5 @@ export default {
   getQuicStreamState,
   getQuicSessionState,
   getQuicEndpointState,
+  sendRawHeadersForTesting,
 };

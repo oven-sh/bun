@@ -187,6 +187,67 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+
+    // A factor whose reciprocal is infinite (zero, or a subnormal up to 2^-128) prints as a multiplication.
+    const minify_twice_test = (source: string, expected: string) =>
+      test(source, () => {
+        const once = minify_test_with_options(source, "");
+        expect(once).toEqual(expected);
+        expect(minify_test_with_options(once, "")).toEqual(once);
+      });
+    for (const product of [
+      `min(1px,1em) * 0`,
+      `0 * min(1px,1em)`,
+      `min(1px,1em) * -0`,
+      `min(1px,1em) / 2 * 0`,
+      `min(1px,1em) * 2 * 0`,
+      `min(1px,1em) * (1 - 1)`,
+      `min(1px,1em) / infinity`,
+      `min(1px,1em) * 1e-50`,
+      `min(1px,1em) * 1e-30 * 1e-30`,
+    ]) {
+      minify_twice_test(`a { width: calc(${product}) }`, `a{width:calc(0*min(1px,1em))}`);
+    }
+    minify_twice_test(`a { border-width: calc(min(1px,1em) * 0) }`, `a{border-width:calc(0*min(1px,1em))}`);
+    minify_twice_test(`a { width: calc(5px + min(1px,1em) * 0) }`, `a{width:calc(5px + 0*min(1px,1em))}`);
+    minify_twice_test(`a { width: calc(5px - min(1px,1em) * 0) }`, `a{width:calc(5px + 0*min(1px,1em))}`);
+    // `mod(1em, 0px)` is NaN in a browser, so this sum is 0px there. A product folded to zero makes it 5px.
+    minify_twice_test(`a { width: calc(5px + mod(1em, 0px) * 0) }`, `a{width:calc(5px + 0*mod(1em,0px))}`);
+    minify_twice_test(`a { width: min(1px, max(1px,1em) * 0) }`, `a{width:min(1px,0*max(1px,1em))}`);
+    minify_twice_test(`a { width: calc(clamp(1px,1em,2vw) * 0) }`, `a{width:calc(0*clamp(1px,1em,2vw))}`);
+    minify_twice_test(`a { width: calc(round(1rem, 10px) * 0) }`, `a{width:calc(0*round(1rem,10px))}`);
+    minify_twice_test(`a { width: calc(min(1px,10%) * 0) }`, `a{width:calc(0*min(1px,10%))}`);
+    minify_twice_test(
+      `a { background: conic-gradient(red calc(min(1deg,1%) * 0), blue) }`,
+      `a{background:conic-gradient(red calc(0*min(1deg,1%)),#00f)}`,
+    );
+    minify_twice_test(
+      `@media (width > calc(min(1px,1em) * 0)) { a { color: red } }`,
+      `@media (width>calc(0*min(1px,1em))){a{color:red}}`,
+    );
+    minify_twice_test(`a { width: calc(min(1px,1em) * 2.5e-39) }`, `a{width:calc(2.5e-39*min(1px,1em))}`);
+    minify_twice_test(`a { width: calc(min(1px,1em) * -2.5e-39) }`, `a{width:calc(-2.5e-39*min(1px,1em))}`);
+    cssTest(`.foo { width: calc(min(1px, 1em) * 0) }`, `.foo { width: calc(0 * min(1px, 1em)); }`);
+    // A factor with a finite reciprocal prints as a division below 1 and as a multiplication from 1.
+    minify_twice_test(`a { width: calc(min(1px,1em) * -.5) }`, `a{width:calc(min(1px,1em)/-2)}`);
+    minify_twice_test(`a { width: calc(min(1px,1em) * 2) }`, `a{width:calc(2*min(1px,1em))}`);
+    // The product cases lightningcss asserts in its calc tests.
+    for (const [source, expected] of [
+      [`calc(-1 * clamp(1.75rem, 8vw, 4rem))`, `calc(-1*clamp(1.75rem,8vw,4rem))`],
+      [`calc(-1 * min(1.75rem, 8vw, 4rem))`, `calc(-1*min(1.75rem,8vw))`],
+      [`calc(-1 * max(1.75rem, 8vw, 4rem))`, `calc(-1*max(4rem,8vw))`],
+      [`calc(clamp(1.75rem, 8vw, 4rem) * -1)`, `calc(-1*clamp(1.75rem,8vw,4rem))`],
+      [`calc(min(1.75rem, 8vw, 4rem) * -1)`, `calc(-1*min(1.75rem,8vw))`],
+      [`calc(max(1.75rem, 8vw, 4rem) * -1)`, `calc(-1*max(4rem,8vw))`],
+      [`calc(clamp(1.75rem, 8vw, 4rem) / 2)`, `calc(clamp(1.75rem,8vw,4rem)/2)`],
+      [`calc(min(1.75rem, 8vw, 4rem) / 2)`, `calc(min(1.75rem,8vw)/2)`],
+      [`calc(max(1.75rem, 8vw, 4rem) / 2)`, `calc(max(4rem,8vw)/2)`],
+      [`calc(0.5 * clamp(1.75rem, 8vw, 4rem))`, `calc(clamp(1.75rem,8vw,4rem)/2)`],
+      [`calc(1 * clamp(1.75rem, 8vw, 4rem))`, `calc(clamp(1.75rem,8vw,4rem))`],
+      [`calc(2 * clamp(1.75rem, 8vw, 4rem) / 2)`, `calc(clamp(1.75rem,8vw,4rem))`],
+    ] as const) {
+      minify_twice_test(`.foo { top: ${source} }`, `.foo{top:${expected}}`);
+    }
   });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.

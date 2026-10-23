@@ -280,17 +280,6 @@ impl Config {
                     break 'tsconfig;
                 }
                 self.tsconfig_buf = out.to_owned_slice().into();
-
-                // TODO: JSC -> Ast conversion
-                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = VirtualMachine::get().as_mut();
-                if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
-                    &mut self.log,
-                    &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
-                    &mut vm.transpiler.resolver.caches.json,
-                ) {
-                    self.tsconfig = Some(parsed_tsconfig);
-                }
             }
         }
 
@@ -325,18 +314,6 @@ impl Config {
                     break 'macros;
                 }
                 self.macros_buf = out.to_owned_slice().into();
-                let source =
-                    bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = VirtualMachine::get().as_mut();
-                let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
-                    &mut self.log,
-                    &source,
-                    bun_resolver::tsconfig_json::JsonMode::Json,
-                ) else {
-                    break 'macros;
-                };
-                self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
             }
         }
 
@@ -582,6 +559,31 @@ impl Config {
             }
         }
 
+        // `tsconfig` and `macro` are parsed after `logLevel` so that it covers their diagnostics.
+        if !self.tsconfig_buf.is_empty() {
+            // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
+            let vm = VirtualMachine::get().as_mut();
+            if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
+                &mut self.log,
+                &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
+                &mut vm.transpiler.resolver.caches.json,
+            ) {
+                self.tsconfig = Some(parsed_tsconfig);
+            }
+        }
+        if !self.macros_buf.is_empty() {
+            let source = bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
+            // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
+            let vm = VirtualMachine::get().as_mut();
+            if let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
+                &mut self.log,
+                &source,
+                bun_resolver::tsconfig_json::JsonMode::Json,
+            ) {
+                self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
+            }
+        }
+
         self.tree_shaking = tree_shaking.unwrap_or(false);
         self.trim_unused_imports = Some(trim_unused_imports.unwrap_or(self.tree_shaking));
         Ok(())
@@ -642,8 +644,7 @@ impl TransformTask {
         loader: Loader,
     ) -> JSValue {
         let config = transpiler.config.get();
-        let mut log = bun_ast::Log::init();
-        log.level = config.log.level;
+        let log = config.log.child();
 
         // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
         // wrapper owns; `run` re-aims its log and arena pointers.
@@ -801,31 +802,27 @@ impl TransformTask {
     fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
-        if self.log.has_any() || self.err.is_some() {
-            let error_value: JsResult<JSValue> = 'brk: {
-                if let Some(err) = &self.err {
-                    if !self.log.has_any() {
-                        break 'brk bun_jsc::BuildMessage::create(
-                            global,
-                            bun_ast::Msg {
-                                data: bun_ast::Data {
-                                    text: err.name().as_bytes().to_vec().into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
+        let log_error = self
+            .log
+            .errors_to_js(global, format_args!("Transform failed"))
+            .transpose();
+        let error_value: JsResult<JSValue> = match (log_error, &self.err) {
+            (Some(value), _) => value,
+            (None, Some(err)) => bun_jsc::BuildMessage::create(
+                global,
+                bun_ast::Msg {
+                    data: bun_ast::Data {
+                        text: err.name().as_bytes().to_vec().into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ),
+            (None, None) => return self.finish(promise, global),
+        };
 
-                break 'brk self.log.to_js(global, format_args!("Transform failed"));
-            };
-
-            promise.reject_with_async_stack(global, error_value)?;
-            return Ok(());
-        }
-
-        self.finish(promise, global)
+        promise.reject_with_async_stack(global, error_value)?;
+        Ok(())
     }
 
     fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
@@ -923,12 +920,11 @@ impl JSTranspiler {
 
         config.from_js(global, config_arg, arena_ref)?;
 
-        if (config.log.warnings + config.log.errors) > 0 {
-            return Err(global.throw_value(
-                config
-                    .log
-                    .to_js(global, format_args!("Failed to create transpiler"))?,
-            ));
+        if let Some(value) = config
+            .log
+            .errors_to_js(global, format_args!("Failed to create transpiler"))?
+        {
+            return Err(global.throw_value(value));
         }
 
         // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
@@ -941,11 +937,11 @@ impl JSTranspiler {
         ) {
             Ok(t) => t,
             Err(err) => {
-                let log = &mut config.log;
-                if (log.warnings + log.errors) > 0 {
-                    return Err(global.throw_value(
-                        log.to_js(global, format_args!("Failed to create transpiler"))?,
-                    ));
+                if let Some(value) = config
+                    .log
+                    .errors_to_js(global, format_args!("Failed to create transpiler"))?
+                {
+                    return Err(global.throw_value(value));
                 }
                 return Err(global.throw_error(err, "Error creating transpiler"));
             }
@@ -979,11 +975,11 @@ impl JSTranspiler {
         transpiler.configure_linker_with_auto_jsx(false);
         transpiler.options.env.behavior = options::EnvBehavior::disable;
         if let Err(err) = transpiler.configure_defines() {
-            let log = &mut config.log;
-            if (log.warnings + log.errors) > 0 {
-                return Err(
-                    global.throw_value(log.to_js(global, format_args!("Failed to load define"))?)
-                );
+            if let Some(value) = config
+                .log
+                .errors_to_js(global, format_args!("Failed to load define"))?
+            {
+                return Err(global.throw_value(value));
             }
             return Err(global.throw_error(err, "Failed to load define"));
         }
@@ -1237,7 +1233,7 @@ impl JSTranspiler {
         let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
 
         let arena = Arena::new();
-        let mut log = bun_ast::Log::init();
+        let mut log = self.config.get().log.child();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1261,16 +1257,12 @@ impl JSTranspiler {
 
         let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
+        if let Some(value) = log_ref.errors_to_js(global, format_args!("Parse error"))? {
+            return Err(global.throw_value(value));
+        }
         let Some(mut parse_result) = parse_result else {
-            if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-            }
             return Err(global.throw(format_args!("Failed to parse")));
         };
-
-        if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-        }
 
         let exports_label = EncodedSlice::latin1(b"exports");
         let imports_label = EncodedSlice::latin1(b"imports");
@@ -1380,8 +1372,7 @@ impl JSTranspiler {
         // (`prev_bundler = this.transpiler`) and restores it on exit. `Transpiler` is not
         // bitwise-copyable in Rust, so explicitly snapshot the fields the body mutates
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
-        let mut log = bun_ast::Log::init();
-        log.level = self.config.get().log.level;
+        let mut log = self.config.get().log.child();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
@@ -1406,16 +1397,12 @@ impl JSTranspiler {
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
         let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
         let log_ref = self.transpiler.get().log_mut();
+        if let Some(value) = log_ref.errors_to_js(global, format_args!("Parse error"))? {
+            return Err(global.throw_value(value));
+        }
         let Some(parse_result) = parse_result else {
-            if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-            }
             return Err(global.throw(format_args!("Failed to parse code")));
         };
-
-        if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-        }
 
         let mut buffer_writer = self.buffer_writer.replace(None).unwrap_or_else(|| {
             let mut writer = JSPrinter::BufferWriter::init();
@@ -1531,7 +1518,7 @@ impl JSTranspiler {
         }
 
         let arena = Arena::new();
-        let mut log = bun_ast::Log::init();
+        let mut log = self.config.get().log.child();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1594,18 +1581,11 @@ impl JSTranspiler {
         // (including the error paths). Compute the result, then reset
         // unconditionally before returning.
         let result = (|| -> JsResult<JSValue> {
-            if let Err(err) = scan_result {
-                if (log.warnings + log.errors) > 0 {
-                    return Err(global
-                        .throw_value(log.to_js(global, format_args!("Failed to scan imports"))?));
-                }
-                return Err(global.throw_error(err, "Failed to scan imports"));
+            if let Some(value) = log.errors_to_js(global, format_args!("Failed to scan imports"))? {
+                return Err(global.throw_value(value));
             }
-
-            if (log.warnings + log.errors) > 0 {
-                return Err(
-                    global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
-                );
+            if let Err(err) = scan_result {
+                return Err(global.throw_error(err, "Failed to scan imports"));
             }
 
             named_imports_to_js(

@@ -2679,6 +2679,438 @@ export default <>hi</>
     ).toThrow();
   });
 
+  describe("a warning is not a failure", () => {
+    const methods = ["transformSync", "transform", "scan", "scanImports"];
+    const optionsAt = (level, options) => (level === "default" ? options : { ...options, logLevel: level });
+    const messagesOf = e => (e instanceof AggregateError ? e.errors : [e]).map(m => [m.level, m.message]);
+    const thrownBy = async fn => {
+      try {
+        await fn();
+      } catch (e) {
+        return e;
+      }
+      throw new Error("expected a throw");
+    };
+
+    const nothing = { exports: [], imports: [] };
+    const defaultExport = { exports: ["default"], imports: [] };
+    // The scan pass lists these two for every source that has JSX.
+    const jsxRuntime = [
+      { kind: "require-call", path: "react/jsx-dev-runtime" },
+      { kind: "require-call", path: "react" },
+    ];
+
+    // [name, loader, source, warning, transform() output, scan() result, scanImports() result]
+    const parserWarnings = [
+      [
+        "legacy HTML comment",
+        "js",
+        "x = 1\n--> legacy html comment\ny = 2\n",
+        'Treating "-->" as the start of a legacy HTML single-line comment',
+        "x = 1;\ny = 2;\n",
+        nothing,
+        [],
+      ],
+      [
+        "JSX key after a spread",
+        "jsx",
+        'export default <div {...obj} key="k" />;\n',
+        '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+        'export default createElement_mvmpqhxp("div", {\n  ...obj,\n  key: "k"\n});\n',
+        defaultExport,
+        jsxRuntime,
+      ],
+      [
+        "JSX key without a value",
+        "jsx",
+        "export default <div key />;\n",
+        '"key" prop ignored. Must be a string, number or symbol.',
+        'export default jsxDEV_7x81h0kn("div", {}, undefined, false, undefined, this);\n',
+        defaultExport,
+        jsxRuntime,
+      ],
+      // The visit pass logs the six warnings below. scanImports() has no visit
+      // pass: it returned [] for these sources before, too.
+      [
+        "write to a getter-only private name",
+        "js",
+        "class Foo { get #x() { this.#x = 1 } }",
+        'Writing to getter-only property "#x" will throw',
+        "class Foo {\n  get #x() {\n    this.#x = 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "update of a getter-only private name",
+        "js",
+        "class Foo { get #x() { this.#x += 1 } }",
+        'Writing to getter-only property "#x" will throw',
+        "class Foo {\n  get #x() {\n    this.#x += 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "read of a setter-only private name",
+        "js",
+        "class Foo { set #x(x) { this.#x } }",
+        'Reading from setter-only property "#x" will throw',
+        "class Foo {\n  set #x(x) {\n    this.#x;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "update of a setter-only private name",
+        "js",
+        "class Foo { set #x(x) { this.#x += 1 } }",
+        'Reading from setter-only property "#x" will throw',
+        "class Foo {\n  set #x(x) {\n    this.#x += 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "write to a private method",
+        "js",
+        "class Foo { #x() { this.#x = 1 } }",
+        'Writing to read-only method "#x" will throw',
+        "class Foo {\n  #x() {\n    this.#x = 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "update of a private method",
+        "js",
+        "class Foo { #x() { this.#x += 1 } }",
+        'Writing to read-only method "#x" will throw',
+        "class Foo {\n  #x() {\n    this.#x += 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+    ];
+
+    describe.each(parserWarnings)("%s", (_, loader, code, warning, output, scanned, imports) => {
+      it.each(["default", "warn", "error"])("every method returns its result at logLevel %s", async level => {
+        // `autoImportJSX: false` is the default. It is here so that the two
+        // JSX rows keep their output if that default changes.
+        const t = new Bun.Transpiler(optionsAt(level, { loader, autoImportJSX: false }));
+        expect(t.transformSync(code)).toBe(output);
+        expect(await t.transform(code)).toBe(output);
+        expect(t.scan(code)).toEqual(scanned);
+        expect(t.scanImports(code)).toEqual(imports);
+      });
+
+      // Proves that the source above does log this warning.
+      it("the warning is thrown beside an error", async () => {
+        const t = new Bun.Transpiler({ loader });
+        const e = await thrownBy(() => t.transformSync(code + "\nconst c = 1;\nc = 2;\n"));
+        expect(messagesOf(e)).toEqual([
+          ["warn", warning],
+          ["error", 'This assignment will throw because "c" is a constant'],
+        ]);
+      });
+    });
+
+    it("scan and scanImports return the imports of a source that has a warning", () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      const code = 'import { a } from "a";\nx = 1\n--> legacy html comment\ny = 2\n';
+      expect(t.scan(code)).toEqual({ imports: [{ kind: "import-statement", path: "a" }], exports: [] });
+      expect(t.scanImports(code)).toEqual([{ kind: "import-statement", path: "a" }]);
+    });
+
+    it("a warning from the JSON loader does not throw", async () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      const json = '{"a":1,"a":2}';
+      const output = "var a = 2;\n\nexport {\n  a\n};\nexport default { a, a: 2 };\n";
+      expect(t.transformSync(json, "json")).toBe(output);
+      expect(await t.transform(json, "json")).toBe(output);
+      expect(t.scan(json, "json")).toEqual(nothing);
+      // Proves that the duplicate key does log a warning.
+      expect(messagesOf(await thrownBy(() => t.transformSync('{"a":1,"a":2,}', "json")))).toEqual([
+        ["warn", 'Duplicate key "a" in object literal'],
+        ["error", "JSON does not support trailing commas"],
+      ]);
+    });
+
+    it("transform() rejects with the error name when a failure logs nothing", async () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      expect(messagesOf(await thrownBy(() => t.transform("a{}", "css")))).toEqual([["error", "ParseError"]]);
+    });
+
+    describe("an error beside a warning", () => {
+      const code = "x = 1\n--> legacy html comment\ny = 2\nbad??!?!?!";
+      const warning = ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'];
+      const error = ["error", "Unexpected ?"];
+
+      describe.each(methods)("%s", fn => {
+        it.each(["default", "warn"])("throws both at logLevel %s", async level => {
+          const t = new Bun.Transpiler(optionsAt(level, { loader: "js" }));
+          const e = await thrownBy(() => t[fn](code));
+          expect(e).toBeInstanceOf(AggregateError);
+          expect(messagesOf(e)).toEqual([warning, error]);
+        });
+
+        it('throws only the error at logLevel "error"', async () => {
+          const t = new Bun.Transpiler({ loader: "js", logLevel: "error" });
+          const e = await thrownBy(() => t[fn](code));
+          expect(e).not.toBeInstanceOf(AggregateError);
+          expect(messagesOf(e)).toEqual([error]);
+        });
+      });
+    });
+
+    describe("logLevel covers the tsconfig and macro options", () => {
+      const unexpectedEnd = ["error", 'Expected "}" but found end of file'];
+      // [name, options that log one warning and one error, the messages in log order]
+      const configs = [
+        [
+          "tsconfig warning beside a macro error",
+          { tsconfig: { compilerOptions: { moduleSuffixes: [".ios"] } }, macro: '{"react": {' },
+          [["warn", "moduleSuffixes is not supported yet"], unexpectedEnd],
+        ],
+        [
+          "duplicate tsconfig key beside a macro error",
+          { tsconfig: '{"compilerOptions":{"jsx":"react","jsx":"react"}}', macro: '{"react": {' },
+          [["warn", 'Duplicate key "jsx" in object literal'], unexpectedEnd],
+        ],
+        [
+          "tsconfig error beside a duplicate macro key",
+          { tsconfig: '{"compilerOptions": {', macro: '{"a":{"b":"c"},"a":{"b":"c"}}' },
+          [unexpectedEnd, ["warn", 'Duplicate key "a" in object literal']],
+        ],
+      ];
+
+      describe.each(configs)("%s", (_, config, messages) => {
+        it.each(["default", "warn"])("the constructor throws both at logLevel %s", async level => {
+          const e = await thrownBy(() => new Bun.Transpiler(optionsAt(level, config)));
+          expect(e).toBeInstanceOf(AggregateError);
+          expect(e.message).toBe("Failed to create transpiler");
+          expect(messagesOf(e)).toEqual(messages);
+        });
+
+        it('the constructor throws only the error at logLevel "error"', async () => {
+          const e = await thrownBy(() => new Bun.Transpiler({ ...config, logLevel: "error" }));
+          expect(e).not.toBeInstanceOf(AggregateError);
+          expect(messagesOf(e)).toEqual([unexpectedEnd]);
+        });
+      });
+
+      it("tsconfig and macro are still read before logLevel", () => {
+        const reads = [];
+        const options = new Proxy(
+          {
+            tsconfig: { compilerOptions: { jsx: "react" } },
+            macro: { react: { bacon: "./macro.js" } },
+            logLevel: "error",
+          },
+          {
+            get(target, key, receiver) {
+              if (typeof key === "string") reads.push(key);
+              return Reflect.get(target, key, receiver);
+            },
+          },
+        );
+        new Bun.Transpiler(options);
+        expect(reads.filter(key => key in options)).toEqual(["tsconfig", "macro", "logLevel"]);
+      });
+
+      it("an invalid logLevel is still reported before a tsconfig warning", () => {
+        expect(
+          () => new Bun.Transpiler({ tsconfig: { compilerOptions: { moduleSuffixes: [".ios"] } }, logLevel: "poop" }),
+        ).toThrow('logLevel must be one of "verbose", "debug", "info", "warn", or "error"');
+      });
+
+      // Without the option the level is the log level of the process. The
+      // option wins over it in both directions.
+      it("the option wins over logLevel in bunfig.toml", async () => {
+        using dir = tempDir("transpiler-loglevel-bunfig", {
+          "bunfig.toml": 'logLevel = "error"\n',
+          "fixture.js": `
+            const messagesOf = e => (e instanceof AggregateError ? e.errors : [e]).map(m => [m.level, m.message]);
+            const thrownBy = fn => {
+              try {
+                fn();
+              } catch (e) {
+                return messagesOf(e);
+              }
+            };
+            const code = "x = 1\\n--> legacy html comment\\ny = 2\\nbad??!?!?!";
+            const config = { tsconfig: '{"compilerOptions":{"jsx":"react","jsx":"react"}}', macro: '{"react": {' };
+            const out = {};
+            for (const level of ["default", "warn"]) {
+              const logLevel = level === "default" ? undefined : level;
+              out[level] = {
+                method: thrownBy(() => new Bun.Transpiler({ loader: "js", logLevel }).transformSync(code)),
+                constructor: thrownBy(() => new Bun.Transpiler({ ...config, logLevel })),
+              };
+            }
+            console.log(JSON.stringify(out));
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({
+            default: { method: [["error", "Unexpected ?"]], constructor: [unexpectedEnd] },
+            warn: {
+              method: [
+                ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'],
+                ["error", "Unexpected ?"],
+              ],
+              constructor: [["warn", 'Duplicate key "jsx" in object literal'], unexpectedEnd],
+            },
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
+    describe("constructor", () => {
+      // [name, options, warning]
+      const configWarnings = [
+        [
+          "importsNotUsedAsValues",
+          { tsconfig: { compilerOptions: { importsNotUsedAsValues: "bogus" } } },
+          'Invalid value "bogus" for "importsNotUsedAsValues"',
+        ],
+        [
+          "moduleSuffixes",
+          { tsconfig: { compilerOptions: { moduleSuffixes: [".ios", ""] } } },
+          "moduleSuffixes is not supported yet",
+        ],
+        [
+          "jsxFactory",
+          { tsconfig: { compilerOptions: { jsxFactory: "1abc" } } },
+          'Invalid JSX member expression: "1abc"',
+        ],
+        [
+          "jsxFragmentFactory",
+          { tsconfig: { compilerOptions: { jsxFragmentFactory: "foo-bar" } } },
+          'Invalid JSX member expression: "foo-bar"',
+        ],
+        [
+          "paths without baseUrl",
+          { tsconfig: { compilerOptions: { paths: { "a/*": ["b/*"] } } } },
+          'Non-relative path "b/*" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)',
+        ],
+        [
+          "paths pattern with two stars",
+          { tsconfig: { compilerOptions: { baseUrl: ".", paths: { "a/*/*": ["./b/*"] } } } },
+          'Invalid pattern "a/*/*", must have at most one "*" character',
+        ],
+        [
+          "paths substitution with two stars",
+          { tsconfig: { compilerOptions: { baseUrl: ".", paths: { "a/*": ["./b/*/*"] } } } },
+          'Invalid pattern "./b/*/*", must have at most one "*" character',
+        ],
+        [
+          "paths value that is not an array",
+          { tsconfig: { compilerOptions: { baseUrl: ".", paths: { "a/*": "./b/*" } } } },
+          'Substitutions for pattern "a/*" should be an array',
+        ],
+        [
+          "duplicate tsconfig key",
+          { tsconfig: '{"compilerOptions":{"jsx":"react","jsx":"react"}}' },
+          'Duplicate key "jsx" in object literal',
+        ],
+        [
+          "macro key that is not a package",
+          { macro: { "./rel": { x: "y" } } },
+          '"./rel" is not a package path. "macros" remaps package paths to macros. Skipping.',
+        ],
+        ["duplicate macro key", { macro: '{"a":{"b":"c"},"a":{"b":"c"}}' }, 'Duplicate key "a" in object literal'],
+        [
+          "macro value that is not an object",
+          { macro: { react: "nope" } },
+          'Invalid macro remapping in "react": expected object where the keys are import names and the value is a string path to replace',
+        ],
+      ];
+      const code = "export const a = 1;";
+      const output = "export const a = 1;\n";
+      const defineError = ["error", 'Expected "}" but found end of file'];
+
+      // In a child process, to read its stderr: the constructor writes nothing.
+      it.concurrent.each(["default", "warn", "error"])(
+        "constructs with each warning-only option at logLevel %s",
+        async level => {
+          const fixture = `
+            const configs = ${JSON.stringify(configWarnings.map(([, config]) => config))};
+            const level = ${JSON.stringify(optionsAt(level, {}))};
+            const out = configs.map(config =>
+              new Bun.Transpiler({ loader: "tsx", ...config, ...level }).transformSync(${JSON.stringify(code)}),
+            );
+            console.log(JSON.stringify(out));
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", fixture],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+            stdout: JSON.stringify(configWarnings.map(() => output)),
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+      );
+
+      // Proves that each option above does log its warning.
+      it.each(configWarnings)("%s: the warning is thrown beside a define error", async (_, config, warning) => {
+        const e = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" } }));
+        expect(e).toBeInstanceOf(AggregateError);
+        expect(e.message).toBe("Failed to load define");
+        expect(messagesOf(e)).toEqual([["warn", warning], defineError]);
+
+        const atError = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" }, logLevel: "error" }));
+        expect(atError).not.toBeInstanceOf(AggregateError);
+        expect(messagesOf(atError)).toEqual([defineError]);
+      });
+
+      // The four tsconfig warnings fill the buffer of the transpiler's log. The
+      // twelve define errors that follow make it grow.
+      it("define errors after a warning-only tsconfig do not corrupt the log", async () => {
+        const fixture = `
+          const tsconfig = {
+            compilerOptions: {
+              importsNotUsedAsValues: "bogus",
+              jsxFactory: "1abc",
+              jsxFragmentFactory: "foo-bar",
+              moduleSuffixes: [".ios"],
+            },
+          };
+          const define = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + "x", "1"]));
+          for (let i = 0; i < 20; i++) {
+            const t = new Bun.Transpiler({ tsconfig, define });
+            if (i % 10 === 0) t.transformSync("export const a = 1;");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+          Bun.gc(true);
+          console.log("constructed");
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: "constructed\n",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+    });
+  });
+
   it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
     // indexed by the property position instead of a dense counter, leaving garbage in the
@@ -4153,15 +4585,6 @@ class Foo {
     expectParseError("class Foo { static { continue } }", 'Cannot use "continue" here');
     expectParseError("x: { class Foo { static { break x } } }", 'There is no containing label named "x"');
     expectParseError("x: { class Foo { static { continue x } } }", 'There is no containing label named "x"');
-
-    expectParseError("class Foo { get #x() { this.#x = 1 } }", 'Writing to getter-only property "#x" will throw');
-    expectParseError("class Foo { get #x() { this.#x += 1 } }", 'Writing to getter-only property "#x" will throw');
-    expectParseError("class Foo { set #x(x) { this.#x } }", 'Reading from setter-only property "#x" will throw');
-    expectParseError("class Foo { set #x(x) { this.#x += 1 } }", 'Reading from setter-only property "#x" will throw');
-
-    // Writing to method warnings
-    expectParseError("class Foo { #x() { this.#x = 1 } }", 'Writing to read-only method "#x" will throw');
-    expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
   it("class bodies keep `this` and the class name as written", () => {

@@ -1616,6 +1616,15 @@ impl Log {
         Log::init()
     }
 
+    /// An empty log at the `level` of `self`, for messages that are appended to `self` later.
+    #[inline]
+    pub fn child(&self) -> Log {
+        Log {
+            level: self.level,
+            ..Default::default()
+        }
+    }
+
     #[inline]
     pub fn add_debug_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
         if !Kind::Debug.should_print(self.level) {

@@ -3047,6 +3047,16 @@ declare module "bun" {
     inline?: boolean;
 
     /**
+     * The lowest level of diagnostic that the transpiler keeps.
+     *
+     * A warning never makes the constructor, `transform`, `transformSync`,
+     * `scan` or `scanImports` throw. Only an error does. When a call throws,
+     * the thrown value also holds the warnings at this level or above, so it
+     * can be an `AggregateError`. At `"error"` it holds errors only.
+     *
+     * When the option is not set, the level is the log level of the process:
+     * `logLevel` in bunfig.toml, or `"warn"`.
+     *
      * @default "warn"
      */
     logLevel?: "verbose" | "debug" | "info" | "warn" | "error";

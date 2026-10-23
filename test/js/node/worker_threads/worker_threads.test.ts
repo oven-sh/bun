@@ -733,6 +733,34 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  test("is not fired for a warning in the tsconfig.json beside the entry", async () => {
+    // The parent has no 'error' listener, so an 'error' event ends it with exit code 1.
+    // The thread that reads a tsconfig.json first logs its warnings. main.mjs is one
+    // directory up, so for sub/tsconfig.json that thread is the worker.
+    using dir = tempDir("worker-threads-tsconfig-warning", {
+      "sub/tsconfig.json": JSON.stringify({ compilerOptions: { moduleSuffixes: [".ios"] } }),
+      "sub/worker.ts": `
+        import { parentPort } from "node:worker_threads";
+        parentPort.postMessage("hi");
+      `,
+      "main.mjs": `
+        import { Worker } from "node:worker_threads";
+        const worker = new Worker("./sub/worker.ts");
+        worker.on("message", data => console.log("message:", data));
+        worker.on("exit", code => console.log("exit", code));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "message: hi\nexit 0\n", stderr: "", exitCode: 0 });
+  });
 });
 
 // Debug and ASAN builds assert on `vm.hasTerminationRequest()` if startup continues to its GC after the stop.

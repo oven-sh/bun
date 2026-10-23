@@ -66,3 +66,33 @@ describe.concurrent("package.json imports alias as the entry point", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test("a warning in the tsconfig.json beside the entry point does not fire the error event", async () => {
+  // The thread that reads a tsconfig.json first logs its warnings. main.js is one directory up, so
+  // for each tsconfig.json below that thread is a worker.
+  const tsconfig = JSON.stringify({ compilerOptions: { moduleSuffixes: [".ios"] } });
+  const { stdout, stderr, exitCode } = await runWorkerFixture({
+    "sub/tsconfig.json": tsconfig,
+    "sub/worker.ts": `postMessage("hi");`,
+    "control/tsconfig.json": tsconfig,
+    "main.js": `
+      const run = specifier =>
+        new Promise(resolve => {
+          const worker = new Worker(specifier);
+          worker.addEventListener("error", event => console.log("error:", event.message));
+          worker.addEventListener("message", event => console.log("message:", event.data));
+          worker.addEventListener("close", event => {
+            console.log("closed", event.code);
+            resolve();
+          });
+        });
+      await run("./sub/worker.ts");
+      // Proves that this tsconfig.json puts a warning in the log of a worker:
+      // the error of an entry that does not exist carries it.
+      await run("./control/missing.ts");
+    `,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe("message: hi\nclosed 0\nerror: AggregateError: Error in worker\nclosed 1\n");
+  expect(exitCode).toBe(0);
+});

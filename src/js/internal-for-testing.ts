@@ -7,13 +7,22 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
+const fmtBinding = $bindgen("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+
+// Process-wide additions to the public keys no certificate chain may hold (blocked_spkis.cpp). `hash` is the SHA-256 of
+// a DER SubjectPublicKeyInfo.
+export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCppFunction(
+  "NodeTLS.cpp",
+  "addBlockedSPKIForTesting",
+  1,
+);
+export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
@@ -27,6 +36,9 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
+// scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
+// fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
+// with uint64 words and returns 0.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -38,12 +50,19 @@ export const highwayStringsForTesting: (
     | "memmem"
     | "memrmem"
     | "memmem16"
-    | "memrmem16",
+    | "memrmem16"
+    | "scannerRunStops"
+    | "lineStarts"
+    | "oddBlocks",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+export const setSQLiteColumnNameTransform = (
+  statement: import("bun:sqlite").Statement,
+  transform: ((name: string) => string) | null | undefined,
+) => statement.native.$setColumnNameTransform(transform);
 
 export const patchInternals = {
   parse: $newRustFunction("patch.rs", "TestingAPIs.parse", 1),
@@ -76,6 +95,18 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+export const semverIntersects = $newRustFunction("SemverObject.rs", "intersectsForTesting", 2) as (
+  left: string,
+  right: string,
+) => boolean;
+
+/** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
+export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
+  text: string,
+  kind: "module" | "script" | "builtin" | "internal",
+  chunkPaths?: string,
+) => string | null | undefined;
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",
@@ -102,6 +133,9 @@ export const subprocessInternals = {
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
+  closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
+    subprocess: import("bun").Subprocess,
+  ) => boolean,
 };
 
 export const iniInternals = {
@@ -126,6 +160,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;
+  operatorNew: (nothrow?: boolean) => boolean | undefined;
   abort: () => void;
   fastfail: () => void;
   trap: () => void;
@@ -221,9 +256,85 @@ export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFramework
   };
 };
 
-export const bindgen = $rust("bindgen_test.rs", "getBindgenTestFunctions") as {
-  add: (a: any, b: any) => number;
-  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+// Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
+export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
+  add: $bindgen("bindgen_test.bind.ts", "add"),
+  requiredAndOptionalArg: $bindgen("bindgen_test.bind.ts", "requiredAndOptionalArg"),
+  utf8Echo: $bindgen("bindgen_test.bind.ts", "utf8Echo"),
+  utf8EchoLoose: $bindgen("bindgen_test.bind.ts", "utf8EchoLoose"),
+  utf8Optional: $bindgen("bindgen_test.bind.ts", "utf8Optional"),
+  utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
+  stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
+  stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
+  expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
+  expectedMessage: $bindgen("bindgen_test.bind.ts", "expectedMessage"),
+  nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
+  optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
+  describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
+  describeAnything: $bindgen("bindgen_test.bind.ts", "describeAnything"),
+  overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
+  describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
+  names: $bindgen("bindgen_test.bind.ts", "names"),
+  bare: $bindgen("bindgen_test.bind.ts", "bare"),
+  dateOf: $bindgen("bindgen_test.bind.ts", "dateOf"),
+  latin1: $bindgen("bindgen_test.bind.ts", "latin1"),
+  textOrBytes: $bindgen("bindgen_test.bind.ts", "textOrBytes"),
+  positions: $bindgen("bindgen_test.bind.ts", "positions"),
+  sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
+  range: $bindgen("bindgen_test.bind.ts", "range"),
+  words: $bindgen("bindgen_test.bind.ts", "words"),
+  sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
+  sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
+  sumBytesIfAny: $bindgen("bindgen_test.bind.ts", "sumBytesIfAny"),
+  fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
+  stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
+  sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  callOr: $bindgen("bindgen_test.bind.ts", "callOr"),
+  stringAsIsOrBytesIfAny: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytesIfAny"),
+  presentUnlessEmptyString: $bindgen("bindgen_test.bind.ts", "presentUnlessEmptyString"),
+  fail: $bindgen("bindgen_test.bind.ts", "fail"),
+  TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
+  TestMutates: $bindgen("bindgen_test.bind.ts", "TestMutates"),
+  TestRefCounted: $bindgen("bindgen_test.bind.ts", "TestRefCounted"),
+  makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
+  TestError: $bindgen("bindgen_test.bind.ts", "TestError"),
+  TestBoundThis: $bindgen("bindgen_test.bind.ts", "TestBoundThis"),
+  TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
+  TestNote: $bindgen("bindgen_test.bind.ts", "TestNote"),
+  TestRefCountedNote: $bindgen("bindgen_test.bind.ts", "TestRefCountedNote"),
+  isNoteFromJSDirect: $bindgen("bindgen_test.bind.ts", "isNoteFromJSDirect"),
+  tokenIdFromJS: $bindgen("bindgen_test.bind.ts", "tokenIdFromJS"),
+  errorConstructor: $bindgen("bindgen_test.bind.ts", "errorConstructor"),
+  afterFirst: $bindgen("bindgen_test.bind.ts", "afterFirst"),
+  bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
+  bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
+  bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
+  bytesOfRefusingStringObject: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingStringObject"),
+  bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
+  bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
+  bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
+  bytesOfThenCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopyingShared"),
+  bytesOfThenCopied: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopied"),
+  bytesOfAreSameMemory: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemory"),
+  bytesOfAreSameMemoryCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemoryCopyingShared"),
+  bytesBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "bytesBeforeAndAfterCallback"),
+  bytesBeforeAndAfterCallbackCopyingShared: $bindgen(
+    "bindgen_test.bind.ts",
+    "bytesBeforeAndAfterCallbackCopyingShared",
+  ),
+  pinnedBytesAfterCallback: $bindgen("bindgen_test.bind.ts", "pinnedBytesAfterCallback"),
+  stringAsIsOrBytes: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytes"),
+  asBigInt: $bindgen("bindgen_test.bind.ts", "asBigInt"),
+  integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
+  looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),
+  looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
+  looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
+  wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
+  portOf: $bindgen("imported_class_test.bind.ts", "portOf"),
+  portOfOrNull: $bindgen("imported_class_test.bind.ts", "portOfOrNull"),
+  portAfterCallback: $bindgen("imported_class_test.bind.ts", "portAfterCallback"),
+  describeAddressOrList: $bindgen("imported_class_test.bind.ts", "describeAddressOrList"),
+  isAddress: $bindgen("imported_class_test.bind.ts", "isAddress"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -242,7 +353,7 @@ export const Dequeue = require("internal/fifo");
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
-const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const rustNormalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
 function nodeNormalizeEncoding(enc) {
   if (enc == null) return "utf8";
@@ -544,13 +655,18 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
+  // Sets the id of this thread's next timer. The counter can only move forward.
+  setNextTimerId: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.setNextTimerId", 1) as (
+    id: number,
+  ) => void,
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which
 // the internal/dgram UDP wrap does not expose — it binds on create).
 export const dgramInternals = {
-  newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
-  closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
+  newRawSocketFd: $bindgen("udp_socket.bind.ts", "dgramNewSocketFd"),
+  closeRawFd: $bindgen("udp_socket.bind.ts", "dgramCloseFd"),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -559,7 +675,7 @@ export const decodeURIComponentSIMD = $newCppFunction(
   1,
 );
 
-export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
 export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "collections/linear_fifo.rs",
@@ -568,21 +684,35 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
-interface setSocketOptionsFn {
-  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
-  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
-}
-
-export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
+const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $newRustFunction(
   "runtime/socket/socket.rs",
   "jsSetSocketOptions",
   3,
 );
 
 /**
+ * `setsockopt()` with `SO_SNDBUF` (`option` 1) or `SO_RCVBUF` (`option` 2) on the connection behind `socket`.
+ *
+ * To get backpressure without sending megabytes, shrink the send buffer of the side that sends. On loopback the kernel
+ * grows the sender's buffer to its maximum (4 MiB on Linux) at once, so shrinking the receiver's buffer changes little.
+ *
+ * @param socket A `Bun.Socket`, a `ServerWebSocket`, a `WebSocket`, a `node:net` socket, the socket of a `node:http`
+ * server's request, or a WebSocket of the `ws` package (built-in or from npm). It has to be connected.
+ */
+export function setSocketOptions(socket: any, option: 1 | 2, size: number): void {
+  // `ws`: the stream the WebSocket runs on, or what the built-in has in its place on a native client.
+  socket = socket._socket ?? socket;
+  setNativeSocketOptions(
+    socket[require("internal/http").kHandle] ?? socket._handle ?? socket[Symbol.for("::bunternal::")] ?? socket,
+    option,
+    size,
+  );
+}
+
+/**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start", "session_buffer"; see fault_inject.h for the per-hook
+ * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook
  * description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
@@ -595,11 +725,12 @@ export type SocketFaultSyscall =
   | "accept"
   | "ssl_loop_buffer"
   | "poll_start"
-  | "session_buffer";
+  | "session_buffer"
+  | "ssl_write";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
-  action: "errno" | "short" | "zero" | "none";
+  action: "errno" | "short" | "zero" | "excess" | "none";
   /** errno name or numeric value (only used when action === "errno") */
   errno?:
     | "ECONNRESET"
@@ -648,6 +779,19 @@ export const namedPipeInternals = {
    * one per accepted pipe client. Always 0 on other platforms.
    */
   liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+};
+
+export const duplexTLSInternals = {
+  /**
+   * Live native contexts behind TLS sockets that run over a JS stream
+   * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
+   * socket, until the task that frees it after the close has run.
+   */
+  liveCount: $newRustFunction(
+    "runtime/socket/socket.rs",
+    "TestingAPIs.jsDuplexUpgradeContextLiveCount",
+    0,
+  ) as () => number,
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
@@ -708,6 +852,13 @@ export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction
 // The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
 // null where there is no PSI backend (everything except Linux).
 export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+
+// The PSI event filter: `armed` is the file at arm time, `polls` one read per POLLPRI. null off Linux.
+export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $newRustFunction(
+  "memory_pressure.rs",
+  "jsPsiFilter",
+  1,
+);
 
 export const getEventLoopStats: () => {
   activeTasks: number;
@@ -800,6 +951,30 @@ export const fetchH3Internals = {
   },
 };
 
+const proxyFor = $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.proxyFor", 2) as (
+  entries: string[],
+  url: string,
+) => string | null;
+
+export const proxyInternals = {
+  /** Whether the `NO_PROXY` value `list` exempts `hostname` on `port`. */
+  noProxyMatches: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.noProxyMatches", 3) as (
+    list: string,
+    hostname: string,
+    port: number,
+  ) => boolean,
+  /** The proxy an environment of exactly `env` selects for `url`, or null. */
+  proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
+  /** What the HTTP client's URL parser makes of `href`. */
+  parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
+    username: string;
+    password: string;
+    hostname: string;
+    port: string;
+    pathname: string;
+  },
+};
+
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
@@ -819,6 +994,14 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
   0,
+);
+
+// Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
+// came with its code: from the parse, or out of the bytecode.
+export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
+  "ZigSourceProvider.cpp",
+  "jsSourceHasLineStarts",
+  1,
 );
 
 // The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds

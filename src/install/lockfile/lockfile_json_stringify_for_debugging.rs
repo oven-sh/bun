@@ -243,6 +243,7 @@ where
             let (relative_path, depth) =
                 tree::relative_path_and_depth::<{ IteratorPathStyle::NodeModules }>(
                     this.buffers.trees.as_slice(),
+                    hoisted_deps,
                     this.buffers.dependencies.as_slice(),
                     this.buffers.string_bytes.as_slice(),
                     u32::try_from(tree_id).expect("int cast"),
@@ -381,6 +382,13 @@ where
                     }
                 }
 
+                let _ = w.end_array();
+            }
+
+            if let Some(libc) = pkg.meta.libc.single_name() {
+                w.object_field(b"libc")?;
+                w.begin_array()?;
+                w.write(libc)?;
                 let _ = w.end_array();
             }
 
@@ -594,12 +602,6 @@ json_scalar_uint!(u8, u16, u32, u64, usize);
 impl JsonScalar for &[u8] {
     fn write_json(&self, out: &mut Vec<u8>, _: WriteStreamOptions) {
         encode_json_string(self, out);
-    }
-}
-impl<const N: usize> JsonScalar for &[u8; N] {
-    #[inline]
-    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
-        self.as_slice().write_json(out, opts);
     }
 }
 

@@ -6,7 +6,7 @@ use bun_boringssl_sys as boringssl;
 
 use super::evp;
 
-pub struct HMAC {
+pub(crate) struct HMAC {
     ctx: boringssl::HMAC_CTX,
     pub(crate) algorithm: evp::Algorithm,
 }
@@ -49,7 +49,7 @@ impl HMAC {
         unsafe { boringssl::HMAC_size(&raw const self.ctx) }
     }
 
-    pub(crate) fn copy(&mut self) -> crate::Result<Box<HMAC>> {
+    pub(crate) fn copy(&self) -> crate::Result<Box<HMAC>> {
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
         unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };

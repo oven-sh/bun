@@ -205,46 +205,11 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // When HMR is active, ConvertESMExportsForHmr deduplicates import records
-    // by path — two `export { ... } from './utils.js'` blocks get merged into
-    // one record. The surviving record might be the one barrel optimization
-    // would mark as unused (its exports not needed), while the other record
-    // (whose exports ARE needed) gets marked unused by HMR dedup. To prevent
-    // both records from ending up unused, promote needed_records to cover ALL
-    // import records that share a path with any needed record.
-    if dev_handle.is_some() {
-        // Collect paths of needed records.
-        let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
-
-        for rec_idx in needed_records.keys() {
-            if (*rec_idx as usize) < ast.import_records.len() {
-                needed_paths.put(
-                    ast.import_records.as_slice()[*rec_idx as usize].path.text,
-                    (),
-                )?;
-            }
-        }
-
-        // Add all records sharing a needed path to the needed set.
-        for entry in ast.named_exports.values() {
-            if let Some(imp) = ast.named_imports.get(&entry.ref_) {
-                if (imp.import_record_index as usize) < ast.import_records.len() {
-                    if needed_paths.contains(
-                        ast.import_records.as_slice()[imp.import_record_index as usize]
-                            .path
-                            .text,
-                    ) {
-                        needed_records.put(imp.import_record_index, ())?;
-                    }
-                }
-            }
-        }
-    }
-
     // Defer unneeded named re-export records: is_unused keeps them out of
     // resolution and linking, is_barrel_deferred lets un_defer_record tell them
     // from the records the parser marked is_unused.
     let mut has_deferrals = false;
+    let mut reexported: Option<AutoBitSet> = None;
     // Borrowck: collect (ref_, import_record_index)
     // pairs first so we can mutate `ast.import_records` without aliasing
     // `ast.named_exports`/`ast.named_imports`.
@@ -254,6 +219,33 @@ fn apply_barrel_optimization_impl(
             let iri = imp.import_record_index;
             if !needed_records.contains(&iri) {
                 if (iri as usize) < ast.import_records.len() {
+                    let flags = ast.import_records.as_slice()[iri as usize].flags;
+                    if flags.intersects(
+                        import_record::Flags::IS_BARREL_DEFERRED
+                            | import_record::Flags::MERGED_IMPORT_WITH_BINDINGS
+                            | import_record::Flags::MERGED_IMPORT_WITHOUT_BINDINGS,
+                    ) {
+                        // Deferred for an earlier name.
+                        if flags.contains(import_record::Flags::IS_BARREL_DEFERRED) {
+                            continue;
+                        }
+                        // A merged statement also stands for statements that export none
+                        // of their names. No request can reach those, so the record stays.
+                        if flags.contains(import_record::Flags::MERGED_IMPORT_WITHOUT_BINDINGS)
+                            || imports_unexported_name(
+                                iri,
+                                &ast.named_exports,
+                                &ast.named_imports,
+                                &mut reexported,
+                            )?
+                        {
+                            needed_records.put(iri, ())?;
+                            continue;
+                        }
+                    }
+                    // No name leads to a record that the parser dropped or merged away.
+                    // A request would un-defer and resolve such a record.
+                    debug_assert!(!flags.contains(import_record::Flags::IS_UNUSED));
                     ast.import_records.as_mut_slice()[iri as usize]
                         .flags
                         .insert(
@@ -295,6 +287,33 @@ fn apply_barrel_optimization_impl(
     }
 
     Ok(())
+}
+
+/// Whether the file imports a name through `record` that it does not export.
+/// `reexported` gets a bit for each named import that is a named export.
+fn imports_unexported_name(
+    record: u32,
+    named_exports: &JSAst::NamedExports,
+    named_imports: &JSAst::NamedImports,
+    reexported: &mut Option<AutoBitSet>,
+) -> Result<bool, AllocError> {
+    let reexported = match reexported {
+        Some(reexported) => reexported,
+        None => {
+            let mut bits = AutoBitSet::init_empty(named_imports.count())?;
+            for export in named_exports.values() {
+                if let Some(index) = named_imports.get_index(&export.ref_) {
+                    bits.set(index);
+                }
+            }
+            reexported.insert(bits)
+        }
+    };
+    Ok(named_imports
+        .values()
+        .iter()
+        .enumerate()
+        .any(|(index, import)| import.import_record_index == record && !reexported.is_set(index)))
 }
 
 /// Make a record that `apply_barrel_optimization` deferred live again. Returns true if the
@@ -479,33 +498,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // so we can detect bare imports (those with no specific export bindings).
     let mut named_ir_indices = AutoBitSet::init_empty(file_import_records.len())?;
 
-    // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
-    // two `import { X } from 'mod'` statements become one, and the second
-    // record is marked is_unused=true. resolveImportRecords then skips those
-    // records, so their path.text stays as the raw specifier while the
-    // surviving record's path.text becomes the resolved absolute path.
-    // named_imports entries created for the dedup'd record still point at
-    // its index, so the direct path lookup below fails for those entries.
-    // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
-    if dev_handle.is_some() {
-        for ir_probe in file_import_records.as_slice() {
-            if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
-                || ir_probe.flags.contains(import_record::Flags::IS_INTERNAL)
-            {
-                continue;
-            }
-            if ir_probe.original_path.is_empty() {
-                continue;
-            }
-            if ir_probe.original_path == ir_probe.path.text {
-                continue;
-            }
-            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text)?;
-        }
-    }
-
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
     for ni in file_named_imports.values() {
         if ni.import_record_index as usize >= file_import_records.len() {
@@ -522,25 +514,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
         // and other code (IncrementalGraph, printer) depends on that.
-        // For dedup'd HMR records (is_unused), fall back to a sibling's
-        // resolved path text since the record itself still has the raw
-        // specifier in path.text.
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
 
@@ -558,7 +532,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(&dev, ir.path.text, alias);
             }
         }
     }
@@ -618,22 +592,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
             continue;
         }
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
-        let ir_target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(ir_target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
 

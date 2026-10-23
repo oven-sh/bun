@@ -107,6 +107,18 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// HMR lowering merges the statements of one import path into the
+        /// first one, and this is its record. One of those statements is an
+        /// `import` that binds names: barrel optimization defers the record
+        /// only if the file exports every name imported through it.
+        const MERGED_IMPORT_WITH_BINDINGS = 1 << 19;
+
+        /// As above, and one of the statements binds no name (`import "p"`,
+        /// `import {} from "p"`, `export {} from "p"`). The file needs the
+        /// module whatever an importer requests, so barrel optimization never
+        /// defers the record.
+        const MERGED_IMPORT_WITHOUT_BINDINGS = 1 << 20;
     }
 }
 

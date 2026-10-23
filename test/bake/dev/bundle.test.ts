@@ -1461,6 +1461,310 @@ devTest("barrel optimization: export star after another statement of the same pa
   },
 });
 
+const sideEffectsFalse = (name: string) =>
+  JSON.stringify({ name, version: "1.0.0", main: "./index.js", sideEffects: false });
+
+// Barrels with more than one statement for './utils.js'. `request` asks for a name of a later one.
+const mergedPathShapes: { index: string; request: string; want: string; second?: string }[] = [
+  {
+    index: `export { a } from './utils.js'; export { b } from './utils.js';`,
+    request: `import { b } from 'PKG'; export default b;`,
+    want: "B",
+  },
+  {
+    index: `export { a } from './utils.js'; export { b } from './utils.js'; export { c } from './utils.js';`,
+    request: `import { c } from 'PKG'; export default c;`,
+    want: "C",
+  },
+  {
+    index: `import { a } from './utils.js'; import { b } from './utils.js'; export { a, b };`,
+    request: `import { b } from 'PKG'; export default b;`,
+    want: "B",
+  },
+  {
+    index: `export { a } from './utils.js'; export * as ns from './utils.js';`,
+    request: `import { ns } from 'PKG'; export default ns.b;`,
+    want: "B",
+  },
+  {
+    index: `export { a } from './utils.js'; export { default as d } from './utils.js';`,
+    request: `import { d } from 'PKG'; export default d;`,
+    want: "D",
+  },
+  {
+    index: `export { a } from './utils.js'; import * as ns from './utils.js'; export { ns };`,
+    request: `import { ns } from 'PKG'; export default ns.b;`,
+    want: "B",
+  },
+  {
+    index: `export { a } from './utils.js'; import d from './utils.js'; export { d };`,
+    request: `import { d } from 'PKG'; export default d;`,
+    want: "D",
+  },
+  {
+    index: `export { a } from './utils.js'; export { b } from './utils.js';`,
+    second: `export { b } from './index.js'; export { c } from './utils.js';`,
+    request: `import { b } from 'PKG/second.js'; export default b;`,
+    want: "B",
+  },
+  // Controls: a name of the first statement, one statement, every export.
+  {
+    index: `export { a } from './utils.js'; export { b } from './utils.js';`,
+    request: `import { a } from 'PKG'; export default a;`,
+    want: "A",
+  },
+  {
+    index: `export { a, b } from './utils.js';`,
+    request: `import { b } from 'PKG'; export default b;`,
+    want: "B",
+  },
+  {
+    index: `export { a } from './utils.js'; export { b } from './utils.js';`,
+    request: `import * as all from 'PKG'; export default all.b;`,
+    want: "B",
+  },
+];
+const mergedPathFiles = (prefix: string, other: (i: number) => string) =>
+  Object.assign(
+    {},
+    ...mergedPathShapes.map(({ index, request, second }, i) => ({
+      [`node_modules/${prefix}-${i}/package.json`]: sideEffectsFalse(`${prefix}-${i}`),
+      [`node_modules/${prefix}-${i}/index.js`]: `${index} export { o } from './other.js';`,
+      [`node_modules/${prefix}-${i}/utils.js`]: `export const a = "A", b = "B", c = "C"; export default "D";`,
+      [`node_modules/${prefix}-${i}/other.js`]: other(i),
+      ...(second && { [`node_modules/${prefix}-${i}/second.js`]: second }),
+      [`${prefix}-request-${i}.ts`]: request.replaceAll("PKG", `${prefix}-${i}`),
+    })),
+  );
+const mergedPathWant = "got: " + mergedPathShapes.map(shape => shape.want).join(" ");
+
+devTest("barrel optimization: a later statement of a path is requested after the barrel is parsed", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // The barrel leads to other.js, and only other.js leads to the module with the
+    // request. So the barrel has deferred './utils.js' when the request arrives.
+    "index.ts": `
+      ${mergedPathShapes.map((_, i) => `import { o as o${i} } from 'late-${i}';`).join("\n")}
+      const got = [];
+      for (const o of [${mergedPathShapes.map((_, i) => `o${i}`).join(", ")}]) got.push(String((await o()).default));
+      console.log('got: ' + got.join(' '));
+    `,
+    ...mergedPathFiles("late", i => `export const o = () => import('../../late-request-${i}');`),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(mergedPathWant);
+  },
+});
+
+devTest("barrel optimization: a later statement of a path is requested before the barrel is parsed", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      ${mergedPathShapes.map((_, i) => `import v${i} from './early-request-${i}';`).join("\n")}
+      console.log('got: ' + [${mergedPathShapes.map((_, i) => `v${i}`).join(", ")}].map(String).join(' '));
+    `,
+    ...mergedPathFiles("early", () => `export const o = "O";`),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(mergedPathWant);
+  },
+});
+
+// The importer has more than one statement for the barrel. `read` is evaluated with
+// the importer's namespace as `m`.
+const mergedImporterShapes: { source: string; read: string; want: string }[] = [
+  {
+    source: `import { Alpha } from 'PKG'; import { Beta } from 'PKG'; export default Alpha + Beta;`,
+    read: "m.default",
+    want: "AB",
+  },
+  {
+    source: `import { Alpha } from 'PKG'; export { Beta } from 'PKG'; export default Alpha;`,
+    read: "m.default + m.Beta",
+    want: "AB",
+  },
+  {
+    source: `import { Alpha } from 'PKG'; import * as ns from 'PKG'; export default Alpha + ns.Beta;`,
+    read: "m.default",
+    want: "AB",
+  },
+  {
+    source: `import { Alpha } from 'PKG'; import Def from 'PKG'; export default Alpha + Def;`,
+    read: "m.default",
+    want: "AD",
+  },
+  {
+    source: `import { Alpha } from 'PKG'; export * as ns from 'PKG'; export default Alpha;`,
+    read: "m.default + m.ns.Beta",
+    want: "AB",
+  },
+  {
+    source: `import { Alpha } from 'PKG'; import { Beta } from 'PKG'; import { Gamma } from 'PKG'; export default Alpha + Beta + Gamma;`,
+    read: "m.default",
+    want: "ABG",
+  },
+  {
+    source: `import 'PKG'; import { Beta } from 'PKG'; export default Beta;`,
+    read: "m.default",
+    want: "B",
+  },
+  {
+    source: `import { Alpha } from 'PKG'; import * as ns from 'PKG'; const whole = ns; export default Alpha + whole.Beta + whole.Gamma;`,
+    read: "m.default",
+    want: "ABG",
+  },
+];
+
+devTest("barrel optimization: more than one statement for the barrel in the importer", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      ${mergedImporterShapes.map((_, i) => `import * as m${i} from './importer-${i}';`).join("\n")}
+      console.log('got: ' + [${mergedImporterShapes.map(({ read }, i) => read.replaceAll("m.", `m${i}.`)).join(", ")}].map(String).join(' '));
+    `,
+    ...Object.assign(
+      {},
+      ...mergedImporterShapes.map(({ source }, i) => ({
+        [`importer-${i}.ts`]: source.replaceAll("PKG", `imported-${i}`),
+        [`node_modules/imported-${i}/package.json`]: sideEffectsFalse(`imported-${i}`),
+        [`node_modules/imported-${i}/index.js`]: `
+          export { Alpha } from './alpha.js';
+          export { Beta } from './beta.js';
+          export { Gamma } from './gamma.js';
+          export { default } from './default.js';
+        `,
+        [`node_modules/imported-${i}/alpha.js`]: `export const Alpha = "A";`,
+        [`node_modules/imported-${i}/beta.js`]: `export const Beta = "B";`,
+        [`node_modules/imported-${i}/gamma.js`]: `export const Gamma = "G";`,
+        [`node_modules/imported-${i}/default.js`]: `export default "D";`,
+      })),
+    ),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: " + mergedImporterShapes.map(shape => shape.want).join(" "));
+  },
+});
+
+// A statement that exports none of its names needs its module whatever an importer
+// requests. `export { a } from` is the only statement with a name to request, and
+// nothing requests it.
+const needsModuleStatements = [
+  `import 'PKG';`,
+  `import {} from 'PKG';`,
+  `export {} from 'PKG';`,
+  `import { helper } from 'PKG'; globalThis.helped = helper;`,
+  `import { helper } from 'PKG';`,
+].flatMap(statement => [`${statement} export { a } from 'PKG';`, `export { a } from 'PKG'; ${statement}`]);
+
+devTest("barrel optimization: a statement of a shared path that exports no name keeps its module", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      ${needsModuleStatements.map((_, i) => `import { keep as keep${i} } from 'needs-${i}';`).join("\n")}
+      const keeps = [${needsModuleStatements.map((_, i) => `keep${i}`).join(", ")}];
+      console.log('loaded: ' + (globalThis.loaded ?? []).sort((a, b) => a - b).join(' ') + ' of ' + keeps.length);
+    `,
+    ...Object.assign(
+      {},
+      ...needsModuleStatements.map((statements, i) => ({
+        [`node_modules/needs-${i}/package.json`]: sideEffectsFalse(`needs-${i}`),
+        [`node_modules/needs-${i}/index.js`]: `${statements.replaceAll("PKG", `needed-${i}`)} export { keep } from './keep.js';`,
+        [`node_modules/needs-${i}/keep.js`]: `export const keep = "K";`,
+        [`node_modules/needed-${i}/package.json`]: JSON.stringify({ name: `needed-${i}`, main: "./index.js" }),
+        [`node_modules/needed-${i}/index.js`]: `
+          (globalThis.loaded ??= []).push(${i});
+          export const a = "A";
+          export const helper = () => "H";
+        `,
+      })),
+    ),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      "loaded: " + needsModuleStatements.map((_, i) => i).join(" ") + " of " + needsModuleStatements.length,
+    );
+  },
+});
+
+devTest("barrel optimization: statements of one path that nothing requests stay deferred", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { keep as keep1 } from 'deferred-exports';
+      import { keep as keep2 } from 'deferred-imports';
+      console.log('got: ' + keep1 + ' ' + keep2);
+    `,
+    "node_modules/deferred-exports/package.json": sideEffectsFalse("deferred-exports"),
+    "node_modules/deferred-exports/index.js": `
+      export { a } from './broken.js';
+      export { b } from './broken.js';
+      export { keep } from './keep.js';
+    `,
+    "node_modules/deferred-exports/broken.js": `export const a = <<<SYNTAX_ERROR>>>;`,
+    "node_modules/deferred-exports/keep.js": `export const keep = "K1";`,
+    "node_modules/deferred-imports/package.json": sideEffectsFalse("deferred-imports"),
+    "node_modules/deferred-imports/index.js": `
+      import { a } from './broken.js';
+      import { b } from './broken.js';
+      export { a, b };
+      export { keep } from './keep.js';
+    `,
+    "node_modules/deferred-imports/broken.js": `export const a = <<<SYNTAX_ERROR>>>;`,
+    "node_modules/deferred-imports/keep.js": `export const keep = "K2";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: K1 K2");
+  },
+});
+
+devTest("barrel optimization: a name of a later statement of a path stays requested on a rebuild", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b } from 'rebuilt-lib';
+      import { value } from './other';
+      console.log('got: ' + b + ' ' + value);
+    `,
+    "other.ts": `
+      import { c } from 'rebuilt-lib';
+      export const value = c;
+    `,
+    "node_modules/rebuilt-lib/package.json": sideEffectsFalse("rebuilt-lib"),
+    "node_modules/rebuilt-lib/index.js": `
+      export { a } from './utils.js';
+      export { b } from './utils.js';
+      export { c } from './c.js';
+      export { d } from './d.js';
+      export { e } from './e.js';
+    `,
+    "node_modules/rebuilt-lib/utils.js": `export const a = "A", b = "B";`,
+    "node_modules/rebuilt-lib/c.js": `export const c = "C";`,
+    "node_modules/rebuilt-lib/d.js": `export const d = "D";`,
+    "node_modules/rebuilt-lib/e.js": `export const e = <<<SYNTAX_ERROR>>>;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: B C");
+    // The barrel is parsed again and index.ts is not: the request for `b` is known
+    // only from the first build.
+    await c.expectReload(async () => {
+      await dev.write(
+        "other.ts",
+        `
+          import { c, d } from 'rebuilt-lib';
+          export const value = c + d;
+        `,
+      );
+    });
+    await c.expectMessage("got: B CD");
+  },
+});
+
 devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

@@ -27,20 +27,40 @@ pub(crate) struct ConvertESMExportsForHmr<'a> {
 pub(crate) struct ImportRef {
     /// Index into ConvertESMExportsForHmr.stmts
     pub stmt_index: u32,
+    /// What the statements of this path tell barrel optimization once they share a record.
+    pub merged_flags: import_record::Flags,
 }
 
-struct DeduplicatedImportResult {
-    pub namespace_ref: Ref,
-    pub import_record_index: u32,
+/// What a statement with an import path binds.
+#[derive(Clone, Copy)]
+pub(crate) enum ImportBinds {
+    /// `import "p"`, `import {} from "p"`, `export {} from "p"`, `export * from "p"`
+    Nothing,
+    /// The names of an `import` statement.
+    Imports,
+    /// The names of `export { a } from "p"` or `export * as ns from "p"`: each one is an export.
+    Exports,
+}
+
+/// What `share_import_record` found for the path of a statement.
+#[derive(Clone, Copy)]
+pub(crate) struct ImportSlot {
+    /// Index into ConvertESMExportsForHmr.imports_seen
+    seen: u32,
+    /// The import statement of an earlier statement with this path. Index into
+    /// ConvertESMExportsForHmr.stmts
+    merged_into: Option<u32>,
 }
 
 impl<'a> ConvertESMExportsForHmr<'a> {
     // Note: takes the concrete `P<'p, TS, SCAN>`; `AstBuilder` instead
     // open-codes the equivalent transform (see bundler/AstBuilder.rs).
+    /// `import_slot` is what `share_import_record` returned for a statement with an import path.
     pub(crate) fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
         &mut self,
         p: &mut P<'p, TS, SCAN>,
         stmt: Stmt,
+        import_slot: Option<ImportSlot>,
     ) -> Result<(), AllocError> {
         let new_stmt: Stmt = match stmt.data {
             js_ast::StmtData::SLocal(mut st) => 'stmt: {
@@ -296,28 +316,24 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 return Ok(()); // do not emit a statement here
             }
             js_ast::StmtData::SExportFrom(st) => {
-                let deduped = self.deduplicated_import(
+                let namespace_ref = self.deduplicated_import(
                     p,
+                    import_slot.unwrap(),
                     st.import_record_index,
                     st.namespace_ref,
                     st.items,
                     stmt.loc,
                     None,
                     stmt.loc,
-                )?;
+                );
                 for item in st.items.slice_mut().iter_mut() {
                     let ref_ = item.name.ref_;
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
-                    // Always set the namespace alias using the deduplicated import
-                    // record. When two `export { ... } from` statements reference
-                    // the same source, the second import record is marked unused
-                    // and its items are merged into the first. The symbols may
-                    // already have a namespace_alias from ImportScanner pointing at
-                    // the now-unused record, so we must update it.
+                    // The namespace of the import statement that this one was merged into.
                     symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                        namespace_ref: deduped.namespace_ref,
+                        namespace_ref,
                         alias: item.original_name,
-                        import_record_index: deduped.import_record_index,
+                        import_record_index: st.import_record_index,
                         ..Default::default()
                     }));
                     self.visit_ref_to_export(
@@ -338,15 +354,16 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 return Ok(());
             }
             js_ast::StmtData::SExportStar(st) => {
-                let deduped = self.deduplicated_import(
+                let namespace_ref = self.deduplicated_import(
                     p,
+                    import_slot.unwrap(),
                     st.import_record_index,
                     st.namespace_ref,
                     bun_ast::StoreSlice::EMPTY,
                     stmt.loc,
                     None,
                     stmt.loc,
-                )?;
+                );
 
                 if let Some(alias) = &st.alias {
                     // 'export * as ns from' creates one named property.
@@ -356,18 +373,16 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             E::EString::init(alias.original_name.slice()),
                             stmt.loc,
                         )),
-                        value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
+                        value: Some(Expr::init_identifier(namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
                 } else {
                     // 'export * from' creates a spread, hoisted at the top.
                     self.export_star_props.push(G::Property {
                         kind: G::PropertyKind::Spread,
-                        value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
+                        value: Some(Expr::init_identifier(namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
-                    p.export_star_import_records
-                        .push(deduped.import_record_index);
                 }
                 return Ok(());
             }
@@ -377,13 +392,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             js_ast::StmtData::SImport(st) => {
                 let _ = self.deduplicated_import(
                     p,
+                    import_slot.unwrap(),
                     st.import_record_index,
                     st.namespace_ref,
                     st.items,
                     st.star_name_loc,
                     st.default_name,
                     stmt.loc,
-                )?;
+                );
                 return Ok(());
             }
             _ => stmt,
@@ -393,41 +409,71 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    /// Deduplicates imports, returning a previously used Ref and import record
-    /// index if present.
+    /// The statements of one import path are merged into one import statement, which
+    /// keeps the record of the first. Points `import_record_index` at that record, so
+    /// that what the scanner files for the statement is filed under the record in use.
+    pub(crate) fn share_import_record<'p, const TS: bool, const SCAN: bool>(
+        &mut self,
+        p: &mut P<'p, TS, SCAN>,
+        import_record_index: &mut u32,
+        binds: ImportBinds,
+    ) -> Result<ImportSlot, AllocError> {
+        let merged_flags = match binds {
+            ImportBinds::Nothing => import_record::Flags::MERGED_IMPORT_WITHOUT_BINDINGS,
+            ImportBinds::Imports => import_record::Flags::MERGED_IMPORT_WITH_BINDINGS,
+            ImportBinds::Exports => import_record::Flags::empty(),
+        };
+        let records = p.import_records.items_mut();
+        let gop = self
+            .imports_seen
+            .get_or_put(records[*import_record_index as usize].path.text)?;
+        let seen = u32::try_from(gop.index).expect("int cast");
+        if !gop.found_existing {
+            gop.value_ptr.merged_flags = merged_flags;
+            return Ok(ImportSlot {
+                seen,
+                merged_into: None,
+            });
+        }
+        gop.value_ptr.merged_flags |= merged_flags;
+        let merged_flags = gop.value_ptr.merged_flags;
+        let stmt_index = gop.value_ptr.stmt_index;
+        let js_ast::StmtData::SImport(stmt) = self.stmts[stmt_index as usize].data else {
+            unreachable!()
+        };
+        // Disable this one since an older record is getting used.  It isn't
+        // practical to delete this import record entry since an import or
+        // require expression can exist.
+        records[*import_record_index as usize]
+            .flags
+            .insert(import_record::Flags::IS_UNUSED);
+        records[stmt.import_record_index as usize]
+            .flags
+            .insert(merged_flags);
+        *import_record_index = stmt.import_record_index;
+        Ok(ImportSlot {
+            seen,
+            merged_into: Some(stmt_index),
+        })
+    }
+
+    /// Adds the statement to the import statement of its path, which is a new
+    /// statement for the first one of a path. Returns the namespace ref in use.
     fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
         &mut self,
         p: &mut P<'p, TS, SCAN>,
+        slot: ImportSlot,
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
         star_name_loc: bun_ast::Loc,
         default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,
-    ) -> Result<DeduplicatedImportResult, AllocError> {
-        let path_text = p.import_records.items()[import_record_index as usize]
-            .path
-            .text;
-        let gop = self.imports_seen.get_or_put(path_text)?;
-        if gop.found_existing {
-            let stmt_index = gop.value_ptr.stmt_index;
-            // Disable this one since an older record is getting used.  It isn't
-            // practical to delete this import record entry since an import or
-            // require expression can exist.
-            p.import_records.items_mut()[import_record_index as usize]
-                .flags
-                .insert(import_record::Flags::IS_UNUSED);
-
+    ) -> Ref {
+        if let Some(stmt_index) = slot.merged_into {
             let js_ast::StmtData::SImport(mut stmt) = self.stmts[stmt_index as usize].data else {
                 unreachable!()
             };
-            // The surviving record may have been marked is_unused by barrel
-            // optimization (when the first export-from statement's exports
-            // were all deferred). Since we are merging new items into it,
-            // clear is_unused so the import is actually emitted.
-            p.import_records.items_mut()[stmt.import_record_index as usize]
-                .flags
-                .remove(import_record::Flags::IS_UNUSED);
 
             let items_len = items.len();
             if items_len > 0 {
@@ -460,10 +506,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             if namespace_ref.is_valid() {
                 if !stmt.namespace_ref.is_valid() {
                     stmt.namespace_ref = namespace_ref;
-                    return Ok(DeduplicatedImportResult {
-                        namespace_ref,
-                        import_record_index: stmt.import_record_index,
-                    });
+                    return namespace_ref;
                 } else {
                     // Erase this namespace ref, but since it may be used in
                     // existing AST trees, a link must be established.
@@ -486,10 +529,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     stmt.default_name = Some(dn);
                 }
             }
-            return Ok(DeduplicatedImportResult {
-                namespace_ref: stmt.namespace_ref,
-                import_record_index: stmt.import_record_index,
-            });
+            return stmt.namespace_ref;
         }
 
         self.stmts.push(Stmt::alloc(
@@ -505,13 +545,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             loc,
         ));
 
-        *gop.value_ptr = ImportRef {
-            stmt_index: u32::try_from(self.stmts.len() - 1).expect("int cast"),
-        };
-        Ok(DeduplicatedImportResult {
-            namespace_ref,
-            import_record_index,
-        })
+        self.imports_seen.values_mut()[slot.seen as usize].stmt_index =
+            u32::try_from(self.stmts.len() - 1).expect("int cast");
+        namespace_ref
     }
 
     fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool>(

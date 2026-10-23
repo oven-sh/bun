@@ -1,5 +1,5 @@
 #![warn(unused_must_use)]
-use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
+use crate::lower::lower_esm_exports_hmr::{ConvertESMExportsForHmr, ImportBinds};
 use crate::p::P;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
 use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
@@ -54,6 +54,22 @@ impl<'a> ImportScanner<'a> {
         for i in 0..stmts.len() {
             // Index directly to allow in-place mutation + reassignment.
             let mut stmt = stmts[i]; // copy
+            let mut import_slot = None;
+            // HMR lowering merges the statements of one import path into one import. A later
+            // statement takes the record of the first before anything is filed under a record.
+            macro_rules! share_import_record {
+                ($st:expr, $binds:expr) => {
+                    if HOT_MODULE_RELOADING_TRANSFORMATIONS {
+                        let binds = $binds;
+                        import_slot = Some(
+                            hot_module_reloading_context
+                                .as_mut()
+                                .unwrap()
+                                .share_import_record(p, &mut $st.import_record_index, binds)?,
+                        );
+                    }
+                };
+            }
             match stmt.data {
                 js_ast::StmtData::SImport(mut import_ptr) => {
                     let st: &mut S::Import = &mut *import_ptr;
@@ -63,7 +79,7 @@ impl<'a> ImportScanner<'a> {
                     // alongside other `p.*` borrows. We take a raw pointer once and unsafe-deref
                     // at each use site (no operation below grows `p.import_records`, so
                     // the pointer stays valid for this iteration).
-                    let record: *mut ImportRecord =
+                    let mut record: *mut ImportRecord =
                         &raw mut p.import_records.items_mut()[import_record_index as usize];
                     macro_rules! record {
                         () => {
@@ -312,6 +328,22 @@ impl<'a> ImportScanner<'a> {
                     }
 
                     let _ = did_remove_star_loc;
+
+                    share_import_record!(
+                        st,
+                        if st.default_name.is_some()
+                            || !st.star_name_loc.is_empty()
+                            || !st.items.is_empty()
+                        {
+                            ImportBinds::Imports
+                        } else {
+                            ImportBinds::Nothing
+                        }
+                    );
+                    if HOT_MODULE_RELOADING_TRANSFORMATIONS {
+                        record =
+                            &raw mut p.import_records.items_mut()[st.import_record_index as usize];
+                    }
 
                     let namespace_ref = st.namespace_ref;
                     // `import defer * as ns` must keep its namespace binding
@@ -755,7 +787,15 @@ impl<'a> ImportScanner<'a> {
                         p.record_export(item.alias_loc, alias, item.name.ref_)?;
                     }
                 }
-                js_ast::StmtData::SExportStar(st) => {
+                js_ast::StmtData::SExportStar(mut st) => {
+                    share_import_record!(
+                        st,
+                        if st.alias.is_some() {
+                            ImportBinds::Exports
+                        } else {
+                            ImportBinds::Nothing
+                        }
+                    );
                     p.import_records_for_current_part
                         .push(st.import_record_index);
 
@@ -778,13 +818,20 @@ impl<'a> ImportScanner<'a> {
                         p.import_records.items_mut()[st.import_record_index as usize]
                             .flags
                             .insert(import_record::Flags::CONTAINS_IMPORT_STAR);
-                    } else if !HOT_MODULE_RELOADING_TRANSFORMATIONS {
+                    } else {
                         // "export * from 'path'"
-                        // (HMR lowering may merge the statement: `convert_stmt` lists the record it keeps)
                         p.export_star_import_records.push(st.import_record_index);
                     }
                 }
-                js_ast::StmtData::SExportFrom(st) => {
+                js_ast::StmtData::SExportFrom(mut st) => {
+                    share_import_record!(
+                        st,
+                        if st.items.is_empty() {
+                            ImportBinds::Nothing
+                        } else {
+                            ImportBinds::Exports
+                        }
+                    );
                     p.import_records_for_current_part
                         .push(st.import_record_index);
                     // SAFETY: arena-owned slice valid for 'p.
@@ -835,7 +882,7 @@ impl<'a> ImportScanner<'a> {
                 hot_module_reloading_context
                     .as_mut()
                     .unwrap()
-                    .convert_stmt(p, stmt)?;
+                    .convert_stmt(p, stmt, import_slot)?;
             } else {
                 stmts[stmts_end] = stmt;
                 stmts_end += 1;

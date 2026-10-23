@@ -3144,6 +3144,45 @@ it("delete process.env.TZ invalidates existing Date instances", async () => {
   });
 });
 
+it("a time zone change reaches a Date that cached its local time in an earlier task", async () => {
+  // The walk over the live Dates runs only when a Date has cached a local time. Each Date here caches one in one
+  // task, and the zone changes in a later task, after the VM was left and entered again.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { setTimeZone } from "bun:jsc";
+       const nextTask = () => new Promise(resolve => setImmediate(resolve));
+       const d = new Date("2024-01-15T12:00:00Z");
+       const hours = [d.getHours()];
+       await nextTask();
+       process.env.TZ = "America/New_York";
+       hours.push(d.getHours());
+       await nextTask();
+       delete process.env.TZ;
+       hours.push(d.getHours());
+       await nextTask();
+       setTimeZone("Asia/Tokyo");
+       hours.push(d.getHours());
+       await nextTask();
+       // A Date made after the last change, and read for the first time after this one.
+       const late = new Date("2024-01-15T12:00:00Z");
+       setTimeZone("America/New_York");
+       hours.push(d.getHours(), late.getHours());
+       console.log(JSON.stringify(hours));`,
+    ],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ hours: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    hours: [12, 7, 12, 21, 7, 7],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.traceDeprecation set at runtime prints a stack", async () => {
   await using proc = Bun.spawn({
     cmd: [

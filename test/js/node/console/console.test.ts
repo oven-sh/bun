@@ -53,18 +53,21 @@ describe("console.Console", () => {
     expect(await value()).toBe("hello\n{ foo: \u001B[32m'bar'\u001B[39m }\n");
   });
 
-  // Node's `shouldColorize(stream)`: `FORCE_COLOR` decides if it is set, and the stream if it is not.
-  describe("without a colorMode", () => {
-    const head = `
-      const { Console } = require("node:console");
-      const { PassThrough } = require("node:stream");
-      const logged = () => {
-        const captured = new PassThrough();
-        new Console(captured).log({ a: 1 });
-        const text = String(captured.read());
-        return text === "{ a: 1 }\\n" ? "plain" : text === "{ a: \\x1b[33m1\\x1b[39m }\\n" ? "colors" : text;
-      };`;
+  // For the programs below: a stream that writes at once. It needs no `process` for that, and a `PassThrough` does.
+  const head = `
+    const { Console } = require("node:console");
+    const { EventEmitter } = require("node:events");
+    const streamInto = (written, properties) =>
+      Object.assign(new EventEmitter(), properties, { write: chunk => void written.push(chunk) });
+    const logged = properties => {
+      const written = [];
+      new Console(streamInto(written, properties)).log({ a: 1 });
+      const text = written.join("");
+      return text === "{ a: 1 }\\n" ? "plain" : text === "{ a: \\x1b[33m1\\x1b[39m }\\n" ? "colors" : text;
+    };`;
 
+  // Node's `shouldColorize(stream)`: `FORCE_COLOR` decides if it is set, and the stream if it is not.
+  describe.concurrent("without a colorMode", () => {
     // `process.stdout` and `process.stderr` listen for SIGWINCH if they are a terminal. The decision needs neither.
     test.skipIf(isWindows)("FORCE_COLOR=0 means no colors, also in a terminal", async () => {
       const program = `${head}
@@ -91,6 +94,7 @@ describe("console.Console", () => {
 
     test("FORCE_COLOR has the values of Node, and is read from the `env` that `process` has now", async () => {
       const program = `${head}
+        const { getColorDepth } = require("node:tty").WriteStream.prototype;
         const seen = {};
         const real = process;
         const env = real.env;
@@ -107,11 +111,17 @@ describe("console.Console", () => {
         env.NO_COLOR = "1";
         globalThis.process = undefined;
         seen["no process"] = logged();
+        // Then a terminal decides from that environment too.
+        delete env.FORCE_COLOR;
+        seen["no process, a terminal with NO_COLOR"] = logged({ isTTY: true, getColorDepth });
+        delete env.NO_COLOR;
+        seen["no process, a terminal"] = logged({ isTTY: true, getColorDepth });
         globalThis.process = real;
         process.stdout.write(JSON.stringify(seen));`;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", program],
-        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined },
+        // With TMUX, a terminal that is not dumb has colors on every platform.
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined, TERM: "xterm", TMUX: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -129,6 +139,8 @@ describe("console.Console", () => {
           unset: "plain",
           "set later": "colors",
           "no process": "colors",
+          "no process, a terminal with NO_COLOR": "plain",
+          "no process, a terminal": "colors",
         },
         stderr: "",
         exitCode: 0,
@@ -142,7 +154,7 @@ describe("console.Console", () => {
         let reads = 0;
         const { FORCE_COLOR, NO_COLOR } = process.env;
         process.env = { NO_COLOR, get FORCE_COLOR() { reads++; return FORCE_COLOR; } };
-        new Console(new PassThrough()).log("a string");
+        new Console(streamInto([])).log("a string");
         const afterString = reads;
         const both = [logged(), logged()];
         warned
@@ -166,6 +178,39 @@ describe("console.Console", () => {
         exitCode: 0,
       });
       expect(stderr).toContain("Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.");
+    });
+  });
+
+  test.concurrent("clear() reads TERM from the `env` that `process` has now", async () => {
+    const program = `${head}
+      const cleared = () => {
+        const written = [];
+        new Console(streamInto(written, { isTTY: true })).clear();
+        return written.length > 0;
+      };
+      const seen = {};
+      const real = process;
+      const env = real.env;
+      real.env = { TERM: "dumb" };
+      seen.dumb = cleared();
+      real.env = { TERM: "xterm" };
+      seen.xterm = cleared();
+      real.env = env;
+      globalThis.process = undefined;
+      seen["no process"] = cleared();
+      globalThis.process = real;
+      process.stdout.write(JSON.stringify(seen));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env: { ...bunEnv, TERM: "xterm" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ seen: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      seen: { dumb: false, xterm: true, "no process": true },
+      stderr: "",
+      exitCode: 0,
     });
   });
 

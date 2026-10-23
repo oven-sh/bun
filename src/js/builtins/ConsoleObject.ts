@@ -484,7 +484,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           if (env.FORCE_COLOR !== undefined) {
             color = require("internal/tty").getColorDepth(env) > 2;
           } else {
-            color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
+            color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth(env) > 2 : true);
           }
         }
 
@@ -607,8 +607,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     // Defined by: https://console.spec.whatwg.org/#clear
     clear() {
       // It only makes sense to clear if _stdout is a TTY.
-      // Otherwise, do nothing.
-      if (this._stdout.isTTY && Bun.env["TERM"] !== "dumb") {
+      // Otherwise, do nothing. `TERM` is from the same `env` as the colors.
+      if (this._stdout.isTTY && (globalThis.process?.env ?? Bun.env).TERM !== "dumb") {
         this._stdout.write("\x1B[2J\x1B[3J\x1B[H");
       }
     },

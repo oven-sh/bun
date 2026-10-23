@@ -1334,6 +1334,8 @@ compile: {
 
 Without `outfile`, the executable is named after the entrypoint and written to `outdir`, or to the current working directory when there is no `outdir`. This matches `bun build --compile`.
 
+On Linux and macOS, when the output path is the null device (`/dev/null`), Bun writes the executable into it and leaves the device in place. `bun build --compile` does the same for a FIFO. `Bun.build` writes into a FIFO only when the output path names one of the process's open descriptors, such as `/dev/stdout`. For any other FIFO, `Bun.build` reports an error.
+
 ### Supported targets
 
 ```ts title="Bun.Build.CompileTarget" icon="/icons/typescript.svg"

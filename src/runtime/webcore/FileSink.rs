@@ -74,6 +74,76 @@ pub struct FileSink {
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
     /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open.
     abort_handle: bun_jsc::AbortHandle,
+    /// A file this sink opened (an fd that is not polled): `on_close` closes it, not the writer.
+    #[cfg(unix)]
+    file: Cell<Option<OwnedFile>>,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct OwnedFile {
+    fd: Fd,
+    /// The script that opened it.
+    opener: bun_jsc::ContextId,
+}
+
+/// The close of a `Bun.write(dest, stream)` file, on the work pool. `then` settles the promise.
+#[cfg(unix)]
+struct CloseStreamFile;
+
+/// Closes on drop as well: a job that is released unrun still closes its file.
+#[cfg(unix)]
+struct StreamFile(Fd);
+
+#[cfg(unix)]
+impl Drop for StreamFile {
+    fn drop(&mut self) {
+        let fd = core::mem::replace(&mut self.0, Fd::INVALID);
+        if fd != Fd::INVALID {
+            fd.close();
+        }
+    }
+}
+
+/// One ref on the sink whose file is being closed.
+#[cfg(unix)]
+struct ClosingSink(*mut FileSink);
+
+// SAFETY: a `FileSink` ref; used and dropped on the sink's JS thread only.
+#[cfg(unix)]
+unsafe impl bun_jsc::job::JsAffine for ClosingSink {}
+
+#[cfg(unix)]
+impl Drop for ClosingSink {
+    fn drop(&mut self) {
+        // A job that is released without `then` reports nothing: the pipe and the keep-alive ref go here.
+        // SAFETY: the ref `on_close` took for this job keeps the sink live until the `deref`.
+        unsafe {
+            (*self.0).release_pipe();
+            FileSink::clear_keep_alive_ref(self.0);
+            FileSink::deref(self.0);
+        }
+    }
+}
+
+#[cfg(unix)]
+impl bun_jsc::JobContext for CloseStreamFile {
+    type OffThread = StreamFile;
+    type Js = ClosingSink;
+
+    fn run(
+        file: &mut StreamFile,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        core::mem::replace(&mut file.0, Fd::INVALID).close();
+        Some(done)
+    }
+
+    fn then(_: StreamFile, sink: ClosingSink, _: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+        // SAFETY: `sink` holds a ref, on the canonical pointer `on_close` was called with.
+        unsafe { FileSink::report_closed(sink.0) };
+        Ok(())
+    }
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -187,6 +257,11 @@ impl Options {
 impl Drop for FileSink {
     fn drop(&mut self) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
+        // Never ended: `on_close` did not run, and nothing is told that this file is closed.
+        #[cfg(unix)]
+        if let Some(file) = self.file.take() {
+            bun_io::Closer::close(file.fd, ());
+        }
         self.release_pipe();
         if let Some(global) = self.js_global() {
             let vm = global.bun_vm().as_mut();
@@ -538,6 +613,35 @@ impl FileSink {
             let mut src = *(*this).source.get();
             src.close(err);
 
+            #[cfg(unix)]
+            if let Some(file) = (*this).file.take() {
+                // Only `Bun.write(dest, stream)` reports through a promise, which can wait for the pool.
+                let global = (*this).js_global().filter(|global| {
+                    (*this).pipe.get().has_done() && !global.bun_vm().is_shutting_down()
+                });
+                if let Some(global) = global {
+                    (*this).ref_();
+                    let opener = global.bun_vm().context_of(file.opener);
+                    bun_jsc::Job::<CloseStreamFile>::schedule(
+                        &global.js_thread(opener),
+                        StreamFile(file.fd),
+                        ClosingSink(this),
+                    );
+                    return;
+                }
+                file.fd.close();
+            }
+            FileSink::report_closed(this);
+        }
+    }
+
+    /// The file is closed: settle the promise of `Bun.write(dest, stream)` and let go of the pipe.
+    /// SAFETY: as [`on_close`](Self::on_close), and the caller holds a ref of its own across the call.
+    unsafe fn report_closed(this: *mut FileSink) {
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
+        unsafe {
+            #[cfg(unix)]
+            debug_assert!((*this).file.get().is_none());
             (*this).settle_stream_done();
             (*this).release_pipe();
 
@@ -816,6 +920,16 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Fifo);
+                    }
+
+                    let file = (!self.pollable.get()).then(|| OwnedFile {
+                        fd,
+                        opener: context.id(),
+                    });
+                    self.writer.with_mut(|w| w.close_fd = file.is_none());
+                    // A restart onto a pollable fd does not pass through `on_close`.
+                    if let Some(previous) = self.file.replace(file) {
+                        previous.fd.close();
                     }
                 }
             }
@@ -1622,6 +1736,8 @@ impl FileSink {
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
+            #[cfg(unix)]
+            file: Cell::new(None),
         }
     }
 }
@@ -1900,6 +2016,11 @@ impl FileSink {
 
         // What the stream's code threw, which need not be an Error.
         if let Some(err) = promise_result.to_error() {
+            // `Bun.write(dest, stream)` rejects its promise with it, once the file is closed.
+            if self.pipe.get().has_done() {
+                crate::dispatch::fold(self.handle_reject_stream(global_this, err));
+                return Ok(JSValue::UNDEFINED);
+            }
             self.release_pipe();
             return Err(global_this.throw_value(err));
         }

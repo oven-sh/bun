@@ -1110,7 +1110,12 @@ test("a wrapper around the default Error.prepareStackTrace leaves the frames as 
     eval: () => eval('new Error("eval")'),
     "function code": () => new Function('return new Error("fn")')(),
     async: () => later(),
-    "anonymous constructor": () => new (class { constructor() { this.error = new Error("anon"); } })().error,
+    "anonymous constructor": () =>
+      new (class {
+        constructor() {
+          this.error = new Error("anon");
+        }
+      })().error,
   };
   // One call site for every way of formatting, so the positions can be compared. The stack is read while
   // the formatter is installed: it is formatted on the first read.
@@ -1220,7 +1225,10 @@ test.concurrent("a node:vm frame named after a transpiled file keeps its own pos
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const at = `    at deep (${join(String(dir), "probe.ts")}:3:26)`;
-  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({ stdout: { plain: at, wrapped: at, typed: 1 }, stderr: "" });
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: { plain: at, wrapped: at, typed: 1 },
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });
 

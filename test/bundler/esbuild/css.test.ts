@@ -177,6 +177,63 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("css/CSSUrlInPropertyInitialValue", {
+    files: {
+      "/a.css": /* css */ `
+          @property --url {
+            syntax: "<url>";
+            inherits: false;
+            initial-value: url(./hi.svg);
+          }
+          @property --image {
+            initial-value: url("./hi.svg");
+            syntax: "<image>";
+            inherits: false;
+          }
+          @property --any {
+            syntax: "*";
+            inherits: false;
+            initial-value: 1px url(./hi.svg);
+          }
+          /* The first initial-value is replaced, so its file is not an import. */
+          @property --last {
+            syntax: "<url>";
+            inherits: false;
+            initial-value: url(./replaced.svg);
+            initial-value: url(./hi.svg);
+          }
+        `,
+      "/hi.svg": /* svg */ `<svg xmlns="http://www.w3.org/2000/svg"><circle r="4" /></svg>`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const url = `url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxjaXJjbGUgcj0iNCIgLz48L3N2Zz4=")`;
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(`
+  /* a.css */
+  @property --url {
+    syntax: "<url>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  @property --image {
+    syntax: "<image>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  @property --any {
+    syntax: "*";
+    inherits: false;
+    initial-value: 1px ${url};
+  }
+  @property --last {
+    syntax: "<url>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  `);
+    },
+  });
+
   // TODO: re-enable these tests when we do minify local css identifiers
   // itBundled("css/TestImportLocalCSSFromJSMinifyIdentifiersAvoidGlobalNames", {
   //   files: {
@@ -977,6 +1034,18 @@ describe("esbuild-bundler", () => {
       "/src/entry.css": /* css */ `
         a { background: url(./one.png); }
         b { background: url("./two.png"); }
+      `,
+    },
+    bundleErrors: {
+      "/src/entry.css": ['Could not resolve: "./one.png"', 'Could not resolve: "./two.png"'],
+    },
+  });
+
+  itBundled("css/MissingImportURLInPropertyInitialValue", {
+    files: {
+      "/src/entry.css": /* css */ `
+        @property --a { syntax: "<url>"; inherits: false; initial-value: url(./one.png); }
+        @property --b { initial-value: url("./two.png"); syntax: "*"; inherits: false; }
       `,
     },
     bundleErrors: {
@@ -2315,4 +2384,65 @@ c {
       "/across-files-url.css",
     ],
   });
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`css/PropertyRuleStringSyntax_${backend}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          .page { color: green; }
+          @property --label { syntax: "<string>"; inherits: false; initial-value: "a"; }
+        `,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+          /* entry.css */
+          .page {
+            color: green;
+          }
+          @property --label {
+            syntax: "<string>";
+            inherits: false;
+            initial-value: "a";
+          }
+        `);
+      },
+    });
+    itBundled(`css/PropertyRuleUniversalSyntaxTrailingSpace_${backend}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          .page { color: green; }
+          @property --label { syntax: "* "; inherits: false; }
+        `,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+          /* entry.css */
+          .page {
+            color: green;
+          }
+          @property --label {
+            syntax: "*";
+            inherits: false
+          }
+        `);
+      },
+    });
+    itBundled(`css/PropertyRuleUnknownSyntaxName_${backend}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          .page { color: green; }
+          @property --label { syntax: "<strings>"; inherits: false; initial-value: "a"; }
+        `,
+      },
+      outfile: "/out.css",
+      bundleErrors: {
+        "/entry.css": ["Invalid value"],
+      },
+    });
+  }
 });

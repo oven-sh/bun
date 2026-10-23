@@ -198,7 +198,7 @@ export const rows: Row[] = [
   ["aot/jit-mode-eager-tier-up", 2, "./jit-mode-eager-tier-up", "eagerTierUpSweep"],
   [
     "aot/joined-programs-all-code-direct",
-    3,
+    12,
     "./joined-programs",
     "joined",
     ["all-code-direct", ["--aot-testing=GenerateAllCodeDirectly"]],

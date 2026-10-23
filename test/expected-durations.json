@@ -2485,13 +2485,40 @@
     "windows": 97302
   },
   "aot/joined-programs-all-code-direct-1.test.ts": {
-    "default": 16928
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-10.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-11.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-12.test.ts": {
+    "default": 90000
   },
   "aot/joined-programs-all-code-direct-2.test.ts": {
-    "default": 12012
+    "default": 90000
   },
   "aot/joined-programs-all-code-direct-3.test.ts": {
-    "default": 12548
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-4.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-5.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-6.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-7.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-8.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-all-code-direct-9.test.ts": {
+    "default": 90000
   },
   "aot/jsdoc-import-tags.test.ts": {
     "default": 17244,

@@ -350,6 +350,12 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    /** These are run whatever --one-in draws. */
+    ["always-draw"]: {
+      type: "string",
+      multiple: true,
+      default: undefined,
+    },
     ["vendor"]: {
       type: "string",
       default: undefined,
@@ -2769,7 +2775,10 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
         .readUInt32LE(0) %
         oneIn ===
       0;
-    const drawnTests = availableTests.filter(isDrawn);
+    const alwaysDrawn: string[] = options["always-draw"] ?? [];
+    const drawnTests = availableTests.filter(
+      testPath => isDrawn(testPath) || alwaysDrawn.some(group => testPath.replaceAll("\\", "/").includes(group)),
+    );
     !isQuiet &&
       console.log("Drawing tests: one in", oneIn, "for", commit, drawnTests.length, "/", availableTests.length);
     availableTests.splice(0, availableTests.length, ...drawnTests);

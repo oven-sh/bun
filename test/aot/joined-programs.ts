@@ -18,7 +18,8 @@ const root = join(import.meta.dir, "programs");
 const namesInGroup = 300;
 // What a script makes from a few rows of the table of built-ins is listed under one name until it is made (run-programs.ts).
 const programsUnderOneName = 6;
-const groupsInShare = 3;
+// TODO: two programs have died on arm64 in code generated directly, in groups that a run happened to take. Until that arm of the generator has been seen whole, a run there takes every group.
+const groupsInShare = process.arch === "arm64" ? Infinity : 3;
 const measure = ["--aot-heat=everything-is-hot"];
 
 const cannotBeJoined = new RegExp(
@@ -186,7 +187,7 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
     if (isWindows || isASAN) return void test.skip("no code is generated directly on Windows or by a Bun built with AddressSanitizer", () => {});
     const groups = groupsOf(programsOfOneFile());
     const carrier = withoutDebugInformation();
-    const [first, step] = partInShare(part, parts, Math.ceil(groups.length / parts / groupsInShare)).split("/").map(Number);
+    const [first, step] = partInShare(part, parts, Math.max(1, Math.ceil(groups.length / parts / groupsInShare))).split("/").map(Number);
     for (let group = first - 1; group < groups.length; group += step) {
       const listed = groups[group];
       const nameOf = (path: string) => inPrograms(path).replaceAll("\\", "/");

@@ -953,7 +953,8 @@ function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): str
 function getAotFileDraw({ os, distro, profile }: Platform, aot: AotTests): number {
   if (aot === "a tenth") return 10;
   if (distro === "debian" && !profile) return 1;
-  return os === "darwin" ? 2 : 8;
+  // TODO: 2 again once a run has shown every file on macOS: 377 of them have never begun there.
+  return os === "darwin" ? 1 : 8;
 }
 
 let expectedDurations: Record<string, Record<string, unknown>> | undefined;
@@ -990,6 +991,8 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 
   if (aot) {
     args.push("--include=aot/", "--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
+    // TODO: until all code that is generated directly has been seen to run on arm64 (test/aot/joined-programs.ts).
+    if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/joined-programs-all-code-direct");
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));

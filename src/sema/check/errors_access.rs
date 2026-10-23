@@ -898,7 +898,7 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         self.note_error_in(at.0);
-        if self.is_reported_too_late(None, at.0) {
+        if self.leaves_own_late_request(at.0, at.1) || self.is_reported_too_late(None, at.0) {
             return self.mark_tainted_from(0);
         }
         let reported = self.reported.len();

@@ -275,6 +275,7 @@ impl Checker<'_, '_> {
         self.release_provisional_shapes();
         self.is_type_checked = false;
         self.has_checked_unused_identifiers = false;
+        self.holds_back_commits = false;
         let hir = self.hir(file);
         if hir.ran_out_of_stack {
             self.ran_out_of_stack.set(true);
@@ -1323,7 +1324,14 @@ impl Checker<'_, '_> {
     /// call, so that call's state determines whether `addDiagnostic` discards it. For an identifier in another file
     /// that would depend on the file order, so that file's `check_file` decides.
     pub(super) fn note_unresolved_identifier(&mut self, file: FileId, e: ExprId, name: Atom) {
+        let pos = self.hir(file)[e].pos;
+        // Only the query that evaluates `e` there notes it. If the task is discarded, the check that replaces it has to
+        // evaluate that query again, so nothing the query stored under a record may have been published by then.
+        self.holds_back_commits |= self.is_resolved_on_request_at(file, pos);
         if self.task.file == Some(file) {
+            if self.leaves_own_late_request(file, pos) {
+                return self.mark_tainted_from(0);
+            }
             let is_discarded = self.serialization_level >= MAX_SERIALIZATION_LEVEL;
             if *self.unknown_symbols.entry(e).or_insert(is_discarded) {
                 return;
@@ -1332,9 +1340,7 @@ impl Checker<'_, '_> {
             self.note_error_in(file);
             // As in `log_diagnostic`: only `check_file` of `file` reports it, and no check visits `e` there.
             let is_late = |visited: FileId| !self.is_checked_no_later_than(visited, file);
-            if self.task.file.is_some_and(is_late)
-                && self.is_left_to_a_request(file, self.hir(file)[e].pos)
-            {
+            if self.task.file.is_some_and(is_late) && self.is_left_to_a_request(file, pos) {
                 self.task.leave_to_an_earlier_request();
             }
         }

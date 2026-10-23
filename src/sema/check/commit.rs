@@ -621,7 +621,11 @@ impl<'s> Checker<'_, 's> {
     fn on_idle(&mut self) {
         self.discard_if_missed_cycle_member();
         // A commit here would store the members of a cycle that are in other files, and withhold those in this one.
-        if self.is_commit_due() && !self.task.was_discarded() && !self.task.has_resolved_a_cycle() {
+        if self.is_commit_due()
+            && !self.holds_back_commits
+            && !self.task.was_discarded()
+            && !self.task.has_resolved_a_cycle()
+        {
             let is_between_files = false;
             self.commit(is_between_files);
         } else if let Some(view) = self.task.view() {

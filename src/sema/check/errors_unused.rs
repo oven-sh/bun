@@ -5,6 +5,7 @@
 //! the identifiers, and a loop at the end of the file marks their symbols.
 
 use super::errors_enums_names::Location;
+use super::explain::NO_LENGTH;
 use super::jsdoc::closing_bracket_after;
 use super::*;
 use crate::bind::{
@@ -196,9 +197,6 @@ impl Checker<'_, '_> {
         self.note_identifiers(file, &mut u);
         self.note_type_references_that_an_instantiation_resolves(file, &mut u);
         u.note_exports();
-        if u.has_unreferenced_name_below_import_type_arguments() {
-            self.task.leave_to_an_earlier_request();
-        }
         let reported = self.reported.len();
         self.report_unused_declarations(&u, &renamed);
         if self.reported.len() == reported {
@@ -209,6 +207,55 @@ impl Checker<'_, '_> {
         self.unused_private_members.clear();
         self.note_rare_references(file, &mut u);
         self.report_unused_declarations(&u, &renamed);
+        if self.reports_name_below_import_type_arguments(&u, reported) {
+            self.task.leave_to_an_earlier_request();
+        }
+    }
+
+    /// True if one of the declarations reported from `self.reported[from]` on is named by a type reference below the
+    /// type arguments of an import type. The check of the file resolves no name there: see
+    /// `File::type_arguments_of_import_types`. tsc counts the reference if the check of an earlier file resolves the
+    /// name, and a task that checks a later file leaves it to that one (`leaves_reference_to_an_earlier_request`). So
+    /// the report is final only once every earlier file is.
+    fn reports_name_below_import_type_arguments(&self, u: &Unused, from: usize) -> bool {
+        let (hir, bound) = (u.hir, u.bound);
+        let below = hir.type_arguments_of_import_types();
+        if below.is_empty() {
+            return false;
+        }
+        let reported = &self.reported[from..];
+        let is_reported = |symbol: SymbolId| {
+            bound.symbol(symbol).decls.iter().any(|&declaration| {
+                let node = hir.node(declaration);
+                let (start, end) = (hir.start(node), self.end_of_node(u.file, node));
+                reported.iter().any(|d| {
+                    let end_of_report = if d.end == NO_LENGTH { 0 } else { d.end };
+                    d.file == u.file
+                        && ((start..end).contains(&d.start)
+                            || (d.start..end_of_report).contains(&start))
+                })
+            })
+        };
+        hir.types.iter().enumerate().any(|(i, node)| {
+            let TypeNodeKind::Ref { name, .. } = node.kind else {
+                return false;
+            };
+            if !below.contain(node.pos) || bound.is_unchecked_type(i) {
+                return false;
+            }
+            // `resolveEntityName`: the first name of `a.b` is a namespace.
+            let meaning = match name.len() {
+                1 => SymFlags::TYPE,
+                _ => SymFlags::NAMESPACE,
+            };
+            let first = hir.texts(name).next();
+            let found = first.and_then(|first| u.resolve_use(bound.type_scope[i], first, meaning));
+            found.is_some_and(|found| {
+                !found.is_self_reference
+                    && u.referenced[found.symbol.idx()] & REFERENCED == 0
+                    && is_reported(found.symbol)
+            })
+        })
     }
 
     fn report_unused_declarations(&mut self, u: &Unused, renamed: &[PatPropId]) {
@@ -1134,43 +1181,6 @@ pub(super) fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
 
 impl Unused<'_, '_> {
     // ───────────────────────────── references ─────────────────────────────
-
-    /// True if a type reference below the type arguments of an import type names something of the file that nothing
-    /// references yet. The check of the file resolves no name there: see `File::type_arguments_of_import_types`. tsc
-    /// counts the reference if the check of an earlier file resolves the name, and a task that checks a later file
-    /// leaves it to that one (`Checker::leaves_reference_to_an_earlier_request`). So what this task reports is final
-    /// only once every earlier file is.
-    fn has_unreferenced_name_below_import_type_arguments(&self) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let below = hir.type_arguments_of_import_types();
-        if below.is_empty() {
-            return false;
-        }
-        hir.types.iter().enumerate().any(|(i, node)| {
-            let TypeNodeKind::Ref { name, .. } = node.kind else {
-                return false;
-            };
-            if !below.contain(node.pos) || bound.is_unchecked_type(i) {
-                return false;
-            }
-            // `resolveEntityName`: the first name of `a.b` is a namespace.
-            let meaning = match name.len() {
-                1 => SymFlags::TYPE,
-                _ => SymFlags::NAMESPACE,
-            };
-            let first = hir.texts(name).next();
-            let found =
-                first.and_then(|first| self.resolve_use(bound.type_scope[i], first, meaning));
-            found.is_some_and(|found| {
-                // No check registers a declaration that is itself below the type arguments.
-                let is_declared_below = (bound.symbol(found.symbol).decls.iter())
-                    .all(|&declaration| below.contain(hir.start(hir.node(declaration))));
-                !found.is_self_reference
-                    && self.referenced[found.symbol.idx()] & REFERENCED == 0
-                    && !is_declared_below
-            })
-        })
-    }
 
     /// `export { a }` references `a` with any meaning, past `checkGrammarModuleElementContext`.
     fn note_exports(&mut self) {

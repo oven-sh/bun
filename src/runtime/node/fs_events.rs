@@ -548,6 +548,12 @@ impl FSEventsLoop {
                 if path.len() < handle_path.len() || !path.starts_with(handle_path) {
                     continue;
                 }
+                // "/a/views2" also starts with "/a/views": the match must end on a path boundary.
+                let ends_on_boundary = handle_path.ends_with(b"/")
+                    || matches!(path.get(handle_path.len()), None | Some(b'/'));
+                if !ends_on_boundary {
+                    continue;
+                }
                 let is_file = (flags & K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR) == 0;
 
                 // Remove common prefix, unless the watched folder is "/"

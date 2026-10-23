@@ -152,7 +152,8 @@ pub struct Options<'a> {
     /// Keeps every directive in the AST, in its original position and with its original text.
     /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
     pub keep_directives: bool,
-    pub preserve_unused_imports_ts: bool,
+    /// From the tsconfig.json that governs the file. Empty for a file inside node_modules.
+    pub unused_import_flags_ts: options::TSUnusedImportFlags,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
     pub features: RuntimeFeatures,
@@ -210,7 +211,7 @@ impl<'a> Default for Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
@@ -262,7 +263,7 @@ impl<'a> Options<'a> {
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             keep_directives: self.keep_directives,
-            preserve_unused_imports_ts: self.preserve_unused_imports_ts,
+            unused_import_flags_ts: self.unused_import_flags_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
             features: RuntimeFeatures {
@@ -341,6 +342,10 @@ impl<'a> Options<'a> {
 
         if self.ts {
             hasher.update(b"TS");
+            if !self.unused_import_flags_ts.is_empty() {
+                hasher.update(b"ts_unused_imports=");
+                hasher.update(&[self.unused_import_flags_ts.bits()]);
+            }
         } else {
             hasher.update(b"NO_TS");
         }
@@ -371,7 +376,7 @@ impl<'a> Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),

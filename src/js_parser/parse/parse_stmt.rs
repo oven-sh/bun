@@ -12,6 +12,7 @@ use js_ast::{Expr, G, LocRef, S, Stmt};
 use js_lexer::T;
 
 use crate::parser::fs;
+use crate::parser::options::TSUnusedImportFlags;
 use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
     StatementScope, StmtList,
@@ -1306,9 +1307,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if Self::IS_TYPESCRIPT_ENABLED {
                         // export {type Foo} from 'bar';
                         // ->
-                        // nothing
+                        // nothing, or `export {} from 'bar'` when tsconfig keeps the statement
                         // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                        if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                        if export_clause.clauses.is_empty()
+                            && export_clause.had_type_only_exports
+                            && !p
+                                .options
+                                .unused_import_flags_ts
+                                .contains(TSUnusedImportFlags::KEEP_STMT)
+                        {
                             return Ok(p.s(S::TypeScript {}, loc));
                         }
                     }
@@ -1477,7 +1484,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 let import_clause = p.parse_import_clause()?;
                 if Self::IS_TYPESCRIPT_ENABLED {
-                    if import_clause.had_type_only_imports && import_clause.items.is_empty() {
+                    // `import { type Foo } from 'mod'` is erased, or stays a request for 'mod'
+                    // when tsconfig keeps the statement.
+                    if import_clause.had_type_only_imports
+                        && import_clause.items.is_empty()
+                        && !p
+                            .options
+                            .unused_import_flags_ts
+                            .contains(TSUnusedImportFlags::KEEP_STMT)
+                    {
                         p.lexer.expect_contextual_keyword(b"from")?;
                         let _ = p.parse_path()?;
                         p.lexer.expect_or_insert_semicolon()?;

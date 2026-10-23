@@ -1,6 +1,7 @@
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
+use bun_js_parser::options::TSUnusedImportFlags;
 use bun_parsers::json_parser;
 use enumset::{EnumSet, EnumSetType};
 
@@ -157,7 +158,12 @@ pub struct TSConfigJSON {
     pub jsx: options::jsx::Pragma,
     pub(crate) jsx_flags: JsxFieldSet,
 
+    /// `None`: the key is absent. `Some(true)`: `"preserve"` or `"error"`.
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
+    /// `None`: the key is absent.
+    pub(crate) preserve_value_imports: Option<bool>,
+    /// `None`: the key is absent.
+    pub(crate) verbatim_module_syntax: Option<bool>,
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
@@ -175,7 +181,9 @@ impl Default for TSConfigJSON {
             paths: PathsMap::default(),
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
-            preserve_imports_not_used_as_values: Some(false),
+            preserve_imports_not_used_as_values: None,
+            preserve_value_imports: None,
+            verbatim_module_syntax: None,
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
@@ -250,6 +258,23 @@ impl TSConfigJSON {
         }
 
         out
+    }
+
+    /// `verbatimModuleSyntax` is both flags. Each of the two settings that it replaced is one.
+    pub fn unused_import_flags(&self) -> TSUnusedImportFlags {
+        if self.verbatim_module_syntax == Some(true) {
+            return TSUnusedImportFlags::all();
+        }
+        let mut flags = TSUnusedImportFlags::empty();
+        flags.set(
+            TSUnusedImportFlags::KEEP_STMT,
+            self.preserve_imports_not_used_as_values == Some(true),
+        );
+        flags.set(
+            TSUnusedImportFlags::KEEP_VALUES,
+            self.preserve_value_imports == Some(true),
+        );
+        flags
     }
 
     /// Support ${configDir}, but avoid allocating when possible.
@@ -380,6 +405,8 @@ impl TSConfigJSON {
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_import_source_v: Option<&bun_ast::E::JsonValue> = None;
             let mut imports_not_used_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
+            let mut preserve_value_imports_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut verbatim_module_syntax_v: Option<&bun_ast::E::JsonValue> = None;
             let mut module_suffixes_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut paths_v: Option<&bun_ast::E::JsonValue> = None;
 
@@ -410,6 +437,12 @@ impl TSConfigJSON {
                         }
                         b"importsNotUsedAsValues" if imports_not_used_v.is_none() => {
                             imports_not_used_v = Some((value, loc))
+                        }
+                        b"preserveValueImports" if preserve_value_imports_v.is_none() => {
+                            preserve_value_imports_v = Some(value)
+                        }
+                        b"verbatimModuleSyntax" if verbatim_module_syntax_v.is_none() => {
+                            verbatim_module_syntax_v = Some(value)
                         }
                         b"moduleSuffixes" if module_suffixes_v.is_none() => {
                             module_suffixes_v = Some((value, loc))
@@ -514,7 +547,9 @@ impl TSConfigJSON {
                         ImportsNotUsedAsValue::Preserve | ImportsNotUsedAsValue::Err => {
                             result.preserve_imports_not_used_as_values = Some(true);
                         }
-                        ImportsNotUsedAsValue::Remove => {}
+                        ImportsNotUsedAsValue::Remove => {
+                            result.preserve_imports_not_used_as_values = Some(false);
+                        }
                         _ => {
                             let _ = log.add_range_warning_fmt(
                                 Some(source),
@@ -527,6 +562,14 @@ impl TSConfigJSON {
                         }
                     }
                 }
+            }
+
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = preserve_value_imports_v {
+                result.preserve_value_imports = Some(val);
+            }
+
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = verbatim_module_syntax_v {
+                result.verbatim_module_syntax = Some(val);
             }
 
             if let Some((prefixes, loc)) = module_suffixes_v {

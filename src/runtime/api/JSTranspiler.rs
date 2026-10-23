@@ -56,6 +56,21 @@ pub(crate) struct JSTranspiler {
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
+/// What tsconfig says about the unused imports of a TypeScript file. `trimUnusedImports: true`
+/// (which `treeShaking: true` implies) asks for their removal, so tsconfig does not apply then.
+fn unused_import_flags_ts(
+    tsconfig: Option<&TSConfigJSON>,
+    trim_unused_imports: Option<bool>,
+) -> options::TSUnusedImportFlags {
+    if trim_unused_imports == Some(true) {
+        return options::TSUnusedImportFlags::empty();
+    }
+    tsconfig.map_or(
+        options::TSUnusedImportFlags::empty(),
+        TSConfigJSON::unused_import_flags,
+    )
+}
+
 fn default_transform_options() -> api::TransformOptions {
     api::TransformOptions {
         disable_hmr: true,
@@ -738,6 +753,10 @@ impl TransformTask {
             path: source.path,
             virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
+            unused_import_flags_ts: unused_import_flags_ts(
+                tsconfig,
+                self.transpiler.options.trim_unused_imports,
+            ),
             experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             use_define_for_class_fields: tsconfig
@@ -1194,6 +1213,10 @@ impl JSTranspiler {
             virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
             macro_js_ctx,
+            unused_import_flags_ts: unused_import_flags_ts(
+                config.tsconfig.as_deref(),
+                config.trim_unused_imports,
+            ),
             experimental_decorators: config
                 .tsconfig
                 .as_deref()
@@ -1561,6 +1584,10 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        opts.unused_import_flags_ts = unused_import_flags_ts(
+            self.config.get().tsconfig.as_deref(),
+            self.config.get().trim_unused_imports,
+        );
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

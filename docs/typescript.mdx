@@ -54,6 +54,39 @@ Running `bun init` in a new directory generates this `tsconfig.json` for you.
 bun init
 ```
 
+## `verbatimModuleSyntax`
+
+With `"verbatimModuleSyntax": true`, Bun keeps every import that has no `type` modifier. The imported module runs even when your code uses none of its names.
+
+```ts index.ts icon="/icons/typescript.svg"
+import { unused } from "./register-plugin"; // runs ./register-plugin
+import { type Options } from "./options"; // runs ./options
+import type { Config } from "./config"; // removed
+```
+
+Without the option, Bun removes all three imports, because no value uses them.
+
+- `bun run`, `bun test`, and `bun build` keep the statement and remove the names that nothing uses. `import { unused } from "./register-plugin"` becomes `import "./register-plugin"`, so a type that you import without `type` still loads.
+- `bun build --no-bundle` prints the unused names too.
+- Bun reads the option from the `tsconfig.json` nearest to each file. Bun does not apply the option to files in `node_modules`.
+
+Write `import type` for an import that you need only for its types. [`bun check`](/runtime/check) reports a type that you import without `type`.
+
+To run a project without this behavior, point Bun at a `tsconfig.json` that turns the option off.
+
+```json tsconfig.run.json icon="file-json"
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "verbatimModuleSyntax": false
+  }
+}
+```
+
+```sh terminal icon="terminal"
+bun --tsconfig-override=tsconfig.run.json index.ts
+```
+
 ## Type checking
 
 Bun runs TypeScript files without checking their types. Use [`bun check`](/runtime/check) to type check your project.

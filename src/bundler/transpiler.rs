@@ -615,6 +615,8 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+                self.options.unused_import_flags_ts =
+                    self.resolver.unused_import_flags_ts(&root_dir);
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
@@ -881,6 +883,8 @@ pub struct ParseOptions<'a, 'b> {
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
+    /// `Resolver::unused_import_flags_ts` for the directory of `path`.
+    pub unused_import_flags_ts: options::TSUnusedImportFlags,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
@@ -1467,7 +1471,7 @@ impl<'a> Transpiler<'a> {
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
                     keep_directives: false,
-                    preserve_unused_imports_ts: false,
+                    unused_import_flags_ts: this_parse.unused_import_flags_ts,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,
                     features: js_ast::RuntimeFeatures::default(),
@@ -2838,6 +2842,7 @@ impl<'a> Transpiler<'a> {
                 // the option fields needed for `ParseOptions` first.
                 let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
                 let dirname_fd = resolve_result.dirname_fd;
+                let unused_import_flags_ts = resolve_result.flags.unused_import_flags_ts();
                 let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
                 let use_define_for_class_fields =
@@ -2868,6 +2873,7 @@ impl<'a> Transpiler<'a> {
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
                     jsx,
+                    unused_import_flags_ts,
                     emit_decorator_metadata,
                     experimental_decorators,
                     use_define_for_class_fields,

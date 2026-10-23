@@ -1939,6 +1939,51 @@ class Test extends Bar {
       ts.expectPrinted_("import Foo = Baz.Bar;", "");
     });
 
+    it("a tsconfig that keeps unused imports keeps an import whose names are all types", () => {
+      const code = `import { type T } from "foo"; export { type U } from "bar"; import type { V } from "baz";`;
+      const requests = [
+        { path: "foo", kind: "import-statement" },
+        { path: "bar", kind: "import-statement" },
+      ];
+      const scan = (compilerOptions, options = {}) =>
+        new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions }, ...options }).scanImports(code);
+
+      for (const compilerOptions of [
+        { verbatimModuleSyntax: true },
+        { importsNotUsedAsValues: "preserve" },
+        { importsNotUsedAsValues: "error" },
+        // It wins over the two settings that it replaced.
+        { verbatimModuleSyntax: true, importsNotUsedAsValues: "remove", preserveValueImports: false },
+      ]) {
+        expect(scan(compilerOptions)).toEqual(requests);
+        const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions } });
+        expect(transpiler.transformSync(`import { type T } from "foo";`)).toBe('import"foo";\n');
+        expect(transpiler.scan(code).imports).toEqual(requests);
+      }
+
+      for (const compilerOptions of [
+        {},
+        { verbatimModuleSyntax: false },
+        { importsNotUsedAsValues: "remove" },
+        // It keeps the unused names of a value import. A clause of types has none.
+        { preserveValueImports: true },
+      ]) {
+        expect(scan(compilerOptions)).toEqual([]);
+      }
+
+      // `trimUnusedImports` and `treeShaking` ask for the removal, whatever tsconfig says.
+      for (const options of [{ trimUnusedImports: true }, { treeShaking: true }]) {
+        expect(scan({ verbatimModuleSyntax: true }, options)).toEqual([]);
+        const trimming = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { verbatimModuleSyntax: true } },
+          ...options,
+        });
+        expect(trimming.transformSync(`import { unused } from "foo"; import { type T } from "bar";`)).toBe("");
+        expect(trimming.scanImports(`import { unused } from "foo";`)).toEqual([]);
+      }
+    });
+
     it("export import Foo = Baz.Bar", () => {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });

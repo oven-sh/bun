@@ -277,6 +277,7 @@ use bun_alloc as allocators;
 // `bun.resolver.SideEffects` — same type as `Result.primary_side_effects_data`
 // (re-exported from `bun_ast`; see `result.rs`).
 use bun_ast::SideEffects;
+use bun_js_parser::options::TSUnusedImportFlags;
 
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
 // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
@@ -1625,6 +1626,9 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+                result
+                    .flags
+                    .set_unused_import_flags_ts(Self::unused_import_flags_ts_of(&dir, &tsconfig));
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -6659,6 +6663,12 @@ impl<'a> Resolver<'a> {
                 if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                     mc.preserve_imports_not_used_as_values = Some(value);
                 }
+                if let Some(value) = parent_config.preserve_value_imports {
+                    mc.preserve_value_imports = Some(value);
+                }
+                if let Some(value) = parent_config.verbatim_module_syntax {
+                    mc.verbatim_module_syntax = Some(value);
+                }
 
                 // TypeScript replaces paths across extends (child overrides parent
                 // entirely), so when a more-specific config defines paths, replace
@@ -6736,6 +6746,27 @@ impl<'a> Resolver<'a> {
                 .enclosing_tsconfig_json
                 .map(TSConfigRef::OfDirectory),
         }
+    }
+
+    /// What the TypeScript files of `dir_info` do with an unused import: what the nearest
+    /// tsconfig.json says, and nothing inside node_modules. A package was not written for the
+    /// settings of the project that installs it. esbuild's `tsConfigForDir` has the same rule.
+    pub fn unused_import_flags_ts(&mut self, dir_info: &DirInfo::DirInfo) -> TSUnusedImportFlags {
+        match self.enclosing_tsconfig_json(dir_info) {
+            Some(tsconfig) => Self::unused_import_flags_ts_of(dir_info, &tsconfig),
+            None => TSUnusedImportFlags::empty(),
+        }
+    }
+
+    /// [`Self::unused_import_flags_ts`], for a caller that holds the tsconfig.json of `dir_info`.
+    fn unused_import_flags_ts_of(
+        dir_info: &DirInfo::DirInfo,
+        tsconfig: &TSConfigJSON,
+    ) -> TSUnusedImportFlags {
+        if dir_info.is_inside_node_modules() {
+            return TSUnusedImportFlags::empty();
+        }
+        tsconfig.unused_import_flags()
     }
 
     /// `DirInfo::tsconfig_json`, for this resolver.

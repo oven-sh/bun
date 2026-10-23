@@ -123,6 +123,30 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("a tsconfig.json that keeps unused imports is part of the cache key", async () => {
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    const keep = JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } });
+    writeFileSync(join(temp_dir, "effect.ts"), `console.log("effect"); export const unused = 1;`);
+    writeFileSync(join(temp_dir, "a.ts"), `import { unused } from "./effect";\nconsole.log("a");` + filler);
+    // A JavaScript file has no import to keep: the setting does not change its key.
+    writeFileSync(join(temp_dir, "b.js"), `console.log("b");` + filler);
+
+    writeFileSync(join(temp_dir, "tsconfig.json"), "{}");
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("a");
+    expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
+    expect(newCacheCount()).toBe(2);
+
+    writeFileSync(join(temp_dir, "tsconfig.json"), keep);
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("effect\na");
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("effect\na");
+    const entries = () => readdirSync(cache_dir).map(name => [name, statSync(join(cache_dir, name)).mtimeMs]);
+    const before = entries();
+    expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
+    expect(entries()).toEqual(before);
+
+    writeFileSync(join(temp_dir, "tsconfig.json"), "{}");
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("a");
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

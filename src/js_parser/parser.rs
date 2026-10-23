@@ -108,6 +108,28 @@ pub mod options {
             }
         }
     }
+    bitflags::bitflags! {
+        /// What a TypeScript file does with an import that no value uses. tsconfig
+        /// `verbatimModuleSyntax` sets both bits. `importsNotUsedAsValues: "preserve" | "error"`
+        /// sets `KEEP_STMT` and `preserveValueImports` sets `KEEP_VALUES`.
+        ///
+        /// | input                               | neither        | `KEEP_STMT`    | `KEEP_VALUES`                   | both                            |
+        /// |-------------------------------------|----------------|----------------|---------------------------------|---------------------------------|
+        /// | `import * as unused from 'foo'`     | (removed)      | `import 'foo'` | `import * as unused from 'foo'` | `import * as unused from 'foo'` |
+        /// | `import { unused } from 'foo'`      | (removed)      | `import 'foo'` | `import { unused } from 'foo'`  | `import { unused } from 'foo'`  |
+        /// | `import { type unused } from 'foo'` | (removed)      | `import 'foo'` | (removed)                       | `import 'foo'`                  |
+        ///
+        /// Only a transform (`bun build --no-bundle`) prints the names that `KEEP_VALUES` keeps. A
+        /// bundle and the runtime link what is printed, and a type that was imported without
+        /// `type` has no export to link to. There `KEEP_VALUES` keeps the statement.
+        #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+        pub struct TSUnusedImportFlags: u8 {
+            /// Keep the statement, for the side effects of the module, when no binding is left.
+            const KEEP_STMT = 1 << 0;
+            /// Keep a value binding that nothing uses.
+            const KEEP_VALUES = 1 << 1;
+        }
+    }
     /// Port of `bake.Framework` (src/runtime/bake/mod.rs:129) — TYPE_ONLY
     /// parser-side mirror. The full struct lives in `bun_runtime::bake` (a
     /// higher tier we cannot depend on here); the parser only consumes the

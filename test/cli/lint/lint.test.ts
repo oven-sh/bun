@@ -6724,6 +6724,103 @@ maybe(() => { return f; });
       expect(reports).toEqual(expected);
     });
 
+    // From ESLint 8.57.1, 9.39.5 and 10.12.0. ESLint 8 doesn't have no-useless-assignment.
+    test.each([
+      [
+        "8.57.1",
+        [
+          "no-eval 1:1-1:5 eval can be harmful.",
+          "id-length 2:11-2:18 Identifier name #'abcdef' is too long (> 3).",
+          "no-magic-numbers 2:21-2:22 No magic number: 1.",
+          "no-magic-numbers 3:31-3:32 No magic number: 2.",
+          "no-magic-numbers 4:13-4:14 No magic number: 1.",
+          "no-magic-numbers 4:16-4:18 No magic number: -1.",
+          "no-implicit-coercion 4:20-4:23 use `Number(1n)` instead.",
+          "no-magic-numbers 4:21-4:23 No magic number: 1n.",
+          "no-magic-numbers 5:21-5:22 No magic number: 3.",
+          "no-loop-func 5:33-5:44 Function declared in a loop contains unsafe references to variable(s) 'i', 'i'.",
+          "object-shorthand 6:13-6:41 Expected property shorthand.",
+          "object-shorthand 6:43-6:73 Expected property shorthand.",
+          "object-shorthand 6:75-6:87 Expected property shorthand.",
+          "no-misleading-character-class 7:12-7:18 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:20-7:32 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:34-7:52 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-implicit-coercion 8:11-8:14 use `Boolean(x)` instead.",
+          "no-implicit-coercion 8:17-8:19 use `Number(y)` instead.",
+        ],
+      ],
+      [
+        "9.39.5",
+        [
+          "no-eval 1:1-1:5 eval can be harmful.",
+          "id-length 2:11-2:18 Identifier name #'abcdef' is too long (> 3).",
+          "no-magic-numbers 2:21-2:22 No magic number: 1.",
+          "no-useless-assignment 3:20-3:21 This assigned value is not used in subsequent statements.",
+          "no-magic-numbers 3:31-3:32 No magic number: 2.",
+          "no-magic-numbers 4:12-4:14 No magic number: +1.",
+          "no-magic-numbers 4:16-4:18 No magic number: -1.",
+          "no-implicit-coercion 4:20-4:23 Unexpected implicit coercion encountered. Use `Number(1n)` instead.",
+          "no-magic-numbers 4:20-4:23 No magic number: +1n.",
+          "no-magic-numbers 5:21-5:22 No magic number: 3.",
+          "no-loop-func 5:33-5:44 Function declared in a loop contains unsafe references to variable(s) 'i'.",
+          "object-shorthand 6:75-6:87 Expected property shorthand.",
+          "no-misleading-character-class 7:14-7:16 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:23-7:25 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:28-7:30 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:47-7:49 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-implicit-coercion 8:11-8:14 Unexpected implicit coercion encountered. Use `Boolean(x)` instead.",
+          "no-implicit-coercion 8:17-8:19 Unexpected implicit coercion encountered. Use `Number(y)` instead.",
+        ],
+      ],
+      [
+        "10.12.0",
+        [
+          "no-eval 1:1-1:5 `eval` can be harmful.",
+          "id-length 2:11-2:18 Identifier name '#abcdef' is too long (> 3).",
+          "no-magic-numbers 2:21-2:22 No magic number: 1.",
+          "no-useless-assignment 3:20-3:21 The value assigned to 'v' is not used in subsequent statements.",
+          "no-magic-numbers 3:31-3:32 No magic number: 2.",
+          "no-magic-numbers 4:12-4:14 No magic number: +1.",
+          "no-magic-numbers 4:16-4:18 No magic number: -1.",
+          "no-implicit-coercion 4:20-4:23 Unexpected implicit coercion encountered. Use `Number(1n)` instead.",
+          "no-magic-numbers 4:20-4:23 No magic number: +1n.",
+          "no-magic-numbers 5:21-5:22 No magic number: 3.",
+          "no-loop-func 5:33-5:44 Function declared in a loop contains unsafe references to variable(s) 'i'.",
+          "object-shorthand 6:75-6:87 Expected property shorthand.",
+          "no-misleading-character-class 7:14-7:16 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:23-7:25 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:28-7:30 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-misleading-character-class 7:47-7:49 Unexpected surrogate pair in character class. Use 'u' flag.",
+          "no-implicit-coercion 8:11-8:14 Unexpected implicit coercion encountered. Use `Boolean(x)` instead.",
+          "no-implicit-coercion 8:17-8:19 Unexpected implicit coercion encountered. Use `Number(y)` instead.",
+        ],
+      ],
+    ])("messages and locations that have changed, with eslint %s", async (version, expected) => {
+      const later = version === "8.57.1" ? "" : `"no-useless-assignment": "error", `;
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{ rules: { ${later}"no-eval": "error", "id-length": ["error", { min: 0, max: 3 }], "no-magic-numbers": "error", "no-loop-func": "error", "object-shorthand": "error", "no-misleading-character-class": "error", "no-implicit-coercion": "error" } }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": `eval("1");
+class A { #abcdef = 1; m() { return this.#abcdef; } }
+function f() { let v = 1; v = 2; return v; }
+const n = [+1, -1, +1n];
+for (var i = 0; i < 3; i++) { g(() => i + i); }
+const o = { x: /** @type {number} */ (x), "y": /** @type {number} */ (y), z: /* c */ z };
+const r = [/[\u{1F44D}]/, /a[\u{1F44D}]b[\u{1F44D}]/, new RegExp("[\u{1F44D}]")];
+const c = !!x + +y;
+console.log(A, f, n, o, r, c);
+`,
+        },
+        ["-f", "json", "a.js"],
+      );
+      const reports = (JSON.parse(raw)[0].messages as any[]).map(
+        it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
+      );
+      // Two rules report \`+1n\`, at the same place.
+      expect(reports.sort()).toEqual(expected.sort());
+    });
+
     // From ESLint 8.57.1 and 9.39.5.
     test.each([
       [

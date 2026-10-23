@@ -1055,7 +1055,7 @@ impl<S: RuleSet> Linter<S> {
             if follows_oxlint {
                 change_as_oxlint(message, changes.1);
             }
-            if changes_something && file.language().eslint_8.is_some() {
+            if changes_something && file.language().eslint_major == 8 {
                 let (fixes, suggests) = config::eslint8::changes_of(rule.reported_as());
                 message.fix = message.fix.take().filter(|_| fixes);
                 if !suggests {

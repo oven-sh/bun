@@ -275,6 +275,7 @@ impl NoMisleadingCharacterClass {
     fn verify<'a>(
         &self,
         node: Expr<'a>,
+        call: Option<Expr<'a>>,
         pattern: &[u8],
         flags: &[u8],
         unicode_fixer: impl Fn(Fixer<'a>) -> Option<Fix>,
@@ -327,6 +328,13 @@ impl NoMisleadingCharacterClass {
         };
         let (text, whole) = (cx.text(), node.node.span());
         for (kind, matches) in found.iter().enumerate() {
+            // ESLint 8 reports the literal or the call, once for each kind.
+            if cx.language().eslint_major < 9 {
+                if !matches.is_empty() {
+                    report(kind, call.unwrap_or(node.node).span());
+                }
+                continue;
+            }
             if node.literal.is_none() {
                 if !matches.is_empty() {
                     report(kind, whole);
@@ -439,7 +447,7 @@ impl Rule for NoMisleadingCharacterClass {
                 true => pattern_node.skip_type_wrappers(),
                 false => pattern_node,
             };
-            self.verify(source_node, &pattern, &flags, unicode_fixer, cx);
+            self.verify(source_node, Some(ref_node), &pattern, &flags, unicode_fixer, cx);
         }
 
         for e in std::mem::take(&mut cx.state) {
@@ -450,7 +458,7 @@ impl Rule for NoMisleadingCharacterClass {
                 let unicode_fixer = |fixer: Fixer<'a>| {
                     (*is_valid.get_or_init(|| is_valid_with_u(literal.pattern()))).then(|| fixer.insert_after(e, "u"))
                 };
-                self.verify(e, literal.pattern(), literal.flags(), unicode_fixer, cx);
+                self.verify(e, None, literal.pattern(), literal.flags(), unicode_fixer, cx);
             }
         }
     }

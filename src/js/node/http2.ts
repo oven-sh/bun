@@ -5017,6 +5017,10 @@ class ClientHttp2Session extends Http2Session {
   #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
+  // Set from the constructor until the hand-over, on a session that is connected in its
+  // constructor and whose parser has no native socket yet. The write handler then keeps the
+  // frames in the parser, so the constructor's tick never runs a JS transport's write.
+  #writeHold: boolean = false;
   #connections: number = 0;
 
   #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
@@ -5421,7 +5425,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return -1;
       const socket = self[bunHTTP2Socket];
       if (transportClosed) return writeToClosedTransport(self, socket);
-      if (socket && !socket.writableEnded && self.#connected) {
+      if (socket && !socket.writableEnded && self.#connected && !self.#writeHold) {
         // redirect writes to socket
         return socket.write(buffer) ? 1 : 0;
       }
@@ -5443,21 +5447,25 @@ class ClientHttp2Session extends Http2Session {
   get alpnProtocol() {
     return this.#alpnProtocol;
   }
+  // The state half of the connect. Returns the error to report when a TLSSocket did not negotiate h2.
+  #setConnected(socket) {
+    this.#connected = true;
+    if (socket instanceof TLSSocket) {
+      this.#alpnProtocol = "h2";
+      // client must check alpnProtocol
+      if (socket.alpnProtocol !== "h2") return $ERR_HTTP2_ERROR("h2 is not supported");
+    } else {
+      this.#alpnProtocol = "h2c";
+    }
+  }
+  // Runs when a socket that was still connecting at connect() has connected.
   #onConnect() {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
-    this.#connected = true;
-    // check if h2 is supported only for TLSSocket
-    if (socket instanceof TLSSocket) {
-      // client must check alpnProtocol
-      if (socket.alpnProtocol !== "h2") {
-        socket.end();
-        const error = $ERR_HTTP2_ERROR("h2 is not supported");
-        this.emit("error", error);
-      }
-      this.#alpnProtocol = "h2";
-    } else {
-      this.#alpnProtocol = "h2c";
+    const alpnError = this.#setConnected(socket);
+    if (alpnError !== undefined) {
+      socket.end();
+      this.emit("error", alpnError);
     }
     const nativeSocket = socket._handle;
     if (nativeSocket) {
@@ -5483,6 +5491,41 @@ class ClientHttp2Session extends Http2Session {
     }
     // Requests made while the socket was still connecting were queued; submit them now.
     this.#flushPendingRequests();
+  }
+
+  // Gives the frames that #writeHold kept in the parser to the transport.
+  #releaseWriteHold() {
+    const socket = this[bunHTTP2Socket];
+    const parser = this.#parser;
+    if (!socket || !parser) return;
+    this.#writeHold = false;
+    const nativeSocket = socket._handle;
+    if (nativeSocket) parser.setNativeSocket(nativeSocket);
+    parser.flush();
+  }
+
+  // The one queued job of a session that was connected in its constructor. node's setupHandle
+  // queues the 'connect' emit the same way.
+  static #afterConstructNT(self: ClientHttp2Session, socket, alpnError: Error | undefined) {
+    // destroy() in the constructor's tick leaves only the emit.
+    if (self[bunHTTP2Socket]) {
+      try {
+        if (alpnError !== undefined) {
+          socket.end();
+          self.emit("error", alpnError);
+        }
+        if (self.#writeHold) self.#releaseWriteHold();
+      } catch (e) {
+        self.destroy(e as Error);
+      }
+      // close() in the constructor's tick saw the first SETTINGS as not acknowledged and took
+      // the ACK grace. With nothing in flight, the session ends here.
+      const pendingRequests = self.#pendingRequests;
+      if (self.#closed && self.#connections === 0 && (pendingRequests === null || pendingRequests.length === 0)) {
+        self.destroy();
+      }
+    }
+    self.emit("connect", self, socket);
   }
 
   #onClose() {
@@ -5753,7 +5796,7 @@ class ClientHttp2Session extends Http2Session {
         return;
       }
       try {
-        this.#onConnect(arguments);
+        this.#onConnect();
         listener?.$call(this, this);
       } catch (e) {
         this.destroy(e);
@@ -5765,7 +5808,9 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options?.maxOutstandingSettings === "number" && options.maxOutstandingSettings >= 1) {
       this.#maxOutstandingSettings = options.maxOutstandingSettings;
     }
-    let connectOnNextTick = false;
+    // A transport that is connected already makes the session connected in this constructor,
+    // as node's setupHandle does. Nothing waits for a connect event then.
+    let transportConnected = false;
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
@@ -5774,7 +5819,7 @@ class ClientHttp2Session extends Http2Session {
         const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
         socket.once(connectEvent, onConnect.bind(this));
       } else {
-        connectOnNextTick = true;
+        transportConnected = true;
       }
     } else {
       // Like node, https only: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
@@ -5806,8 +5851,13 @@ class ClientHttp2Session extends Http2Session {
     }
     const nativeSettings = { ...options, ...options?.settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
-    // #onConnect attaches the native socket; frames written before that (the preface) queue.
+    // A connected kernel socket (its handle has an fd) is attached now: a write to it runs no JS.
+    // A socket that still connects must get no write, and a write to any other transport runs
+    // JS (a Duplex, a TLSSocket over one). #onConnect and #releaseWriteHold attach those later.
+    // Until then the frames (the preface first) queue in the parser.
+    const attachNow = transportConnected && nativeSocket?.fd >= 0;
     this.#parser = new H2FrameParser({
+      native: attachNow ? nativeSocket : undefined,
       context: this,
       settings: nativeSettings,
       handlers: ClientHttp2Session.#Handlers,
@@ -5818,11 +5868,13 @@ class ClientHttp2Session extends Http2Session {
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
     initHttp2SessionPerf(this, "client");
-    if (connectOnNextTick) {
-      // Queued only now that the session is fully built: the parser's construction
-      // re-enters JS, which can drain the tick queue, and an earlier-queued onConnect
-      // would then run against a session whose #parser is not assigned yet.
-      process.nextTick(onConnect.bind(this));
+    if (transportConnected) {
+      const alpnError = this.#setConnected(socket);
+      this.#writeHold = !attachNow;
+      if (typeof listener === "function") this.once("connect", listener as (...args: any[]) => void);
+      // Queued only now that the session is fully built: the parser's construction re-enters
+      // JS, which can drain the tick queue.
+      process.nextTick(ClientHttp2Session.#afterConstructNT, this, socket, alpnError);
     }
   }
 
@@ -5889,6 +5941,8 @@ class ClientHttp2Session extends Http2Session {
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, socket);
     try {
+      // destroy() in the constructor's tick: the frames of that tick go out ahead of the GOAWAY.
+      if (this.#writeHold) this.#releaseWriteHold();
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;

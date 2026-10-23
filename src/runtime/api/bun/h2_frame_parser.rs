@@ -7606,8 +7606,11 @@ impl H2FrameParser {
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings.get());
         } else {
-            // consider that we need to queue until the first flush
-            this_ref.has_nonnative_backpressure.set(true);
+            // Without a native socket, queue until the first flush. The latch also holds
+            // DATA back, and only set_native_socket or a flush with no socket clears it.
+            if matches!(this_ref.native_socket.get(), BunSocket::None) {
+                this_ref.has_nonnative_backpressure.set(true);
+            }
             this_ref.send_preface_and_settings();
         }
         scopeguard::ScopeGuard::into_inner(guard);

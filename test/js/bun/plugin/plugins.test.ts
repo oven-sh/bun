@@ -1,5 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
@@ -1838,9 +1839,11 @@ describe.concurrent("object loader: keeps the exports object alive as long as it
 
 describe("namespace validation", () => {
   const neverMatches = /(?!)/;
-  const rejection = { name: "Error", message: "namespace can only contain letters, numbers, dashes, or underscores" };
+  const rejection = (namespace: string) => ({
+    name: "Error",
+    message: `namespace "${namespace}" can only contain ASCII letters, digits, "_", "-", "@" and "/"`,
+  });
   const accepted = { onLoad: null, onResolve: null };
-  const rejected = { onLoad: rejection, onResolve: rejection };
 
   function thrownBy(setup: (build: import("bun").PluginBuilder) => void) {
     try {
@@ -1868,6 +1871,7 @@ describe("namespace validation", () => {
     ["héllo", "rejected"],
     ["a😀b", "rejected"],
   ])("%j is %s", (namespace, verdict) => {
+    const rejected = { onLoad: rejection(namespace), onResolve: rejection(namespace) };
     expect(register(namespace)).toEqual(verdict === "accepted" ? accepted : rejected);
   });
 
@@ -1878,7 +1882,7 @@ describe("namespace validation", () => {
         // Long enough that each thread spends most of its time in the namespace check.
         const long = Buffer.alloc(16384, "a").toString();
         const namespaces = ["abc", "abc-def", "a/b", "@scope/pkg", "A_Z-0/9", "x"].map(name => long + name);
-        const rejection = "namespace can only contain letters, numbers, dashes, or underscores";
+        const rejection = 'namespace "not valid" can only contain ASCII letters, digits, "_", "-", "@" and "/"';
         const filter = /.*/;
         const callback = () => undefined;
 
@@ -1957,6 +1961,91 @@ describe("namespace validation", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe("namespace characters", () => {
+  const hooks = ["onLoad", "onResolve"] as const;
+  const accepted = "azAZ09_-@/";
+  const refused = ["a$b", "a.b", "yaml:", "two words", "é", "名前"];
+  const neverMatches = /(?!)/;
+
+  // Calls each hook with each namespace and reports what the call did.
+  function register(build: import("bun").PluginBuilder) {
+    return hooks.flatMap(hook =>
+      [accepted, ...refused].map(namespace => {
+        try {
+          build[hook]({ filter: neverMatches, namespace }, () => undefined);
+          return `${hook} ${namespace}: accepted`;
+        } catch (error: any) {
+          return `${hook} ${namespace}: ${error.name}: ${error.message}`;
+        }
+      }),
+    );
+  }
+
+  const expected = (errorName: string) =>
+    hooks.flatMap(hook => [
+      `${hook} ${accepted}: accepted`,
+      ...refused.map(
+        namespace =>
+          `${hook} ${namespace}: ${errorName}: namespace "${namespace}" can only contain ASCII letters, digits, "_", "-", "@" and "/"`,
+      ),
+    ]);
+
+  it("Bun.plugin and Bun.build refuse a namespace with one message, which names every accepted character", async () => {
+    let fromPlugin: string[] | undefined;
+    plugin({
+      name: "namespace characters",
+      setup(build) {
+        fromPlugin = register(build);
+      },
+    });
+
+    using dir = tempDir("plugin-namespace-characters", { "entry.js": "" });
+    let fromBuild: string[] | undefined;
+    const { success } = await Bun.build({
+      entrypoints: [resolve(String(dir), "entry.js")],
+      plugins: [
+        {
+          name: "namespace characters",
+          setup(build) {
+            fromBuild = register(build);
+          },
+        },
+      ],
+    });
+
+    expect({ plugin: fromPlugin, build: fromBuild, success }).toEqual({
+      plugin: expected("Error"),
+      build: expected("TypeError"),
+      success: true,
+    });
+  });
+
+  // The message quotes the namespace. With the synthetic allocation limit, a namespace of 1 MiB makes it too long.
+  it("Bun.plugin throws a RangeError for a refused namespace that is too long to quote", () => {
+    const namespace = Buffer.alloc(1024 * 1024, "!").toString();
+    const thrown: string[] = [];
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      plugin({
+        name: "namespace characters",
+        setup(build) {
+          for (const hook of hooks) {
+            try {
+              build[hook]({ filter: neverMatches, namespace }, () => undefined);
+              thrown.push(`${hook}: accepted`);
+            } catch (error: any) {
+              thrown.push(`${hook}: ${error.name}: ${error.message}`);
+            }
+          }
+        },
+      });
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
+    expect(thrown).toEqual(["onLoad: RangeError: Out of memory", "onResolve: RangeError: Out of memory"]);
   });
 });
 

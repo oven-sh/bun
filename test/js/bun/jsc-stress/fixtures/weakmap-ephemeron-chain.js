@@ -1,4 +1,5 @@
 // @bun
+//@ requireOptions("--useDollarVM=true")
 // From JSTests/stress/weakmap-ephemeron-chain.js and resources/weakmap-ephemeron-chains.js in
 // oven-sh/WebKit, with the shapes inlined.
 // The collector resolves a chain of WeakMap entries through a key-to-values table once the
@@ -239,7 +240,8 @@ function checkReachable(name, fixture) {
   shouldBe(visited, count + 1, `${name}: nodes reachable after GC`);
 }
 
-// Bun does not expose $vm, so the rounds are checked in the engine's own run of this test.
+// $vm is compiled into some builds of Bun only (the harness asks for it above). Where it is
+// not, the time bound at the end of this file is the check.
 function checkRounds(name) {
   if (typeof $vm === "undefined") return;
   const rounds = $vm.fixpointRoundsOfLastGC();
@@ -290,7 +292,10 @@ for (const [name, build] of Object.entries(ephemeronChainShapes(count))) {
     fullGC();
     checkRounds(`mutated late map (round ${round})`);
     let node = head;
-    while (chain.get(node)?.late === undefined) node = chain.get(node);
+    while (chain.get(node)?.late === undefined) {
+      node = chain.get(node);
+      shouldBe(node !== undefined, true, `mutated late map: chain intact after round ${round}`);
+    }
     const { late: map, keys: held } = chain.get(node);
     for (let i = 0; i < held.length; i++) {
       shouldBe(map.has(held[i]), !deleted.has(held[i]), `mutated late map: entry ${i} after round ${round}`);
@@ -368,23 +373,27 @@ const mixedMap = new WeakMap();
 addDeadChain(mixedMap);
 const liveHead = addLiveChain(mixedMap);
 globalThis.fixture = { map: mixedMap, head: liveHead };
-setTimeout(() => {
-  fullGC();
-  fullGC();
-  setTimeout(() => {
-    shouldBe(collected, deadCount, "values of dead keys are collected");
-    let visited = 0;
-    for (let node = liveHead; node; node = mixedMap.get(node)) visited++;
-    shouldBe(visited, count + 1, "live chain stays reachable");
-    globalThis.fixture = null;
-  }, 0);
-}, 0);
+// The registry runs its callbacks in a later task. Collect and wait until they all ran.
+(async () => {
+  await new Promise(resolve => setTimeout(resolve, 0));
+  for (let attempt = 0; attempt < 50 && collected < deadCount; attempt++) {
+    fullGC();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  shouldBe(collected, deadCount, "values of dead keys are collected");
+  let visited = 0;
+  for (let node = liveHead; node; node = mixedMap.get(node)) visited++;
+  shouldBe(visited, count + 1, "live chain stays reachable");
+  globalThis.fixture = null;
+})();
 
 {
-  // A debug build marks far slower, and under a sanitizer slower still.
+  // A debug build marks far slower, and a sanitizer build slower still. The rounds check
+  // above is the one that holds there; this bound is for the release build.
   const isDebug = Bun.version.includes("debug");
-  const longCount = isDebug ? 5000 : 40000;
-  const bound = isDebug ? 30000 : 5000;
+  const isASAN = process.execPath.includes("bun-asan") || isDebug;
+  const longCount = isASAN ? 5000 : 40000;
+  const bound = isASAN ? 30000 : 5000;
   for (const [name, build] of Object.entries(ephemeronChainShapes(longCount))) {
     const fixture = build();
     globalThis.fixture = fixture;

@@ -546,26 +546,38 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
   );
 
   it("runs once, whichever of import() and require() comes first", async () => {
+    // Each order for a build.module() name and for a file that onLoad serves.
+    const specifiers = (order: string) => ["virtual:" + order, `./${order}.js`];
     const entry = `
-      globalThis.ran = { "import-first": 0, "require-first": 0, "import-twice": 0 };
+      import { basename } from "node:path";
+      globalThis.ran = {};
+      const counts = name => ({
+        contents: "globalThis.ran[" + JSON.stringify(name) + "] = (globalThis.ran[" + JSON.stringify(name) + "] | 0) + 1; module.exports = {};",
+        loader: "js",
+      });
       Bun.plugin({
-        name: "virtual",
+        name: "serves",
         setup(build) {
-          for (const name in globalThis.ran)
-            build.module("virtual:" + name, () => ({ contents: "globalThis.ran[" + JSON.stringify(name) + "]++; module.exports = {};", loader: "js" }));
+          for (const order of ["import-first", "require-first", "import-twice"])
+            build.module("virtual:" + order, () => counts("virtual:" + order));
+          build.onLoad({ filter: /-(first|twice)\\.js$/ }, ({ path }) => counts("./" + basename(path)));
         },
       });
-      const same = {
-        "import-first": (await import("virtual:import-first")).default === require("virtual:import-first"),
-        "require-first": require("virtual:require-first") === (await import("virtual:require-first")).default,
-        "import-twice": await Promise.all([import("virtual:import-twice"), import("virtual:import-twice")]).then(([a, b]) => a.default === b.default),
-      };
+      const same = {};
+      for (const specifier of ${JSON.stringify(specifiers("import-first"))})
+        same[specifier] = (await import(specifier)).default === require(specifier);
+      for (const specifier of ${JSON.stringify(specifiers("require-first"))})
+        same[specifier] = require(specifier) === (await import(specifier)).default;
+      for (const specifier of ${JSON.stringify(specifiers("import-twice"))})
+        same[specifier] = await Promise.all([import(specifier), import(specifier)]).then(([a, b]) => a.default === b.default);
       console.log(JSON.stringify({ same, ran: globalThis.ran }));
     `;
-    expect(json(await run({ "entry.mjs": entry }, ["entry.mjs"]))).toEqual({
+    const files = { "entry.mjs": entry, "import-first.js": "", "require-first.js": "", "import-twice.js": "" };
+    const all = ["import-first", "require-first", "import-twice"].flatMap(specifiers);
+    expect(json(await run(files, ["entry.mjs"]))).toEqual({
       printed: {
-        same: { "import-first": true, "require-first": true, "import-twice": true },
-        ran: { "import-first": 1, "require-first": 1, "import-twice": 1 },
+        same: Object.fromEntries(all.map(specifier => [specifier, true])),
+        ran: Object.fromEntries(all.map(specifier => [specifier, 1])),
       },
       stderr: "",
       exitCode: 0,

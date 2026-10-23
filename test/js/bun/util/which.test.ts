@@ -1,8 +1,8 @@
 import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, jest, test } from "bun:test";
-import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
+import { isArm64, isWindows, tempDir, tmpdirSync } from "harness";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -296,9 +296,6 @@ if (isWindows) {
       expect(which("myscript.sh")).toBe(null);
 
       process.chdir(tmpdir());
-      try {
-        rmdirSync("myscript.sh");
-      } catch {}
       // Our cwd is not /tmp
       expect(which("myscript.sh")).toBe(null);
 
@@ -316,17 +313,6 @@ if (isWindows) {
         }),
       ).toBe(abs);
 
-      // TODO: only fails on x64 macos
-      if (!isIntelMacOS) {
-        try {
-          mkdirSync("myscript.sh");
-          chmodSync("myscript.sh", "755");
-        } catch (e) {}
-
-        // directories should not be returned
-        expect(which("myscript.sh")).toBe(null);
-      }
-
       // "bun" is in our PATH
       expect(which("bun")!.length > 0).toBe(true);
 
@@ -339,6 +325,28 @@ if (isWindows) {
       process.chdir(origDir);
       rmSync(basedir, { recursive: true, force: true });
     }
+  });
+
+  // An open(O_EXEC) probe accepted both on musl, where O_EXEC is O_PATH.
+  test("which skips a directory and a file that is not executable on PATH", () => {
+    using dir = tempDir("which-not-executable", {
+      "a/tool": {},
+      "b/tool": "#!/bin/sh\n",
+      "c/data": "not executable\n",
+    });
+    const base = String(dir);
+    chmodSync(join(base, "b/tool"), 0o755);
+    chmodSync(join(base, "c/data"), 0o644);
+
+    expect({
+      directory_then_tool: which("tool", { PATH: `${join(base, "a")}:${join(base, "b")}` }),
+      directory: which("tool", { PATH: join(base, "a") }),
+      not_executable: which("data", { PATH: join(base, "c") }),
+    }).toEqual({
+      directory_then_tool: join(base, "b/tool"),
+      directory: null,
+      not_executable: null,
+    });
   });
 }
 

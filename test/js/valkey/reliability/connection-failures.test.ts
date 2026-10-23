@@ -694,11 +694,11 @@ describe("Valkey: Recovering After fail()", () => {
     return promise;
   }
 
-  // A failure the client detects itself is a deliberate close, not a retry,
-  // even with auto reconnect on (left on here): only closes initiated by the
-  // peer go through the retry policy, as has always been the case and unlike
-  // ioredis. onclose only fires on that terminal path, so it firing is the
-  // assertion.
+  // A failure the client detects on an established connection is a deliberate
+  // close, not a retry, even with auto reconnect on (left on here): once the
+  // handshake is accepted, only closes initiated by the peer go through the
+  // retry policy, as has always been the case and unlike ioredis. onclose only
+  // fires on that terminal path, so it firing is the assertion.
   test.each([
     ["redis", false],
     ["rediss", true],
@@ -1026,15 +1026,502 @@ describe("Valkey: Recovering After fail()", () => {
       // read, so it resolves; the failure that follows is reported by onclose.
       await client.connect();
       expect(await queued).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
-      // The rejection is a failure the client detected, so there is no retry
-      // even with autoReconnect on: onclose fires once and the only second
-      // connection is the one dialed from it.
+      // The rejection is a failure the client detected after the handshake was
+      // accepted, so there is no retry even with autoReconnect on: onclose
+      // fires once and the only second connection is the one dialed from it.
       expect(closes).toEqual([{ message: "Connection closed", connected: false, connections: 1 }]);
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
     } finally {
       client.close();
+      fake.server.close();
+    }
+  });
+
+  // Once a client has connected, a dial made by the retry policy that fails
+  // before its handshake is accepted is one failed attempt, whatever failed
+  // it: the server's error reply to HELLO (a redis at maxclients answers every
+  // new connection with -ERR and a FIN, one still loading answers -LOADING) or
+  // the connection timeout on a peer that accepts and says nothing. The queue
+  // waits for the next attempt and onclose does not fire. A first connection
+  // and a dial connect() makes keep failing at once with the attempt's error.
+  const failedHandshakes: [string, (socket: net.Socket) => string | null, string][] = [
+    [
+      "-ERR max number of clients reached and a FIN",
+      socket => {
+        socket.end("-ERR max number of clients reached\r\n");
+        return null;
+      },
+      "ERR_REDIS_AUTHENTICATION_FAILED: ERR max number of clients reached",
+    ],
+    [
+      "-WRONGPASS",
+      () => "-WRONGPASS invalid username-password pair or user is disabled.\r\n",
+      "ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS invalid username-password pair or user is disabled.",
+    ],
+    [
+      "-LOADING",
+      () => "-LOADING Redis is loading the dataset in memory\r\n",
+      "ERR_REDIS_AUTHENTICATION_FAILED: LOADING Redis is loading the dataset in memory",
+    ],
+    [
+      "silence until the connection timeout",
+      () => null,
+      "ERR_REDIS_CONNECTION_TIMEOUT: Connection timeout reached after 500ms",
+    ],
+  ];
+  const LOADING = "-LOADING Redis is loading the dataset in memory\r\n";
+  const WRONGPASS = "-WRONGPASS invalid username-password pair or user is disabled.\r\n";
+
+  // Drops connection 1 in place of answering PING, which leaves the client
+  // waiting for its first retry; `hello` answers HELLO from connection 2 on.
+  function droppedOnce(hello: (connection: number, socket: net.Socket) => string | null, options = {}) {
+    return helloServer(
+      {
+        HELLO: (connection, socket) => (connection === 1 ? "+OK\r\n" : hello(connection, socket)),
+        PING: (connection, socket) => {
+          if (connection !== 1) return "+PONG\r\n";
+          socket.end();
+          return null;
+        },
+      },
+      options,
+    );
+  }
+
+  const outcomeOf = (promise: Promise<unknown>, fulfilled: string) =>
+    promise.then(
+      () => fulfilled,
+      (err: Error & { code: string }) => `${err.code}: ${err.message}`,
+    );
+
+  test.each(failedHandshakes)(
+    "a reconnect whose HELLO gets %s is retried and the queue is answered by the next connection",
+    async (_name, secondHello) => {
+      const fake = droppedOnce((connection, socket) => (connection === 2 ? secondHello(socket) : "+OK\r\n"));
+      const port = await fake.listen();
+      // 500ms leaves a debug build ample room for the attempts that are answered.
+      const client = new RedisClient(`redis://127.0.0.1:${port}`, { connectionTimeout: 500 });
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        let connects = 0;
+        client.onconnect = () => connects++;
+        await dropAndAwaitRetryDelay(client);
+        // Queued during the outage: it rides out the failed attempt and is
+        // answered once connection 3 is up.
+        const queued = await client.ping();
+        expect({ queued, closes, connects, connected: client.connected, connections: fake.connections }).toEqual({
+          queued: "PONG",
+          closes: 0,
+          connects: 2,
+          connected: true,
+          connections: 3,
+        });
+      } finally {
+        client.close();
+        for (const socket of fake.sockets) socket.destroy();
+        fake.server.close();
+      }
+    },
+  );
+
+  test.each(failedHandshakes)(
+    "a first connection whose HELLO gets %s fails at once with that error",
+    async (_name, firstHello, error) => {
+      const fake = helloServer({
+        HELLO: (connection, socket) => (connection === 1 ? firstHello(socket) : "+OK\r\n"),
+      });
+      const port = await fake.listen();
+      // Auto reconnect and its 20 retries are left on.
+      const client = new RedisClient(`redis://127.0.0.1:${port}`, { connectionTimeout: 500 });
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        const queued = outcomeOf(client.ping(), "answered");
+        const connected = outcomeOf(client.connect(), "connected");
+        expect({
+          connected: await connected,
+          queued: await queued,
+          closes,
+          isConnected: client.connected,
+          connections: fake.connections,
+        }).toEqual({
+          connected: "ERR_REDIS_CONNECTION_CLOSED: Connection closed",
+          queued: error,
+          closes: 1,
+          isConnected: false,
+          connections: 1,
+        });
+      } finally {
+        client.close();
+        for (const socket of fake.sockets) socket.destroy();
+        fake.server.close();
+      }
+    },
+  );
+
+  test("a retry whose HELLO gets a reply that is not RESP is retried", async () => {
+    const fake = droppedOnce(connection => (connection === 2 ? "\x01\r\n" : "+OK\r\n"));
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await dropAndAwaitRetryDelay(client);
+      expect({ queued: await client.ping(), closes, connections: fake.connections }).toEqual({
+        queued: "PONG",
+        closes: 0,
+        connections: 3,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("after a drop, a HELLO rejected on every retry uses up the retries and rejects the queue with the server's error", async () => {
+    const fake = droppedOnce(() => WRONGPASS);
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { maxRetries: 2 });
+    try {
+      const closes: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      client.onclose = err => {
+        closes.push((err as Error & { code: string }).code);
+        closed.resolve();
+      };
+      await dropAndAwaitRetryDelay(client);
+      // Two retries, each rejected the same way; the last rejection is the
+      // one the queued command gets.
+      const queued = await outcomeOf(client.ping(), "answered");
+      await closed.promise;
+      expect({ queued, closes, connected: client.connected, connections: fake.connections }).toEqual({
+        queued: "ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS invalid username-password pair or user is disabled.",
+        closes: ["ERR_REDIS_CONNECTION_CLOSED"],
+        connected: false,
+        connections: 3,
+      });
+      // The client is failed, not stuck: a later command is rejected outright,
+      // and a connect() dials once and is rejected by that dial.
+      const later = await outcomeOf(client.ping(), "answered");
+      const reconnected = await outcomeOf(client.connect(), "connected");
+      expect({ later, reconnected, connections: fake.connections }).toEqual({
+        later: "ERR_REDIS_CONNECTION_CLOSED: Connection has failed",
+        reconnected: "ERR_REDIS_CONNECTION_CLOSED: Connection closed",
+        connections: 4,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a client that never connected fails on a retry whose HELLO is rejected", async () => {
+    // Connection 1 is closed before it is answered, which is retried as it
+    // always was; connection 2 is the retry.
+    const fake = helloServer({
+      HELLO: (connection, socket) => {
+        if (connection === 1) socket.destroy();
+        return connection === 1 ? null : connection === 2 ? LOADING : "+OK\r\n";
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      const queued = outcomeOf(client.ping(), "answered");
+      const connected = outcomeOf(client.connect(), "connected");
+      expect({ connected: await connected, queued: await queued, closes, connections: fake.connections }).toEqual({
+        connected: "ERR_REDIS_CONNECTION_CLOSED: Connection closed",
+        queued: "ERR_REDIS_AUTHENTICATION_FAILED: LOADING Redis is loading the dataset in memory",
+        closes: 1,
+        connections: 2,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a duplicate() of a connected client starts as a client that never connected", async () => {
+    // Connection 2 is the duplicate's first dial, closed before it is
+    // answered; connection 3 is its retry.
+    const fake = helloServer({
+      HELLO: (connection, socket) => {
+        if (connection === 2) socket.destroy();
+        return connection === 2 ? null : connection === 3 ? LOADING : "+OK\r\n";
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      await client.connect();
+      const duplicated = await outcomeOf(client.duplicate(), "connected");
+      expect({ duplicated, connections: fake.connections }).toEqual({
+        duplicated: "ERR_REDIS_CONNECTION_CLOSED: Connection closed",
+        connections: 3,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a connect() after close() whose HELLO is rejected fails at once", async () => {
+    const fake = helloServer({ HELLO: connection => (connection === 2 ? WRONGPASS : "+OK\r\n") });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      await client.connect();
+      client.close();
+      let closes = 0;
+      client.onclose = () => closes++;
+      const again = await outcomeOf(client.connect(), "connected");
+      expect({ again, closes, connections: fake.connections }).toEqual({
+        again: "ERR_REDIS_CONNECTION_CLOSED: Connection closed",
+        closes: 1,
+        connections: 2,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a connect() during the retry delay whose HELLO is rejected fails at once", async () => {
+    const fake = droppedOnce(connection => (connection === 2 ? WRONGPASS : "+OK\r\n"));
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await dropAndAwaitRetryDelay(client);
+      // This dial is connect()'s, not the retry policy's.
+      const again = await outcomeOf(client.connect(), "connected");
+      expect({ again, closes, connections: fake.connections }).toEqual({
+        again: "ERR_REDIS_CONNECTION_CLOSED: Connection closed",
+        closes: 1,
+        connections: 2,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a connect() issued while a retry is dialing resolves once a later retry connects", async () => {
+    // Connection 2 holds its HELLO reply until connect() has been called.
+    const held = Promise.withResolvers<net.Socket>();
+    const fake = droppedOnce((connection, socket) => {
+      if (connection !== 2) return "+OK\r\n";
+      held.resolve(socket);
+      return null;
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await dropAndAwaitRetryDelay(client);
+      const retry = await held.promise;
+      const joined = outcomeOf(client.connect(), "connected");
+      retry.write(LOADING);
+      expect({ joined: await joined, ping: await client.ping(), closes, connections: fake.connections }).toEqual({
+        joined: "connected",
+        ping: "PONG",
+        closes: 0,
+        connections: 3,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("after a connect() whose dial is closed unanswered, a retry whose HELLO is rejected is retried", async () => {
+    // Connection 2 is connect()'s dial, connection 3 is the retry policy's.
+    const fake = helloServer({
+      HELLO: (connection, socket) => {
+        if (connection === 2) socket.destroy();
+        return connection === 2 ? null : connection === 3 ? LOADING : "+OK\r\n";
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      await client.connect();
+      client.close();
+      let closes = 0;
+      client.onclose = () => closes++;
+      const again = await outcomeOf(client.connect(), "connected");
+      expect({ again, ping: await client.ping(), closes, connections: fake.connections }).toEqual({
+        again: "connected",
+        ping: "PONG",
+        closes: 0,
+        connections: 4,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a subscribe() issued while the client waits to retry is sent once a retry connects", async () => {
+    const fake = droppedOnce(connection => (connection === 2 ? LOADING : "+OK\r\n"));
+    const subscribedOn: number[] = [];
+    fake.server.on("connection", (socket: net.Socket) => {
+      const connection = fake.connections;
+      socket.on("data", chunk => {
+        if (!chunk.toString("latin1").includes("SUBSCRIBE")) return;
+        subscribedOn.push(connection);
+        socket.write(push("subscribe", "ch", 1) + push("message", "ch", "m0"));
+      });
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await dropAndAwaitRetryDelay(client);
+      const delivered = Promise.withResolvers<string>();
+      await client.subscribe("ch", message => delivered.resolve(message));
+      expect({ message: await delivered.promise, subscribedOn, closes, connections: fake.connections }).toEqual({
+        message: "m0",
+        subscribedOn: [3],
+        closes: 0,
+        connections: 3,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  // A TCP listener in front of a TLS stub. `route` says what each dial gets:
+  // "relay" pipes it to the stub, "abort" destroys it at its ClientHello, and
+  // "hold" takes the ClientHello and never answers it.
+  async function tlsFront(tlsPort: number, route: (dial: number) => "relay" | "abort" | "hold") {
+    const sockets: net.Socket[] = [];
+    const clientHellos: PromiseWithResolvers<void>[] = [];
+    const clientHello = (dial: number) => (clientHellos[dial] ??= Promise.withResolvers<void>());
+    let dials = 0;
+    const server = net.createServer(socket => {
+      const dial = ++dials;
+      sockets.push(socket);
+      socket.on("error", () => {});
+      const how = route(dial);
+      if (how === "relay") {
+        const upstream = net.connect(tlsPort, "127.0.0.1");
+        sockets.push(upstream);
+        upstream.on("error", () => socket.destroy());
+        socket.pipe(upstream);
+        upstream.pipe(socket);
+        return;
+      }
+      socket.once("data", () => {
+        clientHello(dial).resolve();
+        if (how === "abort") socket.destroy();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      port: (server.address() as net.AddressInfo).port,
+      get dials() {
+        return dials;
+      },
+      clientHelloOf: (dial: number) => clientHello(dial).promise,
+      close: () => {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      },
+    };
+  }
+
+  test("a retry whose TLS handshake the server aborts is retried", async () => {
+    const fake = droppedOnce(() => "+OK\r\n", { secure: true });
+    // Dial 2 never reaches the stub, so dial 3 is the stub's connection 2.
+    const front = await tlsFront(await fake.listen(), dial => (dial === 2 ? "abort" : "relay"));
+    const client = new RedisClient(`rediss://127.0.0.1:${front.port}`, { tls: { ca: tlsCert.cert } });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await dropAndAwaitRetryDelay(client);
+      expect({ queued: await client.ping(), closes, dials: front.dials, handshakes: fake.connections }).toEqual({
+        queued: "PONG",
+        closes: 0,
+        dials: 3,
+        handshakes: 2,
+      });
+    } finally {
+      client.close();
+      front.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a retry whose TLS handshake is cut by the connection timeout is retried", async () => {
+    const fake = droppedOnce(() => "+OK\r\n", { secure: true });
+    const front = await tlsFront(await fake.listen(), dial => (dial === 2 ? "hold" : "relay"));
+    // The timeout has to fit the TLS handshakes of dials 1 and 3 on a debug build.
+    const client = new RedisClient(`rediss://127.0.0.1:${front.port}`, {
+      tls: { ca: tlsCert.cert },
+      connectionTimeout: 2000,
+    });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await dropAndAwaitRetryDelay(client);
+      // Closing the socket for the timeout reports the pending handshake as
+      // failed from inside that close; both are the one failed attempt.
+      expect({ queued: await client.ping(), closes, dials: front.dials, handshakes: fake.connections }).toEqual({
+        queued: "PONG",
+        closes: 0,
+        dials: 3,
+        handshakes: 2,
+      });
+    } finally {
+      client.close();
+      front.close();
+      for (const socket of fake.sockets) socket.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("close() while a retry's TLS handshake is pending rejects the queue with the TLS error", async () => {
+    const fake = droppedOnce(() => "+OK\r\n", { secure: true });
+    const front = await tlsFront(await fake.listen(), dial => (dial === 2 ? "hold" : "relay"));
+    const client = new RedisClient(`rediss://127.0.0.1:${front.port}`, { tls: { ca: tlsCert.cert } });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await dropAndAwaitRetryDelay(client);
+      const queued = outcomeOf(client.ping(), "answered");
+      await front.clientHelloOf(2);
+      client.close();
+      expect({ queued: await queued, closes, connected: client.connected, dials: front.dials }).toEqual({
+        queued: "ECONNRESET: Client network socket disconnected before secure TLS connection was established",
+        closes: 1,
+        connected: false,
+        dials: 2,
+      });
+    } finally {
+      client.close();
+      front.close();
+      for (const socket of fake.sockets) socket.destroy();
       fake.server.close();
     }
   });

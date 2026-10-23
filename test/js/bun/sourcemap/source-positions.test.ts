@@ -289,7 +289,8 @@ describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
       if (!said?.stack) continue;
       checked++;
       const places = [probe];
-      if (dropsNew && probe.text.startsWith("new ")) places.push({ ...probe, column: probe.column + 4, text: probe.text.slice(4) });
+      if (dropsNew && probe.text.startsWith("new "))
+        places.push({ ...probe, column: probe.column + 4, text: probe.text.slice(4) });
       const results = places.map(({ column, text }) => {
         const expected = `${file}:${line}:${column}`;
         const frames = said.stack.split("\n").slice(1).map(position);

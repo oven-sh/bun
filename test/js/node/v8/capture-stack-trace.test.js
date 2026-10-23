@@ -1089,7 +1089,11 @@ test("the default Error.prepareStackTrace heads the stack with the error's name 
 // rewrite-stack-trace) must not change the frames: both render the one record of each frame. This also
 // pins the text of a frame that has no file: a builtin keeps its position, a host function says unknown.
 test("a wrapper around the default Error.prepareStackTrace leaves the frames as they are", async () => {
-  const frames = stack => stack.split("\n").slice(1, 3).map(line => line.trim());
+  const frames = stack =>
+    stack
+      .split("\n")
+      .slice(1, 3)
+      .map(line => line.trim());
   class Box {
     constructor() {
       this.error = new Error("box");
@@ -1152,7 +1156,12 @@ test("a wrapper around the default Error.prepareStackTrace leaves the frames as 
 
 // `new X()` is at `new`, where V8 has it, whichever way the stack is formatted.
 test("a frame made with new is at the new keyword", () => {
-  const where = error => error.stack.split("\n")[1].match(/:(\d+):(\d+)\)?$/).slice(1).map(Number);
+  const where = error =>
+    error.stack
+      .split("\n")[1]
+      .match(/:(\d+):(\d+)\)?$/)
+      .slice(1)
+      .map(Number);
   const text = "\n\nconst made = new Error('made');\nmade";
   Error.prepareStackTrace = origPrepareStackTrace;
   const plain = where((0, eval)(text));

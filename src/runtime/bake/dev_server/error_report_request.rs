@@ -23,8 +23,8 @@ use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
 use bun_io::Write as _;
 use bun_jsc::{
-    JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
-    ZigStackFrameKind, ZigStackFramePosition, ZigStackTrace,
+    JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode, ZigStackFrameKind,
+    ZigStackFramePosition, ZigStackTrace,
 };
 use bun_paths::path_buffer_pool;
 use bun_uws::{self as uws, AnyResponse, Request};

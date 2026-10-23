@@ -30,9 +30,9 @@ use crate::generated_bindgen::html_rewriter_internals::{
 };
 use crate::generated_bindgen::response::js_Response;
 use crate::webcore::blob::SizeType as BlobSizeType;
-use crate::webcore::sink::JSSink;
+use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::{
-    self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
+    self, SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
 use bun_core::{EncodedSlice, String as BunString};
@@ -1161,7 +1161,7 @@ impl RewriterPipe {
         this.pump_controller_attached.set(true);
         this.ref_();
         let assignment_result =
-            JSSink::<RewriterPipe>::assign_to_stream(cx.global(), stream.value, pipe.into());
+            ReadableSinkController::assign_to_stream(cx.global(), stream.value, pipe.into());
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
@@ -1880,12 +1880,9 @@ impl Drop for RewriterPipe {
 
 // ───────────────── RewriterPipe: JsSinkType (JS-pump fallback) ───────────
 
-crate::impl_js_sink_abi!(RewriterPipe, "HTMLRewriterSink");
-
 impl crate::webcore::sink::JsSinkType for RewriterPipe {
     const NAME: &'static str = "HTMLRewriterSink";
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(StartTag::HTMLRewriterSink);
+    const ID: crate::webcore::sink::SinkId = crate::webcore::sink::SinkId::HTMLRewriter;
 
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
@@ -1932,9 +1929,6 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         self.end_from_stream(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_sys::Result::Ok(())
     }
     fn flush_from_js(
         &mut self,

@@ -2456,14 +2456,48 @@ describe("classes", () => {
       return { enumerable, configurable };
     };
 
-    it("enumerable and configurable are the class's, unless a getter has its own configurable", () => {
+    it("enumerable and configurable are the class's, unless a getter has its own", () => {
       const { prototype } = TestError;
       expect(attributes(prototype, "message")).toEqual({ enumerable: false, configurable: true });
       expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: true });
       expect(attributes(prototype, "nonConfigurableCode")).toEqual({ enumerable: false, configurable: false });
-      expect(Object.keys(prototype)).toEqual(["name"]);
+      expect(attributes(prototype, "enumerableCode")).toEqual({ enumerable: true, configurable: true });
+      expect(Object.keys(prototype)).toEqual(["enumerableCode", "name"]);
       expect(attributes(TestCounter.prototype, "count")).toEqual({ enumerable: true, configurable: false });
       expect(attributes(TestCounter.prototype, "increment")).toEqual({ enumerable: true, configurable: false });
+    });
+
+    it("with writable: false, a native function is read-only, unless its key is a symbol", () => {
+      const { prototype } = (bindgen as any).TestReadOnly;
+      expect(Object.getOwnPropertyDescriptor(prototype, "answer")).toMatchObject({
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      });
+      expect(Object.getOwnPropertyDescriptor(prototype, Symbol.dispose)).toMatchObject({
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+      expect(Object.getOwnPropertyDescriptor(TestCounter.prototype, "increment")!.writable).toBe(true);
+    });
+
+    it("a constant is a read-only number of the prototype", () => {
+      const { TestReadOnly } = bindgen as any;
+      expect(Object.getOwnPropertyDescriptor(TestReadOnly.prototype, "kind")).toEqual({
+        value: 3,
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      });
+      expect(Object.getOwnPropertyDescriptor(TestReadOnly.prototype, "hiddenKind")).toEqual({
+        value: -1,
+        writable: false,
+        enumerable: false,
+        configurable: true,
+      });
+      expect(new TestReadOnly().kind).toBe(3);
+      expect(Object.keys(TestReadOnly.prototype)).toEqual(["answer", "kind"]);
     });
 
     it("prototypeBase is what the prototype inherits from", () => {

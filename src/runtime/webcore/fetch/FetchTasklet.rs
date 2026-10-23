@@ -34,7 +34,7 @@ use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyVal
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
-use crate::webcore::sink::JSSink;
+use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
@@ -708,7 +708,7 @@ impl FetchTasklet {
             crate::webcore::readable_stream::NativeWireResult::NotNative => {}
         }
 
-        let assignment_result = JSSink::<FetchRequestBodySink>::assign_to_stream(
+        let assignment_result = ReadableSinkController::assign_to_stream(
             &global_this,
             stream.value,
             core::ptr::NonNull::from(&mut *sink),

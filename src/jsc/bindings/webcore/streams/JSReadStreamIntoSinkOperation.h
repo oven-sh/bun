@@ -30,7 +30,7 @@ public:
         // the acquired default reader. The error path CLEARS this FIRST, so the final
         // releaseLock is deliberately skipped there.
         Reader,
-        // ERASED: the native JSSink controller the pump writes into.
+        // ERASED: the native sink's controller the pump writes into.
         Sink,
         // the JSPromise readStreamIntoSink returned (what Rust's Signal protocol awaits).
         Result,

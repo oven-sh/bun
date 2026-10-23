@@ -36,7 +36,29 @@ test("HTTPResponseSink displays correct message", async () => {
   expect(() => leakedCtrl.write("c")).toThrow(
     'This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
   );
-  expect(() => leakedCtrl.write.call({}, "c")).toThrow("Expected HTTPResponseSink");
+  expect(() => leakedCtrl.write.call({}, "c")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+});
+
+test("the controller of a direct stream is of one class, whichever native sink consumes the stream", async () => {
+  const controllers: any[] = [];
+  const stream = () =>
+    new ReadableStream({
+      type: "direct",
+      pull(controller) {
+        controllers.push(controller);
+        controller.write("a");
+        controller.close();
+      },
+    } as any);
+  using server = Bun.serve({ port: 0, fetch: () => new Response(stream()) });
+  expect(await (await fetch(server.url)).text()).toBe("a");
+  using echo = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+  expect(await (await fetch(echo.url, { method: "POST", body: stream() })).text()).toBe("a");
+
+  const [response, request] = controllers;
+  expect(Object.prototype.toString.call(response)).toBe("[object ReadableSinkController]");
+  expect(Object.getPrototypeOf(request)).toBe(Object.getPrototypeOf(response));
+  expect([response.sinkId, request.sinkId]).toEqual([4, 7]);
 });
 
 // Sentry BUN-2WJA / BUN-2WKB: JSReadable*Controller.end() ran the onClose

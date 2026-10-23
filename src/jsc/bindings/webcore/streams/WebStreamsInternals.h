@@ -530,12 +530,16 @@ void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransf
 // Performs a release ClearAlgorithms deferred, once nothing holds the native state any more.
 void nativeTransformReleaseStateIfIdle(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
 
-// Rust-side single dispatch for the native-transform → native-JSSink byte write, routed
-// through SinkHandle::write (src/runtime/webcore/Sink.rs). Returns a negative number for
-// native ByteStream/FileReader sources under backpressure, but a pending JSPromise for the
-// JSController-sourced sinks that readStreamIntoSink attaches (HTTPResponseSink/FileSink).
-// Both mean "suspend" — nativeSinkWriteIsBackpressure below reads either shape.
-extern "C" JSC::EncodedJSValue Bun__NativeTransformSink__writeBytes(uint8_t sinkId, void* sinkPtr, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len); // userJS: no — Sink.rs
+// A JSReadableSinkController (GeneratedSink.h) without its JS methods. `payload` is its payload().
+extern "C" bool ReadableSinkController__isAttached(const void* payload); // userJS: no — Sink.rs
+extern "C" JSC::EncodedJSValue ReadableSinkController__end(JSC::JSGlobalObject*, JSC::EncodedJSValue controller); // userJS: yes — Sink.rs
+// An empty `reason` is a clean close. Any other, undefined too, tells the sink that its source failed.
+extern "C" JSC::EncodedJSValue ReadableSinkController__close(JSC::JSGlobalObject*, JSC::EncodedJSValue controller, JSC::EncodedJSValue reason); // userJS: yes — Sink.rs
+// The native-transform → native sink byte write, routed through SinkHandle::write. Returns a
+// negative number for native ByteStream/FileReader sources under backpressure, but a pending
+// JSPromise for the JSController-sourced sinks that readStreamIntoSink attaches
+// (HTTPResponseSink/FileSink). Both mean "suspend" — nativeSinkWriteIsBackpressure below reads either shape.
+extern "C" JSC::EncodedJSValue ReadableSinkController__writeBytes(const void* payload, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len); // userJS: no — Sink.rs
 bool nativeSinkWriteIsBackpressure(JSC::VM&, JSC::JSValue wrote); // userJS: no — WebStreamsMisc.cpp
 
 // Brackets a native transform/flush arm so a re-entrant ClearAlgorithms (reached via a
@@ -619,12 +623,15 @@ JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableStreamDefault
 // readableStreamCancel's ControllerKind::None arm for a still-NativePending stream: calls
 // handle.updateRef(false) + handle.cancel(reason) on m_nativePtr directly, no materialize.
 JSC::JSPromise* cancelPendingNativeSource(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: no — BunStreamSource.cpp
-// The JSSink entry point (GlobalObject::assignToStream's body). Returns undefined or
-// a JSPromise (the Signal protocol's value).
-JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue jsSinkController); // userJS: yes — BunStreamSource.cpp
-// The direct-stream → native-JSSink path. Returns undefined | JSPromise.
+// Pumps the stream into the controller's native sink. Returns undefined | JSPromise.
+JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, Bindgen::Generated::JSReadableSinkController*); // userJS: yes — BunStreamSource.cpp
+// The controller's source hears that the sink closed. `sinkClosed`: underneath the source (peer abort, write error), not by its own end() or close().
+void sinkControllerOnClose(JSC::JSGlobalObject*, Bindgen::Generated::JSReadableSinkController*, JSC::JSValue reason, bool sinkClosed); // userJS: yes — BunStreamSource.cpp
+// The sink can take more: resumes a pump, and does nothing for a direct stream.
+void sinkControllerOnReady(JSC::JSGlobalObject*, Bindgen::Generated::JSReadableSinkController*); // userJS: yes — BunStreamSource.cpp
+// The direct-stream → native sink path. Returns undefined | JSPromise.
 JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSDirectStreamSource*); // userJS: yes — BunStreamSource.cpp
-// The generic pump into a native JSSink controller.
+// The generic pump into a native sink's controller.
 JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink); // userJS: yes — BunStreamSource.cpp
 
 // JSDirectStreamController.cpp — direct-stream materialization + the direct controller.

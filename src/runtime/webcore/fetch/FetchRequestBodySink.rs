@@ -6,7 +6,7 @@ use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
 use crate::webcore::streams::{
-    SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
+    SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
@@ -271,12 +271,9 @@ impl FetchRequestBodySink {
     }
 }
 
-crate::impl_js_sink_abi!(FetchRequestBodySink, "FetchRequestBodySink");
-
 impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     const NAME: &'static str = Self::NAME;
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(StartTag::FetchRequestBodySink);
+    const ID: crate::webcore::sink::SinkId = crate::webcore::sink::SinkId::FetchRequestBody;
 
     crate::impl_js_sink_forwarders!();
 

@@ -52,7 +52,8 @@ use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
-use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
+use crate::webcore::sink::ReadableSinkController;
+use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
@@ -1036,7 +1037,7 @@ pub(crate) fn upload_stream(
     }
 
     // The controller cell is installed into `sink.source` by `assign_to_stream`.
-    let assignment_result: JSValue = NetworkSinkJSSink::assign_to_stream(
+    let assignment_result: JSValue = ReadableSinkController::assign_to_stream(
         cx.global(),
         readable_stream.value,
         NonNull::from(sink),

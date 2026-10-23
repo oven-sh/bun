@@ -184,6 +184,26 @@ describe("ArrayBufferSink", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("has a prototype, so instanceof and extends work", () => {
+    const sink = new ArrayBufferSink();
+    expect(Object.getPrototypeOf(sink)).toBe(ArrayBufferSink.prototype);
+    expect(sink).toBeInstanceOf(ArrayBufferSink);
+
+    class CountingSink extends ArrayBufferSink {
+      writes = 0;
+      write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) {
+        this.writes++;
+        return super.write(chunk);
+      }
+    }
+    const counting = new CountingSink();
+    expect(counting).toBeInstanceOf(ArrayBufferSink);
+    counting.write("ab");
+    counting.write("c");
+    expect(counting.writes).toBe(2);
+    expect(new TextDecoder().decode(counting.end() as ArrayBuffer)).toBe("abc");
+  });
+
   it("write() throws when converting the chunk to a string closes the sink", async () => {
     await using proc = Bun.spawn({
       cmd: [

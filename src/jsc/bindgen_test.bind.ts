@@ -310,6 +310,7 @@ export const TestError = b.class({
   proto: {
     code: { getter: b.i32 },
     nonConfigurableCode: { getter: b.i32, configurable: false },
+    enumerableCode: { getter: b.i32, enumerable: true },
     describe: { returns: b.string.utf8 },
     countArguments: { args: { args: b.any.variadic }, returns: b.usize },
     /** Computed once. Assigning replaces it without calling Rust. */
@@ -320,6 +321,19 @@ export const TestError = b.class({
   static: {
     /** Process-wide. */
     level: { getter: b.i32, setter: true },
+  },
+});
+
+/** `writable: false` and `constant`. */
+export const TestReadOnly = b.class({
+  rustPath: "crate::bindgen_test::TestReadOnly",
+  writable: false,
+  construct: {},
+  proto: {
+    answer: { returns: b.i32 },
+    "@@dispose": {},
+    kind: { constant: 3 },
+    hiddenKind: { constant: -1, enumerable: false, configurable: true },
   },
 });
 

@@ -600,6 +600,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
 | `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
+| `writable`       | `false` makes the native functions read-only                                                   |
 | `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
@@ -639,6 +640,7 @@ A property of `proto` is one of these.
 | `{ getter: T, cache: true \| "field", .. }`   | an accessor that returns an [internal field](#internalfields)                              |
 | `{ internalField: "field", setter }`          | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
 | `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`                               |
+| `{ constant: 3 }`                             | a read-only integer, like a WebIDL `const`                                                 |
 | `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
@@ -648,8 +650,8 @@ a native function of the struct (`close` is `do_close` beside a native `close`).
 also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
 `_` of the property is dropped: `_idleStart` is `get_idle_start`.
 `setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An
-accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` on a getter overrides the
-class's.
+accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` and `enumerable` on a getter
+or a constant override the class's.
 
 A key that starts with `@@` is a well-known symbol: `"@@dispose"` defines `prototype[Symbol.dispose]`. The function is
 writable, configurable and not enumerable, like the built-in ones, whatever the class says. Its `name` is

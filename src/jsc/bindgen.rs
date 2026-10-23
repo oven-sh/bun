@@ -706,6 +706,16 @@ pub unsafe trait JsPayload: Sized + 'static {
         // SAFETY: a `JsHeap` is the global object.
         self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
     }
+
+    /// The JS object that owns `self`. In `Drop` it is dead: it only tells which object this was.
+    ///
+    /// # Safety
+    /// `self` was given to [`into_js`](Self::into_js).
+    #[inline]
+    unsafe fn wrapper_value(&self) -> JSValue {
+        // SAFETY: the payload is at this offset in its cell.
+        JSValue::from_cell(unsafe { core::ptr::from_ref(self).byte_sub(Self::PAYLOAD_OFFSET) })
+    }
 }
 
 /// A class whose constructor creates the object itself: `passStructure`.

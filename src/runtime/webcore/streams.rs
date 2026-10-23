@@ -12,7 +12,11 @@ use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
+use crate::generated_bindgen::sink::{
+    SinkPath, SinkStartOptions, js_ReadableSinkController as js_controller,
+};
 use crate::webcore::blob::Any as AnyBlob;
+use crate::webcore::sink::{ReadableSinkController, SinkId};
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
@@ -42,14 +46,10 @@ type BlobSizeType = crate::webcore::BlobSizeType;
 const MAX_HIGH_WATER_MARK: i64 = 256 * 1024 * 1024;
 
 #[inline]
-fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
-    // `to_int64` maps NaN→0 and saturates ±Infinity; clamp in i64 before the
-    // unsigned cast so Infinity/negatives/out-of-range never reach the allocator.
-    let n = value.to_int64();
-    (min as i64).max(n).min(MAX_HIGH_WATER_MARK) as BlobSizeType
+fn high_water_mark(value: f64, min: BlobSizeType) -> BlobSizeType {
+    (min as i64).max(value as i64).min(MAX_HIGH_WATER_MARK) as BlobSizeType
 }
 
-// Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub(crate) use StreamResult as Result;
 pub(crate) mod result {
     pub(crate) use super::{StreamError, Writable};
@@ -76,18 +76,6 @@ pub enum Start {
     OwnedAndDone(Vec<u8>),
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub(crate) enum StartTag {
-    ArrayBufferSink,
-    FileSink,
-    HTTPSResponseSink,
-    HTTPResponseSink,
-    NetworkSink,
-    FetchRequestBodySink,
-    HTMLRewriterSink,
-}
-
 impl Start {
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
@@ -107,170 +95,54 @@ impl Start {
         }
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Start> {
-        if value.is_empty_or_undefined_or_null() || !value.is_object() {
-            return Ok(Start::Empty);
+    /// `start(options)` of an `ArrayBufferSink`.
+    pub(crate) fn array_buffer_sink(options: &SinkStartOptions<'_>) -> Start {
+        if options.as_uint8_array.is_none()
+            && options.stream.is_none()
+            && options.high_water_mark.is_none()
+        {
+            return Start::Empty;
         }
-
-        if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
-            if chunk_size.is_number() {
-                return Ok(Start::ChunkSize(high_water_mark_from_js(chunk_size, 0)));
-            }
-        }
-
-        Ok(Start::Empty)
-    }
-
-    /// Runtime-tag dispatcher for `from_js_with_tag`. The per-sink tag is
-    /// `JsSinkType::START_TAG` (a runtime `Option<StartTag>`); this match
-    /// re-enters the tag-specific body.
-    pub(crate) fn from_js_with_runtime_tag(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-        tag: StartTag,
-    ) -> JsResult<Start> {
-        match tag {
-            StartTag::ArrayBufferSink => {
-                Self::from_js_with_tag::<{ StartTag::ArrayBufferSink }>(global_this, value)
-            }
-            StartTag::FileSink => {
-                Self::from_js_with_tag::<{ StartTag::FileSink }>(global_this, value)
-            }
-            StartTag::NetworkSink => {
-                Self::from_js_with_tag::<{ StartTag::NetworkSink }>(global_this, value)
-            }
-            StartTag::HTTPSResponseSink => {
-                Self::from_js_with_tag::<{ StartTag::HTTPSResponseSink }>(global_this, value)
-            }
-            StartTag::HTTPResponseSink => {
-                Self::from_js_with_tag::<{ StartTag::HTTPResponseSink }>(global_this, value)
-            }
-            StartTag::FetchRequestBodySink => {
-                Self::from_js_with_tag::<{ StartTag::FetchRequestBodySink }>(global_this, value)
-            }
-            StartTag::HTMLRewriterSink => {
-                Self::from_js_with_tag::<{ StartTag::HTMLRewriterSink }>(global_this, value)
-            }
+        Start::ArrayBufferSink {
+            chunk_size: options
+                .high_water_mark
+                .map_or(0, |value| high_water_mark(value, 0)),
+            as_uint8array: options.as_uint8_array.unwrap_or(false),
+            stream: options.stream.unwrap_or(false),
         }
     }
 
-    pub(crate) fn from_js_with_tag<const TAG: StartTag>(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Start> {
-        if value.is_empty_or_undefined_or_null() || !value.is_object() {
-            return Ok(Start::Empty);
+    /// `start(options)` of a `FileSink`.
+    pub(crate) fn file_sink(options: &SinkStartOptions<'_>) -> Start {
+        use bun_sys_jsc::FdJsc as _;
+        let error = |errno: sys::SystemErrno| {
+            Start::Err(SysError {
+                errno: errno as _,
+                syscall: sys::Tag::write,
+                ..Default::default()
+            })
+        };
+        let input_path = match (&options.path, options.fd) {
+            (SinkPath::Path(path), _) => crate::webcore::PathOrFileDescriptor::Path(path.clone()),
+            (SinkPath::Invalid(_), _) => return error(sys::SystemErrno::EINVAL),
+            (SinkPath::Absent, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+            (SinkPath::Absent, Some(fd)) => match Fd::from_js(fd.to_js()) {
+                Some(fd) => crate::webcore::PathOrFileDescriptor::Fd(fd),
+                None => return error(sys::SystemErrno::EBADF),
+            },
+        };
+        Start::FileSink(FileSinkOptions {
+            input_path,
+            ..Default::default()
+        })
+    }
+
+    /// `start(options)` of every other sink.
+    pub(crate) fn chunk_size(options: &SinkStartOptions<'_>) -> Start {
+        match options.high_water_mark {
+            Some(value) => Start::ChunkSize(high_water_mark(value, 256)),
+            None => Start::Empty,
         }
-
-        match TAG {
-            StartTag::ArrayBufferSink => {
-                let mut as_uint8array = false;
-                let mut stream = false;
-                let mut chunk_size: BlobSizeType = 0;
-                let mut empty = true;
-
-                if let Some(val) =
-                    value.get_own(global_this, &bun_core::String::static_("asUint8Array"))?
-                {
-                    if val.is_boolean() {
-                        as_uint8array = val.to_boolean();
-                        empty = false;
-                    }
-                }
-
-                if let Some(val) = value.fast_get(global_this, jsc::BuiltinName::Stream)? {
-                    if val.is_boolean() {
-                        stream = val.to_boolean();
-                        empty = false;
-                    }
-                }
-
-                if let Some(chunk_size_val) =
-                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
-                {
-                    if chunk_size_val.is_number() {
-                        empty = false;
-                        chunk_size = high_water_mark_from_js(chunk_size_val, 0);
-                    }
-                }
-
-                if !empty {
-                    return Ok(Start::ArrayBufferSink {
-                        chunk_size,
-                        as_uint8array,
-                        stream,
-                    });
-                }
-            }
-            StartTag::FileSink => {
-                if let Some(path) = value.fast_get(global_this, jsc::BuiltinName::Path)? {
-                    if !path.is_string() {
-                        return Ok(Start::Err(SysError {
-                            errno: sys::SystemErrno::EINVAL as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        }));
-                    }
-
-                    return Ok(Start::FileSink(FileSinkOptions {
-                        input_path: crate::webcore::PathOrFileDescriptor::Path(
-                            path.to_utf8(global_this)?,
-                        ),
-                        ..Default::default()
-                    }));
-                } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {
-                    if !fd_value.is_any_int() {
-                        return Ok(Start::Err(SysError {
-                            errno: sys::SystemErrno::EBADF as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        }));
-                    }
-
-                    use bun_sys_jsc::FdJsc as _;
-                    if let Some(fd) = Fd::from_js(fd_value) {
-                        return Ok(Start::FileSink(FileSinkOptions {
-                            input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),
-                            ..Default::default()
-                        }));
-                    } else {
-                        return Ok(Start::Err(SysError {
-                            errno: sys::SystemErrno::EBADF as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        }));
-                    }
-                }
-
-                return Ok(Start::FileSink(FileSinkOptions {
-                    input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-                    ..Default::default()
-                }));
-            }
-            StartTag::NetworkSink
-            | StartTag::HTTPSResponseSink
-            | StartTag::HTTPResponseSink
-            | StartTag::FetchRequestBodySink
-            | StartTag::HTMLRewriterSink => {
-                let mut empty = true;
-                let mut chunk_size: BlobSizeType = 2048;
-
-                if let Some(chunk_size_val) =
-                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
-                {
-                    if chunk_size_val.is_number() {
-                        empty = false;
-                        chunk_size = high_water_mark_from_js(chunk_size_val, 256);
-                    }
-                }
-
-                if !empty {
-                    return Ok(Start::ChunkSize(chunk_size));
-                }
-            }
-        }
-
-        Ok(Start::Empty)
     }
 }
 
@@ -789,51 +661,6 @@ impl StreamResult {
 // SourceHandle
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Generic controller externs (defined in the generated `JSSink.cpp`). Every
-/// `JSReadable*SinkController` shares the `JSReadableSinkControllerBase`
-/// layout, so one symbol per operation suffices for all sink kinds.
-pub(crate) mod controller_abi {
-    unsafe extern "C" {
-        #[link_name = "JSSinkController__onReady"]
-        pub(crate) safe fn on_ready(
-            c: ::bun_jsc::JSValue,
-            amt: ::bun_jsc::JSValue,
-            off: ::bun_jsc::JSValue,
-        );
-        #[link_name = "JSSinkController__onClose"]
-        pub(crate) safe fn on_close(c: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue);
-        #[link_name = "JSSinkController__detachPtr"]
-        pub(crate) safe fn detach_ptr(c: ::bun_jsc::JSValue);
-        /// Returns undefined (drained inline), the pump promise, or the thrown Exception cell.
-        #[link_name = "JSSinkController__assignToStream"]
-        pub(crate) safe fn assign_to_stream(
-            g: &::bun_jsc::JSGlobalObject,
-            stream: ::bun_jsc::JSValue,
-            c: ::bun_jsc::JSValue,
-        ) -> ::bun_jsc::JSValue;
-        #[link_name = "JSSinkController__setPipe"]
-        pub(crate) safe fn set_pipe(
-            c: ::bun_jsc::JSValue,
-            stream: ::bun_jsc::JSValue,
-            done: ::bun_jsc::JSValue,
-        );
-        #[link_name = "JSSinkController__pipeStream"]
-        pub(crate) safe fn pipe_stream(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
-        #[link_name = "JSSinkController__clearPipeStream"]
-        pub(crate) safe fn clear_pipe_stream(c: ::bun_jsc::JSValue);
-        #[link_name = "JSSinkController__takePipeDone"]
-        pub(crate) safe fn take_pipe_done(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
-        #[link_name = "JSSinkController__pipeDone"]
-        pub(crate) safe fn pipe_done(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
-        #[link_name = "JSSinkController__setPipeDone"]
-        pub(crate) safe fn set_pipe_done(c: ::bun_jsc::JSValue, done: ::bun_jsc::JSValue);
-        #[link_name = "JSSinkController__setPipeError"]
-        pub(crate) safe fn set_pipe_error(c: ::bun_jsc::JSValue, error: ::bun_jsc::JSValue);
-        #[link_name = "JSSinkController__pipeError"]
-        pub(crate) safe fn pipe_error(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
-    }
-}
-
 /// The one GC root a native sink keeps while a stream is piped into it: its controller cell, which holds the stream, the done-promise and the failure value.
 #[derive(Default)]
 pub(crate) struct PipeCell(::bun_jsc::strong::Optional);
@@ -845,37 +672,52 @@ impl PipeCell {
         done: JSValue,
         global: &JSGlobalObject,
     ) -> PipeCell {
-        controller_abi::set_pipe(cell, stream, done);
-        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+        let pipe = PipeCell::root(cell, global);
+        pipe.set_slots(stream, done);
+        pipe
     }
 
     pub(crate) fn cell(&self) -> Option<JSValue> {
         self.0.get()
     }
 
+    fn set_slots(&self, stream: JSValue, done: JSValue) {
+        let Some(cell) = self.0.get() else { return };
+        let global = VirtualMachine::get().global();
+        let stream = if stream.is_object() {
+            stream
+        } else {
+            JSValue::ZERO
+        };
+        js_controller::pipe_stream_set_cached(cell, global, stream);
+        self.set_done(done);
+    }
+
     /// The pipe is over: a controller the user still holds must not keep the stream or the promise alive.
     pub(crate) fn clear_slots(&self) {
-        if let Some(cell) = self.0.get() {
-            controller_abi::set_pipe(cell, JSValue::UNDEFINED, JSValue::UNDEFINED);
-        }
+        self.set_slots(JSValue::ZERO, JSValue::ZERO);
     }
 
     pub(crate) fn has_stream(&self) -> bool {
         self.stream().is_some()
     }
 
+    /// The stream this pipe holds, else the one the controller's close handler still does: they are the same stream.
     pub(crate) fn stream(&self) -> Option<crate::webcore::ReadableStream> {
-        let stream = controller_abi::pipe_stream(self.0.get()?);
-        if stream.is_empty() {
-            return None;
-        }
+        let cell = self.0.get()?;
+        let stream = js_controller::pipe_stream_get_cached(cell)
+            .or_else(|| js_controller::readable_stream_get_cached(cell))?;
         crate::webcore::ReadableStream::from_js_direct(stream)
     }
 
     pub(crate) fn take_stream(&self) -> Option<crate::webcore::ReadableStream> {
         let stream = self.stream();
         if let Some(cell) = self.0.get() {
-            controller_abi::clear_pipe_stream(cell);
+            js_controller::pipe_stream_set_cached(
+                cell,
+                VirtualMachine::get().global(),
+                JSValue::ZERO,
+            );
         }
         stream
     }
@@ -891,29 +733,37 @@ impl PipeCell {
 
     /// The promise the sink's owner or source awaits, until it is taken to be settled.
     pub(crate) fn done(&self) -> Option<*mut JSPromise> {
-        controller_abi::pipe_done(self.0.get()?).as_promise()
+        js_controller::pipe_done_get_cached(self.0.get()?)?.as_promise()
     }
 
     pub(crate) fn set_done(&self, done: JSValue) {
         debug_assert!(self.0.has(), "no controller cell to hold the promise");
         if let Some(cell) = self.0.get() {
-            controller_abi::set_pipe_done(cell, done);
+            let done = if done.as_promise().is_some() {
+                done
+            } else {
+                JSValue::ZERO
+            };
+            js_controller::pipe_done_set_cached(cell, VirtualMachine::get().global(), done);
         }
     }
 
     pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
-        controller_abi::take_pipe_done(self.0.get()?).as_promise()
+        js_controller::pipe_done_take_cached(self.0.get()?, VirtualMachine::get().global())?
+            .as_promise()
     }
 
+    /// The pipe's failure value shares `failReason`: `close(error)` stores the same value there, and every other writer runs after `pull()` settled.
     pub(crate) fn set_error(&self, error: JSValue) {
         if let Some(cell) = self.0.get() {
-            controller_abi::set_pipe_error(cell, error);
+            if js_controller::fail_reason_get_cached(cell).is_none() {
+                js_controller::fail_reason_set_cached(cell, VirtualMachine::get().global(), error);
+            }
         }
     }
 
     pub(crate) fn error(&self) -> Option<JSValue> {
-        let error = controller_abi::pipe_error(self.0.get()?);
-        (!error.is_empty()).then_some(error)
+        js_controller::fail_reason_get_cached(self.0.get()?)
     }
 }
 
@@ -1077,9 +927,7 @@ impl SourceHandle {
     }
 
     fn close_js_controller(global: &JSGlobalObject, cpp: JSValue, reason: JSValue) {
-        crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
-            controller_abi::on_close(cpp, reason)
-        }));
+        crate::dispatch::fold(ReadableSinkController::on_close(global, cpp, reason));
     }
 
     pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
@@ -1090,9 +938,7 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
-                crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
-                    controller_abi::on_ready(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
-                }));
+                crate::dispatch::fold(ReadableSinkController::on_ready(global, cpp));
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
@@ -1267,50 +1113,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         "HTTPResponseSink"
     };
     // associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or a trait-based dispatch.
-}
-
-/// Per-monomorphization JSSink wrapper alias. Mirrors
-/// `pub const JSSink = Sink.JSSink(@This(), name)`.
-pub(crate) type HTTPServerWritableJSSink<const SSL: bool> =
-    crate::webcore::sink::JSSink<HTTPServerWritable<SSL>>;
-
-// `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
-// `name` ∈ {HTTPResponseSink, HTTPSResponseSink}. Const-generics
-// can't drive `#[link_name]`, so declare both extern sets in a private mod
-// and dispatch at call time on `SSL`. The branch is on a const generic;
-// the optimizer folds it to a direct call per monomorphization.
-mod http_sink_abi {
-    crate::decl_js_sink_externs!("HTTPResponseSink" as http);
-    crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
-}
-
-macro_rules! http_sink_dispatch {
-    ($f:ident($($arg:expr),*)) => {
-        if SSL {
-            http_sink_abi::https::$f($($arg),*)
-        } else {
-            http_sink_abi::http::$f($($arg),*)
-        }
-    };
-}
-
-impl<const SSL: bool> crate::webcore::sink::JsSinkAbi for HTTPServerWritable<SSL> {
-    fn from_js_extern(value: JSValue) -> usize {
-        http_sink_dispatch!(from_js(value))
-    }
-    fn create_object_extern(
-        global: &JSGlobalObject,
-        object: *mut c_void,
-        destructor: usize,
-    ) -> JSValue {
-        http_sink_dispatch!(create_object(global, object, destructor))
-    }
-    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        http_sink_dispatch!(set_destroy_callback(value, callback))
-    }
-    fn create_controller_extern(global: &JSGlobalObject, ptr: *mut c_void) -> JSValue {
-        http_sink_dispatch!(create_controller(global, ptr))
-    }
 }
 
 impl<const SSL: bool> HTTPServerWritable<SSL> {
@@ -2212,17 +2014,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 }
 
-// `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
-// start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
-// the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
 impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SSL> {
     const NAME: &'static str = Self::NAME;
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(if SSL {
-        StartTag::HTTPSResponseSink
+    const ID: SinkId = if SSL {
+        SinkId::HTTPSResponse
     } else {
-        StartTag::HTTPResponseSink
-    });
+        SinkId::HTTPResponse
+    };
 
     crate::impl_js_sink_forwarders!();
 
@@ -2663,7 +2461,7 @@ impl NetworkSink {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, 0)
+        NetworkSinkJSSink::create_object(global_this, self, None)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -2678,12 +2476,9 @@ impl NetworkSink {
     pub(crate) const NAME: &'static str = "NetworkSink";
 }
 
-crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
-
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
+    const ID: SinkId = SinkId::Network;
 
     crate::impl_js_sink_forwarders!();
 

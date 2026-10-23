@@ -883,7 +883,7 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 }
 
 /// [`CompressionStreamCoder__transform`], but the output is written to the
-/// native JSSink `sink_ptr`: returns the sink's `write` result (see
+/// native sink of `sink`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
@@ -892,8 +892,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     input: *const u8,
     input_len: usize,
     finish: bool,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    sink: &crate::webcore::sink::ReadableSinkController,
     more: &mut bool,
 ) -> JSValue {
     let slice = if input.is_null() {
@@ -909,14 +908,9 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
         Ok(has_more) => {
             *more = has_more;
             'write: {
-                let Some(sink_ptr) = NonNull::new(sink_ptr).filter(|_| !out.is_empty()) else {
-                    break 'write JSValue::UNDEFINED;
-                };
-                // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
-                // copies what it needs before returning.
-                let handle =
-                    unsafe { crate::webcore::sink::sink_handle_from_id(sink_id, sink_ptr) };
-                if handle.is_none() {
+                // The sink copies what it needs before returning.
+                let handle = sink.handle();
+                if out.is_empty() || handle.is_none() {
                     break 'write JSValue::UNDEFINED;
                 }
                 handle

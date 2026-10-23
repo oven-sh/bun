@@ -5,7 +5,6 @@
 #include "ErrorCode.h"
 #include "JSCompressionStream.h"
 #include "JSDecompressionStream.h"
-#include "JSSink.h"
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
@@ -183,7 +182,7 @@ struct CodecStepResult {
     bool sinkBackpressure { false };
 };
 
-// One step on this thread, delivered straight into the native JSSink when one is attached
+// One step on this thread, delivered straight into the native sink when one is attached
 // (no JSUint8Array), otherwise enqueued. `input` is only passed on a chunk's first step. A codec
 // error or failed delivery throws.
 static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, const uint8_t* input, size_t inputLen, bool finish)
@@ -192,7 +191,7 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
     if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, stream->m_nativeSinkId, sinkPtr, &step.more));
+        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkPtr, &step.more));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;
@@ -416,7 +415,7 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     CodecStepResult step;
     step.more = more;
     if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(Bun__NativeTransformSink__writeBytes(stream->m_nativeSinkId, sinkPtr, globalObject, out, outLen));
+        JSValue wrote = JSValue::decode(ReadableSinkController__writeBytes(sinkPtr, globalObject, out, outLen));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;

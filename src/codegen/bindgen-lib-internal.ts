@@ -2419,6 +2419,8 @@ export interface GetterField {
   rustName?: string;
   /** Defaults to the class's. */
   configurable?: boolean;
+  /** Defaults to the class's. */
+  enumerable?: boolean;
 }
 
 /** An accessor that reads an internal field in C++, without calling Rust. With `setter: true` it also stores any value assigned to it. */
@@ -2433,8 +2435,18 @@ export interface BuiltinField {
   length: number;
 }
 
+/** An integer that every instance shares, like a WebIDL `const`: a read-only data property. */
+export interface ConstantField {
+  constant: number;
+  /** Defaults to the class's. */
+  enumerable?: boolean;
+  /** Defaults to the class's. */
+  configurable?: boolean;
+}
+
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
-export type Field = FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField;
+export type Field =
+  FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ConstantField;
 export type StaticField =
   | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
   | Omit<GetterField, "cache" | "writable" | "passThis">;
@@ -2465,6 +2477,8 @@ export interface ClassOptions {
   configurable?: boolean;
   /** `false`: native properties are non-enumerable. */
   enumerable?: boolean;
+  /** `false`: native functions are read-only. */
+  writable?: boolean;
   /** `fn memory_cost(&self) -> usize`: the extra memory the struct owns, for a heap snapshot. */
   memoryCost?: boolean;
   /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
@@ -2544,6 +2558,7 @@ export class Getter {
   readonly passThis: boolean;
   readonly setterCapability: Capability;
   readonly configurable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
   constructor(name: string, options: GetterField, isStatic = false, sharedThis = false) {
     this.name = name;
     this.isStatic = isStatic;
@@ -2581,6 +2596,7 @@ export class Getter {
     this.internalField = options.cache === true ? name : options.cache;
     this.declaresInternalField = options.cache === true;
     this.configurable = options.configurable;
+    this.enumerable = options.enumerable;
   }
 }
 
@@ -2604,7 +2620,21 @@ export class Builtin {
   }
 }
 
-export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin;
+export class Constant {
+  readonly name: string;
+  readonly value: number;
+  readonly enumerable: boolean | undefined;
+  readonly configurable: boolean | undefined;
+  constructor(name: string, options: ConstantField) {
+    assert(Number.isSafeInteger(options.constant), `${name}: a constant is an integer`);
+    this.name = name;
+    this.value = options.constant;
+    this.enumerable = options.enumerable;
+    this.configurable = options.configurable;
+  }
+}
+
+export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin | Constant;
 
 /** Stands for the class being declared, in its own signatures. */
 class SelfType extends Type {
@@ -2651,6 +2681,7 @@ export class ClassType extends NamedType {
   readonly staticFunctions: readonly FunctionDefinition[];
   readonly staticGetters: readonly Getter[];
   readonly builtins: readonly Builtin[];
+  readonly constants: readonly Constant[];
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
@@ -2658,6 +2689,7 @@ export class ClassType extends NamedType {
   readonly internalFields: readonly string[];
   readonly configurable: boolean;
   readonly enumerable: boolean;
+  readonly writable: boolean;
   readonly prototypeBase: "Error" | undefined;
   /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
@@ -2711,7 +2743,8 @@ export class ClassType extends NamedType {
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
-          !wellKnownSymbol(name) || !("builtin" in field || "internalField" in field || "getter" in field),
+          !wellKnownSymbol(name) ||
+            !("builtin" in field || "internalField" in field || "getter" in field || "constant" in field),
           `${name}: only a function has an @@ key`,
         );
         if ("builtin" in field) {
@@ -2721,6 +2754,10 @@ export class ClassType extends NamedType {
         if ("internalField" in field) {
           assert(!isStatic, `${name}: an internalField accessor is a property of the prototype`);
           return new InternalFieldAccessor(name, field);
+        }
+        if ("constant" in field) {
+          assert(!isStatic, `${name}: a constant is a property of the prototype`);
+          return new Constant(name, field);
         }
         if ("getter" in field) {
           assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
@@ -2747,6 +2784,7 @@ export class ClassType extends NamedType {
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
+    this.constants = this.protoMembers.filter(member => member instanceof Constant);
     this.staticFunctions = this.staticMembers.filter(member => member instanceof FunctionDefinition);
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
@@ -2781,6 +2819,7 @@ export class ClassType extends NamedType {
     );
     this.configurable = options.configurable ?? false;
     this.enumerable = options.enumerable ?? true;
+    this.writable = options.writable ?? true;
     this.prototypeBase = options.prototypeBase;
   }
   /** The prototype's and the constructor's functions, and `call`. */

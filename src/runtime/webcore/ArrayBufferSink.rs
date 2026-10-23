@@ -43,10 +43,6 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        Ok(())
-    }
-
     pub(crate) fn flush_from_js(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,
@@ -64,17 +60,6 @@ impl ArrayBufferSink {
         }
 
         Ok(JSValue::js_number(0.0))
-    }
-
-    // In-place init: codegen calls this on a pre-allocated slot.
-    pub(crate) fn construct(this: &mut core::mem::MaybeUninit<Self>) {
-        this.write(ArrayBufferSink {
-            bytes: Vec::<u8>::default(),
-            done: false,
-            source: SourceHandle::default(),
-            streaming: false,
-            as_uint8array: false,
-        });
     }
 
     pub fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
@@ -161,9 +146,7 @@ impl ArrayBufferSink {
 // `Sink.JSSink(@This(), "ArrayBufferSink")`.
 impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const NAME: &'static str = "ArrayBufferSink";
-    const HAS_CONSTRUCT: bool = true;
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::ArrayBufferSink);
+    const ID: crate::webcore::sink::SinkId = crate::webcore::sink::SinkId::ArrayBuffer;
 
     crate::impl_js_sink_forwarders!();
 
@@ -172,8 +155,10 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         // `js_construct` allocated for it alone; nothing uses it afterwards.
         unsafe { Self::destroy(this) };
     }
-    fn construct(this: &mut core::mem::MaybeUninit<Self>) {
-        Self::construct(this);
+    fn start_config(
+        options: &crate::generated_bindgen::sink::SinkStartOptions<'_>,
+    ) -> streams::Start {
+        streams::Start::array_buffer_sink(options)
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, cx) {

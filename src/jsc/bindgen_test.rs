@@ -1010,6 +1010,20 @@ pub(crate) fn finite_later(cx: &mut JsScope<'_>, value: f64) -> JsResult<JSValue
     ))
 }
 
+pub(crate) struct TestReadOnly;
+
+impl TestReadOnly {
+    pub(crate) fn constructor() -> Self {
+        Self
+    }
+
+    pub(crate) fn answer(&self) -> i32 {
+        42
+    }
+
+    pub(crate) fn dispose(&self) {}
+}
+
 pub(crate) struct TestError {
     code: i32,
 }
@@ -1031,6 +1045,10 @@ impl TestError {
     }
 
     pub(crate) fn get_non_configurable_code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) fn get_enumerable_code(&self) -> i32 {
         self.code
     }
 

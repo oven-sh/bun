@@ -10,6 +10,7 @@
 #include "JSReadableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
 #include "GeneratedReadableStream.h"
+#include "GeneratedSink.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -47,6 +48,7 @@ using namespace Bun::WebStreams;
 using Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource;
 using Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource;
 using Bun::Bindgen::Generated::JSFileInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSReadableSinkController;
 
 // A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
 static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
@@ -189,6 +191,34 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
 }
 
 // Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
+// Returns undefined, a promise for the end of the stream, or a failure as its Exception cell, never left pending on the VM.
+extern "C" JSC::EncodedJSValue ReadableSinkController__assignToStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue possibleReadableStream, JSC::EncodedJSValue controller)
+{
+    auto& vm = getVM(globalObject);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return JSValue::encode(JSC::Exception::create(vm, createTypeError(globalObject, "Expected a ReadableStream"_s)));
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue result = assignToStream(globalObject, stream, uncheckedDowncast<JSReadableSinkController>(JSValue::decode(controller)));
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        // A termination that has left script is taken (the caller stands down on the cell); beneath script it stays for JSC to unwind.
+        scope.clearExceptionExceptTermination();
+        Bun__VM__takeTerminationOutsideScript(globalObject);
+        return JSValue::encode(exception);
+    }
+    return JSValue::encode(result);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableSinkController__onClose(JSC::EncodedJSValue controller, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason, bool sinkClosed)
+{
+    sinkControllerOnClose(globalObject, uncheckedDowncast<JSReadableSinkController>(JSValue::decode(controller)), JSValue::decode(reason), sinkClosed);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableSinkController__onReady(JSC::EncodedJSValue controller, Zig::GlobalObject* globalObject)
+{
+    sinkControllerOnReady(globalObject, uncheckedDowncast<JSReadableSinkController>(JSValue::decode(controller)));
+}
+
 extern "C" bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));

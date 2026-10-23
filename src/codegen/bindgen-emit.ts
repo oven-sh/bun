@@ -4,6 +4,7 @@ import assert from "node:assert";
 import {
   asciiLiteral,
   Builtin,
+  Constant,
   type Capability,
   type ClassMember,
   ClassType,
@@ -991,15 +992,15 @@ ${getter.hasSetter ? cppSetter(type, getter) : getter.writable ? cppInternalFiel
 
 function cppSourceForClass(type: ClassType): string {
   const { name } = type;
-  const attributes = (configurable = type.configurable) =>
-    `${type.enumerable ? "" : " | JSC::PropertyAttribute::DontEnum"}${configurable ? "" : " | JSC::PropertyAttribute::DontDelete"}`;
+  const attributes = (configurable = type.configurable, enumerable = type.enumerable) =>
+    `${enumerable ? "" : " | JSC::PropertyAttribute::DontEnum"}${configurable ? "" : " | JSC::PropertyAttribute::DontDelete"}`;
   const row = (key: string, attributes: string, value: string) =>
     `    { ${asciiLiteral(key)}, static_cast<unsigned>(${attributes}), JSC::NoIntrinsic, { ${value} } },`;
   const privateSymbol = (fn: FunctionDefinition) => (fn.signatures[0] as Method).privateSymbol;
   const methodRow = (fn: FunctionDefinition) =>
     row(
       fn.name,
-      `JSC::PropertyAttribute::Function${attributes()}`,
+      `JSC::PropertyAttribute::Function${type.writable ? "" : " | JSC::PropertyAttribute::ReadOnly"}${attributes()}`,
       `JSC::HashTableValue::NativeFunctionType, ${methodHostFunctionName(type, fn)}, ${fn.length}`,
     );
   // DOMAttribute has JSC check that the receiver is an instance. A static getter ignores it, and a forBind getter's is a bound function.
@@ -1007,7 +1008,7 @@ function cppSourceForClass(type: ClassType): string {
     const assignable = getter.hasSetter || (getter instanceof Getter && getter.writable);
     return row(
       getter.name,
-      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${attributes(getter instanceof Getter ? getter.configurable : undefined)}`,
+      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${getter instanceof Getter ? attributes(getter.configurable, getter.enumerable) : attributes()}`,
       `JSC::HashTableValue::GetterSetterType, ${getter instanceof Getter && getter.isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter)}, ${assignable ? setterHostFunctionName(type, getter) : "0"}`,
     );
   };
@@ -1016,6 +1017,12 @@ function cppSourceForClass(type: ClassType): string {
       builtin.name,
       "JSC::PropertyAttribute::Builtin",
       `JSC::HashTableValue::BuiltinGeneratorType, WebCore::${low(name)}${cap(builtin.name)}CodeGenerator, ${builtin.length}`,
+    );
+  const constantRow = (constant: Constant) =>
+    row(
+      constant.name,
+      `JSC::PropertyAttribute::ConstantInteger | JSC::PropertyAttribute::ReadOnly${attributes(constant.configurable, constant.enumerable)}`,
+      `JSC::HashTableValue::ConstantType, ${constant.value}`,
     );
   /** In the order the schema has them, which `for-in` shows. */
   const rowsOf = (members: readonly ClassMember[]) =>
@@ -1028,7 +1035,9 @@ function cppSourceForClass(type: ClassType): string {
           ? methodRow(member)
           : member instanceof Builtin
             ? builtinRow(member)
-            : getterRow(member),
+            : member instanceof Constant
+              ? constantRow(member)
+              : getterRow(member),
       );
   const prototypeRows = rowsOf(type.protoMembers);
   const constructorRows = rowsOf(type.staticMembers);
@@ -2037,6 +2046,7 @@ ${[
     accessor => `    ${accessor.hasSetter ? "" : "readonly "}${JSON.stringify(accessor.name)}: any;`,
   ),
   ...type.builtins.map(builtin => member(builtin.name, false, "(...args: any[]) => any")),
+  ...type.constants.map(constant => `    readonly ${JSON.stringify(constant.name)}: ${constant.value};`),
   ...(type.prototypeBase === "Error" ? [`    readonly "name": ${JSON.stringify(type.name)};`] : []),
 ].join("\n")}
   }${

@@ -405,6 +405,115 @@ describe("HTTP/3 header blocks that follow another header block", () => {
   });
 });
 
+// Once a stream's send side is finished, lsquic refuses the want-write that
+// ticked the connection for a STOP_SENDING frame. The frame then waited for
+// the connection's next alarm or packet.
+describe("STOP_SENDING on a stream whose send side is finished", () => {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const get = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+
+  // Two client sessions on one endpoint, so on one socket. `other` is the
+  // clock: when its probe datagram arrives, the server reports whether a
+  // STOP_SENDING has ended the write side of the request stream
+  // (`desiredSize` is null then).
+  async function connectPair(alpn?: string) {
+    const sessions: any[] = [];
+    let request: any;
+    const requested = Promise.withResolvers<void>();
+    const serverSettled = Promise.withResolvers<void>();
+    const probed = Promise.withResolvers<number | null>();
+    const server = await listen(
+      (session: any) => {
+        sessions.push(session);
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          request = stream;
+          requested.resolve();
+        };
+        session.ondatagramstatus = () => serverSettled.resolve();
+        session.ondatagram = (data: Uint8Array) => {
+          if (decoder.decode(data) === "probe") probed.resolve(request.writer.desiredSize);
+        };
+        session.closed.catch(() => {});
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, ...(alpn && { alpn: [alpn] }) },
+    );
+    const options = { servername: "localhost", verifyPeer: "manual", ...(alpn && { alpn }) } as SessionOptions;
+    const client = await connect(server.address!, options);
+    await client.opened;
+    const other = await connect(server.address!, options);
+    await other.opened;
+    // The server has seen its datagram acknowledged: the client owes nothing.
+    const settleServer = async () => {
+      await sessions[0].sendDatagram(encoder.encode("settle"));
+      await serverSettled.promise;
+    };
+    return { server, client, other, requested: requested.promise, settleServer, probed: probed.promise };
+  }
+
+  // With an ALPN the stream is raw QUIC: the request is a body, not headers.
+  const calls: [string, string | undefined, (stream: any) => void][] = [
+    ["stopSending()", undefined, stream => stream.stopSending(5n)],
+    ["destroy(error)", undefined, stream => stream.destroy(new Error("stop"))],
+    ["destroy(undefined, { code })", undefined, stream => stream.destroy(undefined, { code: 7n })],
+    ["stopSending() on a raw QUIC stream", "quic-test", stream => stream.stopSending(5n)],
+  ];
+  test.each(calls)("%s sends the frame in the call", async (_name, alpn, abort) => {
+    const pair = await connectPair(alpn);
+    await using server = pair.server;
+    const { client, other } = pair;
+    const clientSettled = Promise.withResolvers<void>();
+    client.ondatagramstatus = () => clientSettled.resolve();
+    let stream: any;
+    if (alpn) {
+      stream = await client.createBidirectionalStream();
+      stream.writer.writeSync(encoder.encode("request"));
+      stream.writer.endSync();
+    } else {
+      stream = await client.createBidirectionalStream({ headers: get });
+    }
+    stream.closed.catch(() => {});
+    await pair.requested;
+    // Each side sees its last packet acknowledged. The connection then has
+    // nothing to send and no acknowledgement of its own to carry the frame.
+    await client.sendDatagram(encoder.encode("settle"));
+    await clientSettled.promise;
+    await pair.settleServer();
+
+    const stats = client.endpoint.stats;
+    const sentBefore = stats.packetsSent;
+    abort(stream);
+    const sentInCall = stats.packetsSent > sentBefore;
+    await other.sendDatagram(encoder.encode("probe"));
+    const desiredSize = await pair.probed;
+    client.close();
+    other.close();
+    expect({ sentInCall, desiredSize }).toEqual({ sentInCall: true, desiredSize: null });
+  });
+
+  test("stopSending() inside a callback sends the frame when the callback returns", async () => {
+    const pair = await connectPair();
+    await using server = pair.server;
+    const { client, other } = pair;
+    const stream = await client.createBidirectionalStream({ headers: get });
+    stream.closed.catch(() => {});
+    await pair.requested;
+    await pair.settleServer();
+    // The acknowledgement of this datagram is the last packet the connection
+    // receives. Its callback makes the call and starts the clock.
+    client.ondatagramstatus = () => {
+      stream.stopSending(5n);
+      void other.sendDatagram(encoder.encode("probe"));
+    };
+    await client.sendDatagram(encoder.encode("settle"));
+    const desiredSize = await pair.probed;
+    client.close();
+    other.close();
+    expect(desiredSize).toBeNull();
+  });
+});
+
 describe("verifyClient", () => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;

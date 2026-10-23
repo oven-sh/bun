@@ -272,6 +272,11 @@ pub(crate) struct TakeJSBundleOptionsServer {
     pub(crate) kind: ChunkKind,
 }
 
+/// Starts every server chunk. The directive makes all of the chunk strict
+/// code, as the ES modules of a production build are. It adds no line, so the
+/// source map of the chunk does not move.
+const SERVER_CHUNK_START: &bun_core::ZStr = bun_core::ZStr::from_static(b"\"use strict\";({\0");
+
 #[repr(C)]
 #[derive(Default)]
 struct TempLookup {
@@ -1794,16 +1799,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     /// One part of the current server chunk as a program of its own, for
-    /// JSC's parser. It does not start with `(` as the chunk does: after an
-    /// error, JSC reads a leading `(` again as the parameters of an arrow
-    /// function and reports the wrapper in place of the error.
-    pub(crate) fn current_chunk_part_alone(&self, part: usize) -> Vec<u8> {
+    /// JSC's parser: strict code as in the chunk, or sloppy code. It does not
+    /// start with `(` as the chunk does: after an error, JSC reads a leading
+    /// `(` again as the parameters of an arrow function and reports the
+    /// wrapper in place of the error.
+    pub(crate) fn current_chunk_part_alone(&self, part: usize, strict: bool) -> Vec<u8> {
         debug_assert!(matches!(SIDE, Side::Server));
-        const START: &[u8] = b"0,{";
+        let start: &[u8] = if strict {
+            b"\"use strict\";0,{"
+        } else {
+            b"0,{"
+        };
         const END: &[u8] = b"}";
         let code = &self.current_chunk_code[part];
-        let mut text = Vec::with_capacity(START.len() + code.len() + END.len());
-        text.extend_from_slice(START);
+        let mut text = Vec::with_capacity(start.len() + code.len() + END.len());
+        text.extend_from_slice(start);
         text.extend_from_slice(code);
         text.extend_from_slice(END);
         text
@@ -1991,7 +2001,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"({\0"),
+                code: SERVER_CHUNK_START,
                 line_count: 0,
             },
         };

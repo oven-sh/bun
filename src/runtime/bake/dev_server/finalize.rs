@@ -231,7 +231,7 @@ fn load_server_chunk(dev: &mut DevServer, ctx: &HotUpdateContext<'_>) -> JsResul
     let mut rejected_any = false;
     let mut part = 0;
     while part < dev.server_graph.current_chunk_code.len() {
-        let alone = dev.server_graph.current_chunk_part_alone(part);
+        let alone = dev.server_graph.current_chunk_part_alone(part, true);
         let Some(syntax_error) = server_hmr_ffi::bake_find_server_code_syntax_error(
             global,
             BunString::clone_utf8(&alone),
@@ -240,6 +240,12 @@ fn load_server_chunk(dev: &mut DevServer, ctx: &HotUpdateContext<'_>) -> JsResul
             continue;
         };
         rejected_any = true;
+        let sloppy = dev.server_graph.current_chunk_part_alone(part, false);
+        let only_strict_code_is_rejected = server_hmr_ffi::bake_find_server_code_syntax_error(
+            global,
+            BunString::clone_utf8(&sloppy),
+        )
+        .is_none();
 
         let module = dev.server_graph.remove_current_chunk_part(part);
         let file = module.file_index;
@@ -256,15 +262,23 @@ fn load_server_chunk(dev: &mut DevServer, ctx: &HotUpdateContext<'_>) -> JsResul
                     )
                 })
                 .unwrap_or(bun_ast::Loc::EMPTY);
+            let mut notes = vec![bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                "Bun's parser accepted this file, and JavaScriptCore rejected it when the dev server loaded it",
+            )];
+            if only_strict_code_is_rejected {
+                notes.push(bun_ast::range_data(
+                    None,
+                    bun_ast::Range::NONE,
+                    "The dev server runs every server module as strict code, as \"bun build --app\" does",
+                ));
+            }
             let mut log = Log::init();
             log.add_range_error_fmt_with_notes(
                 source,
                 bun_ast::Range { loc, len: 0 },
-                Box::new([bun_ast::range_data(
-                    None,
-                    bun_ast::Range::NONE,
-                    "Bun's parser accepted this file, and JavaScriptCore rejected it when the dev server loaded it",
-                )]),
+                notes.into_boxed_slice(),
                 format_args!("{}", syntax_error.message),
             );
             dev.server_graph

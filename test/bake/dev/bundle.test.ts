@@ -2156,3 +2156,71 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     },
   });
 }
+
+// Server modules are strict code in the dev server. Code that only sloppy
+// code can have, and that the bundler's parser accepts, is a build error
+// with a note that says so.
+{
+  const fixed = (file: string) =>
+    `globalThis.value = "fixed"; ${file.endsWith(".cjs") ? "module.exports = {};" : "export {};"}`;
+  for (const { name, file, bad, error } of [
+    {
+      name: "delete of a name in an ES module",
+      file: "lib.ts",
+      bad: `
+        let cache = 1;
+        globalThis.value = delete cache;
+        export {};
+      `,
+      error: "lib.ts:2:27: error: Cannot delete unqualified property 'cache' in strict mode.",
+    },
+    {
+      name: "a with statement in a CommonJS file",
+      file: "lib.cjs",
+      bad: `with (Math) { globalThis.value = PI; } module.exports = {};`,
+      error: "lib.cjs:1:1: error: 'with' statements are not valid in strict mode.",
+    },
+    {
+      name: "a variable named arguments in a CommonJS file",
+      file: "lib.cjs",
+      bad: `
+        globalThis.value = (function () {
+          var arguments = 1;
+          return arguments;
+        })();
+        module.exports = {};
+      `,
+      error: "lib.cjs:2:7: error: Cannot declare a variable named arguments in strict mode.",
+    },
+    {
+      // For this one JSC reports an error in the text that wraps the chunk.
+      name: "an arrow function parameter named eval in a CommonJS file",
+      file: "lib.cjs",
+      bad: `const pick = (eval) => eval; globalThis.value = pick("value"); module.exports = {};`,
+      error: "lib.cjs:1:15: error: Cannot destructure to a parameter name 'eval' in strict mode.",
+    },
+  ]) {
+    devTest(`a server file that only strict code rejects is a build error (${name})`, {
+      framework: minimalFramework,
+      files: {
+        [file]: bad,
+        "routes/index.ts": `
+          import "../${file}";
+          export default function () {
+            return new Response("value: " + globalThis.value);
+          }
+        `,
+      },
+      async test(dev) {
+        {
+          await using c = await dev.client("/", { errors: [error] });
+        }
+        expect(dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toContain(
+          'note: The dev server runs every server module as strict code, as "bun build --app" does',
+        );
+        await dev.write(file, fixed(file));
+        await dev.fetch("/").equals("value: fixed");
+      },
+    });
+  }
+}

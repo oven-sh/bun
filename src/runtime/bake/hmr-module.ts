@@ -335,7 +335,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       loadOrEsmModule(mod, cjs, cjs.exports);
     } catch (e) {
       mod.state = State.Stale;
-      mod.cjs.exports = {};
+      // The module can have made `exports` read-only. An assignment would then throw in place of `e`.
+      Reflect.set(mod.cjs, "exports", {});
       throw e;
     }
     mod.state = State.Loaded;
@@ -448,7 +449,8 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       loadOrEsmModule(mod, cjs, cjs.exports);
     } catch (e) {
       mod.state = State.Stale;
-      mod.cjs.exports = {};
+      // The module can have made `exports` read-only. An assignment would then throw in place of `e`.
+      Reflect.set(mod.cjs, "exports", {});
       throw e;
     }
     mod.state = State.Loaded;

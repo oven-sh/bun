@@ -24,7 +24,9 @@
 #include "JSStreamsRuntime.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
+#include "MessagePort.h"
 #include "ObjectBindings.h"
+#include "SerializedScriptValue.h"
 #include "VectorSizeLimit.h"
 #include "ZigGlobalObject.h"
 
@@ -1226,6 +1228,30 @@ static EncodedJSValue teeAbortWithError(JSGlobalObject* globalObject, JSStreamTe
 
 // The default-tee read request's chunk steps run as a microtask
 // (onDefaultTeeReadChunkMicrotask). Each canceled flag is re-read live, as the spec does.
+static JSValue structuredCloneTeeChunk(JSGlobalObject* globalObject, JSValue chunk)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<RefPtr<WebCore::MessagePort>> ports;
+    Vector<Strong<JSObject>> transfer;
+    auto serialized = WebCore::SerializedScriptValue::create(
+        *globalObject,
+        chunk,
+        WTF::move(transfer),
+        ports,
+        WebCore::SerializationForStorage::No,
+        WebCore::SerializationContext::WorkerPostMessage);
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        return jsUndefined();
+    }
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+
+    JSValue clone = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    return clone;
+}
+
 static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject, JSValue chunk, JSStreamTeeState* teeState)
 {
     auto& vm = getVM(globalObject);
@@ -1233,10 +1259,19 @@ static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject
     teeState->m_readAgain1 = false;
     auto* controller1 = teeBranchDefaultController(teeState->branch1());
     auto* controller2 = teeBranchDefaultController(teeState->branch2());
+
+    JSValue branch2Chunk = chunk;
+    if (!teeState->m_canceled2 && teeState->m_cloneForBranch2) {
+        branch2Chunk = structuredCloneTeeChunk(globalObject, chunk);
+        if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+            TRY_CLEAR_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, teeAbortWithError(globalObject, teeState, controller1, controller2, exception->value(), readableStreamDefaultControllerError));
+        }
+    }
     if (!teeState->m_canceled1 && controller1)
         readableStreamDefaultControllerEnqueue(globalObject, controller1, chunk);
     if (!scope.exception() && !teeState->m_canceled2 && controller2)
-        readableStreamDefaultControllerEnqueue(globalObject, controller2, chunk);
+        readableStreamDefaultControllerEnqueue(globalObject, controller2, branch2Chunk);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         TRY_CLEAR_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, teeAbortWithError(globalObject, teeState, controller1, controller2, exception->value(), readableStreamDefaultControllerError));
@@ -1270,7 +1305,7 @@ static EncodedJSValue defaultTeeReaderClosedRejected(JSGlobalObject* globalObjec
 }
 
 // ReadableStreamDefaultTee(stream, cloneForBranch2 = false)
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGlobalObject* globalObject, JSReadableStream* stream)
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGlobalObject* globalObject, JSReadableStream* stream, bool cloneForBranch2)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1282,6 +1317,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
     RETURN_IF_EXCEPTION(scope, failure);
 
     auto* teeState = WebCore::JSStreamTeeState::create(vm, runtime->teeStateStructure(domGlobalObject));
+    teeState->m_cloneForBranch2 = cloneForBranch2;
     teeState->setStream(vm, stream);
     teeState->setReader(vm, reader);
     teeState->setCancelPromise(vm, JSPromise::create(vm, globalObject->promiseStructure()));
@@ -1539,7 +1575,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSGlobalOb
 }
 
 // ReadableStreamTee(stream, cloneForBranch2 = false)
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject* globalObject, JSReadableStream* stream)
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject* globalObject, JSReadableStream* stream, bool cloneForBranch2)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1548,7 +1584,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject
     RETURN_IF_EXCEPTION(scope, failure);
     if (stream->m_controllerKind == ControllerKind::Byte)
         RELEASE_AND_RETURN(scope, readableByteStreamTee(globalObject, stream));
-    RELEASE_AND_RETURN(scope, readableStreamDefaultTee(globalObject, stream));
+    RELEASE_AND_RETURN(scope, readableStreamDefaultTee(globalObject, stream, cloneForBranch2));
 }
 
 // ReadableStreamPipeTo(source, dest, preventClose, preventAbort, preventCancel[, signal]).

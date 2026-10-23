@@ -4474,7 +4474,7 @@ impl<'a> Resolver<'a> {
         let mut _safe_path: Option<&'static [u8]> = None;
 
         // Start at the top.
-        while queue_slice_len > 0 {
+        'walk: while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
@@ -4592,7 +4592,18 @@ impl<'a> Resolver<'a> {
                                 }
                             }
 
-                            return Ok(None);
+                            if queue_slice_len == 0
+                                || err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                            {
+                                return Ok(None);
+                            }
+                            // An ENOENT ancestor can still have an openable child (#44565).
+                            top_parent = allocators::Result {
+                                index: allocators::NOT_FOUND,
+                                hash: queue_top.result.hash,
+                                status: allocators::ItemStatus::NotFound,
+                            };
+                            continue 'walk;
                         }
                     }
                 }

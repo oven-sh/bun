@@ -3891,10 +3891,6 @@ Server.prototype.getConnections = function getConnections(callback) {
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
-  if (typeof port === "string") {
-    const numPort = Number(port);
-    if (!Number.isNaN(numPort)) port = numPort;
-  }
   let backlog;
   let path;
   let exclusive = false;
@@ -3903,8 +3899,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let readableAll = false;
   let writableAll = false;
   let fd;
-  //port is actually path
-  if (typeof port === "string") {
+  if (isPipeName(port)) {
     if (Number.isSafeInteger(hostname)) {
       if (hostname > 0) {
         //hostname is backlog

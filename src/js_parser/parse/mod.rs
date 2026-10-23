@@ -1560,9 +1560,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
                     } else if !is_use_strict && str_.eql_comptime(b"use strict") {
                         // `"use\x20strict"` has the value of a Use Strict Directive but is not one,
-                        // and the printer writes the value. In the REPL it stays a string
-                        // expression, which is the result of the line.
-                        if !p.options.repl_mode {
+                        // and the printer writes the value. At the top level of the REPL it stays
+                        // a string expression, which is the result of the line.
+                        if !(p.options.repl_mode && p.current_scope == p.module_scope) {
                             skip = true;
                             stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                         }

@@ -880,6 +880,7 @@ impl<'s> Program<'s> {
             instantiation_limit_hits: 0,
             limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
+            comparisons_after_failed_variances: 0,
             relations_of_this_task: Default::default(),
             stores_relations_per_task: false,
             constraints_of_this_task: Default::default(),
@@ -1624,10 +1625,12 @@ pub struct Checker<'p, 's> {
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`).
     /// That depends on the comparisons in progress and on the order in which the types were created.
     comparisons_of_deeply_nested_types: u64,
+    /// How many comparisons continued after their variance check failed, to explain the error (`relate_variances`).
+    comparisons_after_failed_variances: u64,
     /// Only in a task that commits. The comparisons that succeed because a nested comparison was `TernaryMaybe`, for
     /// two deeply nested types or at 100 levels. Another task may get a different result, and in `Program::relations`
     /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
-    /// everything the task has derived from it.
+    /// everything the task has derived from it. Also the comparisons that replace a failure that's published already.
     relations_of_this_task: FxHashMap<relate::Key, u8>,
     /// True if `insert_relation` stores in `relations_of_this_task`.
     stores_relations_per_task: bool,

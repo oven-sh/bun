@@ -4153,6 +4153,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let save_reliability = std::mem::replace(&mut self.reliability, 0);
+        let after_failed_variances = self.comparisons_after_failed_variances;
         let result = if r.expanding == REC_BOTH {
             self.comparisons_of_deeply_nested_types += 1;
             self.task.hold_back();
@@ -4160,6 +4161,13 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
+        // Without `REPORT` the same comparison fails.
+        if REPORT
+            && result.holds()
+            && self.comparisons_after_failed_variances != after_failed_variances
+        {
+            self.close_cycle(self.stack.len().saturating_sub(1));
+        }
         // Past the limit, the entry waits for the commit. An entry about the visited file is never shared in the
         // first place, as long as it isn't held back. If it were, the commit would publish it.
         if r.relation_count < r.waits_for_commit_below && !key.is_of_visited_file(&self.task.own) {
@@ -4258,6 +4266,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
+            // The failure is published already.
+            if entry & SUCCEEDED != 0 && self.p.relations.get(&self.task, &key) != Some(entry) {
+                self.relations_of_this_task.insert(key, entry);
+            }
         }
     }
 
@@ -4271,15 +4283,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.p.relations.insert(&self.task, key, entry, stored);
     }
 
-    /// Returns the entry in `Program::relations`, or else in `relations_of_this_task`. Anything
-    /// computed from the latter is also only valid for this task.
+    /// Returns the entry in `relations_of_this_task`, or else in `Program::relations`. Anything
+    /// computed from the former is also only valid for this task. All of its entries are successes.
     #[inline]
     fn known_relation(&mut self, key: &Key) -> Option<u8> {
         let known = self.p.relations.get(&self.task, key);
-        if known.is_some() || self.relations_of_this_task.is_empty() {
+        if self.relations_of_this_task.is_empty() || known.is_some_and(|entry| entry & FAILED == 0)
+        {
             return known;
         }
-        let cached_value = self.relations_of_this_task.get(key).copied()?;
+        let Some(&cached_value) = self.relations_of_this_task.get(key) else {
+            return known;
+        };
         self.comparisons_of_deeply_nested_types += 1;
         self.task.hold_back();
         Some(cached_value)
@@ -4945,6 +4960,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !(REPORT && variances.iter().any(|v| v & VARIANCE_MASK == INVARIANT)) {
                 return Some(Ternary::FALSE);
             }
+            self.comparisons_after_failed_variances += 1;
             shared.original_error_chain = r.error_chain.clone();
             r.restore_error_state(&shared.save_error_state);
         }
@@ -5125,6 +5141,15 @@ impl<'p, 's> Checker<'p, 's> {
             );
             let holds = result.is_some_and(Ternary::holds);
             self.note_compared_by_variances::<REPORT>(alias, &source_args, &target_args, holds);
+            // With `REPORT` this comparison continues, and two conditional types with the same `extends` type can be
+            // related structurally. That result replaces the failure. See "counts as a cycle" in `commit.rs`.
+            if shared.variance_check_failed
+                && matches!((sd, td), (TypeData::Cond { .. }, TypeData::Cond { .. }))
+                && variances.iter().any(|v| v & VARIANCE_MASK == INVARIANT)
+                && self.cond_extends(source) == self.cond_extends(target)
+            {
+                self.task.hold_back();
+            }
             if let Some(result) = result {
                 return result;
             }

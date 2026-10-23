@@ -79,6 +79,12 @@
 //!   comparisons that follow from either (`Checker::constraints_of_this_task`, `relations_of_this_task`). In a shared
 //!   table the first such result would stick for every task. They stay for the rest of the task, because its other
 //!   tables keep what was derived from them for that long.
+//! - **A comparison that only succeeds where an error is reported counts as a cycle.** tsc gives up on two instantiations
+//!   of an alias whose type arguments aren't related by the variances. Only while it reports that, and if a type
+//!   parameter is invariant, it continues and compares them structurally. Two conditional types can pass, and that
+//!   result replaces the failure. So the result depends on what the checker has reported before. The failure waits for
+//!   a commit, because a published entry can't be replaced. If it's published anyway, by a task that never got to the
+//!   error, the success stays in the task that did (`relations_of_this_task`).
 //! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};

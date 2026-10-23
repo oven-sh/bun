@@ -695,6 +695,65 @@ module.exports = { scope };
     }
   });
 
+  // By the variances of `Extract`, `Declared<T>` isn't related to `Indexed<T>`. `U` is invariant, so where TypeScript
+  // reports that, it continues and compares the two conditional types structurally. That succeeds and replaces the
+  // failure: `run(name)` has no error, and what's checked later finds the two related. The task of `b.ts` gets to the
+  // returned expressions first, because `a.ts` is long.
+  test("relates two conditional types from the first error about them on, whichever file's task gets there first", async () => {
+    using dir = project({
+      "a.ts": `interface Mutation<E = unknown> { e: E }
+interface Model<M extends Record<string, Mutation> = Record<string, Mutation>> { mutations: M }
+type Mutations<T> = T extends Model<infer M> ? M : never;
+type ErrorOf<T> = T extends Mutation<infer E> ? E : never;
+type Declared<T> = Extract<keyof Mutations<T>, string>;
+type Indexed<T extends Model> = Extract<keyof T["mutations"], string>;
+interface Options<T extends Model> {
+  mutate<Name extends Declared<T>>(name: Name): ErrorOf<Mutations<T>[Name]>;
+}
+declare function build<T extends Model>(options: Options<T>): Options<T>;
+${Array.from({ length: 600 }, (_, i) => `export const x${i} = [1, 2].map(v => ({ v, i: ${i} })).length;\n`).join("")}
+export function returnsTheCall<T extends Model>() {
+  return build<T>({ mutate: name => run(name) });
+  function run<Name extends Indexed<T>>(name: Name): ErrorOf<T["mutations"][Name]> { return null!; }
+}
+export function returnsTheFirstOfThree<T extends Model, N extends Declared<T>>(n: N) {
+  function run<Name extends Indexed<T>>(name: Name): Name { return name; }
+  function pick<Name extends Indexed<T>>(name: Name): 1;
+  function pick(name: unknown): 2;
+  function pick(name: unknown): number { return 0; }
+  const before: never = pick(n);
+  const first = run(n);
+  const after: never = pick(n);
+  return first;
+}
+export function returnsAnotherCall<T extends Model, N extends Declared<T>>(n: N) {
+  function run<Name extends Indexed<T>>(name: Name): ErrorOf<T["mutations"][Name]> { return null!; }
+  function pick<Name extends Indexed<T>>(name: Name): 1;
+  function pick(name: unknown): 2;
+  function pick(name: unknown): number { return 0; }
+  build<T>({ mutate: name => run(name) });
+  return pick(n);
+}
+`,
+      "b.ts": `import { returnsAnotherCall, returnsTheCall, returnsTheFirstOfThree } from "./a";
+export function measure<A, B extends A>(a: Extract<A, string>, b: Extract<B, string>) {
+  a = b;
+  return a;
+}
+export const types: [never, never, never] = [returnsTheCall, returnsTheFirstOfThree, returnsAnotherCall];
+`,
+    });
+    const threads = [1, 2, 2, 4, 8, 16];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(`a.ts(621,9): error TS2322: Type '2' is not assignable to type 'never'.
+a.ts(623,9): error TS2322: Type '1' is not assignable to type 'never'.
+b.ts(6,46): error TS2322: Type '<T extends Model>() => Options<T>' is not assignable to type 'never'.
+b.ts(6,62): error TS2322: Type '<T extends Model, N extends Declared<T>>(n: N) => Extract<keyof T["mutations"], string>' is not assignable to type 'never'.
+b.ts(6,86): error TS2322: Type '<T extends Model, N extends Declared<T>>(n: N) => 1' is not assignable to type 'never'.`);
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // `a.ts`, `b.ts` and `c.ts` import each other, and the type of `routes` depends on itself. What tsc reports depends
   // on where it enters that cycle. Here that's `0first.ts`, which doesn't import those files. It gets there through a
   // declaration that a file outside the import cycle makes visible everywhere.

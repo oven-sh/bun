@@ -938,13 +938,11 @@ impl Run<'_> {
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
             for (target, result) in targets.zip(linted) {
                 // A file that's in no program is linted without the rule.
-                match result.map_or_else(
+                let result = result.map_or_else(
                     || context.lint_file(target, &on_circular_fixes, None),
                     |it| Ok(Some(it)),
-                ) {
-                    Ok(result) => results.get_mut().extend(result),
-                    Err(error) => return Err(error),
-                }
+                )?;
+                results.get_mut().extend(result);
             }
             (results.get_mut()).append(&mut context.invalid_tsconfigs.lock().results);
             phases.checking += started.elapsed().as_secs_f64();

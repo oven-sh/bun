@@ -58,7 +58,6 @@ pub struct Entry {
     link_is_utf8: bool,
     link_kind: LinkKind,
     mode: u32,
-    perm_is_set: bool,
     size: i64,
     mtime: Option<i64>,
     warned: bool,
@@ -836,6 +835,8 @@ impl Reader {
                     return Err(Error::RedundantHeader('A'));
                 }
                 self.format = Format::Pax;
+                // A Solaris ACL. Permissions come from the header's mode alone, as in GNU tar and
+                // node-tar, so neither this nor a `SCHILY.acl.*` record is read.
                 self.begin_body(size, None)
             }
             b'g' => {
@@ -1428,12 +1429,7 @@ impl Reader {
     fn header_common(&mut self) -> Result<()> {
         let h = self.main_header;
         // Truncated the way a 32-bit `mode_t` is.
-        let mode = header::mode(&h) as u32;
-        self.entry.mode = if self.entry.perm_is_set {
-            (mode & S_IFMT) | self.entry.perm()
-        } else {
-            mode
-        };
+        self.entry.mode = header::mode(&h) as u32;
         if self.entry.mtime.is_none() {
             self.entry.mtime = Some(header::mtime(&h));
         }

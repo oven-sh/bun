@@ -70,6 +70,6 @@ Bun does not migrate an npm lockfile from npm 6 or older (`lockfileVersion` 1); 
 
 Bun preserves the original lockfile. You can remove it manually after verification.
 
-The other lockfiles do not record the `bin` and the install scripts of a package. Bun reads both from the registry for an npm package. For a git, GitHub or tarball package only its own `package.json` has them, and Bun downloads nothing to migrate: such a package has `"hasInstallScript": null` in `bun.lock` until a `bun install` installs it, which records both.
+`yarn.lock` and `pnpm-lock.yaml` do not record whether a package has install scripts. Except for Yarn 2+, they do not record its `bin` either. Bun reads both from the registry for an npm package. For a git, GitHub or tarball package, only its own `package.json` has them. Bun downloads nothing to migrate, so such a package has `"hasInstallScript": null` in `bun.lock`. The first `bun install` that installs the package records both.
 
 Bun writes the migrated `bun.lock` only when the command saves a lockfile. `bun install --frozen-lockfile` (and `bun ci`), `--dry-run`, `--no-save`, and read-only commands such as `bun outdated` use the migrated lockfile in memory and write nothing. Under `--frozen-lockfile`, Bun prints a `note:` asking you to run `bun install` and commit the result. To migrate without installing, run `bun pm migrate` or `bun install --lockfile-only`.

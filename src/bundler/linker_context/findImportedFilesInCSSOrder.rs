@@ -848,6 +848,30 @@ fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
     out
 }
 
+fn layer_lists_are_equal(a: &[LayerName], b: &[LayerName]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.eql(b))
+}
+
+/// Whether two import orders print the same CSS. `CssImportOrder::hash` is not enough to tell.
+pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOrder]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            import_conditions_are_equal(a.conditions.slice_const(), b.conditions.slice_const())
+                && match (&a.kind, &b.kind) {
+                    (CssImportOrderKind::Layers(a), CssImportOrderKind::Layers(b)) => {
+                        layer_lists_are_equal(a.inner().slice(), b.inner().slice())
+                    }
+                    (CssImportOrderKind::ExternalPath(a), CssImportOrderKind::ExternalPath(b)) => {
+                        a.text == b.text
+                    }
+                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) => {
+                        a.get() == b.get()
+                    }
+                    _ => false,
+                }
+        })
+}
+
 fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {
     if a.len() != b.len() {
         return false;

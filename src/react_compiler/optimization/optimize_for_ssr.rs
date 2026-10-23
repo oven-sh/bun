@@ -17,11 +17,11 @@
 //!
 //! Ported from TypeScript `src/Optimization/OptimizeForSSR.ts`.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
-use crate::hir::visitors::{each_instruction_value_operand, each_terminal_operand};
+use crate::hir::visitors::{operands, terminal_operands};
 use crate::hir::{
     ArrayPatternElement, HirFunction, IdentifierId, InstructionValue, PlaceOrSpread,
     PrimitiveValue, hir_vec, is_set_state_type, is_start_transition_type,
@@ -43,7 +43,7 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
     // Any use of the hook return other than the expected destructuring pattern
     // prevents inlining (we delete from inlined_state if we see the identifier used
     // as an operand elsewhere).
-    let mut inlined_state: HashMap<IdentifierId, InlinedStateReplacement> = HashMap::new();
+    let mut inlined_state: HashMap<IdentifierId, InlinedStateReplacement> = HashMap::default();
 
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
@@ -141,16 +141,14 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
 
             // Any use of useState/useReducer return besides destructuring prevents inlining
             if !inlined_state.is_empty() {
-                let operands = each_instruction_value_operand(&instr.value, env);
-                for operand in &operands {
+                for operand in operands(&instr.value, &env.functions) {
                     let id = env.identifiers[operand.identifier.0 as usize].id;
                     inlined_state.remove(&id);
                 }
             }
         }
         if !inlined_state.is_empty() {
-            let operands = each_terminal_operand(&block.terminal);
-            for operand in &operands {
+            for operand in terminal_operands(&block.terminal) {
                 let id = env.identifiers[operand.identifier.0 as usize].id;
                 inlined_state.remove(&id);
             }

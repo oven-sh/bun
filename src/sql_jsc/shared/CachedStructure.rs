@@ -1,13 +1,21 @@
+use core::ffi::{CStr, c_char};
 use core::mem::{ManuallyDrop, MaybeUninit};
 
-use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
-use bun_sql::shared::ColumnIdentifier;
+use crate::jsc::{
+    ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, JsError, JsResult,
+    MarkedArgumentBuffer, StrongOptional, bun_string_jsc,
+};
+use bun_jsc::Weak;
+use bun_ptr::RawSlice;
+use bun_sql::shared::{ColumnIdentifier, Data};
 
 #[derive(Default)]
 pub struct CachedStructure {
     pub(crate) structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub(crate) fields: Option<Box<[ExternColumnIdentifier]>>,
+    /// `result.statement`, kept alive only by the results that hold it.
+    description: Weak<()>,
 }
 
 impl CachedStructure {
@@ -17,6 +25,18 @@ impl CachedStructure {
 
     pub(crate) fn js_value(&self) -> Option<JSValue> {
         self.structure.get()
+    }
+
+    pub(crate) fn description(&self) -> Option<JSValue> {
+        self.description.get()
+    }
+
+    pub(crate) fn set_description(&mut self, global_object: &JSGlobalObject, description: JSValue) {
+        self.description = Weak::create_passive(description, global_object);
+    }
+
+    pub(crate) fn clear_description(&mut self) {
+        self.description = Weak::default();
     }
 
     pub(crate) fn set(
@@ -59,7 +79,7 @@ impl CachedStructure {
         // lets de duplicate the fields early
         let non_duplicated_count = columns
             .clone()
-            .filter(|c| !matches!(c, ColumnIdentifier::Duplicate))
+            .filter(|c| !matches!(c, ColumnIdentifier::Duplicate(_)))
             .count();
 
         let max_inline = JSObject::max_inline_capacity() as usize;
@@ -79,7 +99,7 @@ impl CachedStructure {
 
         let mut i: usize = 0;
         for name_or_index in columns {
-            if matches!(name_or_index, ColumnIdentifier::Duplicate) {
+            if matches!(name_or_index, ColumnIdentifier::Duplicate(_)) {
                 continue;
             }
 
@@ -92,12 +112,12 @@ impl CachedStructure {
                 ColumnIdentifier::Index(index) => {
                     out.value.index = *index;
                 }
-                ColumnIdentifier::Duplicate => unreachable!(),
+                ColumnIdentifier::Duplicate(_) => unreachable!(),
             }
             out.tag = match name_or_index {
                 ColumnIdentifier::Name(_) => 2,
                 ColumnIdentifier::Index(_) => 1,
-                ColumnIdentifier::Duplicate => 0,
+                ColumnIdentifier::Duplicate(_) => 0,
             };
             ids[i].write(out);
             i += 1;
@@ -124,6 +144,100 @@ impl CachedStructure {
             self.set(global_object, Some(structure), None);
         }
     }
+}
+
+/// What `result.statement` is made of, for the results of a query whose statement no other query
+/// runs: nothing would share the object, so it is made when somebody reads it.
+pub(crate) struct Undescribed<T>(Vec<Option<T>>);
+
+impl<T> Default for Undescribed<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> Undescribed<T> {
+    /// Returns the number that gets `result` back from `take`.
+    pub(crate) fn push(&mut self, result: T) -> JSValue {
+        self.0.push(Some(result));
+        JSValue::js_number_from_uint64(self.0.len() as u64 - 1)
+    }
+
+    pub(crate) fn take(&mut self, number: JSValue) -> Option<T> {
+        let index = usize::try_from(number.to_int32()).ok()?;
+        self.0.get_mut(index)?.take()
+    }
+}
+
+/// Makes `result.statement`. `append_columns` appends a value per key, column after column.
+pub(crate) fn describe_statement<const KEYS: usize>(
+    global_object: &JSGlobalObject,
+    query: &bun_core::String,
+    parameter_types: &[u32],
+    keys: [&CStr; KEYS],
+    append_columns: impl FnOnce(&mut MarkedArgumentBuffer) -> JsResult<()>,
+) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn SQL__createStatementDescription(
+            global_object: &JSGlobalObject,
+            query: &bun_core::String,
+            parameter_types: *const u32,
+            parameter_count: usize,
+            keys: *const *const c_char,
+            key_count: usize,
+            column_values: &MarkedArgumentBuffer,
+        ) -> JSValue;
+    }
+    let keys = keys.map(|key| key.as_ptr());
+    MarkedArgumentBuffer::new(|column_values| {
+        append_columns(column_values)?;
+        bun_jsc::host_fn::from_js_host_call(global_object, || {
+            // SAFETY: each pointer has as many live elements as the count after it; C++ keeps none.
+            unsafe {
+                SQL__createStatementDescription(
+                    global_object,
+                    query,
+                    parameter_types.as_ptr(),
+                    parameter_types.len(),
+                    keys.as_ptr(),
+                    KEYS,
+                    column_values,
+                )
+            }
+        })
+    })
+}
+
+pub(crate) fn column_name_to_js(
+    global_object: &JSGlobalObject,
+    column: &ColumnIdentifier,
+) -> JsResult<JSValue> {
+    match column {
+        ColumnIdentifier::Name(name) | ColumnIdentifier::Duplicate(name) => {
+            bun_string_jsc::create_utf8_for_js(global_object, name.slice())
+        }
+        ColumnIdentifier::Index(index) => {
+            let mut digits = bun_core::fmt::ItoaBuf::new();
+            bun_string_jsc::create_utf8_for_js(
+                global_object,
+                bun_core::fmt::itoa(&mut digits, *index),
+            )
+        }
+    }
+}
+
+/// Runs user code that can close the connection: hold no reference into it or its statements.
+pub(crate) fn transform_name(
+    global_object: &JSGlobalObject,
+    transform: JSValue,
+    name: JSValue,
+) -> JsResult<ColumnIdentifier> {
+    let renamed = transform
+        .call(global_object, JSValue::UNDEFINED, &[name])?
+        .to_bun_string(global_object)?;
+    let renamed = renamed.to_utf8();
+    ColumnIdentifier::init(Data::Temporary(RawSlice::new(renamed.slice())))
+        .map_err(|_| JsError::OutOfMemory)
 }
 
 // No explicit `impl Drop` is needed: the GC-strong structure handle is freed

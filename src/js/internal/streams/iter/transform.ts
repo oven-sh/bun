@@ -13,9 +13,9 @@ const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
 const { kValidatedTransform } = require("internal/streams/iter/types");
 const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = require("internal/validators");
 
-const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
-const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
-const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
+const NativeZlib = $bindgen("node_zlib_binding.bind.ts", "NativeZlib");
+const NativeBrotli = $bindgen("node_zlib_binding.bind.ts", "NativeBrotli");
+const NativeZstd = $bindgen("node_zlib_binding.bind.ts", "NativeZstd");
 const constants = process.binding("constants").zlib;
 
 const Uint8ArraySlice = Uint8Array.prototype.slice;

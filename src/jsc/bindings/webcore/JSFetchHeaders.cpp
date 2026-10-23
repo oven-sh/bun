@@ -134,27 +134,27 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
 
     if (argument0.value() && !argument0.value().isUndefined()) {
         if (auto* existingJsFetchHeaders = dynamicDowncast<JSFetchHeaders>(argument0.value())) {
+            auto* structure = structureForNewTarget<FetchHeaders>(lexicalGlobalObject, callFrame);
+            RETURN_IF_EXCEPTION(throwScope, {});
             auto newHeaders = FetchHeaders::create(existingJsFetchHeaders->wrapped());
-            auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(newHeaders));
+            auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(newHeaders));
             if constexpr (IsExceptionOr<decltype(jsValue)>)
                 RETURN_IF_EXCEPTION(throwScope, {});
-            setSubclassStructureIfNeeded<FetchHeaders>(lexicalGlobalObject, callFrame, asObject(jsValue));
-            RETURN_IF_EXCEPTION(throwScope, {});
             return JSValue::encode(jsValue);
         }
         init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>(*lexicalGlobalObject, argument0.value()));
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* structure = structureForNewTarget<FetchHeaders>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = FetchHeaders::create(WTF::move(init));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<FetchHeaders>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (argument0.value())
         uncheckedDowncast<JSFetchHeaders>(jsValue)->computeMemoryCost();
@@ -508,11 +508,44 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_set, (JSGlobalObject * 
 
 struct FetchHeadersIteratorTraits {
     static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
-    using KeyType = IDLDOMString;
-    using ValueType = IDLDOMString;
 };
 
 using FetchHeadersIteratorBase = JSDOMIteratorBase<JSFetchHeaders, FetchHeadersIteratorTraits>;
+
+static inline JSC::JSString* headerNameToJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const FetchHeaders::Iterator::Entry& entry)
+{
+    if (entry.name)
+        return WebCore::clientData(vm)->httpHeaderIdentifiers().stringFor(globalObject, *entry.name);
+    return JSC::jsStringWithCache(vm, *entry.key);
+}
+
+template<>
+JSC::JSValue FetchHeadersIteratorBase::next(JSC::JSGlobalObject& lexicalGlobalObject)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_iterator) {
+        if (auto* entry = m_iterator->nextEntry()) {
+            JSC::JSValue result;
+            switch (m_kind) {
+            case IterationKind::Keys:
+                result = headerNameToJS(vm, globalObject(), *entry);
+                break;
+            case IterationKind::Values:
+                result = JSC::jsStringWithCache(vm, *entry->value);
+                break;
+            case IterationKind::Entries:
+                result = JSC::constructArrayPair(globalObject(), headerNameToJS(vm, globalObject(), *entry), JSC::jsStringWithCache(vm, *entry->value));
+                RETURN_IF_EXCEPTION(scope, {});
+                break;
+            }
+            return createIteratorResultObject(&lexicalGlobalObject, result, false);
+        }
+        m_iterator = std::nullopt;
+    }
+    return createIteratorResultObject(&lexicalGlobalObject, JSC::jsUndefined(), true);
+}
+
 class FetchHeadersIterator final : public FetchHeadersIteratorBase {
 public:
     using Base = FetchHeadersIteratorBase;
@@ -589,7 +622,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_values, (JSC::JSGlobalO
 
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSFetchHeaders* thisObject)
 {
-    return JSValue::encode(iteratorForEach<FetchHeadersIterator>(*lexicalGlobalObject, *callFrame, *thisObject));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue callback = callFrame->argument(0);
+    JSC::JSValue thisValue = callFrame->argument(1);
+
+    auto callData = JSC::getCallData(callback);
+    if (callData.type == JSC::CallData::Type::None)
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Cannot call callback on a non-function"_s);
+
+    auto iterator = thisObject->wrapped().createIterator();
+    while (auto* entry = iterator.nextEntry()) {
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(JSC::jsStringWithCache(vm, *entry->value));
+        arguments.append(headerNameToJS(vm, thisObject->globalObject(), *entry));
+        arguments.append(thisObject);
+        ASSERT(!arguments.hasOverflowed());
+        JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, callback, callData, thisValue, arguments);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

@@ -1,0 +1,13 @@
+class MyClass {
+  x = 1
+
+  ;in = 2
+}
+class B {
+  x = 1
+
+  ;
+  y
+
+  ;[a] = 1
+}

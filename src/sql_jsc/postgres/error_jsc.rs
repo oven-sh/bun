@@ -1,6 +1,8 @@
 //! `createPostgresError` / `postgresErrorToJS` bridges.
 
-use crate::jsc::{JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc};
+use crate::jsc::{
+    JSGlobalObject, JSValue, JsError, JsResult, SQLErrorClass, bun_string_jsc, create_sql_error,
+};
 use bun_sql::postgres::any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
 
 pub(crate) fn create_postgres_error(
@@ -8,16 +10,13 @@ pub(crate) fn create_postgres_error(
     message: &[u8],
     options: &PostgresErrorOptions,
 ) -> JsResult<JSValue> {
-    let opts_obj = JSValue::create_empty_object(global, 0);
-    opts_obj.ensure_still_alive();
-    opts_obj.put(
+    // The fields and their order are those of the `PostgresError` constructor (src/js/internal/sql/errors.ts).
+    let error = create_sql_error(global, SQLErrorClass::Postgres, message)?;
+    error.put(
         global,
         b"code",
         bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
-    // Each optional field is `put` by name when `Some`. Property names must
-    // stay camelCase (`internalPosition`, `internalQuery`, `dataType`) since
-    // the JS consumer reads `options.internalPosition` etc.
     let optional_fields: [(&'static [u8], Option<&[u8]>); 16] = [
         (b"errno", options.errno),
         (b"detail", options.detail),
@@ -37,15 +36,10 @@ pub(crate) fn create_postgres_error(
         (b"routine", options.routine),
     ];
     for (name, value) in optional_fields {
-        opts_obj.put_optional_utf8(global, name, value)?;
+        error.put_optional_utf8(global, name, value)?;
     }
-    opts_obj.put(
-        global,
-        b"message",
-        bun_string_jsc::create_utf8_for_js(global, message)?,
-    );
 
-    Ok(opts_obj)
+    Ok(error)
 }
 
 pub(crate) fn postgres_error_to_js(
@@ -67,6 +61,7 @@ pub(crate) fn postgres_error_to_js_with_hint(
         ConnectionClosed => b"ERR_POSTGRES_CONNECTION_CLOSED",
         ConnectionFailed => b"ERR_POSTGRES_CONNECTION_FAILED",
         ConnectionRefused => b"ERR_POSTGRES_CONNECTION_REFUSED",
+        CopyNotSupported => b"ERR_POSTGRES_COPY_NOT_SUPPORTED",
         ExpectedRequest => b"ERR_POSTGRES_EXPECTED_REQUEST",
         ExpectedStatement => b"ERR_POSTGRES_EXPECTED_STATEMENT",
         InvalidBackendKeyData => b"ERR_POSTGRES_INVALID_BACKEND_KEY_DATA",
@@ -75,17 +70,12 @@ pub(crate) fn postgres_error_to_js_with_hint(
         InvalidCharacter => b"ERR_POSTGRES_INVALID_CHARACTER",
         InvalidMessage => b"ERR_POSTGRES_INVALID_MESSAGE",
         InvalidMessageLength => b"ERR_POSTGRES_INVALID_MESSAGE_LENGTH",
-        InvalidQueryBinding => b"ERR_POSTGRES_INVALID_QUERY_BINDING",
         InvalidServerKey => b"ERR_POSTGRES_INVALID_SERVER_KEY",
         InvalidServerSignature => b"ERR_POSTGRES_INVALID_SERVER_SIGNATURE",
-        MultidimensionalArrayNotSupportedYet => {
-            b"ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"
-        }
-        NullsInArrayNotSupportedYet => b"ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET",
-        Overflow => b"ERR_POSTGRES_OVERFLOW",
         PBKDFD2 => b"ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2",
         SASL_SIGNATURE_MISMATCH => b"ERR_POSTGRES_SASL_SIGNATURE_MISMATCH",
         SASL_SIGNATURE_INVALID_BASE64 => b"ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64",
+        SASLIterationCountOutOfRange => b"ERR_POSTGRES_SASL_ITERATION_COUNT_OUT_OF_RANGE",
         TLSNotAvailable => b"ERR_POSTGRES_TLS_NOT_AVAILABLE",
         TLSUpgradeFailed => b"ERR_POSTGRES_TLS_UPGRADE_FAILED",
         TooManyParameters => {
@@ -109,7 +99,6 @@ pub(crate) fn postgres_error_to_js_with_hint(
         UnsupportedByteaFormat => b"ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT",
         UnsupportedArrayFormat => b"ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT",
         UnsupportedIntegerSize => b"ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE",
-        UnsupportedNumericFormat => b"ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT",
         UnknownFormatCode => b"ERR_POSTGRES_UNKNOWN_FORMAT_CODE",
         JSError => {
             return global.take_exception(JsError::Thrown);

@@ -567,6 +567,23 @@ macro_rules! zstr {
     }};
 }
 
+/// The path of the null device, as a literal that `concat!` accepts. Use it for paths handed to a
+/// child process, because most Windows programs treat `/dev/null` as an ordinary path.
+#[cfg(not(windows))]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "/dev/null"
+    };
+}
+#[cfg(windows)]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "NUL"
+    };
+}
+
 /// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
 /// struct whose address is the only thing Rust ever observes.
 ///
@@ -2220,6 +2237,28 @@ impl StackCheck {
         remaining > Self::THRESHOLD
     }
 
+    /// How many bytes of stack this thread has left before `is_safe_to_recurse` says no.
+    #[inline]
+    pub fn remaining(self) -> usize {
+        Self::frame_address()
+            .saturating_sub(self.cached_stack_end)
+            .saturating_sub(Self::THRESHOLD)
+    }
+
+    /// The same check, which says no after at most `bytes` more of stack
+    /// than are in use here. For what builds a tree that other code walks
+    /// afterwards: that code needs stack for each level too, its frames can
+    /// be larger, and a derived `Drop` cannot ask.
+    #[inline]
+    pub fn with_at_most(self, bytes: usize) -> Self {
+        let end = Self::frame_address()
+            .saturating_sub(Self::THRESHOLD)
+            .saturating_sub(bytes);
+        Self {
+            cached_stack_end: self.cached_stack_end.max(end),
+        }
+    }
+
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
     /// headroom on top of the platform threshold. Use when the code after the
     /// check makes a deep call (e.g. into the transpiler) before reaching the
@@ -2667,7 +2706,15 @@ fn os_entropy(bytes: &mut [u8]) {
                 if err == libc::EINTR {
                     continue;
                 }
-                panic!("getrandom failed: errno {err}");
+                // Linux before 3.17 returns ENOSYS, and a seccomp filter can return EPERM.
+                use std::io::Read;
+                if std::fs::File::open("/dev/urandom")
+                    .and_then(|mut f| f.read_exact(&mut bytes[filled..]))
+                    .is_err()
+                {
+                    panic!("getrandom failed: errno {err}");
+                }
+                return;
             }
             filled += rc as usize;
         }
@@ -3354,39 +3401,29 @@ macro_rules! generic_index_int { ($($t:ty),*) => { $(
 )* } }
 generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
 
-/// Generic-integer bound used by `validateIntegerRange` /
-/// `validateBigIntRange` / `getInteger`
+/// Generic-integer bound used by `validateIntegerRange` / `getInteger`
 /// (JSGlobalObject). Provides the small surface those callers need:
-/// signedness, range as `i128`, and lossy/wrapping casts from the JSC numeric
-/// carriers (i32 / f64 / i64 / u64).
+/// range as `i128`, and lossy/wrapping casts from the JSC numeric
+/// carriers (i32 / f64).
 pub trait Integer: Copy + Default {
-    const SIGNED: bool;
     const MIN_I128: i128;
     const MAX_I128: i128;
     const ZERO: Self;
     fn from_i32(v: i32) -> Self;
     fn from_f64(v: f64) -> Self;
-    fn from_i64(v: i64) -> Self;
-    fn from_u64(v: u64) -> Self;
 }
 macro_rules! impl_integer {
-    ($($t:ty: $signed:expr),* $(,)?) => { $(
+    ($($t:ty),* $(,)?) => { $(
         impl Integer for $t {
-            const SIGNED: bool = $signed;
             const MIN_I128: i128 = <$t>::MIN as i128;
             const MAX_I128: i128 = <$t>::MAX as i128;
             const ZERO: Self = 0;
             #[inline] fn from_i32(v: i32) -> Self { v as Self }
             #[inline] fn from_f64(v: f64) -> Self { v as Self }
-            #[inline] fn from_i64(v: i64) -> Self { v as Self }
-            #[inline] fn from_u64(v: u64) -> Self { v as Self }
         }
     )* };
 }
-impl_integer!(
-    i8: true, i16: true, i32: true, i64: true, isize: true,
-    u8: false, u16: false, u32: false, u64: false, usize: false,
-);
+impl_integer!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 /// Primitive integers transcodable as native-endian raw bytes.
 ///
@@ -4285,7 +4322,7 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
@@ -4377,19 +4414,26 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable").as_ptr();
+        let exec_path = self_exe_path().expect("unreachable");
 
-        libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
+        libc::execve(
+            exec_path.as_ptr(),
+            newargv.as_ptr().cast(),
+            envp.as_ptr().cast(),
+        );
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        crate::err_generic!(
+            "Failed to reload \"<b>{}<r>\": {} <d>(execve)<r>",
+            bstr::BStr::new(exec_path.as_bytes()),
+            crate::ErrnoNames::SYS
+                .name(errno)
+                .unwrap_or("unknown error"),
+        );
         if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
             return;
         }
-        panic!("Unexpected error while reloading: errno {}", errno);
+        crate::Global::exit(1);
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -5014,49 +5058,49 @@ pub mod timespec_mode {
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
-/// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
-/// Sentinel `i64::MIN` / `NaN` ⇒ not mocked.
+/// from `bun_runtime::test_runner::timers::FakeTimers`. Thread-local, like
+/// each VM's fake timer heap.
 pub mod mock_time {
-    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+    use core::cell::Cell;
 
-    static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
-    // Mocked wall-clock `Date.now()` in ms, stored as f64 bits; NaN = unset.
-    static MOCKED_WALL_MS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
+    thread_local! {
+        static MOCKED_TIME_NS: Cell<Option<i64>> = const { Cell::new(None) };
+        /// Mocked wall-clock `Date.now()` in ms.
+        static MOCKED_WALL_MS: Cell<Option<f64>> = const { Cell::new(None) };
+    }
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
     #[inline]
     pub fn set(ns: i64) {
-        MOCKED_TIME_NS.store(ns, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(Some(ns));
     }
     /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
     /// real clock again.
     #[inline]
     pub fn clear() {
-        MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(None);
     }
     /// Current mocked time, or `None` if not mocked.
     #[inline]
     pub fn get() -> Option<i64> {
-        let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
-        if v == i64::MIN { None } else { Some(v) }
+        MOCKED_TIME_NS.get()
     }
     /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
     /// fake-timers alongside `set` so calendar-based consumers and the
     /// monotonic timer heap move through the same mock.
     #[inline]
     pub fn set_wall_ms(ms: f64) {
-        MOCKED_WALL_MS.store(ms.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(Some(ms));
     }
     /// Clear the mocked wall-clock time.
     #[inline]
     pub fn clear_wall() {
-        MOCKED_WALL_MS.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(None);
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
     pub(crate) fn wall_ms() -> Option<f64> {
-        let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
-        if v.is_nan() { None } else { Some(v) }
+        MOCKED_WALL_MS.get()
     }
 }
 

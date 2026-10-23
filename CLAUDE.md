@@ -101,7 +101,7 @@ test("(multi-file test) my feature", async () => {
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
 - When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
 - Keep tests fast: budget roughly 1s per test and 10s per file. Debug+ASAN builds run 10-100x slower than release, so a 1s local test can take a minute in CI. Use `test.concurrent` for independent subprocess-spawning tests.
-- Never contact the public internet (registry.npmjs.org, github.com, CDNs). Use `VerdaccioRegistry` from `"harness"` for package installs and a local `Bun.serve({ port: 0 })` for HTTP.
+- Never contact the public internet (registry.npmjs.org, github.com, CDNs). Use `TestRegistry` from `"registry"` (`test/packages/registry`) for package installs and a local `Bun.serve({ port: 0 })` for HTTP.
 - `setDefaultTimeout` is a ceiling, not a target. Leave the default and pass a per-test timeout only for the rare outlier; a 5-minute file default multiplies across retries when one test hangs.
 - Leak tests branch their RSS threshold on `isASAN`/`isDebug` and keep the bound well below what the unfixed leak produces. An un-branched absolute delta flakes under ASAN quarantine and GC jitter.
 - **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` or `await sleep(N)` to wait for a condition; poll with a deadline or `await` the event itself. You are not testing the TIME PASSING, you are testing the CONDITION.
@@ -114,7 +114,7 @@ test("(multi-file test) my feature", async () => {
 - **Rust code** (`src/**/*.rs`): Core runtime, JavaScript bindings, bundler, package manager. This is what compiles and ships.
 - **C++ code** (`src/jsc/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
-- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
+- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.bind.ts` and other sources. The build regenerates them automatically when their inputs change.
 
 ### Core Source Organization
 
@@ -129,7 +129,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
 - `src/resolver/` - Module resolution system
 - `src/ast/` - AST node types and arena allocation
-- `src/jsc/bindings/` - C++ JavaScriptCore bindings (generated classes from `.classes.ts` + manual bindings)
+- `src/jsc/bindings/` - C++ JavaScriptCore bindings (classes generated from `.bind.ts` + manual bindings)
 - `src/jsc/` - Rust-side JSC glue (`VirtualMachine.rs`, `web_worker.rs`, `event_loop.rs`, FFI imports)
 - `src/runtime/api/` - Bun-specific JS-visible APIs (`BunObject.rs`, `JSBundler.rs`, `Glob`, `Archive`, …)
 - `src/runtime/server/` - `Bun.serve` HTTP/WebSocket server
@@ -165,7 +165,7 @@ When implementing JavaScript classes in C++:
 
 Code generation happens automatically as part of the build process. The main scripts are:
 
-- `src/codegen/generate-classes.ts` - Generates Rust & C++ bindings from `*.classes.ts` files
+- `src/codegen/bindgen.ts` - Generates Rust, C++ & TypeScript bindings from `*.bind.ts` files (`docs/project/bindgen.mdx`)
 - `src/codegen/generate-jssink.ts` - Generates stream-related classes
 - `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`
 - `src/codegen/bundle-functions.ts` - Bundles global functions like `ReadableStream`

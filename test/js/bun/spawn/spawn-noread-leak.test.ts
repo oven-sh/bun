@@ -1,77 +1,89 @@
 import { expect, test } from "bun:test";
-import { isASAN, isWindows, rss, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, withoutAsanQuarantine } from "harness";
 import { join } from "node:path";
 
-// Regression coverage for issue #18265 / PR #20102: a `"pipe"` stdio stream
-// that JS never reads must not retain the PipeReader's read buffer past the
-// child's exit.
+// Regression test for #18265 (fixed by #20102): a "pipe" stdio stream that JS
+// never reads must not leak its read buffer.
 //
-// PipeReader reserves a per-reader read buffer once data arrives (~16 KB on
-// POSIX via the hardcoded `reserve(16 * 1024)` in PosixBufferedReader, ~64 KB
-// on Windows via libuv's pipe alloc_cb suggested_size). On POSIX the first
-// read uses a shared stack buffer and only falls through to the per-reader
-// `reserve()` loop once it has produced data, so the child must write to the
-// piped stream for that allocation to happen. The child writes a full 16 KB so
-// the retained buffer's pages are actually faulted in; with a tiny write only
-// one page is touched and the regressed delta sits under any useful RSS bound.
-//
-// The previous form spawned msys2 `cat` (~9 ms/spawn on Windows arm64) with an
-// empty stderr pipe; native `cmd /c type` / POSIX `cat` keep the spawn cost at
-// ~2.5 ms / ~0.2 ms respectively.
+// Each child has the two kinds of unread pipe from that report:
+// - stdout carries a payload. The reader buffers it, and the Subprocess keeps
+//   the bytes until the GC collects it. The RSS bound is for this buffer.
+// - stderr carries nothing. This is the stream that leaked in #18265: its
+//   reserved buffer stayed empty and was never freed. A leak of that kind is a
+//   few pages per child at most, too little for the RSS bound. LeakSanitizer
+//   reports it on the ASAN lane.
 
 const MB = 1024 * 1024;
 const BATCH = 50;
+const WARMUP_BATCHES = 3;
+const MEASURE_BATCHES = 12;
+const PAYLOAD_BYTES = 64 * 1024;
 
-test("unread 'pipe' stdio does not leak the PipeReader buffer", async () => {
+// The children run from a process of their own. Its RSS has none of the test
+// runner's memory, and ASAN can run there with the quarantine off.
+const fixture = /* js */ `
+  const { cmd, batch, warmupBatches, measureBatches } = JSON.parse(process.argv.at(-1));
+  const exits = {};
+  async function rssAfter(batches) {
+    for (let i = 0; i < batches; i++) {
+      const codes = await Promise.all(
+        Array.from({ length: batch }, () => Bun.spawn(cmd, { stdio: ["ignore", "pipe", "pipe"] }).exited),
+      );
+      for (const code of codes) exits[code] = (exits[code] ?? 0) + 1;
+      Bun.gc(true);
+    }
+    return process.memoryUsage.rss();
+  }
+  // The warmup puts the state that the runtime creates lazily into the baseline.
+  const baseline = await rssAfter(warmupBatches);
+  const final = await rssAfter(measureBatches);
+  console.log(JSON.stringify({ exits, baseline, final }));
+`;
+
+test("unread 'pipe' stdout and stderr do not leak after the child exits", async () => {
   using dir = tempDir("spawn-noread-leak", {
-    "payload.bin": Buffer.alloc(16 * 1024, "x").toString(),
+    "payload.bin": Buffer.alloc(PAYLOAD_BYTES, "x").toString(),
   });
   const payload = join(String(dir), "payload.bin");
+  // On Windows `cat` is the msys2 build, which is slow to start. `type` is a
+  // builtin of the native cmd.
   const cmd = isWindows ? ["cmd", "/c", "type", payload] : ["cat", payload];
 
-  async function spawnBatch(): Promise<number> {
-    const codes = await Promise.all(
-      Array.from({ length: BATCH }, async () => {
-        const proc = Bun.spawn(cmd, { stdio: ["ignore", "pipe", "ignore"] });
-        return proc.exited;
-      }),
-    );
-    // Fold all exit codes so a child that failed to launch surfaces as a test
-    // failure instead of a silently-different workload.
-    return codes.reduce((a, b) => a | b, 0);
+  // The precondition: a child that exits with its pipes unread leaves its whole
+  // output buffered in the parent. So the read comes after the exit here.
+  {
+    await using proc = Bun.spawn(cmd, { stdio: ["ignore", "pipe", "pipe"] });
+    const exitCode = await proc.exited;
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    expect({ stdoutBytes: stdout.length, stderr, exitCode }).toEqual({
+      stdoutBytes: PAYLOAD_BYTES,
+      stderr: "",
+      exitCode: 0,
+    });
   }
 
-  let badExit = 0;
-
-  // Warm up so lazily-created runtime state (thread pools, signal fds, JSC
-  // heap growth) is already in the baseline and only per-spawn retention shows
-  // up in the delta.
-  for (let i = 0; i < 3; i++) {
-    badExit |= await spawnBatch();
-    Bun.gc(true);
-  }
-  const baseline = rss();
-
-  const MEASURE_BATCHES = 12;
-  for (let i = 0; i < MEASURE_BATCHES; i++) {
-    badExit |= await spawnBatch();
-    Bun.gc(true);
-  }
-  const final = rss();
+  const options = { cmd, batch: BATCH, warmupBatches: WARMUP_BATCHES, measureBatches: MEASURE_BATCHES };
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture, JSON.stringify(options)],
+    // ASAN keeps freed memory in a quarantine. With it on, the RSS grows by the
+    // same amount with and without a leak.
+    env: withoutAsanQuarantine(bunEnv),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { exits, baseline, final } = JSON.parse(stdout);
   const deltaMB = (final - baseline) / MB;
-
   console.log(
     `RSS: ${(baseline / MB).toFixed(1)} MB -> ${(final / MB).toFixed(1)} MB ` +
-      `(+${deltaMB.toFixed(1)} MB over ${MEASURE_BATCHES * BATCH} spawns)`,
+      `(delta ${deltaMB.toFixed(1)} MB over ${MEASURE_BATCHES * BATCH} spawns)`,
   );
 
-  // Release builds sit at ~0-1 MB delta across all platforms when nothing
-  // leaks; a retained 16 KB buffer over 600 spawns shows as ~10 MB. ASAN
-  // quarantine holds the freed buffers so the delta there (~50 MB) is
-  // dominated by quarantine growth regardless of whether the retention path is
-  // broken; keep that lane as a smoke check with a wider bound (the earlier 6x
-  // multiplier on the ratio assertion encoded the same thing).
-  const limitMB = isASAN ? 100 : 5;
-  expect(deltaMB).toBeLessThan(limitMB);
-  expect(badExit).toBe(0);
+  expect(exits).toEqual({ 0: (WARMUP_BATCHES + MEASURE_BATCHES) * BATCH });
+  // A leaked stdout buffer is 64 KB per child: 37.5 MB over the 600 measured
+  // children. Without a leak the delta is under 1 MB on a release build and
+  // about 2 MB with ASAN.
+  expect(deltaMB).toBeLessThan(12);
+  expect(exitCode).toBe(0);
 });

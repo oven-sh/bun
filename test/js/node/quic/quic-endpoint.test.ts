@@ -6,7 +6,7 @@ import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
-import { BlockList } from "node:net";
+import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
 
@@ -402,4 +402,163 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     // LeakSanitizer needs more than the default 5 s on a debug build.
     60_000,
   );
+});
+
+// lsquic merges the 1-RTT ACK frames that it reads in one batch of packets
+// into one frame. A range of one frame that lay inside a range of the other
+// cut the merged range short: [16-8] merged with [15-12][10-9] gave
+// [16-12][10-9]. A packet that arrived late, and that only the newer frame
+// acknowledged, was then declared lost.
+describe("ACK frames read in one batch", () => {
+  test("a packet is acknowledged when the frame that covers it is merged with an older frame", async () => {
+    // Two datagrams of SIZE bytes do not fit in one packet. The relay sees
+    // ciphertext, so it tells the packets apart by length: one with a SIZE
+    // datagram, one with the server's MARK datagram. A path MTU probe is
+    // longer than 1400 bytes.
+    const SIZE = 1100;
+    const MARK = 600;
+    const lengthIn = (min: number, max: number) => (packet: Buffer) =>
+      !(packet[0] & 0x80) && packet.length >= min && packet.length < max;
+    const carriesDatagram = lengthIn(SIZE, 1400);
+    const carriesMark = lengthIn(MARK, SIZE);
+
+    const received: number[] = [];
+    const statuses: string[] = [];
+    let sent = 0;
+    // A session or a socket that fails rejects the wait that is pending.
+    const failed = Promise.withResolvers<never>();
+    failed.promise.catch(() => {});
+    const failWith = (session: any, name: string) => {
+      session.onerror = failed.reject;
+      session.closed.then(() => failed.reject(new Error(`the ${name} session closed`)), failed.reject);
+    };
+    // Each event source below calls `check`, and the pending wait tests its condition again.
+    let check = () => {};
+    const until = (done: () => boolean) =>
+      Promise.race([
+        failed.promise,
+        new Promise<void>(resolve => {
+          check = () => done() && resolve();
+          check();
+        }),
+      ]);
+
+    // While `keeping`, the relay below keeps what both sides send.
+    let keeping = false;
+    let serverSession: any;
+    await using server = await listen(
+      (session: any) => {
+        serverSession = session;
+        failWith(session, "server");
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["quic-test"],
+        transportParams: { maxIdleTimeout: 10 },
+        ondatagram(this: any, datagram: Uint8Array) {
+          received.push(datagram[0]);
+          // This datagram leaves after the ACK of the packets that the server has.
+          if (keeping && received.length === sent) this.sendDatagram(new Uint8Array(MARK));
+          check();
+        },
+      } as any,
+    );
+    const serverPort = server.address!.port;
+
+    // The sessions and the sockets go first, then the server.
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => serverSession?.destroy());
+    let clientPort = 0;
+    const datagramPackets: Buffer[] = [];
+    const otherClientPackets: Buffer[] = [];
+    const serverPackets: Buffer[] = [];
+    const upstream = cleanup.adopt(
+      await Bun.udpSocket({
+        hostname: "127.0.0.1",
+        socket: {
+          data(_socket, packet) {
+            if (keeping) serverPackets.push(Buffer.from(packet));
+            else front.send(packet, clientPort, "127.0.0.1");
+            check();
+          },
+          error: (_socket, error) => failed.reject(error),
+        },
+      }),
+      socket => socket.close(),
+    );
+    const front = cleanup.adopt(
+      await Bun.udpSocket({
+        hostname: "127.0.0.1",
+        socket: {
+          data(_socket, packet, port) {
+            clientPort = port;
+            if (!keeping) upstream.send(packet, serverPort, "127.0.0.1");
+            else (carriesDatagram(packet) ? datagramPackets : otherClientPackets).push(Buffer.from(packet));
+            check();
+          },
+          error: (_socket, error) => failed.reject(error),
+        },
+      }),
+      socket => socket.close(),
+    );
+    // One call hands the receiver all `packets` before it reads: it reads them in one batch.
+    const sendBatch = (socket: typeof front, port: number, packets: Buffer[]) =>
+      expect(socket.sendMany(packets.flatMap(packet => [packet, port, "127.0.0.1"]))).toBe(packets.length);
+
+    const client: any = await connect(new SocketAddress({ address: "127.0.0.1", port: front.port }), {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 10 },
+      ondatagram() {},
+      ondatagramstatus(_id: bigint, status: string) {
+        statuses.push(status);
+        check();
+      },
+    } as SessionOptions);
+    cleanup.defer(() => client.destroy());
+    failWith(client, "client");
+    await Promise.race([failed.promise, client.opened]);
+    const send = (count: number) => {
+      for (let i = 0; i < count; i++) client.sendDatagram(Buffer.alloc(SIZE, ++sent));
+    };
+
+    // Datagrams 1 to 3 arrive in order. Once the client has their statuses, the server owes no ACK.
+    send(3);
+    await until(() => statuses.length === 3);
+
+    // A receiver can still read a batch in two parts, and then a round ends
+    // without a merge. So the test runs three rounds.
+    for (let round = 1; round <= 3; round++) {
+      // The relay keeps the packets of the next five datagrams: N to N+4.
+      keeping = true;
+      send(5);
+      await until(() => datagramPackets.length === 5);
+      const [n, ...later] = datagramPackets.splice(0);
+
+      // N+1, N+2 and N+3 arrive: the ACK frame of the server has the gap of N.
+      sendBatch(upstream, serverPort, later.slice(0, 3));
+      await until(() => received.length === sent - 2 && serverPackets.length >= 1);
+      const withGap = serverPackets.length;
+
+      // N+4 and N arrive in one batch. The server answers it with one ACK
+      // frame, which reaches higher than the first one and has no gap.
+      sendBatch(upstream, serverPort, [later[3], n]);
+      await until(() => serverPackets.some(carriesMark));
+      expect(serverPackets.findIndex(carriesMark)).toBeGreaterThan(withGap);
+
+      // The client reads both ACK frames in one batch, and lsquic merges them.
+      keeping = false;
+      sendBatch(front, clientPort, serverPackets.splice(0));
+      sendBatch(upstream, serverPort, otherClientPackets.splice(0));
+      await until(() => statuses.length === sent);
+    }
+
+    const { datagramsAcknowledged, datagramsLost } = client.stats;
+    expect({ statuses, datagramsAcknowledged, datagramsLost }).toEqual({
+      statuses: Array.from({ length: sent }, () => "acknowledged"),
+      datagramsAcknowledged: BigInt(sent),
+      datagramsLost: 0n,
+    });
+  });
 });

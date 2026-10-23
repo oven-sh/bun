@@ -52,7 +52,7 @@ while (accepted() < N - settled && performance.now() < deadline) await new Promi
 // connection's timeout is held back for 30 more.
 sweepSocketTimers(8);
 const left = accepted();
-while (settled < N && performance.now() < deadline) await Bun.sleep(5);
+while (left <= 0 && settled < N && performance.now() < deadline) await Bun.sleep(5);
 
 console.log(JSON.stringify({ opened, held: Math.max(left, held.size) }));
 

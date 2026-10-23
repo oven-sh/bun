@@ -808,6 +808,376 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/37326
+  describe("regex literals and comments in continuation detection", () => {
+    test("regex containing a double quote evaluates on one line", async () => {
+      const { stdout, exitCode } = await runRepl(['x = /hello "world/;', "x.source", ".exit"]);
+      expect(stripAnsi(stdout)).toContain('hello "world');
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex containing a backtick evaluates on one line", async () => {
+      const { stdout, exitCode } = await runRepl(["x = /hello `world/;", "x.source", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("hello `world");
+      expect(exitCode).toBe(0);
+    });
+
+    test("slash inside a regex character class does not end the regex", async () => {
+      const { stdout, exitCode } = await runRepl(['/[/"]/.test("/")', ".exit"]);
+      expect(stripAnsi(stdout)).toContain("true");
+      expect(exitCode).toBe(0);
+    });
+
+    test("escaped slash inside a regex does not end the regex", async () => {
+      const { stdout, exitCode } = await runRepl(['/a\\/b/.test("a/b")', ".exit"]);
+      expect(stripAnsi(stdout)).toContain("true");
+      expect(exitCode).toBe(0);
+    });
+
+    test("unbalanced brace and paren inside a regex evaluate on one line", async () => {
+      const { stdout, exitCode } = await runRepl(["x = /a{b\\(/;", "x", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("/a{b\\(/");
+      expect(exitCode).toBe(0);
+    });
+
+    test("backslash before a newline does not continue a regex onto the next line", async () => {
+      // `/a\` at end of line is an unterminated regex; the `2]` on the next
+      // line must still balance the `[`, not be swallowed as regex body.
+      const { stdout, stderr, exitCode } = await runRepl(["x = [1, /a\\", "2]", "40 + 2", ".exit"]);
+      expect(stripAnsi(stdout + stderr)).toContain("SyntaxError");
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("invalid regex reports a syntax error instead of waiting for more input", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["x = /hello (world/;", "1 + 1", ".exit"]);
+      expect(stripAnsi(stdout + stderr)).toContain("SyntaxError");
+      // REPL recovered and evaluated the next line
+      expect(stripAnsi(stdout)).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex after the return keyword", async () => {
+      const { stdout, exitCode } = await runRepl(['function f() { return /ab"c/; }', "f()", ".exit"]);
+      expect(stripAnsi(stdout)).toContain('/ab"c/');
+      expect(exitCode).toBe(0);
+    });
+
+    test("division is not mistaken for a regex", async () => {
+      const { stdout, exitCode } = await runRepl(["x = 10 / 2 / 1; x", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("5");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after postfix increment and decrement", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "i = 84; q = (i++ / 2); q",
+        "i = 86; q = (i-- / 2); q",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["42", "43"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after an object literal inside brackets", async () => {
+      const { stdout, exitCode } = await runRepl(["q = [{} / 1]; q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("NaN");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a function expression body inside a group", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "q = (function () {} / 2); q",
+        "q = [class {} / 2]; q",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["NaN", "[ NaN ]"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after an assigned object literal opens a continuation", async () => {
+      const { stdout, exitCode } = await runRepl(["q = {} / ({", "valueOf: () => 2 }); q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("NaN");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex after a statement block", async () => {
+      const { stdout, exitCode } = await runRepl(["if (true) {} /\"/.test('\"')", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("true");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after an object literal inside a function body", async () => {
+      const { stdout, exitCode } = await runRepl(["function g() { return {valueOf: () => 84} / 2 }; g()", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a non-null assertion", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "q = (84! / 2); q",
+        "q = (86!! / 2); q",
+        "q = ({ a: 1 }! / 2); q",
+        "q = (88 ! / 2); q",
+        // `return !` is a prefix, so the `/` still starts a regex.
+        'function r(s) { return ! /"/.test(s) }; r("a")',
+        // A member named like a keyword is still postfix context.
+        "q = ({ in: 84 }.in! / 2); q",
+        'q = ("x"! / 2); q',
+        // An identifier ending in a non-ASCII letter is still a word.
+        "café = 90; q = (café! / 2); q",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["42", "43", "NaN", "44", "true", "42", "NaN", "45"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a nested generic cast", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "q = (84 as unknown as Array<Array<number>> / 2); q",
+        "q = (86 as unknown as Map<string, number> / 2); q",
+        "q = (88 as unknown as Map<Array<number>, string> / 2); q",
+        "q = (90 as unknown as Record<string, number[]> / 2); q",
+        "q = (92 as unknown as Record<string, A & B> / 2); q",
+        // A comma-separated comparison is not a generic, so the `/` starts a regex.
+        "q = (1 < 2, 3 > /\"/.test('\"')); q",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["42", "43", "44", "45", "46", "true"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a cast to void", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "q = (84 as void / 2); q",
+        "q = (86 as string | void / 2); q",
+        "q = (88 as void! / 2); q",
+        // The void operator still takes a regex operand.
+        "q = void /\"/.test('\"'); q",
+        // Bitwise-or of a void-operator expression is not a type union.
+        "q = (256 | void /\"/.test('\"')) + 1; q",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["42", "43", "44", "undefined", "257"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a cast to an inline type literal", async () => {
+      const { stdout, exitCode } = await runRepl(["function t(x) { return x as {a:number} / 2 }; t(84)", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a spread object literal", async () => {
+      const { stdout, exitCode } = await runRepl(["x = { ...{} / 2 }; 40 + 2", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex after a for-await head", async () => {
+      const { stdout, exitCode } = await runRepl(['for await (const x of []) /"/.test("x"); 40 + 2', ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a JSX closing tag is not a regex start", async () => {
+      // Line 1 may fail at runtime (no JSX runtime configured), but it must
+      // evaluate as one line so line 2 still runs.
+      const { stdout, exitCode } = await runRepl(["q = (<a></a>)", "40 + 2", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("division after a JSX element", async () => {
+      // Each JSX line fails at runtime (no JSX runtime is configured), but it
+      // must evaluate as one input, so that the last line still runs.
+      const noJsxRuntime = expect.stringMatching(/^ReferenceError: /);
+      const { outputs, stderr, exitCode } = await runRepl([
+        "q = (<a></a> / 2)",
+        "q = [<a/> / 2]",
+        "q = (<a></a > / 2)",
+        "q = (<a.b></a.b> / 2)",
+        "q = (<my-el></my-el> / 2)",
+        "40 + 2",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([noJsxRuntime, noJsxRuntime, noJsxRuntime, noJsxRuntime, noJsxRuntime, "42"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a method named like a conditional keyword does not make its paren a regex context", async () => {
+      const { stdout, exitCode } = await runRepl(["o = { if: (n) => n }; q = (o.if(84) / 2); q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a private field named like a keyword does not start a regex", async () => {
+      const { stdout, exitCode } = await runRepl(["class C { #in = 84; q = this.#in / 2 }; new C().q", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex after a conditional's closing paren", async () => {
+      const { stdout, exitCode } = await runRepl(['if (true) x = /"/; x', ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain('/"/');
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regex as the right operand of a division", async () => {
+      const { stdout, exitCode } = await runRepl(['10 / /[(]/.test("(")', ".exit"]);
+      expect(stripAnsi(stdout)).toContain("10");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a property named like a keyword does not start a regex", async () => {
+      // `x.in / {` must open a continuation, not be read as `x.in` followed
+      // by a regex starting at `/ {`.
+      const { stdout, exitCode } = await runRepl(["x = { in: 84 }; x.in / {", "valueOf: () => 2 }", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("unbalanced bracket in a line comment is ignored", async () => {
+      const { stdout, exitCode } = await runRepl(["1 + 1 // unbalanced (", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("unterminated block comment continues to the next line", async () => {
+      const { stdout, exitCode } = await runRepl(["40 + 2 /* comment", "*/", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    // The cases below stop at the end of the input, with no `.exit`. A scan that
+    // takes a complete line for an open string or bracket glues every later line
+    // to it, and the end of the input then drops the glued lines unrun, with
+    // exit code 0 and nothing on stderr.
+    const log = (mark: string) => `console.log("ran ${mark}")`;
+    const ran = (mark: string) => `ran ${mark}\nundefined`;
+
+    test.each([
+      [
+        "an apostrophe in a line comment",
+        ["// don't", log("a"), log("b"), log("c")],
+        ["undefined", ran("a"), ran("b"), ran("c")],
+      ],
+      [
+        // The second apostrophe used to close the "string": three lines ran as one input.
+        "an apostrophe in each of two line comments",
+        ["// don't", log("a"), "// isn't", log("c")],
+        ["undefined", ran("a"), "undefined", ran("c")],
+      ],
+      [
+        "an apostrophe in a line comment, then a single-quoted string",
+        ["// don't", log("a"), "var q = 'x'", log("c")],
+        ["undefined", ran("a"), '"x"', ran("c")],
+      ],
+      [
+        "an apostrophe in a line comment, then one in a double-quoted string",
+        ["// don't", log("a"), `var q = "it's"`, log("c")],
+        ["undefined", ran("a"), `"it's"`, ran("c")],
+      ],
+      [
+        "a brace in a block comment",
+        ["/* { */", log("a"), log("b"), log("c")],
+        ["undefined", ran("a"), ran("b"), ran("c")],
+      ],
+      [
+        // The lone `}` is an input of its own: it does not close the brace in the comment.
+        "a brace in a block comment, then a lone closing brace",
+        ["/* { */", log("a"), "}", log("c")],
+        ["undefined", ran("a"), "SyntaxError: Parser error", ran("c")],
+      ],
+      ["a paren in a regex character class", ["var r = /[(]/", log("a"), log("b")], ["/[(]/", ran("a"), ran("b")]],
+    ])("%s does not hold back the lines after it", async (_shape, lines, expected) => {
+      const { outputs, stderr, exitCode } = await runRepl(lines);
+      expect(outputs).toEqual(expected);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // `.load` evaluates the file whole, so the continuation scan never sees these lines.
+    test(".load runs a file whose lines hold the same shapes", async () => {
+      using dir = tempDir("repl-load-shapes", {
+        "shapes.js": ["// don't", log("a"), "/* { */", log("b"), "var r = /[(]/", ""].join("\n"),
+      });
+      const filePath = path.join(String(dir), "shapes.js");
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, log("after")]);
+      expect(outputs).toEqual([`Loading ${filePath}...\nran a\nran b\n/[(]/`, ran("after")]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // Known gaps of the scan: it counts quotes and brackets by bytes, with no
+    // template, JSX or statement context. Each comment says what the case prints now.
+    test.todo.each([
+      [
+        // Observed: no output. The backtick in the string ends the template for the scan.
+        "a quoted backtick in a template substitution does not open a continuation",
+        ["var t = `${'`'}`; t", log("a")],
+        ['"`"', ran("a")],
+      ],
+      [
+        // Observed: no output. Node reports the SyntaxError at once.
+        "a string with no closing quote is a syntax error at once",
+        ['var u = "abc', log("a")],
+        [expect.stringMatching(/^SyntaxError: /), ran("a")],
+      ],
+      [
+        // Observed: no output. Node reports the SyntaxError at once.
+        "a closing bracket that does not match is a syntax error at once",
+        ["foo(]", log("a")],
+        [expect.stringMatching(/^SyntaxError: /), ran("a")],
+      ],
+      [
+        // Observed: no output. `//x</a>)` reads as a line comment, so the `(` stays open.
+        // The line fails at runtime (no JSX runtime is configured), but it is one input.
+        "a // in JSX text does not start a comment",
+        ["(<a>https://x</a>)", log("a")],
+        [expect.stringMatching(/^ReferenceError: /), ran("a")],
+      ],
+      [
+        // Observed: two SyntaxErrors. The `/` after the function body reads as a
+        // regex start, so the `(` is not counted and the first line runs alone.
+        "a division after a function expression continues onto the next line",
+        ["q = function () {} / (", "2)", log("a")],
+        ["NaN", ran("a")],
+      ],
+    ])("%s", async (_shape, lines, expected) => {
+      const { outputs, stderr, exitCode } = await runRepl(lines);
+      expect(outputs).toEqual(expected);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("async evaluation", () => {
     test("awaits promises at the top level and in async functions", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
@@ -1705,6 +2075,21 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  // Editor mode evaluates its buffer whole, so the continuation scan never sees these lines.
+  test(".editor runs a buffer whose lines hold quotes and brackets in comments and a regex", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(".editor\n");
+      await waitFor(/editor mode/i);
+      send("// don't\n");
+      send("/* { */\n");
+      send("var __shape = /[(]/\n");
+      send('"ran " + __shape.source\n');
+      send("\x04"); // Ctrl+D to finish editor mode
+      // The echoed input holds the two parts, the result holds them joined.
+      await waitFor('"ran [(]"');
+    });
+  });
+
   test(".editor is ignored while a multiline input is pending", async () => {
     await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
       send("function __pending() {\n");
@@ -1731,6 +2116,21 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await waitFor(/\u276f|> /);
       send("test()\n");
       await waitFor("99");
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/37326
+  test("an apostrophe in a comment keeps the normal prompt", async () => {
+    await withTerminalRepl(async ({ send, waitForScreen }) => {
+      const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+      // The odd quote used to change the prompt to "... " until Ctrl+C, and
+      // nothing typed in between ran.
+      send("// don't\n");
+      await waitForScreen(s => s.rows.length === top + 3 && s.rows.at(-1) === "> ");
+      send('"ran " + "a"\n');
+      const screen = await waitForScreen(s => s.rows.length === top + 5 && s.rows.at(-1) === "> ");
+      expect(screen.rows.slice(top)).toEqual(["> // don't", "undefined", '> "ran " + "a"', '"ran a"', "> "]);
     });
   });
 

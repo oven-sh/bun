@@ -30,21 +30,27 @@ check — together they catch most things; neither alone is bulletproof.
 
 **In scope but may miss:**
 
-- x64 linear-sweep may desync on data-in-`.text` and skip real instructions
-  that follow, up to the next symbol start (where the decoder resyncs).
-  Variable-length x86 encoding makes perfect code/data separation
-  undecidable (`README.md:53-62`). aarch64 is more reliable
-  (fixed-width words, `$d` mapping symbols mark data), but a missing mapping
-  symbol can still hide a hit.
+- x64 linear-sweep may desync on data-in-`.text` that nothing marks and skip
+  real instructions that follow, up to the next symbol start (where the
+  decoder resyncs). Variable-length x86 encoding makes perfect code/data
+  separation undecidable (`README.md`, "Data-in-`.text` false positives").
+  aarch64 is more reliable (fixed-width words, `$d` mapping symbols mark
+  data), but a missing mapping symbol can still hide a hit.
+- On Windows x64 the sweep leaves out the jump tables that the PDB marks. It
+  leaves out a marked block only when every 4-byte word of it, up to the next
+  mark or the function's end, is the address of code in that function. A
+  wrong record that still passes this check hides its block.
 - Instructions deliberately ignored (TZCNT/XGETBV on x64, hint-space PAC/BTI
   on aarch64) could theoretically be misused; we assume the compiler's idiom
   is the only one.
 
 **Can report false violations:**
 
-- Data bytes in `.text` that happen to form a valid post-baseline encoding.
-  Rare on ELF (LLVM puts tables in `.rodata`), common on Windows PE (MSVC
-  inlines jump tables). See `README.md:64-77`.
+- Data bytes in `.text` that nothing marks and that happen to form a valid
+  post-baseline encoding. Rare on ELF (LLVM puts tables in `.rodata`). On
+  Windows PE, MSVC stores jump tables in `.text` and marks them in the PDB,
+  and the scanner leaves those out. See `README.md`, "Data-in-`.text` false
+  positives", for what stays.
 
 When in doubt, the emulator is ground truth: `qemu -cpu Nehalem` and hit the
 code path. SIGILL = real bug. No SIGILL = either gated or a data-in-text
@@ -178,7 +184,24 @@ qemu-aarch64 -cpu cortex-a53 ./bun-profile <code path>             # aarch64
 
 Linear-sweep decode means data bytes in `.text` can happen to form a valid
 instruction encoding. LLVM puts tables in `.rodata` so ELF builds are usually
-clean; MSVC inlines jump tables and `static const` arrays into `.text`.
+clean; MSVC stores the jump table of a `switch` in `.text`, after the
+function.
+
+The scanner leaves out the jump tables that the PDB marks, so an MSVC jump
+table needs no allowlist entry. Its stderr says how many it found:
+
+```
+scanning bun-profile.exe (... 78475 symbols, 10 data ranges) against ...
+10 table marks in the PDB, 10 of them jump tables
+```
+
+Fewer jump tables than marks means the table check rejected a marked block.
+The byte index table of a two-level switch is such a block.
+
+`scripts/verify-baseline.ts` runs the Windows scan with `--min-data-ranges 1`.
+A scan that finds no table fails as a tool error (`checker exited 2`), at
+every link layout. Then the marks did not reach the PDB: look at the change
+to the toolchain, the sysroot or the link. Do not allowlist.
 
 Signs of a false positive:
 
@@ -187,11 +210,29 @@ Signs of a false positive:
 - `objdump -d` around the reported address shows `ret` then byte soup — no
   stack frame setup, no control flow leading to it.
 
-If confirmed: allowlist the symbol as a **blanket pass** (bare name, no
-`[...]` bracket). The reported features are misdecoded data bytes whose
-values move with link layout, not gated code, so a ceiling has nothing to
-bound and just re-flakes on the next layout that decodes differently. Note
+If confirmed on Windows, first find out whether the PDB marks the bytes:
+
+```sh
+# The function's module. S_PROCREF counts modules from 1, -modi from 0.
+llvm-pdbutil dump -globals bun-profile.pdb | grep -A1 '`_powf_special`'
+llvm-pdbutil dump -symbols -modi=<module - 1> bun-profile.pdb
+```
+
+A table mark is an `S_LDATA32` record with an empty name and
+`type = <no type>`, inside the function's `S_GPROC32`/`S_LPROC32`, at the
+address of the data. If the hit is in a marked block, the table check
+rejected the block. Do not allowlist the symbol: make `msvc_table_ranges` in
+`src/main.rs` accept the new shape, and add the shape to `src/tests.rs`.
+
+If nothing marks the bytes: allowlist the symbol as a **blanket pass** (bare
+name, no `[...]` bracket). The reported features are misdecoded data bytes
+whose values move with link layout, not gated code, so a ceiling has nothing
+to bound and just re-flakes on the next layout that decodes differently. Note
 the reason in the group comment.
+
+`llint_entry` on Windows is such a symbol: nothing marks the LLInt's opcode
+ids. It still has the `[AVX]` ceiling that it got before this rule. Apply the
+rule when a layout decodes another feature there.
 
 ## Adding an allowlist entry
 
@@ -208,10 +249,11 @@ symbol_name_exactly_as_the_tool_printed_it  [FEAT1, FEAT2]
 
 **Use a feature ceiling** (`[...]`) for gated code. A blanket pass (no
 brackets) defeats the "did the gate get updated when the dep grew AVX-512?"
-check (`src/main.rs:616-621`). List exactly the features the tool reported;
-that's what the gate currently checks. The exceptions are confirmed
-data-in-.text misdecodes (previous section) and `<no-symbol@...>` padding
-(below): there is no gate to drift past, so blanket-pass those.
+check (`record()` in `src/main.rs`). List exactly the features the tool
+reported; that's what the gate currently checks. The exceptions are confirmed
+misdecodes of data that nothing marks (previous section) and
+`<no-symbol@...>` padding (below): there is no gate to drift past, so
+blanket-pass those.
 
 **x64 feature names** (iced-x86 Debug strings — must match exactly):
 `AVX`, `AVX2`, `FMA`, `FMA4`, `BMI1`, `BMI2`, `MOVBE`, `ADX`, `RDRAND`,
@@ -283,3 +325,5 @@ See `src/main.rs:94-135` and `src/aarch64.rs`:
 - **3DNow!, SMM, Cyrix, VIA, RTM/TSX** (x64) — no toolchain targeting x86-64
   emits these without explicit intrinsics. When their encodings show up
   (`0f 0f` 3DNow!, `C7/C6 F8` XBEGIN/XABORT), it's data.
+- **Jump tables the PDB marks** (Windows x64) — MSVC's switch tables in
+  `.text`. They are not decoded at all.

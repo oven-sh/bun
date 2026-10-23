@@ -28,6 +28,11 @@ cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml
 blanket-pass wins). Useful for layering an extra allowlist on top of the
 base one without editing it.
 
+`--min-data-ranges <n>` makes a scan that leaves out fewer than `n` data
+ranges a tool error. `scripts/verify-baseline.ts` passes `1` for Windows x64,
+where the scan depends on the PDB's jump-table marks (see "Data-in-`.text`
+false positives").
+
 Exit `0` = clean, `1` = violations, `2` = tool error.
 
 Use the `-profile` artifact. The stripped release binary has no `.symtab`
@@ -56,27 +61,41 @@ The tool linear-sweeps every byte in `.text`, restarting the decoder at every
 symbol start (an instruction that would straddle one is discarded), so data at
 the end of a function — JSC's LLInt puts a 4-byte opcode id in front of every
 `llint_op_*` label — cannot desynchronise the decode of the functions after
-it. Within one symbol there's no general way to do better for x86: toolchains
-don't emit "this byte is data" markers the way ARM EABI's `$d` mapping symbols
-do, and code/data separation in x86 binaries is undecidable in general
+it. Within one symbol, the sweep needs the toolchain to say which bytes are
+data: code/data separation in x86 binaries is undecidable in general
 ([Schwarz & Debray 2002](https://www2.cs.arizona.edu/~debray/Publications/disasm.pdf)).
 
-MSVC inlines jump tables and small `static const` arrays into `.text` right
-after the function that uses them (LLVM puts them in `.rodata`, so ELF builds
-are typically clean). When those bytes form a valid instruction encoding,
-the decoder reports it.
+MSVC stores the jump table of a `switch` in `.text`, after the last
+instruction of the function that uses it (LLVM puts jump tables in `.rodata`,
+so ELF builds are typically clean). Each entry is the image-relative address
+of a case label. The bytes change with link layout, and at some layouts they
+form a valid instruction encoding.
+
+**Skipped with the PDB:** the jump tables that MSVC marks. cl writes an
+unnamed, untyped `S_LDATA32` record at the first byte of each table, inside
+the scope of the procedure. The scanner reads those records
+(`msvc_table_ranges` in `src/main.rs`). A block runs from a record to the next
+record of the procedure, or to the procedure's end. The sweep leaves a block
+out only when every 4-byte word in it is the address of code of that
+procedure. Stderr counts the marks and the blocks left out (`N data ranges`).
+Any other block is decoded like code: the byte index table of a two-level
+switch (small integers that do not change with link layout), or a record that
+is not a table.
+
+**Not marked:** JSC's LLInt opcode ids inside `llint_entry` on Windows (the PDB
+has one symbol for the whole interpreter and no record for the ids), constants
+in hand-written asm, objects linked without CodeView records, and every table
+of a PE scanned without its PDB.
 
 **Filtered automatically:** 3DNow!, SMM, Cyrix, VIA Padlock, RTM/TSX — ISA
 extensions no toolchain targeting x86-64 emits without explicit intrinsics.
 Their encodings (`0f xx` for the defunct extensions, `C7/C6 F8` for
-XBEGIN/XABORT) surface when a jump table's bytes happen to line up; the MSVC
-CRT strspn/strcspn/strpbrk switch tables are the observed source of the
-latter.
+XBEGIN/XABORT) surface when the bytes of unmarked data happen to line up.
 
-**Not filtered (very rare):** a table whose bytes form a valid
+**Not filtered (very rare):** unmarked data whose bytes form a valid
 VEX/EVEX-prefixed encoding. Looks like a real AVX hit. Triage the same way:
 disassemble around the address; if preceded by `ret` + small-int byte soup
-instead of stack-frame setup, it's a table. Allowlist the symbol.
+instead of stack-frame setup, it's data. Allowlist the symbol.
 
 ## What's deliberately ignored
 
@@ -90,6 +109,8 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
 - **XGETBV** — every AVX-dispatch path calls this, always after
   `if (CPUID.OSXSAVE)`. A stray one would SIGILL at startup; the emulator
   test catches that trivially.
+- **PDB-marked jump tables** (Windows) — MSVC's switch tables in `.text`, see
+  "Data-in-`.text` false positives" above.
 
 **aarch64:**
 
@@ -142,3 +163,19 @@ when the dependency did?"
 One allowlist covers both glibc and musl because the dispatch surface is
 architecture-specific, not libc-specific. Symbols that LTO inlined away on
 one libc show as STALE on the other — informational, not an error.
+
+## Tests
+
+```sh
+cargo test --manifest-path scripts/verify-baseline-static/Cargo.toml
+```
+
+- `src/tests.rs`: the x64 sweep and the jump-table rule on byte fixtures.
+- `src/aarch64.rs`: the aarch64 encoding masks.
+- `tests/pdb_marks.rs`: the built scanner on `tests/fixtures/switch-table.dll`
+  and its PDB. `tests/fixtures/switch-table.s` is their source and holds the
+  commands that rebuild them.
+
+The `verify-baseline` CI steps only build the scanner. The tests run in
+`.github/workflows/verify-baseline-static.yml`, on a pull request that changes
+the crate's sources, tests or manifests.

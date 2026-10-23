@@ -55,7 +55,7 @@ The workflow runs all three formatters simultaneously:
 
 1. Bump `channel` in `rust-toolchain.toml`.
 2. Bump `RUSTUP_TOOLCHAIN` in the `Format Code` step's `env:` block in `format.yml` to the same value.
-3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `rust-lints.yml` to the same value.
+3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `rust-lints.yml` and in `verify-baseline-static.yml` to the same value.
 4. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
 
 #### To update clang-format version:
@@ -142,3 +142,10 @@ Four independent jobs over the Rust workspace. They share `.github/actions/rust-
 - Locally, `bun run rust:mordant` is the same invocation and `bun run rust:mordant:baseline` regenerates the baseline. Both need mordant installed once, with the two values from the job's `env:`: `rustup toolchain install <MORDANT_TOOLCHAIN> --profile minimal --component rustc-dev --component llvm-tools-preview`, then `cargo +<MORDANT_TOOLCHAIN> install --locked --git https://github.com/scarletindustries/mordant --rev <MORDANT_REV>`. `cargo mordant --version` prints the commit of the installed build. The script adds the three targets' std to that toolchain itself (`rustup target add`). Both also expect `build/debug/codegen`, `vendor/lolhtml` and `vendor/rust-argon2` to exist, which any normal `bun bd` leaves behind.
 
 To bump mordant: change `MORDANT_REV` (and `MORDANT_TOOLCHAIN`, when mordant's `rust-toolchain` file changed) in `rust-lints.yml`, install that build locally, run `bun run rust:mordant`, fix what the new revision reports or regenerate `mordant-baseline.toml` with `bun run rust:mordant:baseline`, and put the triage in the PR description.
+
+## verify-baseline-static.yml Workflow
+
+One job, `cargo test --locked` in `scripts/verify-baseline-static`. The scanner behind the Buildkite `verify-baseline` steps is a crate of its own (outside the workspace, with its own `Cargo.lock`), and those steps only `cargo build` it, so nothing else runs its tests.
+
+- The path filter names the crate's `src/`, `tests/` and manifests, and the workflow file. An edit of an allowlist or of the crate's docs does not start it.
+- It pins `RUSTUP_TOOLCHAIN` at the workflow level, like `rust-lints.yml`, and installs that toolchain with `--profile minimal`. It uses none of `.github/actions/rust-lint-setup`: the crate needs no LLVM, no Bun and no configure step.

@@ -2496,6 +2496,96 @@ describe("css tests", () => {
     );
   });
 
+  // The property handlers are shared by every rule in a stylesheet. A logical property in one rule
+  // must not change how a later rule's shorthand is minified. util.ts checks this for every test in
+  // this file; these are the direct cases, plus the in-rule outputs the fix changes or must not change.
+  describe("shorthand after a logical property in an earlier rule", () => {
+    for (const [shorthand, logical, top] of [
+      ["margin", "margin-inline-start", "margin-top"],
+      ["padding", "padding-inline-start", "padding-top"],
+      ["inset", "inset-inline-start", "top"],
+      ["scroll-margin", "scroll-margin-inline-start", "scroll-margin-top"],
+    ]) {
+      minify_test(`div{${logical}:2px}.a{${shorthand}:1px;${shorthand}:0}`, `div{${logical}:2px}.a{${shorthand}:0}`);
+      minify_test(`div{${logical}:2px}.a{${shorthand}:0;${top}:5px}`, `div{${logical}:2px}.a{${shorthand}:5px 0 0}`);
+    }
+
+    minify_test("div{margin-inline:2px}.a{margin:1px;margin:0}", "div{margin-inline:2px}.a{margin:0}");
+    minify_test(
+      "div{margin-block-start:var(--x)}.a{margin:1px;margin:0}",
+      "div{margin-block-start:var(--x)}.a{margin:0}",
+    );
+    minify_test(
+      "div{margin-inline-start:2px}.a{color:red}.b{margin:1px;margin:0}",
+      "div{margin-inline-start:2px}.a{color:red}.b{margin:0}",
+    );
+    minify_test(
+      "div{margin-inline-start:2px}.a{margin:1px;margin:0}.b{margin:1px;margin:0}",
+      "div{margin-inline-start:2px}.a,.b{margin:0}",
+    );
+    minify_test(
+      "div{margin-inline-start:2px!important}.a{margin:1px!important;margin:0!important}",
+      "div{margin-inline-start:2px!important}.a{margin:0!important}",
+    );
+    // The earlier rule is dropped from the output, but it still went through the handlers.
+    minify_test("@media not all{div{margin-inline-start:2px}}.a{margin:1px;margin:0}", ".a{margin:0}");
+    // Same, for merged same-selector rules: the merged block is re-minified after the rule following it.
+    minify_test(".a{margin:1px}.a{margin:0}@media not all{div{margin-inline-start:2px}}", ".a{margin:0}");
+
+    // With browser targets. The logical property is on the block axis: for targets that compile
+    // logical properties, an inline-axis one becomes `:dir()` rules whose minify resets the handler.
+    const bundlerDefault = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+    prefix_test("div{margin-block-start:2px}.a{margin:1px;margin:0}", "div{margin-top:2px;}.a{margin:0;}", {
+      safari: 8 << 16,
+    });
+    prefix_test(
+      "div{padding-block-start:2px}.a{padding:1px;padding:0}",
+      "div{padding-block-start:2px;}.a{padding:0;}",
+      bundlerDefault,
+    );
+    prefix_test("div{inset-block-start:2px}.a{inset:1px;inset:0}", "div{top:2px;}.a{inset:0;}", bundlerDefault);
+
+    // The later rule prints what it prints with no rule before it, also when that is not shorter:
+    // a longhand after the shorthand always folds into it.
+    minify_test(
+      "div{inset-block-start:2px}.a{inset:1px;left:5px}",
+      "div{inset-block-start:2px}.a{inset:1px 1px 1px 5px}",
+    );
+    minify_test(
+      "div{margin-inline-start:2px}.a{margin:1.25rem;margin-left:0}",
+      "div{margin-inline-start:2px}.a{margin:1.25rem 1.25rem 1.25rem 0}",
+    );
+    // The duplicate-rule check compares the first `.a` rule with the last one after both are minified.
+    // They have the same properties once `margin:1px;margin:0` merges, and no longer have them once
+    // `margin:1px;margin-top:2px` merges.
+    minify_test(
+      "div{margin-inline-start:2px}.a{margin:1px;margin:0}.b{color:red}.a{margin:2px}",
+      "div{margin-inline-start:2px}.b{color:red}.a{margin:2px}",
+    );
+    minify_test(
+      "div{margin-inline-start:2px}.a{margin:1px;margin-top:2px}.b{color:red}.a{margin:2px;margin-top:var(--x)}",
+      "div{margin-inline-start:2px}.a{margin:2px 1px 1px}.b{color:red}.a{margin:2px;margin-top:var(--x)}",
+    );
+
+    // Within one rule, a shorthand following a logical property behaves like the first declaration
+    // of a fresh rule: the logical value is flushed first, then later longhands fold into the shorthand.
+    minify_test(".a{margin-inline-start:1px;margin:0;margin-top:5px}", ".a{margin-inline-start:1px;margin:5px 0 0}");
+    // Switching category in either direction still flushes, so the fallback order is preserved.
+    minify_test(".a{margin-inline-start:1px;margin:0}", ".a{margin-inline-start:1px;margin:0}");
+    minify_test(
+      ".a{margin:0;margin-inline-start:1px;margin-top:3px}",
+      ".a{margin:0;margin-inline-start:1px;margin-top:3px}",
+    );
+    minify_test(
+      ".a{margin-inline-start:1px;margin:0;margin-inline-end:2px}",
+      ".a{margin-inline-start:1px;margin:0;margin-inline-end:2px}",
+    );
+    minify_test(
+      ".a{border:1px solid red;border-inline-start-color:blue}",
+      ".a{border:1px solid red;border-inline-start-color:#00f}",
+    );
+  });
+
   describe("size", () => {
     prefix_test(
       `

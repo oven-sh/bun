@@ -77,6 +77,18 @@ test("deeply nested valid calc() still parses and folds", async () => {
   expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
 });
 
+test("a color channel inside nested calc() parses as a percentage and as a number", async () => {
+  const open = Buffer.alloc(64 * "calc(".length, "calc(").toString();
+  const close = Buffer.alloc(64, ")").toString();
+  const nested = (value: string) => open + value + close;
+  const { stderr, exitCode, output } = await buildCSS(
+    "nested-calc-channel.css",
+    `.a{color:hsl(120 ${nested("50%")} 50%)}.b{color:hsl(120 ${nested("50")} 50)}`,
+  );
+  expect(output).toContain(".a, .b {\n  color: #40bf40;\n}");
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+});
+
 test("stylesheets truncated inside an otherwise-valid value still parse", async () => {
   // Blocks left open at the end of input are implicitly closed when their
   // contents parse fine; that behavior must survive the fast-fail path.

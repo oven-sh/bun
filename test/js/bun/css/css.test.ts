@@ -3,9 +3,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
+  attrTest,
   cssTest,
   cssTestTodo,
   indoc,
@@ -7621,6 +7622,90 @@ describe("css tests", () => {
         safari: Some(6 << 16),
       },
     );
+  });
+
+  // The slice and the width of mask-border and of the legacy -webkit-mask-box-image start at 0 and
+  // auto (css-masking-1), not at the 100% and 1 of border-image.
+  describe("mask-border", () => {
+    for (const name of ["mask-border", "-webkit-mask-box-image"]) {
+      // A slice of 100% and a width of 1 are not initial values here.
+      minify_test(`.foo { ${name}: url(x.png) 100% }`, `.foo{${name}:url(x.png) 100%}`);
+      minify_test(`.foo { ${name}: url(x.png) 30 / 1 }`, `.foo{${name}:url(x.png) 30/1}`);
+      minify_test(`.foo { ${name}: url(x.png) 100% / 1 / 2 }`, `.foo{${name}:url(x.png) 100%/1/2}`);
+      minify_test(`.foo { ${name}: url(x.png) 100% / 1 / 0 stretch }`, `.foo{${name}:url(x.png) 100%/1}`);
+      minify_test(`.foo { ${name}: round 100% / 1 url(x.png) }`, `.foo{${name}:url(x.png) 100%/1 round}`);
+      // An omitted slice or width stays omitted.
+      minify_test(`.foo { ${name}: url(x.png) }`, `.foo{${name}:url(x.png)}`);
+      minify_test(`.foo { ${name}: url(x.png) 30 }`, `.foo{${name}:url(x.png) 30}`);
+      minify_test(`.foo { ${name}: url(x.png) 30 / / 2 }`, `.foo{${name}:url(x.png) 30//2}`);
+      minify_test(`.foo { ${name}: url(x.png) round }`, `.foo{${name}:url(x.png) round}`);
+      // A slice or a width that is written stays as written.
+      minify_test(`.foo { ${name}: url(x.png) 0 }`, `.foo{${name}:url(x.png) 0}`);
+      minify_test(`.foo { ${name}: url(x.png) 0 fill }`, `.foo{${name}:url(x.png) 0 fill}`);
+      minify_test(`.foo { ${name}: url(x.png) 30 / auto }`, `.foo{${name}:url(x.png) 30/auto}`);
+      // A value with no source. The printer can write a space before it, which cssTest ignores.
+      cssTest(`.foo { ${name}: 0 }`, `.foo { ${name}: 0; }`);
+      cssTest(`.foo { ${name}: 100% / 1 }`, `.foo { ${name}: 100% / 1; }`);
+      // Rules with equal declarations merge. An omitted slice is not equal to a slice of 100%.
+      minify_test(
+        `.a { ${name}: linear-gradient(red, blue) 100% } .b { ${name}: linear-gradient(red, blue) 100% }`,
+        `.a,.b{${name}:linear-gradient(red,#00f) 100%}`,
+      );
+      minify_test(
+        `.a { ${name}: linear-gradient(red, blue) } .b { ${name}: linear-gradient(red, blue) 100% / 1 }`,
+        `.a{${name}:linear-gradient(red,#00f)}.b{${name}:linear-gradient(red,#00f) 100%/1}`,
+      );
+    }
+
+    minify_test(".foo { mask-border: url(x.png) 100% / 1 / 0 stretch alpha }", ".foo{mask-border:url(x.png) 100%/1}");
+    minify_test(".foo { mask-border: luminance url(x.png) 100% }", ".foo{mask-border:url(x.png) 100% luminance}");
+    minify_test(".foo { mask-border: url(x.png) luminance }", ".foo{mask-border:url(x.png) luminance}");
+    cssTest(".foo { mask-border: 100% / 1 luminance }", ".foo { mask-border: 100% / 1 luminance; }");
+
+    // border-image keeps its own initial values.
+    minify_test(".foo { border-image: url(x.png) 100% / 1 }", ".foo{border-image:url(x.png)}");
+    minify_test(".foo { border-image: url(x.png) 100% / 2 }", ".foo{border-image:url(x.png) 100%/2}");
+    minify_test(".foo { border-image: url(x.png) 30 / 1 / 2 round }", ".foo{border-image:url(x.png) 30//2 round}");
+    minify_test(".foo { border-image: url(x.png) 0 / auto }", ".foo{border-image:url(x.png) 0/auto}");
+
+    // The longhands are printed as written.
+    minify_test(
+      ".foo { mask-border-slice: 100%; mask-border-width: 1; -webkit-mask-box-image-slice: 0; -webkit-mask-box-image-width: auto }",
+      ".foo{mask-border-slice:100%;mask-border-width:1;-webkit-mask-box-image-slice:0;-webkit-mask-box-image-width:auto}",
+    );
+
+    minify_test(".foo { mask-border: url(x.png) 100% !important }", ".foo{mask-border:url(x.png) 100%!important}");
+    minify_test(
+      "@container style(-webkit-mask-box-image: url(x.png) 30 / 1) { .foo { color: red } }",
+      "@container style(-webkit-mask-box-image:url(x.png) 30/1){.foo{color:red}}",
+    );
+
+    test("style attribute", () => {
+      expect([
+        attrTest("mask-border: url(x.png) 100% / 1", "", false),
+        attrTest("-webkit-mask-box-image: url(x.png) 30 / 1; mask-border: url(x.png) 30", "", true),
+      ]).toEqual([
+        'mask-border: url("x.png") 100% / 1',
+        "-webkit-mask-box-image:url(x.png) 30/1;mask-border:url(x.png) 30",
+      ]);
+    });
+
+    test("Bun.build keeps a slice of 100% and a width of 1", async () => {
+      using dir = tempDir("css-mask-border", {
+        "a.css":
+          ".a { mask-border: linear-gradient(red, blue) 100% / 1 }\n.b { -webkit-mask-box-image: linear-gradient(red, blue) 100% }\n",
+      });
+      const outputs: string[] = [];
+      for (const minify of [false, true]) {
+        const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], minify });
+        outputs.push(await result.outputs[0].text());
+      }
+      // Without `minify` the first line is a comment with the path of the input file.
+      expect(outputs.map(css => css.replace(/^\/\*.*\*\/\n/, ""))).toEqual([
+        ".a {\n  mask-border: linear-gradient(red, #00f) 100% / 1;\n}\n\n.b {\n  -webkit-mask-box-image: linear-gradient(red, #00f) 100%;\n}\n",
+        ".a{mask-border:linear-gradient(red,#00f) 100%/1}.b{-webkit-mask-box-image:linear-gradient(red,#00f) 100%}\n",
+      ]);
+    });
   });
 
   describe("color-scheme", () => {

@@ -259,6 +259,7 @@ mod generic_registrations {
         // masking
         masking::Mask,
         masking::MaskBorder,
+        masking::MaskBoxImage,
         // overflow
         overflow::Overflow,
         // position

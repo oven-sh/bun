@@ -33,6 +33,26 @@ pub struct BorderImage {
     pub(crate) repeat: BorderImageRepeat,
 }
 
+/// The components that a `border-image` or `mask-border` value wrote. `None` is an omitted one.
+#[derive(Default)]
+pub(crate) struct BorderImageComponents {
+    pub(crate) source: Option<Image>,
+    pub(crate) slice: Option<BorderImageSlice>,
+    pub(crate) width: Option<Rect<BorderImageSideWidth>>,
+    pub(crate) outset: Option<Rect<LengthOrNumber>>,
+    pub(crate) repeat: Option<BorderImageRepeat>,
+}
+
+impl BorderImageComponents {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.source.is_none()
+            && self.slice.is_none()
+            && self.width.is_none()
+            && self.outset.is_none()
+            && self.repeat.is_none()
+    }
+}
+
 impl BorderImage {
     // Recorded here for a future shorthand trait/derive to consume.
     // PropertyFieldMap:
@@ -44,23 +64,33 @@ impl BorderImage {
     // VendorPrefixMap: all fields = true
 
     pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImage> {
-        Self::parse_with_callback(input, |_: &mut css::Parser| false)
+        let mut components = BorderImageComponents::default();
+        Self::parse_components(input, &mut components);
+        if components.is_empty() {
+            return Err(input.new_custom_error(css::ParserError::invalid_declaration));
+        }
+        Ok(BorderImage {
+            source: components.source.unwrap_or_default(),
+            slice: components.slice.unwrap_or_else(BorderImageSlice::default),
+            width: components.width.unwrap_or_else(|| {
+                Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default())
+            }),
+            outset: components
+                .outset
+                .unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::default())),
+            repeat: components.repeat.unwrap_or_else(BorderImageRepeat::default),
+        })
     }
 
-    pub(crate) fn parse_with_callback(
+    /// Parses the components that the input continues with, and stops before anything else.
+    pub(crate) fn parse_components(
         input: &mut css::Parser,
-        mut callback: impl FnMut(&mut css::Parser) -> bool,
-    ) -> Result<BorderImage> {
-        let mut source: Option<Image> = None;
-        let mut slice: Option<BorderImageSlice> = None;
-        let mut width: Option<Rect<BorderImageSideWidth>> = None;
-        let mut outset: Option<Rect<LengthOrNumber>> = None;
-        let mut repeat: Option<BorderImageRepeat> = None;
-
+        components: &mut BorderImageComponents,
+    ) {
         loop {
-            if slice.is_none() {
+            if components.slice.is_none() {
                 if let Ok(value) = input.try_parse(BorderImageSlice::parse) {
-                    slice = Some(value);
+                    components.slice = Some(value);
                     // Parse border image width and outset, if applicable.
                     let maybe_width_outset = input.try_parse(
                         |i: &mut css::Parser| -> Result<(
@@ -90,52 +120,29 @@ impl BorderImage {
                     );
 
                     if let Ok(val) = maybe_width_outset {
-                        width = val.0;
-                        outset = val.1;
+                        components.width = val.0;
+                        components.outset = val.1;
                     }
                     continue;
                 }
             }
 
-            if source.is_none() {
+            if components.source.is_none() {
                 if let Ok(value) = input.try_parse(Image::parse) {
-                    source = Some(value);
+                    components.source = Some(value);
                     continue;
                 }
             }
 
-            if repeat.is_none() {
+            if components.repeat.is_none() {
                 if let Ok(value) = input.try_parse(BorderImageRepeat::parse) {
-                    repeat = Some(value);
+                    components.repeat = Some(value);
                     continue;
                 }
-            }
-
-            if callback(input) {
-                continue;
             }
 
             break;
         }
-
-        if source.is_some()
-            || slice.is_some()
-            || width.is_some()
-            || outset.is_some()
-            || repeat.is_some()
-        {
-            return Ok(BorderImage {
-                source: source.unwrap_or_default(),
-                slice: slice.unwrap_or_else(BorderImageSlice::default),
-                width: width.unwrap_or_else(|| {
-                    Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default())
-                }),
-                outset: outset
-                    .unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::default())),
-                repeat: repeat.unwrap_or_else(BorderImageRepeat::default),
-            });
-        }
-        Err(input.new_custom_error(css::ParserError::invalid_declaration))
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -145,6 +152,10 @@ impl BorderImage {
             &self.width,
             &self.outset,
             &self.repeat,
+            !self.slice.eql(&BorderImageSlice::default()),
+            !self.width.eql(&Rect::<BorderImageSideWidth>::all(
+                BorderImageSideWidth::default(),
+            )),
             dest,
         )
     }
@@ -155,15 +166,14 @@ impl BorderImage {
         width: &Rect<BorderImageSideWidth>,
         outset: &Rect<LengthOrNumber>,
         repeat: &BorderImageRepeat,
+        // False for a slice or a width that the printed value omits.
+        has_slice: bool,
+        has_width: bool,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
         if !source.eql(&Image::default()) {
             source.to_css(dest)?;
         }
-        let has_slice = !slice.eql(&BorderImageSlice::default());
-        let has_width = !width.eql(&Rect::<BorderImageSideWidth>::all(
-            BorderImageSideWidth::default(),
-        ));
         let has_outset = !outset.eql(&Rect::<LengthOrNumber>::all(LengthOrNumber::Number(0.0)));
         if has_slice || has_width || has_outset {
             dest.write_str(" ")?;
@@ -224,16 +234,6 @@ impl BorderImage {
             && self.outset.eql(&other.outset)
             && self.repeat.eql(&other.repeat)
     }
-
-    pub(crate) fn default() -> BorderImage {
-        BorderImage {
-            source: Image::default(),
-            slice: BorderImageSlice::default(),
-            width: Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default()),
-            outset: Rect::<LengthOrNumber>::all(LengthOrNumber::default()),
-            repeat: BorderImageRepeat::default(),
-        }
-    }
 }
 
 /// A value for the [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) property.
@@ -267,7 +267,7 @@ impl BorderImageRepeat {
         self.horizontal.is_compatible(browsers) && self.vertical.is_compatible(browsers)
     }
 
-    fn default() -> BorderImageRepeat {
+    pub(crate) fn default() -> BorderImageRepeat {
         BorderImageRepeat {
             horizontal: BorderImageRepeatKeyword::Stretch,
             vertical: BorderImageRepeatKeyword::Stretch,

@@ -1857,7 +1857,7 @@ pub enum Property {
     MaskBorder(masking::MaskBorder),
     WebKitMaskComposite(SmallList<masking::WebKitMaskComposite, 1>),
     MaskSourceType((SmallList<masking::WebKitMaskSourceType, 1>, VendorPrefix)),
-    MaskBoxImage((border_image::BorderImage, VendorPrefix)),
+    MaskBoxImage((masking::MaskBoxImage, VendorPrefix)),
     MaskBoxImageSource((css::css_values::image::Image, VendorPrefix)),
     MaskBoxImageSlice((border_image::BorderImageSlice, VendorPrefix)),
     MaskBoxImageWidth(
@@ -3817,7 +3817,7 @@ impl Property {
                 }
             }
             PropertyId::MaskBoxImage(pre) => {
-                if let Some(c) = parse_value::<border_image::BorderImage>(input, options) {
+                if let Some(c) = parse_value::<masking::MaskBoxImage>(input, options) {
                     return Ok(Property::MaskBoxImage((c, pre)));
                 }
             }

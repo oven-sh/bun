@@ -24,11 +24,14 @@
 #include "ErrorCode.h"
 
 #include "DOMException.h"
+#include "ErrorStackTrace.h"
+#include "FormatStackTraceForJS.h"
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromiseDeferred.h"
 
 #include <JavaScriptCore/ErrorHandlingScope.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ScriptCallStack.h>
@@ -104,6 +107,83 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     (void)topExceptionScope.tryClearException();
     vm.clearLastException();
     return errorMessage;
+}
+
+static ScriptPosition positionOfFrame(VM& vm, JSGlobalObject* globalObject, const StackFrame& frame)
+{
+    LineColumn lineColumn = frame.computeLineAndColumn();
+    String sourceURL = Zig::sourceURL(vm, frame);
+
+    // A frame of a node:vm context keeps its own positions, as in formatStackTrace().
+    JSGlobalObject* globalObjectOfFrame = globalObject;
+    if (auto* callee = frame.callee()) {
+        if (auto* object = callee->getObject())
+            globalObjectOfFrame = object->globalObject();
+    }
+    if (globalObjectOfFrame == globalObject)
+        Bun::remapLineColumn(vm, String { sourceURL }, lineColumn, sourceURL);
+    return { sourceURL, lineColumn.line, lineColumn.column };
+}
+
+// Where the source URL is on an Error whose `stack` was read, and on a DOMException that native code made.
+static String ownSourceURL(VM& vm, JSObject* object)
+{
+    JSValue sourceURL = object->getDirect(vm, vm.propertyNames->sourceURL);
+    return sourceURL && sourceURL.isString() ? asString(sourceURL)->tryGetValue() : String();
+}
+
+ScriptPosition scriptPositionOfThrownValue(JSGlobalObject& lexicalGlobalObject, JSValue thrownValue, JSC::Exception* exception)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    JSGlobalObject* globalObject = defaultGlobalObject(&lexicalGlobalObject);
+
+    // Where it was thrown: the first frame of the program still on the stack at the throw.
+    if (exception) {
+        for (const StackFrame& frame : exception->stack()) {
+            if (Zig::isScriptFrame(frame))
+                return positionOfFrame(vm, globalObject, frame);
+        }
+    }
+
+    // Else where the value was made, if it says.
+    if (auto* error = dynamicDowncast<ErrorInstance>(thrownValue)) {
+        auto* stackTrace = error->stackTrace();
+        if (!error->line()) {
+            if (!stackTrace)
+                return {};
+            // Not the first script frame: a `stack` read or a collection leaves only the first frame's position.
+            for (const StackFrame& frame : *stackTrace) {
+                if (!frame.hasLineAndColumnInfo())
+                    continue;
+                return Zig::isScriptFrame(frame) ? positionOfFrame(vm, globalObject, frame) : ScriptPosition {};
+            }
+            return {};
+        }
+
+        // The line and the column are the cell's: a program can write any value to the properties.
+        String sourceURL = ownSourceURL(vm, error);
+        if (!Zig::isScriptSourceURL(sourceURL))
+            return {};
+        if (!stackTrace)
+            return { sourceURL, error->line(), error->column() };
+        // A SyntaxError of JavaScriptCore's parser: the line is in the code that ran, and there is no column.
+        LineColumn lineColumn { error->line(), 1 };
+        Bun::remapLineColumn(vm, String { sourceURL }, lineColumn, sourceURL);
+        return { sourceURL, lineColumn.line, 0 };
+    }
+
+    if (auto* domException = dynamicDowncast<JSDOMException>(thrownValue)) {
+        JSValue line = domException->getDirect(vm, vm.propertyNames->line);
+        JSValue column = domException->getDirect(vm, vm.propertyNames->column);
+        String sourceURL = ownSourceURL(vm, domException);
+        if (!line || !line.isUInt32() || !column || !column.isUInt32() || !Zig::isScriptSourceURL(sourceURL))
+            return {};
+        LineColumn lineColumn { line.asUInt32(), column.asUInt32() };
+        Bun::remapLineColumn(vm, String { sourceURL }, lineColumn, sourceURL);
+        return { sourceURL, lineColumn.line, lineColumn.column };
+    }
+
+    return {};
 }
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)

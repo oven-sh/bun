@@ -452,14 +452,17 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
     }
 }
 
-void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
+void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message, String&& filename, unsigned lineno, unsigned colno)
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext&) {
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy(), filename = WTF::move(filename).isolatedCopy(), lineno, colno](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
         ErrorEvent::Init init;
         init.message = message;
+        init.filename = filename;
+        init.lineno = lineno;
+        init.colno = colno;
         workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     });
 }
@@ -505,15 +508,15 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     });
 }
 
-void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, JSC::JSValue error)
+void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, const String& filename, unsigned lineno, unsigned colno, JSC::JSValue error)
 {
     switch (m_options.kind) {
     case WorkerOptions::Kind::Web:
-        postMessageErrorToWorkerObject(String { message });
+        postMessageErrorToWorkerObject(String { message }, String { filename }, lineno, colno);
         return;
     case WorkerOptions::Kind::Node:
         if (!postSerializedErrorToWorkerObject(workerGlobalObject, error))
-            postMessageErrorToWorkerObject(String { message });
+            postMessageErrorToWorkerObject(String { message }, String { filename }, lineno, colno);
         return;
     }
 }

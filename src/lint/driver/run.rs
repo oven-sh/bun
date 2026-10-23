@@ -601,6 +601,7 @@ impl Run<'_> {
             && loader.wants_types(&loaded, config)
             && (has_rules_with_types || context.checks_types);
         if needs_types {
+            loader.number_type_flags();
             let file = Typed {
                 path: &path,
                 config,
@@ -609,6 +610,33 @@ impl Run<'_> {
             if let Some(Some(result)) =
                 typed::lint(context, self.environment, &[file], &on_circular_fixes).pop()
             {
+                return Ok(Linted {
+                    results: vec![result],
+                    files: 1,
+                    listed: None,
+                });
+            }
+        } else if name.is_some()
+            && !config.language.is_oxlint
+            && loader.wants_types(&loaded, config)
+        {
+            let without_types = context.verify_text_without_types(
+                display_path.clone(),
+                &path,
+                text.clone(),
+                config,
+                &on_circular_fixes,
+            );
+            let file = Typed {
+                path: &path,
+                config,
+                text: Some(text.clone()),
+            };
+            let result = without_types.or_else(|| {
+                loader.number_type_flags();
+                typed::lint(context, self.environment, &[file], &on_circular_fixes).pop()?
+            });
+            if let Some(result) = result {
                 return Ok(Linted {
                     results: vec![result],
                     files: 1,
@@ -814,6 +842,7 @@ impl Run<'_> {
             if !is_oxlint {
                 loader.advise_about_typescript();
             }
+            loader.number_type_flags();
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
             for (target, result) in targets.into_iter().zip(linted) {
@@ -836,11 +865,23 @@ impl Run<'_> {
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
         let (heavy, with_engine) = with_engine.split_at(count(Needs::Heavy));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
-        let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
-            Ok(Some(result)) => results.lock().push(result),
-            Ok(None) => {}
-            Err(error) => {
-                failure.lock().get_or_insert(error);
+        // The files on which a JavaScript rule asks for types, if their config turns types on.
+        let waiting_for_types = Guarded::new(Vec::new());
+        let can_get_types = |target: &Target| match &target.status {
+            // oxlint gives plugins no parser services.
+            Status::Matched(config) => {
+                !config.language.is_oxlint && loader.wants_types(&target.loaded, config)
+            }
+            _ => false,
+        };
+        let lint = |target: &Target| {
+            let waiting = can_get_types(target).then_some(&waiting_for_types);
+            match context.lint_file(target, &on_circular_fixes, waiting) {
+                Ok(Some(result)) => results.lock().push(result),
+                Ok(None) => {}
+                Err(error) => {
+                    failure.lock().get_or_insert(error);
+                }
             }
         };
         let files = Files {
@@ -878,6 +919,36 @@ impl Run<'_> {
             false => {}
         }
         phases.linting = started.elapsed().as_secs_f64();
+        let waiting = std::mem::take(&mut *waiting_for_types.lock());
+        let waiting: FxHashSet<Vec<u8>> = waiting.into_iter().collect();
+        if !waiting.is_empty() {
+            let started = Instant::now();
+            loader.advise_about_typescript();
+            loader.number_type_flags();
+            let targets = (without_types.iter()).filter(|it| waiting.contains(&it.path));
+            let files = targets.clone().filter_map(|target| match &target.status {
+                Status::Matched(config) => Some(Typed {
+                    path: &target.path,
+                    config,
+                    text: None,
+                }),
+                _ => None,
+            });
+            let files: Vec<Typed> = files.collect();
+            let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
+            for (target, result) in targets.zip(linted) {
+                // A file that's in no program is linted without the rule.
+                match result.map_or_else(
+                    || context.lint_file(target, &on_circular_fixes, None),
+                    |it| Ok(Some(it)),
+                ) {
+                    Ok(result) => results.get_mut().extend(result),
+                    Err(error) => return Err(error),
+                }
+            }
+            (results.get_mut()).append(&mut context.invalid_tsconfigs.lock().results);
+            phases.checking += started.elapsed().as_secs_f64();
+        }
         if let Some(error) = failure.get_mut().take() {
             return Err(error);
         }
@@ -1158,9 +1229,24 @@ impl Run<'_> {
         for (eslint_path, oxlint_path) in ignored_eslint_config.iter().filter(|_| !options.silent) {
             self.note_ignored_config(eslint_path, oxlint_path);
         }
-        let without_types = js_plugins.rules_that_asked_for_types();
-        if !without_types.is_empty() {
-            let ids: Vec<&[u8]> = without_types.iter().map(|it| &it.id[..]).collect();
+        let (without_types, beyond_types): (Vec<_>, Vec<_>) = (js_plugins
+            .rules_skipped_for_types())
+        .into_iter()
+        .partition(|it| it.unknown.is_none());
+        let reasons: [&[u8]; 2] = [
+            b" did not run because there is no type information for the files: ",
+            b" did not run because rules that run in JavaScript cannot read this from a type: ",
+        ];
+        for (rules, reason) in [without_types, beyond_types].iter().zip(reasons) {
+            if rules.is_empty() {
+                continue;
+            }
+            let ids: Vec<Vec<u8>> = (rules.iter())
+                .map(|rule| match &rule.unknown {
+                    Some(unknown) => [&rule.id[..], b" (", unknown, b")"].concat(),
+                    None => rule.id.to_vec(),
+                })
+                .collect();
             let noun: &[u8] = match ids.len() {
                 1 => b" rule",
                 _ => b" rules",
@@ -1168,7 +1254,7 @@ impl Run<'_> {
             loader.add_unsupported(&[
                 ids.len().to_string().as_bytes(),
                 noun,
-                b" did not run because rules that run in JavaScript cannot use type information: ",
+                reason,
                 &ids.join(&b", "[..]),
                 match linter.registry().replaces_plugin(b"@typescript-eslint") {
                     true => &b""[..],

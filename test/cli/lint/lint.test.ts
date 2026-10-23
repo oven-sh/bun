@@ -13466,7 +13466,7 @@ describe.concurrent("nativePluginRules", () => {
       };
       const result = await lint({ ...files, ...bunfig("false") }, ["a.js"], { mayFail: true });
       expect(result.stderr).toContain(
-        "1 rule did not run because rules that run in JavaScript cannot use type information: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
+        "1 rule did not run because there is no type information for the files: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
       );
       expect(result.exitCode).toBe(2);
     },

@@ -75,6 +75,8 @@ pub(super) mod ask {
     pub(crate) const LIB_NAME: u32 = 17;
     /// The [`LIB_VARIABLES`] word for the name given in the details. Empty if the libraries don't define it.
     pub(crate) const LIB_VARIABLE: u32 = 18;
+    /// See `Host::types_for`. Empty unless the file's flags say that it has types.
+    pub(crate) const TYPES: u32 = 19;
 }
 
 /// Appends `list` to `lists`, prefixed with its length, and returns its offset. The empty list is at offset 0, so

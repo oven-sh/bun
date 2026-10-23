@@ -98,6 +98,7 @@ const SETTINGS = 2;
 const CONFIGURED = 3;
 const SELECTORS = 4;
 const LOADED = 10;
+const TYPES = 19;
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
@@ -355,6 +356,73 @@ async function loadPlugin([location, position, firstRule]) {
   return { name, isAlias, id, file, export: path, hasNothing, rules: described };
 }
 
+// ------------- types -------------
+
+// What a rule reads from the types and isn't known here. The other side knows this text: `UNKNOWN_TYPE_INFORMATION` in `host.rs`.
+function refuse(what) {
+  throw new Error(`You have used a rule which requires type information that bun lint does not have: ${what}`);
+}
+
+// `members` under the name of one of TypeScript's classes. To read any other member is refused.
+function lookAlike(name, members) {
+  return new Proxy(members, {
+    get: (_, key) => (key in members || typeof key === "symbol" ? members[key] : refuse(`${name}.${key}`)),
+  });
+}
+
+// Of the file: `{ asked, services }`. `null` until a rule reads `parserServices`.
+let typed = null;
+
+// What typescript-eslint's parser gives with type information, as far as `types.rs` knows it. Only for a rule that has asked for
+// types before, by throwing. `null` for any other: a rule that uses types if there are any goes on without them.
+function typedServices() {
+  typed ??= readTypes();
+  return typed.asked.has(currentRule?.position) ? typed.services : null;
+}
+
+function readTypes() {
+  const { emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations } =
+    fileSettings.languageOptions.parserOptions;
+  const words = native.askWords(TYPES, "", 0xffffffff);
+  const first = 1 + words[0];
+  // Where the row of a node begins. The rows are sorted.
+  const find = (start, end, type) => {
+    let low = 0;
+    let high = (words.length - first) / 6;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const at = first + middle * 6;
+      const order = words[at] - start || words[at + 1] - end || words[at + 2] - type;
+      if (order === 0) return at;
+      if (order < 0) low = middle + 1;
+      else high = middle;
+    }
+    return -1;
+  };
+  const signatures = count => Array.from({ length: count }, () => lookAlike("Signature", {}));
+  const services = {
+    emitDecoratorMetadata: emitDecoratorMetadata === true,
+    experimentalDecorators: experimentalDecorators === true,
+    isolatedDeclarations: isolatedDeclarations === true,
+    program: lookAlike("Program", {}),
+    esTreeNodeToTSNodeMap: lookAlike("esTreeNodeToTSNodeMap", {}),
+    tsNodeToESTreeNodeMap: lookAlike("tsNodeToESTreeNodeMap", {}),
+    getSymbolAtLocation: node => refuse(`getSymbolAtLocation(${node.type})`),
+    getTypeAtLocation(node) {
+      const at = find(node.range[0], node.range[1], native.typeId(node.type));
+      if (at === -1) refuse(`getTypeAtLocation(${node.type})`);
+      const flags = words[at + 3];
+      return lookAlike("Type", {
+        flags,
+        getFlags: () => flags,
+        getCallSignatures: () => signatures(words[at + 4]),
+        getConstructSignatures: () => signatures(words[at + 5]),
+      });
+    },
+  };
+  return { asked: new Set(words.subarray(1, 1 + words[0])), services };
+}
+
 // ------------- ESLint's `context` -------------
 
 // The text of the file, without the byte order mark.
@@ -364,6 +432,7 @@ const SourceCode = native.sourceCode(native.TokenStore, [
   program,
   scopeManager,
   () => fileSettings.languageOptions.parserOptions,
+  typedServices,
   oxlintScopeManager,
 ]);
 let sourceCode = new SourceCode();
@@ -950,7 +1019,7 @@ function reset() {
   nodes = [];
   groupByKey = new Map();
   groups = [];
-  currentRule = currentNode = null;
+  currentRule = currentNode = typed = null;
   isCreating = false;
   // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
   afterHooks = [];

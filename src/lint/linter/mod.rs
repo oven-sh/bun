@@ -129,6 +129,8 @@ pub struct LintOptions<'o> {
     /// The length of the prefix of the file's path that is ESLint's `physicalFilename`, if that isn't the whole path.
     /// In that case this is a block that a processor extracted from that file.
     pub physical_path_len: Option<usize>,
+    /// The caller lints the file again with types if the result [needs them](LintResult::needs_types).
+    pub can_lint_with_types: bool,
     /// `false` if `options.respectEslintDisableDirectives` in an `.oxlintrc.json` is `false`. Then only comments that
     /// start with `oxlint` count.
     pub respects_eslint_comments: bool,
@@ -161,6 +163,7 @@ impl Default for LintOptions<'_> {
             parse_again: None,
             again: None,
             physical_path_len: None,
+            can_lint_with_types: false,
             respects_eslint_comments: true,
         }
     }
@@ -181,6 +184,9 @@ pub struct LintResult {
     /// The file [may be misread](may_be_misread), or a comment in a non-JavaScript file turns on a rule that isn't for
     /// its language, and the caller has another tool that can lint it. The rest of the result is empty.
     pub needs_another_linter: bool,
+    /// A JavaScript rule asks for types, the file has none, and [`LintOptions::can_lint_with_types`] is set. The rest
+    /// of the result is empty.
+    pub needs_types: bool,
     /// ESLint throws this while linting the file, which ends the run with exit code 2. Either a rule rejects options
     /// that its schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a JavaScript plugin's rule throws.
     /// The rest of the result is then empty.
@@ -754,18 +760,35 @@ impl<S: RuleSet> Linter<S> {
             options.again,
         ) && !running_js.is_empty()
         {
+            let waits_for_types = options.can_lint_with_types && file.types.is_none();
+            let needs_types = || LintResult {
+                needs_types: true,
+                ..LintResult::default()
+            };
+            if waits_for_types
+                && !(running_js.iter()).all(|it| host.can_run(&it.configured.rule, file))
+            {
+                return needs_types();
+            }
             // There's no telling what a rule that doesn't run would have reported.
+            let mut skip = |rule: &Arc<js_plugin::Rule>| {
+                host.skip_for_types(rule);
+                rules_to_ignore.push(RuleId::Js(Arc::clone(rule)));
+            };
             running_js.retain(|it| {
-                let has_asked = host.has_asked_for_types(&it.configured.rule);
-                if has_asked {
-                    rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
+                let can_run = host.can_run(&it.configured.rule, file);
+                if !can_run {
+                    skip(&it.configured.rule);
                 }
-                !has_asked
+                can_run
             });
             // Runs once more for each rule that asks for types.
             while !running_js.is_empty() {
                 let enabled: Vec<&js_plugin::Configured> =
                     running_js.iter().map(|it| &**it.configured).collect();
+                let had_asked: Vec<bool> = (enabled.iter())
+                    .map(|it| host.has_asked_for_types(&it.rule))
+                    .collect();
                 match host.run_on_block(
                     file,
                     settings,
@@ -783,15 +806,22 @@ impl<S: RuleSet> Linter<S> {
                         }
                     }
                     Err(failure) => {
-                        let needs_types = |it: &RunningJs| {
+                        let asks_for_types = |it: &RunningJs| {
                             host.asks_for_types(&it.configured.rule, &failure.message)
                         };
                         let at = failure.rule.map(|it| it as usize);
                         if let Some(at) =
-                            at.filter(|it| running_js.get(*it).is_some_and(needs_types))
+                            at.filter(|it| running_js.get(*it).is_some_and(asks_for_types))
                         {
-                            let removed = running_js.remove(at);
-                            rules_to_ignore.push(RuleId::Js(Arc::clone(&removed.configured.rule)));
+                            if waits_for_types {
+                                return needs_types();
+                            }
+                            // The next run has the types, unless this one had them.
+                            let rule = &running_js[at].configured.rule;
+                            if had_asked[at] || !host.can_run(rule, file) {
+                                skip(rule);
+                                running_js.remove(at);
+                            }
                             continue;
                         }
                         let rule = at.and_then(|it| running_js.get(it));

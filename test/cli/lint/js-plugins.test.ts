@@ -1853,7 +1853,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         4 problems"
       `);
       expect(stderr).toContain(
-        "2 rules did not run because rules that run in JavaScript cannot use type information: typed/at-once, typed/later",
+        "2 rules did not run because there is no type information for the files: typed/at-once, typed/later",
       );
       expect(stderr).not.toContain("You have used a rule");
       expect(exitCode).toBe(2);
@@ -1861,6 +1861,204 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     },
     timeout,
   );
+
+  describe("where the config turns on type information", () => {
+    // `reads` is what the rule does with the type of the first argument of each `it()`.
+    const typed = (reads: string, rules = "") => ({
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "es2022", "types": [] } }`,
+      "plugin.mjs": `
+        // This is what \`getParserServices\` in @typescript-eslint/utils does.
+        function services(context) {
+          const services = context.sourceCode.parserServices;
+          if (services?.esTreeNodeToTSNodeMap == null || services.tsNodeToESTreeNodeMap == null || services.program == null) {
+            throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file. See https://tseslint.com/typed-linting for enabling linting with type information.\\nParser: (unknown)");
+          }
+          return services;
+        }
+        const reads = ${reads};
+        const create = context => ({
+          CallExpression(node) {
+            if (node.callee.name !== "it") return;
+            context.report({ node: node.arguments[0], message: String(reads(services(context), node.arguments[0])) });
+          },
+        });
+        // Many rules use types only if there are any, or look for what another parser provides.
+        const optional = context => ({
+          Program(node) {
+            const { program, svelteParseContext } = context.sourceCode.parserServices;
+            context.report({ node, message: program + " " + svelteParseContext });
+          },
+        });
+        export default { rules: { title: { create }, optional: { create: optional } } };`,
+      "eslint.config.mjs": `
+        import demo from "./plugin.mjs";
+        export default [{
+          files: ["**/*.ts"],
+          plugins: { demo, "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+          rules: { "demo/title": "error", ${rules} },
+        }];`,
+    });
+    const facts = `(services, node) => {
+      const type = services.getTypeAtLocation(node);
+      return [type.flags, type.getFlags(), type.getCallSignatures().length, type.getConstructSignatures().length].join(" ");
+    }`;
+    const titles = `declare function it(title: unknown): void;
+class Store {}
+function load(): void;
+function load(from: string): void;
+function load() {}
+const label: string = "a";
+const count = 1;
+enum Color {
+  Red = "red",
+}
+it("text");
+it(\`a\${count}\`);
+it(label);
+it(load);
+it(Store);
+it(count);
+it(() => {});
+it(class {});
+it(load.name);
+it(Color.Red);
+it(label as any);
+it(undefined);
+it({});
+it(count > 0);
+it(Math.random() > 0 ? label : load);
+`;
+    const messagesOf = (raw: string) => JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message);
+    // \`type.flags\` of each title, as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 reports it with these versions of
+    // TypeScript. TypeScript 6 renumbered \`ts.TypeFlags\`.
+    const flags = {
+      "5.9.3": [128, 128, 4, 524288, 524288, 256, 524288, 524288, 4, 1152, 1, 32768, 524288, 1048592, 1048576],
+      "6.0.3": [1024, 1024, 32, 1048576, 1048576, 2048, 1048576, 1048576, 32, 33792, 1, 4, 1048576, 134217984, 134217728],
+    };
+    const signatures = ["0 0", "0 0", "0 0", "2 0", "0 1", "0 0", "1 0", "0 1", "0 0", "0 0", "0 0", "0 0", "0 0", "0 0", "0 0"];
+
+    test.concurrent.each([
+      ["5.9.3", ""],
+      ["6.0.3", ""],
+      // The file is linted with types from the start.
+      ["6.0.3", `"@typescript-eslint/no-floating-promises": "error"`],
+    ] as const)(
+      "a rule gets the flags and the signatures of an expression's type: typescript %s, %s",
+      async (version, rules) => {
+        const files = {
+          ...typed(facts, rules),
+          "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }),
+          "a.ts": titles,
+        };
+        const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)).toEqual(flags[version].map((it, i) => `${it} ${it} ${signatures[i]}`));
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3.
+    test.concurrent(
+      "a rule gets the type of what an import binds",
+      async () => {
+        const reads = `(services, node) => {
+          return node.parent.parent.parent.body.flatMap(it => it.specifiers ?? []).map(it => {
+            const type = services.getTypeAtLocation(it);
+            return [it.type, type.flags, type.getCallSignatures().length, type.getConstructSignatures().length].join(" ");
+          }).join(", ");
+        }`;
+        const files = {
+          ...typed(reads),
+          "node_modules/typescript/package.json": `{ "name": "typescript", "version": "5.9.3" }`,
+          "lib.ts": `export function fn() {}\nexport class K {}\nexport const n = 1;\nexport default function main() {}\nexport interface I {}\n`,
+          "a.ts": `import main, { K, fn, n, type I } from "./lib";\nimport * as all from "./lib";\ndeclare function it(title: unknown): void;\nit([main, K, fn, n, all, {} as I]);\n`,
+        };
+        const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)[0].split(", ")).toEqual([
+          "ImportDefaultSpecifier 524288 1 0",
+          "ImportSpecifier 524288 0 1",
+          "ImportSpecifier 524288 1 0",
+          "ImportSpecifier 256 0 0",
+          "ImportSpecifier 1 0 0",
+          "ImportNamespaceSpecifier 524288 0 0",
+        ]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "a rule that hasn't asked for types gets the same as without them",
+      async () => {
+        const files = {
+          ...typed(facts, `"demo/optional": "error"`),
+          "a.ts": `declare function it(title: unknown): void;\nit(it);\n`,
+        };
+        const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)).toEqual(["null undefined", "1048576 1048576 1 0"]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "text from standard input has types too",
+      async () => {
+        using dir = tempDir("bun-lint-js-plugins", typed(facts));
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "json", "--stdin", "--stdin-filename", "a.ts"],
+          env,
+          cwd: String(dir),
+          stdin: Buffer.from(`declare function it(title: unknown): void;\nit(it);\n`),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(messagesOf(stdout)).toEqual(["1048576 1048576 1 0"]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.concurrent(
+      "the other rules' fixes are applied once",
+      async () => {
+        const files = { ...typed(facts, `"no-var": "error"`), "a.ts": `declare function it(title: unknown): void;\nvar a = 1;\nit(a);\n` };
+        const { raw, files: written, exitCode } = await lint(files, ["-f", "json", "--fix", "a.ts"], ["a.ts"]);
+        expect(messagesOf(raw)).toEqual(["64 64 0 0"]);
+        expect(written["a.ts"]).toBe(`declare function it(title: unknown): void;\nlet a = 1;\nit(a);\n`);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.concurrent.each([
+      ["(services, node) => services.getTypeAtLocation(node).symbol", "Type.symbol"],
+      ["(services, node) => services.getTypeAtLocation(node).getCallSignatures()[0].getReturnType()", "Signature.getReturnType"],
+      ["(services, node) => services.getTypeAtLocation(node.parent.parent)", "getTypeAtLocation(ExpressionStatement)"],
+      ["(services, node) => services.getSymbolAtLocation(node)", "getSymbolAtLocation(Identifier)"],
+      ["(services, node) => services.program.getTypeChecker()", "Program.getTypeChecker"],
+      ["(services, node) => services.esTreeNodeToTSNodeMap.get(node)", "esTreeNodeToTSNodeMap.get"],
+    ])(
+      "a rule that reads anything else is skipped, and the error says what it read: %s",
+      async (reads, named) => {
+        const files = {
+          ...typed(reads, `"no-var": "error"`),
+          "a.ts": `declare function it(title: unknown): void;\nit(it);\nvar a = 1;\n`,
+          "b.ts": `declare function it(title: unknown): void;\nit(it);\n`,
+        };
+        const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "a.ts", "b.ts"]);
+        expect(stdout).toBe(`<dir>/a.ts:3:1: Unexpected var, use let or const instead. [Error/no-var]\n\n1 problem`);
+        expect(stderr).toContain(
+          `1 rule did not run because rules that run in JavaScript cannot read this from a type: demo/title (${named})`,
+        );
+        expect(exitCode).toBe(2);
+      },
+      timeout,
+    );
+  });
 
   // This is how `eslint-plugin-import` parses the modules that a file imports.
   test.each(["parser", "* as parser"])(

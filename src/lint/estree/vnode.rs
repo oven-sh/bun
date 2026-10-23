@@ -8,6 +8,8 @@ use crate::ast::{
 };
 use crate::span::Span;
 use crate::tokens::skip_trivia;
+use crate::types::Type;
+use bun_sema::check::services::{Location, Row};
 use bun_sema::hir::{ModifierId, PropId};
 
 /// A node of the ESTree that ESLint's parser would produce for the file.
@@ -198,6 +200,25 @@ impl<'a> VNode<'a> {
     }
 
     #[inline]
+    /// `services.getTypeAtLocation(node)`, if the node is an expression or one of the specifiers of an import.
+    pub(crate) fn type_at_location(self) -> Option<Type<'a>> {
+        // A default or namespace import has the type of its name.
+        let local = match (self.base, self.part) {
+            (Node::Expr(_) | Node::Func(_) | Node::Class(_) | Node::ImportSpec(_), Part::Main) => {
+                return Some(self.base.ty());
+            }
+            (_, Part::DefaultSpecifier) => Part::DefaultLocal,
+            (_, Part::NamespaceSpecifier) => Part::NamespaceLocal,
+            _ => return None,
+        };
+        let local = VNode {
+            base: self.base,
+            part: local,
+        };
+        let name = Location::from(Row::NameAt(local.span().start));
+        Some(self.file().type_checker().get_type_at_location(name))
+    }
+
     pub(crate) fn program(file: &'a File<'a>) -> VNode<'a> {
         VNode::new(file, Part::Main)
     }

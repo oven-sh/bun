@@ -147,7 +147,7 @@ bun lint --native-plugin-rules=@typescript-eslint,import # only these two stay n
 nativePluginRules = ["@typescript-eslint", "import"]
 ```
 
-ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules don't get types.
+ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules get little of a type.
 
 `nativePluginRules` picks which version of a plugin runs. It doesn't turn rules on or off. To do that, see [`lint.rules`](/runtime/bunfig#lint-rules).
 
@@ -229,7 +229,7 @@ export default [
 
 ## Notes
 
-- **JavaScript rules don't get types.** `parserServices.program` is `null`, even with `--type-aware`. A rule that calls typescript-eslint's `getParserServices()` doesn't run, and `bun lint` exits with code `2`.
+- **JavaScript rules get little of a type.** In a file whose ESLint config turns on type information, a rule that calls typescript-eslint's `getParserServices()` can call `getTypeAtLocation()` with an expression or a specifier of an import. The type has `flags`, `getFlags()`, `getCallSignatures()` and `getConstructSignatures()`, and only the lengths of these two lists mean anything. A rule that reads anything else doesn't run, and `bun lint` says what it read and exits with code `2`. For every other rule `parserServices.program` is `null`.
 - **Plugins run on several threads.** Each thread imports the plugin, so module-level state is per thread, not per run.
 - **A renamed built-in plugin runs in JavaScript.** For example, `@antfu/eslint-config` registers `@typescript-eslint` as `ts`.
 - **A rule that throws ends the run** with exit code `2`. With an oxlint config, Bun reports the error for that file and continues.

@@ -2,6 +2,7 @@
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
+use super::types::{self, FlagValues};
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
@@ -128,12 +129,30 @@ struct State {
     /// Keyed by selector text.
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
-    /// [`Host::rules_that_asked_for_types`]
-    asked_for_types: Vec<Arc<Rule>>,
+    asked_for_types: Vec<AskedForTypes>,
+}
+
+/// A rule that [has asked for types](Host::has_asked_for_types).
+struct AskedForTypes {
+    rule: Arc<Rule>,
+    /// What it read from the types that isn't known. It doesn't run on any more files.
+    unknown: Option<Box<[u8]>>,
+    /// [`Host::skip_for_types`]
+    was_skipped: bool,
+}
+
+/// A rule that didn't run on some file.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub struct SkippedForTypes {
+    pub id: Box<[u8]>,
+    /// What it read from the types that isn't known. `None` means its files have no types.
+    pub unknown: Option<Box<[u8]>>,
 }
 
 /// The start of the error that `getParserServices` in `@typescript-eslint/utils` throws, in every version.
 const NEEDS_TYPES_ERROR_PREFIX: &[u8] = b"You have used a rule which requires ";
+/// What follows it in the error of `refuse` in `worker/main.js`. Then comes what the rule read.
+const UNKNOWN_TYPE_INFORMATION: &[u8] = b"type information that bun lint does not have: ";
 
 /// A run's plugins, shared by all threads.
 pub struct Host<'e> {
@@ -143,6 +162,8 @@ pub struct Host<'e> {
     measures: bool,
     /// True if any rule [has asked for types](Host::has_asked_for_types).
     has_been_asked_for_types: AtomicBool,
+    /// [`Host::number_type_flags`]
+    numbers_type_flags_as_before_typescript_6: AtomicBool,
     state: Guarded<State>,
 }
 
@@ -200,6 +221,7 @@ struct RunOptions<'h> {
     enabled: &'h [&'h Configured],
     wants_fixes: bool,
     physical_path_len: Option<usize>,
+    types: Option<&'h [u32]>,
 }
 
 const PLUGIN_PROTOCOL_ERROR: &[u8] =
@@ -213,6 +235,7 @@ impl<'e> Host<'e> {
             cwd: cwd.to_vec(),
             measures: false,
             has_been_asked_for_types: AtomicBool::new(false),
+            numbers_type_flags_as_before_typescript_6: AtomicBool::new(false),
             state: Guarded::new(State::default()),
         }
     }
@@ -314,10 +337,21 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// True if `rule` has asked for types, which JavaScript rules can't get. It isn't run on any more files.
+    /// True if `rule` has asked for types. From then on it only runs on files that have types.
     pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
-            && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
+            && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(&it.rule, rule))
+    }
+
+    /// False if `rule` [has asked for types](Host::has_asked_for_types) that it can't get: the file has none, or it
+    /// has read something from them that isn't known.
+    pub fn can_run(&self, rule: &Arc<Rule>, file: &File) -> bool {
+        if !self.has_been_asked_for_types.load(Ordering::Relaxed) {
+            return true;
+        }
+        let state = self.state.lock();
+        let asked = (state.asked_for_types.iter()).find(|it| Arc::ptr_eq(&it.rule, rule));
+        asked.is_none_or(|it| file.types.is_some() && it.unknown.is_none())
     }
 
     /// True if `thrown`, the message of an error that `rule` threw, means the rule needs types. From then on the rule
@@ -325,22 +359,74 @@ impl<'e> Host<'e> {
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
         // With an oxlint config, the error's class precedes the message.
         let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
-        if !message.starts_with(NEEDS_TYPES_ERROR_PREFIX) {
+        let Some(what) = message.strip_prefix(NEEDS_TYPES_ERROR_PREFIX) else {
             return false;
+        };
+        let unknown = what.strip_prefix(UNKNOWN_TYPE_INFORMATION).map(Box::from);
+        let mut state = self.state.lock();
+        let asked = &mut state.asked_for_types;
+        match asked.iter_mut().find(|it| Arc::ptr_eq(&it.rule, rule)) {
+            Some(known) => known.unknown = known.unknown.take().or(unknown),
+            None => asked.push(AskedForTypes {
+                rule: Arc::clone(rule),
+                unknown,
+                was_skipped: false,
+            }),
         }
-        if !self.has_asked_for_types(rule) {
-            self.state.lock().asked_for_types.push(Arc::clone(rule));
-            self.has_been_asked_for_types.store(true, Ordering::Relaxed);
-        }
+        self.has_been_asked_for_types.store(true, Ordering::Relaxed);
         true
     }
 
-    /// The rules that [have asked for types](Host::has_asked_for_types), sorted by name.
-    pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
-        let mut rules = self.state.lock().asked_for_types.clone();
-        crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
-        rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
+    /// `rule`, which [has asked for types](Host::has_asked_for_types), didn't run on a file.
+    pub fn skip_for_types(&self, rule: &Arc<Rule>) {
+        let mut state = self.state.lock();
+        let mut asked = state.asked_for_types.iter_mut();
+        if let Some(asked) = asked.find(|it| Arc::ptr_eq(&it.rule, rule)) {
+            asked.was_skipped = true;
+        }
+    }
+
+    /// The rules that [were skipped](Host::skip_for_types), sorted by name.
+    pub fn rules_skipped_for_types(&self) -> Vec<SkippedForTypes> {
+        let state = self.state.lock();
+        let skipped = state.asked_for_types.iter().filter(|it| it.was_skipped);
+        let mut rules: Vec<SkippedForTypes> = skipped
+            .map(|it| SkippedForTypes {
+                id: it.rule.id.clone(),
+                unknown: it.unknown.clone(),
+            })
+            .collect();
+        crate::utils::sort::sort(&mut rules);
+        // Each config file that imports a plugin has its own rules.
+        rules.dedup();
         rules
+    }
+
+    /// Sets which `ts.TypeFlags` rules compare `type.flags` with.
+    pub fn number_type_flags(&self, like: FlagValues) {
+        (self.numbers_type_flags_as_before_typescript_6)
+            .store(like == FlagValues::BeforeTypeScript6, Ordering::Relaxed);
+    }
+
+    /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, their positions, and what they can
+    /// learn about the types in `file`. `None` if none of them has asked, or the file has no types.
+    fn types_for<'a>(&self, file: &'a File<'a>, enabled: &[&Configured]) -> Option<Vec<u32>> {
+        file.types.as_ref()?;
+        let positions = (0..).zip(enabled);
+        let asked = positions.filter(|it| self.has_asked_for_types(&it.1.rule));
+        let mut words = vec![0];
+        words.extend(asked.map(|it| it.0));
+        words[0] = words.len() as u32 - 1;
+        if words[0] == 0 {
+            return None;
+        }
+        let is_before_6 = (self.numbers_type_flags_as_before_typescript_6).load(Ordering::Relaxed);
+        let flag_values = match is_before_6 {
+            true => FlagValues::BeforeTypeScript6,
+            false => FlagValues::SinceTypeScript6,
+        };
+        types::of_nodes(file, flag_values, &mut words);
+        Some(words)
     }
 
     /// The known plugins, each with its location: the `[directory, specifier, alias]` of [`Host::load`], or the
@@ -557,11 +643,13 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
         parse_again: Option<&ParseAgain>,
     ) -> Result<Vec<Report>, Failure> {
+        let types = self.types_for(file, enabled);
         let run_options = RunOptions {
             settings,
             enabled,
             wants_fixes,
             physical_path_len,
+            types: types.as_deref(),
         };
         let size = file.text().len();
         let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
@@ -591,6 +679,7 @@ impl<'e> Host<'e> {
             enabled,
             wants_fixes,
             physical_path_len,
+            types,
         } = *run_options;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
@@ -606,7 +695,8 @@ impl<'e> Host<'e> {
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
             | (source_type_for_oxlint(file) << 5)
-            | (u32::from(ast::shortens_nodes(file)) << 8);
+            | (u32::from(ast::shortens_nodes(file)) << 8)
+            | (u32::from(types.is_some()) << 9);
         wire::words(
             &mut message,
             &[
@@ -656,6 +746,7 @@ impl<'e> Host<'e> {
             }
             ask::REPORTS => reports::read(details, &offsets, &mut reported.borrow_mut()),
             ask::CONFIG_COMMENTS => directives::write(file, &offsets, out),
+            ask::TYPES => wire::words(out, types.unwrap_or_default()),
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {

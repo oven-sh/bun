@@ -9,6 +9,7 @@ use super::relate::Relation;
 use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
@@ -844,12 +845,23 @@ impl Checker<'_, '_> {
         // `resolveDeclaredMembers(t).declaredMembers`: a property it declares itself resolves any conflict. Don't call
         // `members(ty)` here. In tsgo a base type `M<t>` is the first to request those, in the loop below, which leaves
         // `t` without the members of `M<t>`.
-        let own: Vec<Atom> = (self.resolve_declared_members(sym).props.iter())
+        let mut own: Vec<Atom> = (self.resolve_declared_members(sym).props.iter())
             .map(|prop| prop.name)
             .collect();
+        // A long list of names is sorted, so that lookups can binary search.
+        const LONG: usize = 32;
+        let is_sorted = own.len() > LONG;
+        if is_sorted {
+            own.shared_sort_unstable_by_key(|name| name.0);
+        }
+        let is_own = |name: Atom| match is_sorted {
+            true => own.binary_search_by_key(&name.0, |own| own.0).is_ok(),
+            false => own.contains(&name),
+        };
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
         // For a private or protected property, also its declaration.
         let mut seen: Vec<(Atom, TypeId, PropFlags, Option<&PropSource>, TypeId)> = Vec::new();
+        let mut places = crate::util::LaterPlaces::default();
         let mut identical = true;
         for &declared_base in bases {
             // In each base, `this` is instantiated with the derived type's `this` type.
@@ -859,11 +871,12 @@ impl Checker<'_, '_> {
                 continue;
             };
             for prop in &members.shape().props {
-                if own.contains(&prop.name) {
+                if is_own(prop.name) {
                     continue;
                 }
                 let prop_type = self.type_of_prop_as_read(prop, members.mapper);
-                match seen.iter().find(|s| s.0 == prop.name) {
+                let room = seen.len() + members.shape().props.len();
+                match places.find(&mut seen, |s| s.0, prop.name, room) {
                     None => seen.push((
                         prop.name,
                         prop_type,

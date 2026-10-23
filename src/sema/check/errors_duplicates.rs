@@ -819,8 +819,10 @@ impl Checker<'_, '_> {
         }
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
         let mut names: SmallVec<[(Atom, bool, u8); 4]> = SmallVec::new();
+        let mut places = crate::util::LaterPlaces::default();
         // 1 for an instance member, 2 for a static member.
         let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
+        let mut private_places = crate::util::LaterPlaces::default();
         for m in members.iter() {
             let member = &hir[m];
             let is_static = member.flags.contains(Flags::STATIC);
@@ -857,7 +859,8 @@ impl Checker<'_, '_> {
                 if count < 2 || kind == 0 {
                     continue;
                 }
-                match names.iter_mut().find(|n| (n.0, n.1) == (name, is_static)) {
+                let key = (name, is_static);
+                match places.find(&mut names, |n| (n.0, n.1), key, members.len()) {
                     None => names.push((name, is_static, kind)),
                     Some(state) if state.2 == 1 || state.2 == 2 && kind != 2 => {
                         state.2 = 3;
@@ -868,14 +871,20 @@ impl Checker<'_, '_> {
                 }
             }
             if check_private_names && let (Some(name), PropKey::Private(_)) = (name, member.key) {
-                let at = private_names.iter().position(|it| it.0 == name);
-                let at = at.unwrap_or_else(|| {
-                    private_names.push((name, 0));
-                    private_names.len() - 1
-                });
-                let before = private_names[at].1;
-                private_names[at].1 |= if is_static { 2 } else { 1 };
-                if before != 3 && private_names[at].1 == 3 {
+                let side = if is_static { 2 } else { 1 };
+                let known = private_places.find(&mut private_names, |it| it.0, name, members.len());
+                let before = match known {
+                    Some(it) => {
+                        let before = it.1;
+                        it.1 |= side;
+                        before
+                    }
+                    None => {
+                        private_names.push((name, side));
+                        0
+                    }
+                };
+                if before != 3 && before | side == 3 {
                     self.report_duplicate_member_errors(file, members, name, None, 2804);
                 }
             }

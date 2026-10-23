@@ -853,6 +853,7 @@ impl Checker<'_, '_> {
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
         let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
+        let mut places = crate::util::LaterPlaces::default();
         for p in properties.iter() {
             let prop = &hir[p];
             let current_kind = match prop.kind {
@@ -919,7 +920,8 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            let Some(existing) = seen.iter_mut().find(|seen| seen.0 == effective_name) else {
+            let known = places.find(&mut seen, |seen| seen.0, effective_name, properties.len());
+            let Some(existing) = known else {
                 seen.push((effective_name, current_kind));
                 continue;
             };

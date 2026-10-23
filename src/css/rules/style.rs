@@ -54,13 +54,9 @@ impl<R> StyleRule<R> {
 
     pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
         self.vendor_prefix = selector::get_prefix(&self.selectors);
-        if !self.vendor_prefix.contains(VendorPrefix::NONE) {
-            return;
-        }
-        if self.vendor_prefix != VendorPrefix::NONE {
-            // Mixed as written. A pass per prefix would print the prefixed pseudo unprefixed.
-            self.vendor_prefix = VendorPrefix::empty();
-        } else if context.targets.should_compile_selectors() {
+        if self.vendor_prefix.contains(VendorPrefix::NONE)
+            && context.targets.should_compile_selectors()
+        {
             self.vendor_prefix = selector::downlevel_selectors(
                 context.arena,
                 self.selectors.v.slice_mut(),
@@ -75,10 +71,15 @@ impl<R> StyleRule<R> {
 
     /// Whether the targets need this selector list `:is()`-wrapped or split. See `Compatibility`.
     pub(crate) fn should_compile_selector_list(&self, targets: &css::targets::Targets) -> bool {
-        self.selectors.v.len() > 1
-            && targets.should_compile_selectors()
-            && selector::compatibility(self.selectors.v.slice(), targets)
-                == selector::Compatibility::Incompatible
+        use selector::Compatibility;
+        if self.selectors.v.len() <= 1 || !targets.should_compile_selectors() {
+            return false;
+        }
+        match selector::compatibility(self.selectors.v.slice(), targets) {
+            Compatibility::Compatible => false,
+            Compatibility::Incompatible => true,
+            Compatibility::VendorPrefixed => !selector::prints_as_written(&self.selectors),
+        }
     }
 }
 
@@ -181,17 +182,6 @@ impl<R> StyleRule<R> {
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
         let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
 
-        // Prefixed pseudos but no prefix pass: print them as written, even in an ancestor's pass.
-        let inherited_prefix = dest.vendor_prefix;
-        let as_written = self.vendor_prefix.is_empty()
-            && (!inherited_prefix.is_empty() || !self.rules.v.is_empty())
-            && selector::has_vendor_prefixed_pseudo(&self.selectors);
-        let own_prefix = if as_written {
-            VendorPrefix::empty()
-        } else {
-            inherited_prefix
-        };
-
         if has_declarations {
             //   #[cfg(feature = "sourcemap")]
             //   dest.add_mapping(self.loc);
@@ -202,15 +192,12 @@ impl<R> StyleRule<R> {
             // Each rule prelude gets its own budget for `&` substitutions when
             // compiling nesting (see `serialize::serialize_nesting`).
             dest.nesting_expansions = 0;
-            dest.vendor_prefix = own_prefix;
-            let result = selector::serialize::serialize_selector_list(
+            selector::serialize::serialize_selector_list(
                 self.selectors.v.slice(),
                 dest,
                 ctx,
                 false,
-            );
-            dest.vendor_prefix = inherited_prefix;
-            result?;
+            )?;
             dest.whitespace()?;
             dest.write_char(b'{')?;
             dest.indent();
@@ -326,13 +313,8 @@ impl<R> StyleRule<R> {
             dest.skip_prefixed_nested_rules = skip_prefixed_nested;
             // `with_context` keeps the (closure-data, fn) split so the
             // `Printer` reborrow lives only inside `func`.
-            let result = dest.with_context(
-                &self.selectors,
-                own_prefix,
-                as_written,
-                &self.rules,
-                |rules, d| rules.to_css(d),
-            );
+            let result =
+                dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d));
             dest.skip_prefixed_nested_rules = saved_skip;
             result?;
         }

@@ -261,19 +261,8 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
-/// Whether some pseudo in the list carries an explicit vendor prefix, as `::-moz-placeholder` does.
-pub(crate) fn has_vendor_prefixed_pseudo(selectors: &SelectorList) -> bool {
-    selectors.v.slice().iter().any(|selector| {
-        selector.components.iter().any(|component| {
-            let prefix = match component {
-                Component::NonTsPseudoClass(pc) => pc.get_prefix(),
-                Component::PseudoElement(pe) => pe.get_prefix(),
-                Component::Any { vendor_prefix, .. } => *vendor_prefix,
-                _ => return false,
-            };
-            !prefix.difference(VendorPrefix::NONE).is_empty()
-        })
-    })
+pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
+    compatibility(selectors, targets) == Compatibility::Compatible
 }
 
 /// How the browser targets support a selector list. The worst member wins, hence `Ord`.
@@ -284,10 +273,6 @@ pub(crate) enum Compatibility {
     Incompatible,
     /// A member is vendor prefixed: other engines drop the whole rule, and browser hacks use that.
     VendorPrefixed,
-}
-
-pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
-    compatibility(selectors, targets) == Compatibility::Compatible
 }
 
 /// `feature` with an unforgiving argument list: one unsupported argument invalidates the selector.
@@ -305,6 +290,62 @@ fn unforgiving(
 /// `-moz-focusring` and the like. The parser skips its unsupported-pseudo warning by the same test.
 fn is_vendor_name(name: &[u8]) -> bool {
     bun_core::strings::starts_with_char(name, b'-')
+}
+
+/// Author-written vendor prefixes in these selectors, plus `NONE` if a component prints per pass.
+fn pseudo_prefixes(selectors: &[Selector]) -> VendorPrefix {
+    let one = core::slice::from_ref::<Selector>;
+    // A set with `NONE` is an unprefixed pseudo, as parsed or as downleveled for the targets.
+    let written = |prefix: VendorPrefix| {
+        if prefix.contains(VendorPrefix::NONE) {
+            VendorPrefix::NONE
+        } else {
+            prefix
+        }
+    };
+    let mut prefixes = VendorPrefix::empty();
+    for selector in selectors {
+        for component in selector.components.iter() {
+            prefixes.insert(match component {
+                Component::NonTsPseudoClass(pc) => match pc {
+                    PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+                        pseudo_prefixes(one(selector))
+                    }
+                    PseudoClass::Lang { .. } | PseudoClass::Dir { .. } => VendorPrefix::NONE,
+                    _ => written(pc.get_prefix()),
+                },
+                Component::PseudoElement(pe) => match pe {
+                    PseudoElement::CueFunction { selector }
+                    | PseudoElement::CueRegionFunction { selector } => {
+                        pseudo_prefixes(one(selector))
+                    }
+                    _ => written(pe.get_prefix()),
+                },
+                Component::Any {
+                    vendor_prefix,
+                    selectors,
+                } => written(*vendor_prefix) | pseudo_prefixes(selectors),
+                Component::Is(selectors)
+                | Component::Where(selectors)
+                | Component::Has(selectors)
+                | Component::Negation(selectors) => VendorPrefix::NONE | pseudo_prefixes(selectors),
+                Component::NthOf(nth) => pseudo_prefixes(&nth.selectors),
+                Component::Slotted(selector) | Component::Host(Some(selector)) => {
+                    pseudo_prefixes(one(selector))
+                }
+                _ => continue,
+            });
+        }
+    }
+    prefixes
+}
+
+/// Whether a rule with this whole list has no prefix pass that would rewrite a prefixed pseudo.
+pub(crate) fn prints_as_written(selectors: &SelectorList) -> bool {
+    let prefixes = pseudo_prefixes(selectors.v.slice());
+    let written = prefixes.difference(VendorPrefix::NONE);
+    written.is_empty()
+        || (written.bits().count_ones() == 1 && !prefixes.contains(VendorPrefix::NONE))
 }
 
 pub(crate) fn compatibility(selectors: &[parser::Selector], targets: &Targets) -> Compatibility {
@@ -1369,30 +1410,21 @@ pub(crate) mod serialize {
                     None,
                 );
             }
-            // Outside a prefix pass of its own, a rule prints its parents as they printed.
-            let saved_prefix = dest.vendor_prefix;
-            if ctx.as_written || saved_prefix.is_empty() {
-                dest.vendor_prefix = ctx.vendor_prefix;
-            }
             // If there's only one simple selector, just serialize it directly.
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
-            let result = if ctx.selectors.v.len() == 1
+            if ctx.selectors.v.len() == 1
                 && (first
                     || (!has_type_selector(ctx.selectors.v.at(0))
                         && is_simple(ctx.selectors.v.at(0))))
             {
-                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)
+                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
             } else {
-                dest.write_str(b":is(")
-                    .and_then(|()| {
-                        serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)
-                    })
-                    .and_then(|()| dest.write_char(b')'))
-            };
-            dest.vendor_prefix = saved_prefix;
-            result?;
+                dest.write_str(b":is(")?;
+                serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
+                dest.write_char(b')')?;
+            }
         } else {
             // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
             // Otherwise, if nesting is supported, serialize the nesting selector directly.

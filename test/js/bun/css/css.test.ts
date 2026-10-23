@@ -142,8 +142,13 @@ describe("css tests", () => {
       --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
       --pico-color: var(--pico-primary-inverse);
     }`,
-      // `:-moz-any()` only parses in Firefox, so the rule prints once, as written.
-      indoc`[type="file"]::file-selector-button:-moz-any() {
+      indoc`[type="file"]::-webkit-file-upload-button:-webkit-any() {
+      --pico-background-color: var(--pico-primary-hover-background);
+      --pico-border-color: var(--pico-primary-hover-border);
+      --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
+      --pico-color: var(--pico-primary-inverse);
+    }
+    [type="file"]::file-selector-button:is() {
       --pico-background-color: var(--pico-primary-hover-background);
       --pico-border-color: var(--pico-primary-hover-border);
       --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
@@ -5938,30 +5943,54 @@ describe("css tests", () => {
           ".a, .b:focus-visible, x:-moz-any-link { color: red; }",
           targets,
         );
-        // :not(), :has() and :nth-child(of) take unforgiving lists: a vendor-prefixed argument drops the rule.
-        prefix_test(".a, .b:not(:-moz-any-link) { color: red }", ".a, .b:not(:-moz-any-link) { color: red; }", targets);
-        prefix_test(".a, .b:has(:-moz-any-link) { color: red }", ".a, .b:has(:-moz-any-link) { color: red; }", targets);
+        // :nth-child(of) takes an unforgiving list: a vendor-prefixed argument drops the rule.
         prefix_test(
           ".a, :nth-child(2n of :-moz-any-link) { color: red }",
           ".a, :nth-child(2n of :-moz-any-link) { color: red; }",
           targets,
         );
-        // An unprefixed pseudo next to its prefixed form prints once, as written, not once per prefix.
-        prefix_test(
-          ".p::placeholder, .p::-moz-placeholder { color: red }",
-          ".p::placeholder, .p::-moz-placeholder { color: red; }",
-          targets,
-        );
-        prefix_test(
-          "input:-moz-read-only::placeholder { color: red }",
-          "input:-moz-read-only::placeholder { color: red; }",
-          targets,
-        );
       });
     }
-    minify_test(
+    // These lists still split. Another member gives the rule an unprefixed printing pass, and that
+    // pass would print the prefixed pseudo without its prefix.
+    prefix_test(
       ".p::placeholder, .p::-moz-placeholder { color: red }",
-      ".p::placeholder,.p::-moz-placeholder{color:red}",
+      `
+      .p::placeholder {
+        color: red;
+      }
+
+      .p::-moz-placeholder {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a, .b:not(:-moz-any-link) { color: red }",
+      `
+      .a {
+        color: red;
+      }
+
+      .b:not(:-moz-any-link) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a:-webkit-autofill, .b:-moz-any-link { color: red }",
+      `
+      .a:-webkit-autofill {
+        color: red;
+      }
+
+      .b:-moz-any-link {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
     );
     // :where() is forgiving, so a vendor-prefixed argument does not drop the rule. Only :where() support counts.
     prefix_test(

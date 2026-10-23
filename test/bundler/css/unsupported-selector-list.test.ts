@@ -16,7 +16,6 @@ describe("css", () => {
         .e, ::-webkit-foo { color: red }
         .i, input::-moz-placeholder { color: red }
         button::-moz-focus-inner, [type="button"]::-moz-focus-inner { border-style: none }
-        .p::placeholder, .p::-moz-placeholder { opacity: 1 }
       `,
     });
     const result = await Bun.build({
@@ -31,7 +30,6 @@ describe("css", () => {
       ".e,::-webkit-foo{color:red",
       ".i,input::-moz-placeholder{color:red",
       "button::-moz-focus-inner,[type=button]::-moz-focus-inner{border-style:none",
-      ".p::placeholder,.p::-moz-placeholder{opacity:1",
       "",
     ]);
   });

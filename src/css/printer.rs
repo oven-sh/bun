@@ -795,12 +795,9 @@ impl<'a> Printer<'a> {
         self.write_separated(iter, |d| d.delim(b',', false), f)
     }
 
-    /// `vendor_prefix` and `as_written`: how `selectors` were just printed, see `StyleContext`.
     pub(crate) fn with_context<C, F>(
         &mut self,
         selectors: &css::SelectorList,
-        vendor_prefix: css::VendorPrefix,
-        as_written: bool,
         closure: C,
         func: F,
     ) -> PrintResult<()>
@@ -814,12 +811,7 @@ impl<'a> Printer<'a> {
             None
         };
 
-        let ctx = css::StyleContext {
-            selectors,
-            parent,
-            vendor_prefix,
-            as_written,
-        };
+        let ctx = css::StyleContext { selectors, parent };
 
         // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
         // soundness relies on restoring `parent` before this frame returns.

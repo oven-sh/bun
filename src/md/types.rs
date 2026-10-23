@@ -82,6 +82,7 @@ pub trait RendererImpl {
     fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()>;
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()>;
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
+    /// A line ending in `Code` or `Latexmath` text is a space (CommonMark 6.1), or `\n` for a consumer that `wants_source`.
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
 
     /// Whether this consumer wants to know where things are written in the

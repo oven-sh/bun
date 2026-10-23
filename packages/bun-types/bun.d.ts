@@ -1847,7 +1847,7 @@ declare module "bun" {
       link?: (children: string, meta: LinkMeta) => string | null | undefined;
       /** Image. `src` is the URL, `title` is the optional title attribute. */
       image?: (children: string, meta: ImageMeta) => string | null | undefined;
-      /** Inline code (`` `code` ``). */
+      /** Inline code (`` `code` ``). A line break inside it is a space. */
       codespan?: (children: string) => string | null | undefined;
       /** Strikethrough (`~~text~~`). */
       strikethrough?: (children: string) => string | null | undefined;

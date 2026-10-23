@@ -153,15 +153,15 @@ The `listItem` callback receives everything needed to render markers directly:
 
 ### Inline callbacks
 
-| Callback        | Meta                               | Description                  |
-| --------------- | ---------------------------------- | ---------------------------- |
-| `strong`        | —                                  | Strong emphasis (`**text**`) |
-| `emphasis`      | —                                  | Emphasis (`*text*`)          |
-| `link`          | `{ href: string, title?: string }` | Link                         |
-| `image`         | `{ src: string, title?: string }`  | Image                        |
-| `codespan`      | —                                  | Inline code (`` `code` ``)   |
-| `strikethrough` | —                                  | Strikethrough (`~~text~~`)   |
-| `text`          | —                                  | Plain text content           |
+| Callback        | Meta                               | Description                                                   |
+| --------------- | ---------------------------------- | ------------------------------------------------------------- |
+| `strong`        | —                                  | Strong emphasis (`**text**`)                                  |
+| `emphasis`      | —                                  | Emphasis (`*text*`)                                           |
+| `link`          | `{ href: string, title?: string }` | Link                                                          |
+| `image`         | `{ src: string, title?: string }`  | Image                                                         |
+| `codespan`      | —                                  | Inline code (`` `code` ``). A line break inside it is a space |
+| `strikethrough` | —                                  | Strikethrough (`~~text~~`)                                    |
+| `text`          | —                                  | Plain text content                                            |
 
 ### Examples
 
@@ -355,7 +355,7 @@ You can override every HTML tag the parser produces:
 | `strong`     | `{ children }`               | Strong (`**text**`)                                             |
 | `a`          | `{ href, title?, children }` | Link                                                            |
 | `img`        | `{ src, alt?, title? }`      | Image (no children)                                             |
-| `code`       | `{ children }`               | Inline code                                                     |
+| `code`       | `{ children }`               | Inline code. A line break inside it is a space                  |
 | `del`        | `{ children }`               | Strikethrough (`~~text~~`)                                      |
 | `br`         | `{}`                         | Hard line break (no children)                                   |
 

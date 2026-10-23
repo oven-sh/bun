@@ -4340,7 +4340,8 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 }
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0)
 {
-    return JSC::JSValue::decode(JSValue0).isBigInt32();
+    UNUSED_PARAM(JSValue0);
+    return false;
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue JSValue0)
@@ -4530,7 +4531,7 @@ uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 {
     JSValue v1 = JSValue::decode(JSValue0);
     JSValue v2 = JSValue::decode(JSValue1);
-    ASSERT(v1.isHeapBigInt() || v1.isBigInt32());
+    ASSERT(v1.isHeapBigInt());
 
 #if USE(BIGINT32)
     if (v1.isBigInt32()) {

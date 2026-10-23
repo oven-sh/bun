@@ -3,6 +3,7 @@
 //
 //   TEST_PART=aot/structural-types-7 bun test test/aot/parts.test.ts     one part
 //   TEST_PART=aot/structural-types bun test test/aot/parts.test.ts       all its parts
+//   TEST_PART=bundler/compile-trim-runtime-by-use.test.ts ..             the unit of that name alone, as the runner asks for it
 //   TEST_PART=all bun test test/aot/parts.test.ts                        everything
 //
 // A part that takes more than three minutes in CI: raise the number of parts.
@@ -13,7 +14,7 @@ import { join } from "node:path";
  * `name`, a path under test/, is run in `parts` parts called `<name>-<part>`: `callee` of `module` is called with `before`, the part from 1, the number of parts and what `behind`
  * has for that part. Where `parts` is 0 there is one unit, `name`, and the call has `before` alone. Rows of one name are run together.
  */
-export type Row = [name: string, parts: number, module: string, callee: string, before?: unknown[], behind?: unknown[][]];
+export type Row = [name: string, parts: number, module: string, callee: string, before?: unknown[], behind?: unknown[][] | undefined];
 
 const here = import.meta.dirname;
 const foldersIn = (folder: string) =>

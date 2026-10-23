@@ -3713,7 +3713,7 @@ private:
             return JSValue();
         }
         m_gcBuffer.appendWithCrashOnOverflow(bigInt);
-        return tryConvertToBigInt32(bigInt);
+        return bigInt;
     }
 
     JSValue readTerminal()

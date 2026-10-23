@@ -6,14 +6,15 @@ import { findBuiltinTable, generators } from "./generate";
 import { rows, units, unitsOf } from "./parts.mts";
 import { unsupported } from "./run-programs";
 
-const wanted = process.env.TEST_PART?.replaceAll("\\", "/")
-  .replace(/^test\//, "")
-  .replace(/\.test\.ts$/, "");
+const asked = process.env.TEST_PART?.replaceAll("\\", "/").replace(/^test\//, "");
+const wanted = asked?.replace(/\.test\.ts$/, "");
+// A row without parts may have the name of a row with parts. The runner asks for a unit by the name of its file.
+const isOneUnit = asked !== wanted;
 
 for (const row of wanted === undefined ? [] : rows) {
   const [name, parts, module, callee, before = [], behind = []] = row;
   for (const [index, unit] of unitsOf(row).entries())
-    if (wanted === unit || wanted === name || wanted === "all")
+    if (wanted === unit || (!isOneUnit && (wanted === name || wanted === "all")))
       await (await import(module))[callee](...before, ...(parts ? [index + 1, parts, ...(behind[index] ?? [])] : []));
 }
 

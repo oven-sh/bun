@@ -204,7 +204,7 @@ const kindTests: Record<Exclude<ValueKind, JSClass>, { ofValue?: (value: string)
   null: { ofValue: value => `${value}.isNull()` },
   boolean: { ofValue: value => `${value}.isBoolean()` },
   number: { ofValue: value => `${value}.isNumber()` },
-  bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "cell->isHeapBigInt()" },
+  bigint: { ofCell: "cell->isHeapBigInt()" },
   string: { ofCell: "cell->isString()" },
   stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
   array: { ofCell: "JSC::isJSArray(cell)" },

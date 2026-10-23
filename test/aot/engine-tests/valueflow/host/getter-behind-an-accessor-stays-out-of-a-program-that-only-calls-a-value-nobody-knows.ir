@@ -1,6 +1,6 @@
 # somethingThatNoTableLists()   The program names neither Buffer.prototype.offset nor process.send (runtimefunction 65565; 65559 is called on behalf of process.send), and lets in no code that the build has not seen.
 # Only a read that names the accessor enters the function behind it. TODO: the program has values that nobody knows, and `unknown[key]` names no member of the host: where such a read hits the accessor
-# at run time it is refused with the error that names it. Entering the function once a call may call whatever has escaped cures that (tried 00:33:12, taken out: one function more in the tests of T:codegen)
+# at run time it is refused with the error that names it. Entering the function once a call may call whatever has escaped cures that (tried, taken out: one function more in the tests of codegen)
 # LIBRARY: own
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1

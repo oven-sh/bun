@@ -60,7 +60,6 @@ const needNoCompiler = [
   "aot/test-files-self-skip.test.ts",
   "cli/aot-compile-executable-path.test.ts",
   "cli/aot-unknown-flags.test.ts",
-  "cli/compile/compile-library.test.ts",
   "cli/test/test-aot-mocks-and-lazy-constants.test.ts",
   "internal/builtins-manifest.test.ts",
   "js/bun/jsc/sealed-global-object-error-message.test.ts",

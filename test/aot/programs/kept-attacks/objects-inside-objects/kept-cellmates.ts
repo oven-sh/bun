@@ -1,4 +1,4 @@
-// struct-fields' model of long-lived pairs, with the outer object made first and out in the world before the inner one is made and stored: 2 M kept pairs, 4 M short-lived ones.
+// A model of long-lived pairs, with the outer object made first and out in the world before the inner one is made and stored: 2 M kept pairs, 4 M short-lived ones.
 interface Inner { d: number; e: number }
 interface Outer { b: number; c: Inner | undefined; next: Outer | null }
 let last: Outer | null = null

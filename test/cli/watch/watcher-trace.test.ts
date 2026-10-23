@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isFreeBSD, isMacOS, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync, readFileSync, truncateSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 
 test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
@@ -261,3 +261,58 @@ test("BUN_WATCHER_TRACE appends across reloads", async () => {
     expect(event).toHaveProperty("files");
   }
 }, 10000);
+
+// inotify and ReadDirectoryChangesW report a truncation as a write. kqueue reports it as a change of
+// the file's attributes, as it does for `chmod` and `utimes`.
+test("a truncation is a write event, and a change of metadata alone is not", async () => {
+  using dir = tempDir("watcher-trace-truncation", {
+    "app/main.js": `import "./imported.js";\nconsole.log("end");\n`,
+    "app/imported.js": `console.log("run");console.log("tail");`,
+  });
+  const cwd = join(String(dir), "app");
+  const imported = join(cwd, "imported.js");
+  // Outside the folder that is watched.
+  const traceFile = join(String(dir), "trace.log");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: traceFile },
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const reader = proc.stdout.getReader();
+  let stdout = "";
+  const printed = async (wanted: string) => {
+    while (!stdout.includes(wanted)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += Buffer.from(value).toString();
+    }
+  };
+  /** The events that the trace has for `imported.js`: its own, and those of its folder that name it (inotify). */
+  const events = (): string[] =>
+    readFileSync(traceFile, "utf8")
+      .split("\n")
+      .filter(line => line.trim())
+      .flatMap(line => Object.entries<{ events: string[]; changed?: string[] }>(JSON.parse(line).files))
+      .filter(([path, file]) => path.endsWith("imported.js") || file.changed?.includes("imported.js"))
+      .flatMap(([, file]) => file.events);
+  await printed("run\ntail\nend\n");
+
+  // ReadDirectoryChangesW does not tell these from a write.
+  if (!isWindows) {
+    chmodSync(imported, 0o600);
+    utimesSync(imported, new Date(2020, 0, 1), new Date(2020, 0, 1));
+    // kqueue reports them, and the watcher has handled them once the trace has them. inotify is
+    // not asked for them.
+    if (isMacOS || isFreeBSD) while (!events().includes("metadata")) await Bun.sleep(1);
+  }
+
+  // The rest of the file is the same, so the reload is for the truncation.
+  truncateSync(imported, `console.log("run");`.length);
+  await printed("run\nend\n");
+
+  expect(stdout).toBe("run\ntail\nend\nrun\nend\n");
+  expect(events()).toContain("write");
+});

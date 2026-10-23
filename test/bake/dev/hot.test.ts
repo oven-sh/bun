@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { renameSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -574,6 +574,29 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
       }
       await c.expectMessage(`atomic ${round}`);
     }
+  },
+});
+devTest("hmr rebuilds a file that is truncated", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./dep";
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `console.log("kept");console.log("cut");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kept", "cut");
+
+    {
+      await using _wait = await dev.batchChanges();
+      // Nothing is written: kqueue reports a truncation as a change of the file's attributes.
+      truncateSync(dev.join("dep.ts"), dev.read("dep.ts").indexOf(`console.log("cut");`));
+    }
+    await c.expectMessage("kept");
   },
 });
 devTest("hot update frames are not delivered to application websocket topics", {

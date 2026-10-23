@@ -149,6 +149,18 @@ async function main() {
     `  ${await run("callback", "path", (target, callback) => fs.readFile(target, withEmpty("flag", callback)))}: fs.readFile`,
   );
 
+  lines.push("", "# flag '' is invalid for an fd only in the UTF-8 fast path of fs.readFileSync");
+  for (const [shown, encodingOptions] of [
+    ["encoding: 'utf8'", () => ({ encoding: "utf8" })],
+    ["encoding: 'utf-8'", () => ({ encoding: "utf-8" })],
+    ["encoding: 'UTF8'", () => ({ encoding: "UTF8" })],
+    ["encoding: 'utf8', buffer", () => ({ encoding: "utf8", buffer: Buffer.alloc(8) })],
+  ]) {
+    await rows(`(fd, { ${shown}, flag: '' })`, ["fs.readFileSync", "fs.readFile"], "fd", () => [
+      { ...encodingOptions(), flag: "" },
+    ]);
+  }
+
   lines.push("", "# a flag that Node.js accepts");
   for (const [shown, flag] of [
     ["null", null],

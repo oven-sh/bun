@@ -3155,6 +3155,18 @@ const emptyFlagModeExpected = `# flag '' is invalid for a path in fs.readFileSyn
 (path, callback) with callback.flag = ''
   succeeds: fs.readFile
 
+# flag '' is invalid for an fd only in the UTF-8 fast path of fs.readFileSync
+(fd, { encoding: 'utf8', flag: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync
+  succeeds: fs.readFile
+(fd, { encoding: 'utf-8', flag: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync
+  succeeds: fs.readFile
+(fd, { encoding: 'UTF8', flag: '' })
+  succeeds: fs.readFileSync, fs.readFile
+(fd, { encoding: 'utf8', buffer, flag: '' })
+  succeeds: fs.readFileSync, fs.readFile
+
 # a flag that Node.js accepts
 (path, { flag: null })
   succeeds: fs.readFileSync, fs.readFile, fs.promises.readFile
@@ -3292,20 +3304,23 @@ for (const [name, runtime] of [
   ["bun", bunExe()],
   ["node", emptyFlagModeNode],
 ] as const) {
-  it.skipIf(!runtime)(`readFile, writeFile and appendFile check flag and mode like node v26 (${name})`, async () => {
-    using dir = tempDir("fs-empty-flag-mode", {});
-    await using proc = Bun.spawn({
-      cmd: [runtime!, emptyFlagModeFixture, String(dir)],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: emptyFlagModeExpected, stderr: "", exitCode: 0 });
-  });
+  it.concurrent.skipIf(!runtime)(
+    `readFile, writeFile and appendFile check flag and mode like node v26 (${name})`,
+    async () => {
+      using dir = tempDir("fs-empty-flag-mode", {});
+      await using proc = Bun.spawn({
+        cmd: [runtime!, emptyFlagModeFixture, String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: emptyFlagModeExpected, stderr: "", exitCode: 0 });
+    },
+  );
 }
 
-it("a readFile or writeFile call that throws for its flag or its mode releases its signal", async () => {
+it.concurrent("a readFile or writeFile call that throws for its flag or its mode releases its signal", async () => {
   using dir = tempDir("fs-empty-flag-mode-signal", { "file.txt": "old" });
   // A signal with a listener stays alive while a call holds it. Each call here throws after it took the signal.
   const src = `

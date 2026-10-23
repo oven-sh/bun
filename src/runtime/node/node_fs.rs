@@ -3367,6 +3367,23 @@ pub(crate) mod args {
         value.is_string() && !value.to_boolean()
     }
 
+    /// Node's readFileSync converts the flag of an fd only in its UTF-8 fast path: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L613-L624
+    #[cold]
+    fn takes_utf8_fast_path(options: JSValue, global_object: &JSGlobalObject) -> JsResult<bool> {
+        let Some(encoding) = options.fast_get(global_object, bun_jsc::BuiltinName::Encoding)?
+        else {
+            return Ok(false);
+        };
+        if !encoding.is_string_literal() {
+            return Ok(false);
+        }
+        let spelling = encoding.to_js_string_view(global_object)?;
+        if !spelling.eq_ascii(b"utf8") && !spelling.eq_ascii(b"utf-8") {
+            return Ok(false);
+        }
+        Ok(options.get(global_object, "buffer")?.is_none())
+    }
+
     /// Consume the next positional argument as a Node.js fs `encoding` option.
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
     /// object with an `.encoding` property. Any other value (including `undefined`
@@ -4265,11 +4282,13 @@ pub(crate) mod args {
                         // Node checks the signal first, and an aborted async call never converts the flag: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L449-L452
                         let aborted = arguments.will_be_async
                             && abort_signal.as_ref().is_some_and(|signal| signal.aborted());
-                        // `''` stays the default for fs.promises.readFile (`options.flag || 'r'`), for an fd (Node converts its flag only in the sync UTF-8 fast path), and for the `cb` that `fs.readFile(path, cb)` passes as the options.
+                        // `''` stays the default for fs.promises.readFile (`options.flag || 'r'`), for the `cb` that `fs.readFile(path, cb)` passes as the options, and for an fd whose flag Node does not convert.
                         let is_default = is_empty_string(flag_)
                             && (arguments.from_fs_promises
-                                || matches!(path, PathOrFileDescriptor::Fd(_))
-                                || arg.is_callable());
+                                || arg.is_callable()
+                                || (matches!(path, PathOrFileDescriptor::Fd(_))
+                                    && (arguments.will_be_async
+                                        || !takes_utf8_fast_path(arg, ctx)?)));
                         if !aborted && !is_default {
                             flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                         }

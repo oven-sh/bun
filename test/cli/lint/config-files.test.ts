@@ -4669,6 +4669,90 @@ console.log(a, B, c, d);
     expect(exitCode).toBe(2);
   });
 
+  // typescript-eslint 8 calls them only-throw-error and no-unnecessary-template-expression. The reports of
+  // no-throw-literal are those of typescript-eslint 5.62.0, 6.21.0 and 7.18.0, which agree.
+  describe("rules that typescript-eslint 8 renamed run under their old names", () => {
+    const old = (schema: string) =>
+      `{ meta: { schema: ${schema} }, create() { throw new Error("ran in JavaScript"); } }`;
+    const options = `[{ type: "object", properties: { allowThrowingAny: { type: "boolean" }, allowThrowingUnknown: { type: "boolean" } }, additionalProperties: false }]`;
+    const project = (version: string, rules: object) => ({
+      ".eslintrc.json": rc({
+        parser: "@typescript-eslint/parser",
+        parserOptions: { project: "./tsconfig.json" },
+        plugins: ["@typescript-eslint"],
+        reportUnusedDisableDirectives: true,
+        rules,
+      }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "es2022", types: [] } }),
+      "node_modules/@typescript-eslint/parser/index.js": `throw new Error("loaded");`,
+      "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({ version, main: "index.js" }),
+      "node_modules/@typescript-eslint/eslint-plugin/index.js": version.startsWith("8")
+        ? `module.exports = { rules: {} };`
+        : `module.exports = { rules: { "no-throw-literal": ${old(options)}, "no-useless-template-literals": ${old("[]")} } };`,
+      "a.ts": `declare const anyValue: any;
+declare const unknownValue: unknown;
+class MyError extends Error {}
+export function a() { throw 'x'; }
+export function b() { throw undefined; }
+export function c() { throw new MyError(); }
+export function d() { throw anyValue; }
+export function e() { throw unknownValue; }
+export function f() { try { a(); } catch (err) { throw err; } }
+export function g(p: Promise<void>) { return p.catch(err => { throw err; }); }
+export function h(x: Error | string) { throw x; }
+// eslint-disable-next-line @typescript-eslint/no-throw-literal
+export function i() { throw 'disabled'; }
+export const j = \`\${'x'}\`;
+// eslint-disable-next-line @typescript-eslint/no-useless-template-literals
+export const k = \`\${'x'}\`;
+`,
+    });
+    const both = (...setting: unknown[]) => ({
+      "@typescript-eslint/no-throw-literal": ["error", ...setting],
+      "@typescript-eslint/no-useless-template-literals": "error",
+    });
+    const thrown = (...lines: string[]) => lines.map(it => `a.ts:${it} @typescript-eslint/no-throw-literal`);
+    const template = "a.ts:14:19 @typescript-eslint/no-useless-template-literals";
+
+    test.each([
+      [[], ["4:29", "5:29", "11:46"]],
+      [[{ allowThrowingAny: false }], ["4:29", "5:29", "7:29", "10:69", "11:46"]],
+      [[{ allowThrowingUnknown: false }], ["4:29", "5:29", "8:29", "9:56", "11:46"]],
+    ])("with the options %j", async (setting, lines) => {
+      for (const version of ["5.62.0", "6.21.0", "7.18.0"]) {
+        const { problems, stderr, exitCode } = await lint(project(version, both(...setting)), ["a.ts"]);
+        expect(problems).toEqual([...thrown(...lines), template].sort());
+        expect(stderr).not.toContain("did not run");
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("an option that the old rule doesn't have is an error", async () => {
+      const { stderr, exitCode } = await lint(project("6.21.0", both({ allowRethrowing: true })), ["a.ts"]);
+      expect(stderr).toContain(`Configuration for rule "@typescript-eslint/no-throw-literal" is invalid`);
+      expect(exitCode).toBe(2);
+    });
+
+    test("--rule takes the old name", async () => {
+      const { problems } = await lint(project("6.21.0", {}), [
+        "--rule",
+        "@typescript-eslint/no-throw-literal: error",
+        "a.ts",
+      ]);
+      // The comment about the other rule is unused.
+      expect(problems).toEqual([...thrown("4:29", "5:29", "11:46"), "a.ts:15:1 -"].sort());
+    });
+
+    test("typescript-eslint 8 doesn't have them", async () => {
+      const { problems, stderr, exitCode } = await lint(project("8.71.1", both()), ["a.ts"]);
+      expect(problems).toEqual([]);
+      expect(stderr).toContain(
+        "2 rules in your .eslintrc config are not supported: @typescript-eslint/no-throw-literal, @typescript-eslint/no-useless-template-literals",
+      );
+      expect(exitCode).toBe(2);
+    });
+  });
+
   test("typescript-eslint's configs come from the installed version", async () => {
     const files = (version: string, configs: string) => ({
       ".eslintrc.json": rc({ extends: "plugin:@typescript-eslint/mine" }),

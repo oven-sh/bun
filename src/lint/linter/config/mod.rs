@@ -1662,7 +1662,7 @@ impl Config {
             })
             .map(Arc::new);
         }
-        for setting in rules {
+        for mut setting in rules {
             // ESLint's `throwRuleNotFoundError`, where it's certain that ESLint has no such rule.
             if setting.severity != Severity::Off
                 && !self.accepts_all_plugins
@@ -1742,10 +1742,20 @@ impl Config {
             let is_free = native.is_none()
                 && js.is_none()
                 && !config.foreign_plugins.iter().any(|it| **it == *prefix);
-            let base = match is_free {
-                true => registry.base_of(&setting.id),
-                false => None,
+            let base = match (is_free, native, js) {
+                (true, ..) => registry.base_of(&setting.id),
+                // The installed package still has the rule under its old name, which stays its name here.
+                (false, None, Some(Some(_))) => registry.renamed(&setting.id),
+                _ => None,
             };
+            if !is_free && base.is_some_and(|it| it.meta.name == "only-throw-error") {
+                // The option is newer than the old name.
+                let off = (b"allowRethrowing".to_vec(), Json::Bool(false));
+                match setting.options.first_mut() {
+                    Some(Json::Object(options)) => options.push(off),
+                    _ => setting.options = vec![Json::Object(vec![off])],
+                }
+            }
             let name: Option<Arc<[u8]>> = base.map(|_| Arc::from(&setting.id[..]));
             let entry = match (native.or(base), js) {
                 (Some(entry), _) => entry,

@@ -295,11 +295,12 @@ adler32_arm_neon_dotprod  [DotProd]
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via getauxval(AT_HWCAP). Same gate as the
 # highway_strings.cpp block above.
-# (6 symbols)
+# (7 symbols)
 # ----------------------------------------------------------------------------
 _ZN9bun_image10N_SVE2_128L12ModulateImplEPhmff                                [SVE]
 _ZN9bun_image10N_SVE2_128L13Rotate180ImplEPKhmmPh                             [SVE]
 _ZN9bun_image10N_SVE2_128L14CmykToRgbaImplEPhm                                [SVE]
+_ZN9bun_image10N_SVE2_128L18NearestPaletteImplEPKhjiiii                       [SVE]
 _ZN9bun_image10N_SVE2_128L8VertPassEPKhmmPhmPKNS_4SpanEPKsm                   [SVE]
 _ZN9bun_image10N_SVE2_128L9FlipHImplEPKhmmPh                                  [SVE]
 _ZN9bun_image10N_SVE2_128L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                  [SVE]

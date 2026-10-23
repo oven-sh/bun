@@ -6,7 +6,7 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { deflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -275,5 +275,84 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
       const decoded = await new Bun.Image(jpeg).png().bytes();
       expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: "png" });
     }
+  });
+});
+
+describe("Palette PNG: Highway nearest-entry kernel", () => {
+  // The palette search compares one vector of entries per step (NearestPaletteImpl in image_resize.cpp), and Highway
+  // picks the vector per CPU. On the emulated baseline CPU a step is 4 entries: 3 colours take the loop below one
+  // step, 5, 13 and 37 end in a step that starts early, and 256 is 64 whole steps.
+  const width = 32;
+  const height = 32;
+
+  function chunk(type: string, data: Uint8Array): Uint8Array {
+    const out = new Uint8Array(12 + data.length);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, data.length);
+    out.set(Buffer.from(type, "latin1"), 4);
+    out.set(data, 8);
+    view.setUint32(8 + data.length, Bun.hash.crc32(out.subarray(4, 8 + data.length)));
+    return out;
+  }
+
+  // Noise: more colours than a palette holds. Alpha is 1 to 254, so that every palette entry has alpha.
+  let seed = 11;
+  const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24;
+  const rgba = new Uint8Array(width * height * 4);
+  for (let p = 0; p < width * height; p++) rgba.set([next(), next(), next(), 1 + (next() % 254)], p * 4);
+  const raw = new Uint8Array(height * (1 + width * 4));
+  for (let y = 0; y < height; y++) {
+    raw.set(rgba.subarray(y * width * 4, (y + 1) * width * 4), y * (1 + width * 4) + 1);
+  }
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr.set([8, 6, 0, 0, 0], 8); // 8 bits per sample, truecolor with alpha
+  const source = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw)),
+    chunk("IEND", new Uint8Array(0)),
+  ]);
+
+  test.each([3, 5, 13, 37, 256])("%d colours: each pixel gets the nearest palette entry", async colors => {
+    const png = await new Bun.Image(source).png({ palette: true, colors }).bytes();
+    const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+    let depth = 0;
+    let plte: Uint8Array = new Uint8Array(0);
+    let trns: Uint8Array = new Uint8Array(0);
+    const idat: Uint8Array[] = [];
+    for (let at = 8; at < png.length; at += 12 + dv.getUint32(at)) {
+      const type = Buffer.from(png.subarray(at + 4, at + 8)).toString("latin1");
+      const data = png.subarray(at + 8, at + 8 + dv.getUint32(at));
+      if (type === "IHDR") depth = data[8];
+      else if (type === "PLTE") plte = data;
+      else if (type === "tRNS") trns = data;
+      else if (type === "IDAT") idat.push(data);
+    }
+    expect({ entries: plte.length / 3, alphas: trns.length }).toEqual({ entries: colors, alphas: colors });
+    // A row is its filter type (0: none), then its indices at `depth` bits each, from the high bits of every byte.
+    const rows = inflateSync(Buffer.concat(idat));
+    const stride = 1 + Math.ceil((width * depth) / 8);
+    let wrong = 0;
+    for (let p = 0; p < width * height; p++) {
+      const bit = (p % width) * depth;
+      const byte = rows[Math.floor(p / width) * stride + 1 + (bit >> 3)];
+      const index = (byte >> (8 - depth - (bit & 7))) & ((1 << depth) - 1);
+      // The nearest entry by squared distance over the four channels, the first one on a tie.
+      let nearest = 0;
+      let least = Infinity;
+      for (let i = 0; i < colors; i++) {
+        let distance = (rgba[p * 4 + 3] - trns[i]) ** 2;
+        for (let c = 0; c < 3; c++) distance += (rgba[p * 4 + c] - plte[i * 3 + c]) ** 2;
+        if (distance < least) {
+          least = distance;
+          nearest = i;
+        }
+      }
+      if (index !== nearest) wrong++;
+    }
+    expect(wrong).toBe(0);
   });
 });

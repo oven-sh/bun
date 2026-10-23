@@ -131,7 +131,6 @@ function assertFSEventHandle(handle) {
 
 class FSWatcher extends EventEmitter {
   #watcher;
-  #listener;
   #ignoreMatcher;
   #silentClose = false;
   _handle;
@@ -151,12 +150,7 @@ class FSWatcher extends EventEmitter {
       options = { encoding: options };
     }
 
-    if (typeof listener !== "function") {
-      listener = () => {};
-    }
-
     this.#ignoreMatcher = createIgnoreMatcher(options?.ignore);
-    this.#listener = listener;
     try {
       this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
     } catch (e: any) {
@@ -166,13 +160,20 @@ class FSWatcher extends EventEmitter {
       // Only ENOENT is suppressed, and the watcher is left unstarted rather than
       // reporting the failure. The option defaults to true, so an absent value
       // still throws; any other falsy value suppresses.
-      if (options?.throwIfNoEntry !== undefined && !options.throwIfNoEntry && e.code === "ENOENT") {
-        this._handle = new FSEvent(this);
-        return;
-      }
-      throw e;
+      if (options?.throwIfNoEntry === undefined || options.throwIfNoEntry || e.code !== "ENOENT") throw e;
     }
     this._handle = new FSEvent(this);
+
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2540-L2542
+    if (listener) {
+      try {
+        this.addListener("change", listener);
+      } catch (e) {
+        // node leaks the started handle here, which keeps the process alive
+        closeNativeWatcherWithoutEvent(this);
+        throw e;
+      }
+    }
   }
 
   #onEvent(eventType, filenameOrError, fromAbort = false) {
@@ -203,7 +204,6 @@ class FSWatcher extends EventEmitter {
         return;
       }
       this.emit("change", eventType, filenameOrError);
-      this.#listener(eventType, filenameOrError);
     }
   }
 
@@ -245,7 +245,6 @@ class FSWatcher extends EventEmitter {
     dispatchNativeEvent = function dispatchNativeEvent(watcher, eventType, filename) {
       if (filename != null && watcher.#ignoreMatcher?.(filename)) return;
       watcher.emit("change", eventType, filename);
-      watcher.#listener(eventType, filename);
     };
     closeNativeWatcher = function closeNativeWatcher(watcher) {
       watcher.#watcher?.close();

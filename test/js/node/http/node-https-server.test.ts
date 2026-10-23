@@ -177,6 +177,29 @@ server.listen(0, "127.0.0.1", async () => {
   });
 });
 
+test("node:https loads with a polluted Object.prototype", async () => {
+  // The copied http.Server descriptors have no prototype, so an inherited `get` does not make them accessors.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+Object.prototype.get = function () {};
+Object.prototype.set = function () {};
+const https = require("node:https");
+const server = https.createServer();
+console.log(typeof server.listen, typeof server.close, server.listening);
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "function function false\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 test("loading node:https does not load node:tls until Server is read", async () => {
   // https.Server is set up on first read because its parent class lives in node:tls.
   await using proc = Bun.spawn({

@@ -990,6 +990,35 @@ describe("spyOn", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  // fs.ReadStream and https.Server are accessors on their module until the first read, which
+  // replaces them with the class. spyOn reads them, so the spy lands on the class.
+  (isBun ? test : test.skip).each(["node:fs", "node:https"])(
+    "works on a lazy export of %s before its first read",
+    async modulePath => {
+      const name = modulePath === "node:fs" ? "ReadStream" : "Server";
+      await using proc = Bun.spawn({
+        cmd: [
+          process.execPath,
+          "-e",
+          `
+const { spyOn } = require("bun:test");
+const mod = require(${JSON.stringify(modulePath)});
+const spy = spyOn(mod, ${JSON.stringify(name)});
+const { value } = Object.getOwnPropertyDescriptor(mod, ${JSON.stringify(name)});
+console.log(value === spy, typeof spy.mock.calls, spy.getMockName());
+spy.mockRestore();
+console.log(typeof mod[${JSON.stringify(name)}], mod[${JSON.stringify(name)}].name);
+`,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `true object ${name}\nfunction ${name}\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("override impl after doesnt break restore", () => {
     var obj = {
       original() {

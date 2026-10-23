@@ -23,6 +23,7 @@ const ArrayPrototypeMap = Array.prototype.map;
 const ObjectAssign = Object.assign;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ReflectDefineProperty = Reflect.defineProperty;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
@@ -634,10 +635,10 @@ function linkServerClass() {
 }
 
 // The first read of `https.Server` replaces the accessor on `exports` with a data property. Once user code has sealed
-// or frozen `exports` the accessor is not configurable: Reflect.defineProperty returns false instead of throwing and
-// the accessor stays in place.
+// or frozen `exports` the accessor is not configurable: defineProperty returns false instead of throwing and the
+// accessor stays in place.
 function materializeServerExport(value) {
-  Reflect.defineProperty(https, "Server", { value, writable: true, configurable: true });
+  ReflectDefineProperty(https, "Server", { value, writable: true, configurable: true });
   return value;
 }
 

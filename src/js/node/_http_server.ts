@@ -4342,7 +4342,12 @@ http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
 // The methods this module defines on Server.prototype, captured before user code can patch them. https.Server takes
 // them as own properties of its own prototype: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122
-const { constructor: _constructor, ...serverPrototypeDescriptors } = Object.getOwnPropertyDescriptors(Server.prototype);
+// The descriptors have no prototype, so a later Object.prototype.get or .set does not reach defineProperties.
+const serverPrototypeDescriptors: PropertyDescriptorMap = Object.create(null);
+for (const key of Reflect.ownKeys(Server.prototype)) {
+  if (key === "constructor") continue;
+  serverPrototypeDescriptors[key] = { __proto__: null, ...Object.getOwnPropertyDescriptor(Server.prototype, key) };
+}
 httpServerParts.initHttpServer = initHttpServer;
 httpServerParts.serverPrototypeDescriptors = serverPrototypeDescriptors;
 

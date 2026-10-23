@@ -8,7 +8,14 @@
 // protocol error; see StmtPrepareOKPacket::decode_internal for the invariant.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { listeningServer, mysqlHandshakeV10, mysqlOkPacket, mysqlReadPackets, mysqlStmtPrepareOk } from "./wire-frames";
+import {
+  listeningServer,
+  mysqlAckSessionSetup,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
+  mysqlStmtPrepareOk,
+} from "./wire-frames";
 
 const COM_STMT_PREPARE = 0x16;
 const COM_STMT_EXECUTE = 0x17;
@@ -22,13 +29,14 @@ test("MySQL: prepare-OK with statement_id 0 is a protocol error and is never exe
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] === COM_STMT_PREPARE) {
           // The hostile frame: a well-formed prepare-OK whose statement_id is 0.
           socket.write(mysqlStmtPrepareOk(1, 0, 0, 0));

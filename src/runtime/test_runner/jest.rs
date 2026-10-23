@@ -5,16 +5,17 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
+use bun_jsc::bindgen::JsLocal;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
 };
-use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
 
-pub use super::bun_test;
-use super::expect::{Expect, ExpectTypeOf};
-use super::scope_functions::{create_bound, strings as scope_strings, Mode as ScopeKind};
+pub(crate) use super::bun_test;
+use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
+use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use bun_test::js_fns::generic_hook;
@@ -27,7 +28,7 @@ struct RepeatInfo {
 }
 
 #[derive(Default)]
-pub struct CurrentFile {
+pub(crate) struct CurrentFile {
     title: Box<[u8]>,
     prefix: Box<[u8]>,
     repeat_info: RepeatInfo,
@@ -109,7 +110,7 @@ impl CurrentFile {
     }
 }
 
-pub struct TestRunner<'a> {
+pub(crate) struct TestRunner<'a> {
     pub(crate) current_file: CurrentFile,
     pub(crate) files: FileList,
     pub(crate) index: FileMap,
@@ -123,7 +124,7 @@ pub struct TestRunner<'a> {
     /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
     /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
     /// `test_command.rs` where this is populated.
-    pub(crate) concurrent_test_glob: Option<&'a [&'a [u8]]>,
+    pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
@@ -229,7 +230,7 @@ impl<'a> TestRunner<'a> {
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
-            if bun_glob::matcher::r#match(pattern, file_path).matches() {
+            if pattern.r#match(file_path).matches() {
                 return true;
             }
         }
@@ -259,7 +260,7 @@ impl<'a> TestRunner<'a> {
 use crate::timer::EventLoopTimerState as TimerState;
 
 #[derive(Default, Clone, Copy)]
-pub struct Summary {
+pub(crate) struct Summary {
     pub(crate) pass: u32,
     pub(crate) expectations: u32,
     pub(crate) skip: u32,
@@ -280,7 +281,7 @@ pub(crate) struct GetOrPutFileResult {
     pub(crate) file_id: FileId,
 }
 
-pub struct File {
+pub(crate) struct File {
     pub source: bun_ast::Source,
 }
 
@@ -297,7 +298,7 @@ bun_collections::multi_array_columns! {
 pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 
 #[allow(non_snake_case)]
-pub mod Jest {
+pub(crate) mod Jest {
     use super::*;
 
     // JS-VM-thread-only singleton; RacyCell
@@ -338,7 +339,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::TEST(),
+            "test",
         )?;
         module.put(global_object, b"test", test_scope_functions);
         module.put(global_object, b"it", test_scope_functions);
@@ -348,7 +349,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XTEST(),
+            "xtest",
         )?;
         module.put(global_object, b"xtest", xtest_scope_functions);
         module.put(global_object, b"xit", xtest_scope_functions);
@@ -358,7 +359,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::DESCRIBE(),
+            "describe",
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
 
@@ -367,7 +368,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XDESCRIBE(),
+            "xdescribe",
         )?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
 
@@ -403,8 +404,8 @@ pub mod Jest {
             b"setDefaultTimeout",
             jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
         );
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
-        module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
+        module.put(global_object, b"expect", js_Expect::get_constructor(global_object));
+        module.put(global_object, b"expectTypeOf", js_ExpectTypeOf::get_constructor(global_object));
 
         // will add more 9 properties in the module here so we need to allocate 23 properties
         create_mock_objects(global_object, module);
@@ -440,7 +441,7 @@ pub mod Jest {
 
         module.put(global_object, b"jest", jest);
         module.put(global_object, b"spyOn", spy_on);
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
+        module.put(global_object, b"expect", js_Expect::get_constructor(global_object));
 
         let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
@@ -480,7 +481,7 @@ pub mod Jest {
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
             }
-            let str = arguments[0].to_slice(global_object)?;
+            let str = arguments[0].to_utf8(global_object)?;
             let slice = str.slice();
 
             if !bun_paths::is_absolute(slice) {
@@ -515,50 +516,40 @@ pub mod Jest {
     }
 }
 
-/// Reached only from `node:test`, through `$newRustFunction` rather than the
+/// Reached only from `node:test`, through `$bindgen` rather than the
 /// public `bun:test` module object, whenever a node:test API registers something. Returns 0 outside `bun test`.
-pub(crate) fn js_file_generation(
-    global: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn file_generation() -> u32 {
     // `runner_ptr()` rather than `runner()`: node:test calls this on every test
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
-        if global.bun_vm().worker_ref().is_none() {
+    Jest::runner_ptr().map_or(0, |p| unsafe {
+        if VirtualMachine::get().worker_ref().is_none() {
             (*p.as_ptr()).node_test_used = true;
         }
         (*p.as_ptr()).bun_test_root.file_generation
-    });
-    Ok(JSValue::from(generation))
+    })
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
 /// late call after the watchdog moved on cannot mark the currently-running one.
-pub(crate) fn js_node_test_mark_result(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     use super::execution::Result as ExecResult;
-    let [mode, done] = callframe.arguments_as_array::<2>();
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
     // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
     // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
-    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
-    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
-        return Ok(JSValue::UNDEFINED);
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
+    let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
+        return;
     };
-    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
-    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
-    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
+    let (dcb_ref, dcb_called) = (dcb.r#ref.get().as_deref(), dcb.called.get());
     let bound = match dcb_ref {
-        Some(refdata) => refdata.phase.clone(),
+        Some(refdata) => refdata.phase,
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
         // drain before it stamps the DoneCallback. `get_current_state_data()`
         // can't name a sequence inside a concurrent group, but
@@ -573,19 +564,18 @@ pub(crate) fn js_node_test_mark_result(
             None => buntest.get_current_state_data(),
         },
         // done() already ran and reported — nothing left to mark.
-        None => return Ok(JSValue::UNDEFINED),
+        None => return,
     };
     let Some((sequence_ptr, _)) =
         buntest.execution.get_current_and_valid_execution_sequence(&bound)
     else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
     // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
     let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
     if sequence.result == ExecResult::Pending {
-        sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+        sequence.result = if todo { ExecResult::Todo } else { ExecResult::Skip };
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 pub(crate) mod on_unhandled_rejection {
@@ -649,7 +639,7 @@ pub(crate) mod on_unhandled_rejection {
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
-        jsc_vm.run_error_handler(rejection, exception_list);
+        bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }
 }
 
@@ -663,7 +653,7 @@ fn consume_arg(
     fallback: &[u8],
 ) -> JsResult<()> {
     if should_write {
-        let owned_slice = arg.to_slice_or_null(global_this)?;
+        let owned_slice = arg.to_utf8(global_this)?;
         array_list.extend_from_slice(owned_slice.slice());
     } else {
         array_list.extend_from_slice(fallback);
@@ -718,13 +708,13 @@ pub(crate) fn format_label(
                 let var_path = &label[var_start..var_end];
                 let value = function_args[0].get_if_property_exists_from_path(
                     global_this,
-                    bun_core::String::init(var_path).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
                 )?;
                 if !value.is_empty_or_undefined_or_null() {
                     // For primitive strings, use toString() to avoid adding quotes
                     // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
                     if value.is_string() {
-                        let owned_slice = value.to_slice_or_null(global_this)?;
+                        let owned_slice = value.to_utf8(global_this)?;
                         list.extend_from_slice(owned_slice.slice());
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);
@@ -795,10 +785,8 @@ pub(crate) fn format_label(
                     )?;
                 }
                 b'j' | b'o' => {
-                    let mut str = bun_core::String::empty();
-                    // `str` released by Drop.
                     // Use jsonStringifyFast for SIMD-optimized serialization
-                    current_arg.json_stringify_fast(global_this, &mut str)?;
+                    let str = current_arg.json_stringify_fast(global_this)?;
                     let owned_slice = str.to_owned_slice();
                     list.extend_from_slice(&owned_slice);
                     idx += 1;

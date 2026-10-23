@@ -1,7 +1,9 @@
 #include "CookieMap.h"
 #include "JSCookieMap.h"
+#include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
+#include <bun-uws/src/Http2Context.h>
 #include "helpers.h"
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -14,13 +16,22 @@ namespace WebCore {
 template<typename Res>
 static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, Res* res)
 {
-    auto& vm = JSC::getVM(global_this);
+    auto& vm = global_this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
     // Loop over modified cookies and write Set-Cookie headers to the response
     for (auto& cookie : cookie_map->getAllChanges()) {
-        auto utf8 = cookie->toString(global_this->vm()).utf8();
-        RETURN_IF_EXCEPTION(scope, );
-        res->writeHeader("Set-Cookie", utf8.data());
+        auto header = cookie->toString(vm);
+        if (header.hasException()) [[unlikely]] {
+            propagateException(*global_this, scope, header.releaseException());
+            return;
+        }
+        auto utf8 = header.returnValue().tryGetUTF8();
+        if (!utf8) [[unlikely]] {
+            throwOutOfMemoryError(global_this, scope);
+            return;
+        }
+        res->writeHeader("Set-Cookie", utf8->legacyCStringPointer());
     }
 }
 extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, UWSResponseKind kind, void* arg2)
@@ -31,6 +42,9 @@ extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* glo
         break;
     case UWSResponseKind::SSL:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        break;
+    case UWSResponseKind::H2:
+        CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http2Response*>(arg2));
         break;
     case UWSResponseKind::H3:
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http3Response*>(arg2));
@@ -110,8 +124,10 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 name = nameView.toString();
 
                 if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(valueView);
-                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                    auto utf8View = Bun::UTF8View::tryCreate(valueView);
+                    if (!utf8View) [[unlikely]]
+                        return Exception { OutOfMemoryError };
+                    value = Bun::decodeURIComponentSIMD(utf8View->bytes());
                 } else {
                     value = valueView.toString();
                 }

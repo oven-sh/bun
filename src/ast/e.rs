@@ -6,7 +6,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
@@ -124,7 +124,7 @@ impl Array {
                 debug_assert!(matches!(item.data, crate::expr::Data::EString(_)));
             }
         }
-        self.items.slice_mut().sort_by(array_sorter_is_less_than);
+        index_sort::sort_slice_by(self.items.slice_mut(), array_sorter_is_less_than);
     }
 }
 
@@ -313,6 +313,12 @@ pub struct Dot {
     /// unwrapped if the resulting value is unused. Unwrapping means discarding
     /// the call target but keeping any arguments with side effects.
     pub call_can_be_unwrapped_if_unused: CallUnwrap,
+
+    /// `target` is an `EImportIdentifier` and this read was counted in
+    /// `Part::import_symbol_property_uses` instead of as a use of the import,
+    /// so the linker may bind it straight to the export it names
+    /// (`LinkerGraph::import_member_bindings`).
+    pub is_import_property_use: bool,
 }
 impl Default for Dot {
     fn default() -> Self {
@@ -323,6 +329,7 @@ impl Default for Dot {
             optional_chain: None,
             can_be_removed_if_unused: false,
             call_can_be_unwrapped_if_unused: CallUnwrap::Never,
+            is_import_property_use: false,
         }
     }
 }
@@ -330,6 +337,8 @@ pub struct Index {
     pub index: ExprNodeIndex,
     pub target: ExprNodeIndex,
     pub optional_chain: Option<OptionalChain>,
+    /// See `Dot::is_import_property_use`.
+    pub is_import_property_use: bool,
 }
 
 pub struct Arrow {
@@ -686,12 +695,6 @@ impl Number {
         self.value
     }
 }
-impl From<f64> for Number {
-    #[inline]
-    fn from(v: f64) -> Self {
-        Number::new(v)
-    }
-}
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
     b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9", b"10", b"11", b"12", b"13", b"14",
@@ -778,11 +781,6 @@ impl Number {
         self.to::<usize>()
     }
 
-    #[inline]
-    pub(crate) fn to_u32(self) -> u32 {
-        self.to::<u32>()
-    }
-
     pub(crate) fn to<T: NumberCast>(self) -> T {
         let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
@@ -807,7 +805,7 @@ macro_rules! impl_number_cast {
         }
     )*};
 }
-impl_number_cast!(u32, usize);
+impl_number_cast!(usize);
 
 pub struct BigInt {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
@@ -991,7 +989,6 @@ pub struct JsonTape {
     prop_value_locs: Vec<crate::Loc, TapeAlloc>,
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
-    str_used: usize,
     pub encoding: StrEncoding,
 }
 
@@ -1014,7 +1011,6 @@ impl JsonTape {
             prop_value_locs: Vec::new_in(alloc),
             item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
-            str_used: 0,
             encoding: StrEncoding::Utf8,
         }
     }
@@ -1061,7 +1057,7 @@ impl JsonTape {
         (first, rows.len() as u32)
     }
 
-    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    /// Copy decoded string bytes into the tape; chunks grow only within capacity and so never move.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
         self.alloc_str_join(bytes, b"")
     }
@@ -1072,26 +1068,21 @@ impl JsonTape {
         let fits = self
             .str_chunks
             .last()
-            .is_some_and(|c| c.len() - self.str_used >= len);
+            .is_some_and(|c| c.capacity() - c.len() >= len);
         if !fits {
             let cap = len.max(Self::STR_CHUNK);
-            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
-            chunk.resize(cap, 0);
+            let chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
             self.str_chunks.push(chunk);
-            self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
-        let out = &mut chunk[self.str_used..self.str_used + len];
+        let start = chunk.len();
         if len <= 32 {
-            for (o, &c) in out.iter_mut().zip(a.iter().chain(b)) {
-                *o = c;
-            }
+            chunk.extend(a.iter().chain(b));
         } else {
-            out[..a.len()].copy_from_slice(a);
-            out[a.len()..].copy_from_slice(b);
+            chunk.extend_from_slice(a);
+            chunk.extend_from_slice(b);
         }
-        self.str_used += len;
-        Str::new(out)
+        Str::new(&chunk[start..])
     }
 
     /// The row buffers, for a reader that resolves spans itself.
@@ -1115,6 +1106,12 @@ impl JsonTape {
     #[inline]
     fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON] {
         &self.props[first as usize..first as usize + count as usize]
+    }
+
+    /// Returns one object's properties, given the row range from its [`ObjectJSON::rows`].
+    #[inline]
+    pub fn properties(&self, rows: core::ops::Range<u32>) -> &[PropertyJSON] {
+        &self.props[rows.start as usize..rows.end as usize]
     }
 
     #[inline]
@@ -1184,6 +1181,13 @@ impl ObjectJSON {
         }
         // SAFETY: per the constructor's contract the tape outlives this node.
         unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
+    }
+
+    /// The tape rows that hold [`Self::properties`]. Code that keeps the tape alive longer than
+    /// this node can store the range and read it back with [`JsonTape::properties`].
+    #[inline]
+    pub fn rows(&self) -> core::ops::Range<u32> {
+        self.first..self.first + self.count
     }
 
     /// Parallel to [`Self::properties`]; `None` unless the parse recorded value locations.
@@ -1341,14 +1345,6 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for crate::Error {
-    fn from(e: SetError) -> Self {
-        match e {
-            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            SetError::Clobber => crate::Error::Clobber,
-        }
-    }
-}
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
@@ -1398,11 +1394,11 @@ impl Object {
         false
     }
 
-    pub fn put(&mut self, _bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
+    pub fn put(&mut self, bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
-            let key = Expr::init(EString::init(key), expr.loc);
+            let key = Expr::allocate(bump, EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
@@ -1420,7 +1416,7 @@ impl Object {
         self.put(
             bump,
             key,
-            Expr::init(EString::init(value), crate::Loc::EMPTY),
+            Expr::allocate(bump, EString::init(value), crate::Loc::EMPTY),
         )
     }
 
@@ -1527,95 +1523,7 @@ impl Object {
                 ));
             }
         }
-        self.properties
-            .slice_mut()
-            .sort_by(object_sorter_is_less_than);
-    }
-
-    pub fn package_json_sort(&mut self) {
-        self.properties
-            .slice_mut()
-            .sort_by(package_json_sort_is_less_than);
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PackageJsonSortFields {
-    Name = 0,
-    Version = 1,
-    Author = 2,
-    Repository = 3,
-    Config = 4,
-    Main = 5,
-    Module = 6,
-    Dependencies = 7,
-    DevDependencies = 8,
-    OptionalDependencies = 9,
-    PeerDependencies = 10,
-    Exports = 11,
-    Fake = 12,
-}
-
-bun_core::comptime_string_map! {
-    static PACKAGE_JSON_SORT_MAP: PackageJsonSortFields = {
-        b"name" => PackageJsonSortFields::Name,
-        b"version" => PackageJsonSortFields::Version,
-        b"author" => PackageJsonSortFields::Author,
-        b"repository" => PackageJsonSortFields::Repository,
-        b"config" => PackageJsonSortFields::Config,
-        b"main" => PackageJsonSortFields::Main,
-        b"module" => PackageJsonSortFields::Module,
-        b"dependencies" => PackageJsonSortFields::Dependencies,
-        b"devDependencies" => PackageJsonSortFields::DevDependencies,
-        b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
-        b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
-        b"exports" => PackageJsonSortFields::Exports,
-    };
-}
-
-fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
-    let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
-    let mut rhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
-
-    if let Some(k) = &lhs.key {
-        if let crate::expr::Data::EString(s) = &k.data {
-            lhs_key_size = *PACKAGE_JSON_SORT_MAP
-                .get(&s.data)
-                .unwrap_or(&PackageJsonSortFields::Fake) as u8;
-        }
-    }
-
-    if let Some(k) = &rhs.key {
-        if let crate::expr::Data::EString(s) = &k.data {
-            rhs_key_size = *PACKAGE_JSON_SORT_MAP
-                .get(&s.data)
-                .unwrap_or(&PackageJsonSortFields::Fake) as u8;
-        }
-    }
-
-    match lhs_key_size.cmp(&rhs_key_size) {
-        Ordering::Equal => {
-            // Full `Ordering` so this is usable with `sort_by`.
-            let a = lhs
-                .key
-                .as_ref()
-                .unwrap()
-                .data
-                .e_string()
-                .expect("infallible: variant checked")
-                .data;
-            let b = rhs
-                .key
-                .as_ref()
-                .unwrap()
-                .data
-                .e_string()
-                .expect("infallible: variant checked")
-                .data;
-            a.cmp(&b)
-        }
-        ord => ord,
+        index_sort::sort_slice_by(self.properties.slice_mut(), object_sorter_is_less_than);
     }
 }
 
@@ -1703,6 +1611,23 @@ pub struct EString {
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
+
+/// [`EString::flattened`] result: the node itself, or an owned copy when a rope was flattened.
+pub enum Flattened<'a> {
+    Borrowed(&'a EString),
+    Owned(EString),
+}
+
+impl core::ops::Deref for Flattened<'_> {
+    type Target = EString;
+    #[inline]
+    fn deref(&self) -> &EString {
+        match self {
+            Flattened::Borrowed(s) => s,
+            Flattened::Owned(s) => s,
+        }
+    }
+}
 
 impl Default for EString {
     fn default() -> Self {
@@ -1894,10 +1819,28 @@ impl EString {
         true
     }
 
+    /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
     pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
+        self.data = Str::new(self.flatten_rope(bump));
+        self.next = None;
+    }
+
+    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`.
+    pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
+        if self.next.is_none() || !self.is_utf8() {
+            return Flattened::Borrowed(self);
+        }
+        let mut copy = self.shallow_clone();
+        copy.data = Str::new(self.flatten_rope(bump));
+        copy.next = None;
+        Flattened::Owned(copy)
+    }
+
+    /// The rope's bytes, concatenated into a fresh `bump` slice.
+    fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
@@ -1905,8 +1848,7 @@ impl EString {
             bytes.extend_from_slice(&part.get().data);
             str_ = part.get().next;
         }
-        self.data = Str::new(bytes.into_bump_slice());
-        self.next = None;
+        bytes.into_bump_slice()
     }
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
@@ -2012,7 +1954,7 @@ impl EString {
         }
     }
 
-    /// Link `other` onto this string's rope tail.
+    /// Link `other` onto this string's rope tail. Mutates both ropes: neither may have another owner.
     ///
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
@@ -2346,32 +2288,17 @@ pub struct RegExp {
 }
 impl RegExp {
     pub fn pattern(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i_) = self.flags_offset {
-            let mut i = i_;
-            while i > 0 && self.value[i as usize] != b'/' {
-                i -= 1;
-            }
-
-            return bun_core::trim(&self.value[..i as usize], b"/");
-        }
-
-        bun_core::trim(&self.value, b"/")
+        // Between the first slash and the last: flags have none. Not `trim`: a pattern can end in `\/`.
+        let end = bun_core::strings::last_index_of_char(&self.value, b'/').unwrap_or(0);
+        self.value.get(1..end).unwrap_or_default()
     }
 
     pub fn flags(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i) = self.flags_offset {
-            return &self.value[i as usize..];
-        }
-
-        b""
+        // Behind the last slash. Not by `flags_offset`, which wraps at 65,536.
+        let slash = bun_core::strings::last_index_of_char(&self.value, b'/');
+        slash
+            .and_then(|it| self.value.get(it + 1..))
+            .unwrap_or_default()
     }
 }
 
@@ -2430,6 +2357,12 @@ pub struct Import {
     pub expr: ExprNodeIndex,
     pub options: ExprNodeIndex,
     pub import_record_index: u32,
+    /// When bundling a string-literal `import("...")`, this is the synthetic
+    /// namespace symbol minted by `transpose_import`. Property accesses /
+    /// destructuring of the awaited result are recorded under this ref so the
+    /// linker can tree-shake unused exports of the importee. `Ref::NONE` when
+    /// not bundling or the specifier is non-constant.
+    pub namespace_ref: Ref,
     // TODO:
     // Comments inside "import()" expressions have special meaning for Webpack.
     // Preserving comments inside these expressions makes it possible to use

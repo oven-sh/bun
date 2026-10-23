@@ -32,12 +32,6 @@ impl Slicable for crate::semver_string::String {
         crate::semver_string::String::slice(self, buf)
     }
 }
-impl Slicable for crate::external_string::ExternalString {
-    #[inline]
-    fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
-        crate::external_string::ExternalString::slice(self, buf)
-    }
-}
 
 /// Alias so callers can name `bun_semver::string::Formatter` etc.
 pub use crate::semver_string as string;
@@ -178,10 +172,6 @@ pub mod external_string {
             lhs_buf: &[u8],
             rhs_buf: &[u8],
         ) -> Ordering {
-            if self.hash == rhs.hash && self.hash > 0 {
-                return Ordering::Equal;
-            }
-
             self.value.order(rhs.value, lhs_buf, rhs_buf)
         }
 
@@ -302,7 +292,7 @@ pub mod semver_string {
 
         #[inline]
         pub fn fmt_store_path<'a>(&'a self, buf: &'a [u8]) -> StorePathFormatter<'a> {
-            StorePathFormatter { buf, str: self }
+            fmt_store_path(self.slice(buf))
         }
 
         #[inline]
@@ -514,27 +504,22 @@ pub mod semver_string {
         #[inline]
         pub fn len(self) -> usize {
             match self.bytes[Self::MAX_INLINE_LEN - 1] & 128 {
-                0 => {
-                    // Edgecase: string that starts with a 0 byte will be considered empty.
-                    match self.bytes[0] {
-                        0 => 0,
-                        _ => {
-                            let mut i: usize = 0;
-                            while i < self.bytes.len() {
-                                if self.bytes[i] == 0 {
-                                    return i;
-                                }
-                                i += 1;
-                            }
-                            8
-                        }
-                    }
-                }
+                // Edgecase: string that starts with a 0 byte will be considered empty.
+                0 => self.inline_len(),
                 _ => {
                     let ptr_ = self.ptr();
                     ptr_.len as usize
                 }
             }
+        }
+
+        /// Length of an inline string: index of the first NUL byte, or 8.
+        #[inline]
+        fn inline_len(self) -> usize {
+            let bits = u64::from_le_bytes(self.bytes);
+            let zero_bytes =
+                bits.wrapping_sub(0x0101_0101_0101_0101) & !bits & 0x8080_8080_8080_8080;
+            (zero_bytes.trailing_zeros() / 8) as usize
         }
 
         #[inline]
@@ -545,26 +530,20 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
+        /// Returns false if the offset and length, which may come from a file, reach past the end
+        /// of `buf`. `slice` returns "" for such a string.
+        #[inline]
+        pub fn is_within(self, buf: &[u8]) -> bool {
+            let ptr_ = self.ptr();
+            self.is_inline() || ptr_.off as usize + ptr_.len as usize <= buf.len()
+        }
+
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]
         pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
             match self.bytes[Self::MAX_INLINE_LEN - 1] & 128 {
-                0 => {
-                    // Edgecase: string that starts with a 0 byte will be considered empty.
-                    match self.bytes[0] {
-                        0 => b"",
-                        _ => {
-                            let mut i: usize = 0;
-                            while i < self.bytes.len() {
-                                if self.bytes[i] == 0 {
-                                    return &self.bytes[0..i];
-                                }
-                                i += 1;
-                            }
-                            &self.bytes
-                        }
-                    }
-                }
+                // Edgecase: string that starts with a 0 byte will be considered empty.
+                0 => &self.bytes[..self.inline_len()],
                 _ => {
                     let ptr_ = self.ptr();
                     let (off, len) = (ptr_.off as usize, ptr_.len as usize);
@@ -589,16 +568,7 @@ pub mod semver_string {
                 return Ok(String::init_inline(str));
             }
 
-            let hash = Builder::string_hash(str);
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(*entry.value_ptr);
-            }
-
-            // new entry
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(new)
+            self.append_with_hash(str, Builder::string_hash(str))
         }
 
         pub fn append_with_hash(&mut self, str: &[u8], hash: u64) -> Result<String, AllocError> {
@@ -608,7 +578,12 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(*entry.value_ptr);
+                // Equal hashes don't mean equal strings, so the second string isn't added to the
+                // pool.
+                if strings::eql(entry.value_ptr.slice(self.bytes), str) {
+                    return Ok(*entry.value_ptr);
+                }
+                return String::init_append(self.bytes, str);
             }
 
             // new entry
@@ -618,26 +593,7 @@ pub mod semver_string {
         }
 
         pub fn append_external(&mut self, str: &[u8]) -> Result<ExternalString, AllocError> {
-            let hash = Builder::string_hash(str);
-
-            if String::can_inline(str) {
-                return Ok(ExternalString {
-                    value: String::init_inline(str),
-                    hash,
-                });
-            }
-
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
-            }
-
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(ExternalString { value: new, hash })
+            self.append_external_with_hash(str, Builder::string_hash(str))
         }
 
         pub fn append_external_with_hash(
@@ -645,24 +601,10 @@ pub mod semver_string {
             str: &[u8],
             hash: u64,
         ) -> Result<ExternalString, AllocError> {
-            if String::can_inline(str) {
-                return Ok(ExternalString {
-                    value: String::init_inline(str),
-                    hash,
-                });
-            }
-
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
-            }
-
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(ExternalString { value: new, hash })
+            Ok(ExternalString {
+                value: self.append_with_hash(str, hash)?,
+                hash,
+            })
         }
     }
 
@@ -714,25 +656,30 @@ pub mod semver_string {
 
     // ── String.StorePathFormatter ─────────────────────────────────────────
     pub struct StorePathFormatter<'a> {
-        pub(crate) str: &'a String,
-        pub(crate) buf: &'a [u8],
+        bytes: &'a [u8],
+    }
+
+    /// Spells `bytes` as a single path component of the isolated store.
+    pub fn fmt_store_path(bytes: &[u8]) -> StorePathFormatter<'_> {
+        StorePathFormatter { bytes }
     }
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            for &c in self.str.slice(self.buf) {
-                let n = match c {
-                    b'/' => b'+',
-                    b'\\' => b'+',
-                    b':' => b'+',
-                    b'#' => b'+',
-                    // `?` would be parsed as a query-string delimiter during
-                    // module resolution (and is invalid in Windows filenames).
-                    b'?' => b'+',
-                    _ => c,
-                };
-                use core::fmt::Write;
-                f.write_char(n as char)?;
+            use core::fmt::Write;
+            for chunk in self.bytes.utf8_chunks() {
+                // `?` is the query-string delimiter in module resolution, and it's invalid in
+                // Windows filenames.
+                let mut rest = chunk.valid();
+                while let Some(i) = strings::index_of_any(rest.as_bytes(), b"/\\:#?") {
+                    f.write_str(&rest[..i])?;
+                    f.write_char('+')?;
+                    rest = &rest[i + 1..];
+                }
+                f.write_str(rest)?;
+                for &c in chunk.invalid() {
+                    f.write_char(c as char)?;
+                }
             }
             Ok(())
         }
@@ -757,7 +704,7 @@ pub mod semver_string {
     }
 
     // Bridge to `bun_collections::ArrayHashMap` adapted lookups so callers can
-    // pass `ArrayHashContext` directly to `get_adapted` / `get_or_put_adapted`
+    // pass `ArrayHashContext` directly to `get_index_adapted` / `get_or_put_adapted`
     // / `put_assume_capacity_context` without a per-crate orphan-rule wrapper.
     impl<'a> bun_collections::array_hash_map::ArrayHashAdapter<String, String>
         for ArrayHashContext<'a>
@@ -859,6 +806,10 @@ pub mod semver_string {
         pub fn contains(&self, hash: u64) -> bool {
             self.map.contains_key(&hash)
         }
+        #[inline]
+        pub fn get(&self, hash: u64) -> Option<String> {
+            self.map.get(&hash).copied()
+        }
         /// Number of slots reservable without rehash.
         #[inline]
         pub fn capacity(&self) -> usize {
@@ -881,7 +832,9 @@ pub mod semver_string {
     }
 
     impl Builder {
-        #[inline]
+        // `Wyhash11::hash` is `#[inline(always)]`, which would add about 700 bytes at each of 130
+        // call sites.
+        #[inline(never)]
         pub fn string_hash(buf: &[u8]) -> u64 {
             bun_wyhash::Wyhash11::hash(0, buf)
         }
@@ -890,17 +843,17 @@ pub mod semver_string {
         pub fn count(&mut self, slice_: &[u8]) {
             self.count_with_hash(
                 slice_,
-                if slice_.len() >= String::MAX_INLINE_LEN {
-                    Self::string_hash(slice_)
-                } else {
+                if String::can_inline(slice_) {
                     u64::MAX
+                } else {
+                    Self::string_hash(slice_)
                 },
             )
         }
 
         #[inline]
         pub(crate) fn count_with_hash(&mut self, slice_: &[u8], hash: u64) {
-            if slice_.len() <= String::MAX_INLINE_LEN {
+            if String::can_inline(slice_) {
                 return;
             }
 
@@ -930,43 +883,9 @@ pub mod semver_string {
             self.append_with_hash::<T>(slice_, Self::string_hash(slice_))
         }
 
-        pub fn append_utf8_without_pool<T: BuilderStringType>(
-            &mut self,
-            slice_: &[u8],
-            hash: u64,
-        ) -> T {
-            if slice_.len() <= String::MAX_INLINE_LEN {
-                if strings::is_all_ascii(slice_) {
-                    return T::from_init(self.allocated_slice(), slice_, hash);
-                }
-            }
-
-            debug_assert!(self.len <= self.cap); // didn't count everything
-            debug_assert!(self.ptr.is_some()); // must call allocate first
-
-            // reshaped for borrowck — compute final slice range, then borrow once.
-            let start = self.len;
-            let end = self.cap;
-            {
-                let dst = &mut self.ptr.as_mut().unwrap()[start..end];
-                dst[..slice_.len()].copy_from_slice(slice_);
-            }
-            self.len += slice_.len();
-
-            debug_assert!(self.len <= self.cap);
-
-            let allocated = &self.ptr.as_ref().unwrap()[0..self.cap];
-            let final_slice = &allocated[start..start + slice_.len()];
-            T::from_init(allocated, final_slice, hash)
-        }
-
         // SlicedString is not supported due to inline strings.
-        pub(crate) fn append_without_pool<T: BuilderStringType>(
-            &mut self,
-            slice_: &[u8],
-            hash: u64,
-        ) -> T {
-            if slice_.len() <= String::MAX_INLINE_LEN {
+        pub fn append_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+            if String::can_inline(slice_) {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }
             debug_assert!(self.len <= self.cap); // didn't count everything
@@ -993,7 +912,7 @@ pub mod semver_string {
             slice_: &[u8],
             hash: u64,
         ) -> T {
-            if slice_.len() <= String::MAX_INLINE_LEN {
+            if String::can_inline(slice_) {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }
 
@@ -1032,4 +951,27 @@ pub mod semver_string {
         core::mem::size_of::<String>() == core::mem::size_of::<Pointer>(),
         "String types must be the same size",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::semver_string::{Builder, String};
+
+    #[test]
+    fn builder_allocates_eight_byte_non_ascii_strings() {
+        // 8 bytes with the high bit set on the last byte cannot be inlined
+        // (that bit marks an out-of-line pointer), so the builder must count
+        // and copy it like any longer string.
+        let s: &[u8] = b"abcdef\xc3\xa9";
+        assert_eq!(s.len(), 8);
+        assert!(!String::can_inline(s));
+
+        let mut builder = Builder::default();
+        builder.count(s);
+        assert_eq!(builder.cap, 8);
+        builder.allocate().unwrap();
+        let out: String = builder.append::<String>(s);
+        assert_eq!(builder.len, 8);
+        assert_eq!(out.slice(builder.allocated_slice()), s);
+    }
 }

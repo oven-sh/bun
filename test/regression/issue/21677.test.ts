@@ -75,7 +75,7 @@ test("issue #21677 - reproduce with raw HTTP to verify duplicate headers", async
   await new Promise((resolve, reject) => {
     const socket = Bun.connect({
       hostname: "localhost",
-      port: server.port,
+      port: server.port!,
       socket: {
         data(socket, data) {
           const response = data.toString();

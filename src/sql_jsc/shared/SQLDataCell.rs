@@ -1,7 +1,7 @@
 use core::ptr;
 use core::slice;
 
-use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
@@ -49,14 +49,15 @@ pub enum Tag {
     Int8 = 4,
     Bool = 5,
     Date = 6,
-    DateWithTimeZone = 7,
-    Bytea = 8,
-    Json = 9,
-    Array = 10,
-    TypedArray = 11,
-    Raw = 12,
-    Uint4 = 13,
-    Uint8 = 14,
+    Bytea = 7,
+    Json = 8,
+    Array = 9,
+    Raw = 10,
+    Uint4 = 11,
+    Uint8 = 12,
+    Numbers = 13,
+    Int32Array = 14,
+    Float32Array = 15,
 }
 
 #[repr(C)]
@@ -72,12 +73,12 @@ pub union Value {
     pub(crate) int8: i64,
     pub(crate) bool_: u8, // `bool` is a Rust keyword
     pub(crate) date: f64,
-    pub(crate) date_with_time_zone: f64,
     pub(crate) bytea: [usize; 2],
     // LIFETIMES.tsv: SHARED — same rationale as `string`.
     pub(crate) json: WTFStringImpl,
     pub(crate) array: Array,
-    pub(crate) typed_array: TypedArray,
+    /// Numbers and nulls as JS holds them. None of them is a GC cell.
+    pub(crate) numbers: Array<JSValue>,
     pub(crate) raw: Raw,
     pub(crate) uint4: u32,
     pub(crate) uint8: u64,
@@ -88,35 +89,31 @@ pub union Value {
 // is single-writer by convention; never call `deinit` on more than one copy.
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct Array {
-    // LIFETIMES.tsv: OWNED → Vec<SQLDataCell>. Kept as raw ptr/len/cap because
+pub struct Array<T = SQLDataCell> {
+    // LIFETIMES.tsv: OWNED → Vec<T>. Kept as raw ptr/len/cap because
     // C++ reads these three fields directly across FFI; reconstructed as Vec in
     // `deinit` to free.
-    pub(crate) ptr: *mut SQLDataCell,
+    pub(crate) ptr: *mut T,
     pub(crate) len: u32,
     pub(crate) cap: u32,
 }
 
-impl Default for Array {
-    fn default() -> Self {
-        Self {
-            ptr: ptr::null_mut(),
-            len: 0,
-            cap: 0,
+impl<T> Array<T> {
+    fn new(items: Vec<T>) -> Array<T> {
+        debug_assert!(items.capacity() <= u32::MAX as usize);
+        let mut items = core::mem::ManuallyDrop::new(items);
+        Array {
+            ptr: items.as_mut_ptr(),
+            len: items.len() as u32,
+            cap: items.capacity() as u32,
         }
     }
-}
 
-impl Array {
-    pub(crate) fn slice(&mut self) -> &mut [SQLDataCell] {
+    pub(crate) fn slice(&mut self) -> &mut [T] {
         if self.ptr.is_null() {
             return &mut [];
         }
-        // SAFETY: ptr is non-null and points to at least `len` initialized
-        // cells (invariant upheld by producers — postgres/DataCell.rs decomposes
-        // a `Vec<SQLDataCell>` into these fields). Genuine FFI: ptr/len/cap are
-        // thin C fields read directly by C++ (SQLClient.cpp), so this cannot be
-        // a `Vec` field without breaking ABI.
+        // SAFETY: non-null; `new` took ptr/len from a `Vec<T>`.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
     }
 
@@ -129,10 +126,7 @@ impl Array {
         if p.is_null() {
             return;
         }
-        // SAFETY: ptr/len/cap originate from a `Vec<SQLDataCell>` decomposed
-        // by the producer (postgres/DataCell.rs `parse_array`), i.e. a
-        // Vec-shaped allocation from the global allocator. Reconstruct and drop.
-        // Elements were already deinit'd by the caller; SQLDataCell has no Drop.
+        // SAFETY: `new` took ptr/cap from a `Vec`; the caller released the items.
         unsafe { drop(Vec::from_raw_parts(p, 0, cap)) };
     }
 }
@@ -144,35 +138,8 @@ pub struct Raw {
     pub(crate) len: u64,
 }
 
-impl Default for Raw {
-    fn default() -> Self {
-        Self {
-            ptr: ptr::null(),
-            len: 0,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct TypedArray {
-    // LIFETIMES.tsv: BORROW_PARAM → Option<&'a [u8]>. Kept as thin raw ptr for
-    // #[repr(C)] FFI layout (a Rust slice ref is a fat pointer). free_value=0
-    // for typed_array producers, so deinit's free path is effectively dead for
-    // borrowed buffers.
-    pub(crate) head_ptr: *mut u8,
-    // LIFETIMES.tsv: BORROW_FIELD → sub-slice of head_ptr; same rationale.
-    pub(crate) ptr: *mut u8,
-    pub(crate) len: u32,
-    pub(crate) byte_len: u32,
-    pub(crate) type_: JSType, // `type` is a Rust keyword
-}
-
-// Note: no `&mut [u8]` slice getters are provided. `len` is the typed-array
-// *element* count (consumed by SQLClient.cpp), not a byte length, so a
-// `&mut [u8; len]` view would be wrong for elements wider than u8; `deinit`
-// builds the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
-// directly (no intermediate `&mut` reference).
+// `DataCell` in SQLClient.cpp asserts the same size.
+const _: () = assert!(core::mem::size_of::<SQLDataCell>() == 32);
 
 impl SQLDataCell {
     // Note: kept as an explicit method, not `impl Drop` — this type is
@@ -206,18 +173,9 @@ impl SQLDataCell {
                 let len = bytea[1];
                 // Build the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
                 // (no `&mut` reference materialized); only `Box::from_raw` is unsafe.
-                // SAFETY: bytea[0]/bytea[1] are ptr/len of a buffer allocated
-                // via the global allocator. The only `free_value=1` Bytea
-                // producer is `parse_bytea`
-                // (postgres/DataCell.rs), which allocates exactly `hex.len()/2`
-                // bytes and stores `decode_hex_to_bytes`'s return. With that
-                // call-site invariant (`source.len() >= 2 * dest.len()`), the
-                // non-truncating decoder cannot exhaust the input before the
-                // destination fills, so on success it returns `dest.len()` —
-                // hence allocation size == len and the `Box<[u8]>` layout
-                // below matches the allocation. (In general the decoder may
-                // return less than `dest.len()` when the input runs out first;
-                // this proof depends on parse_bytea's allocation size.)
+                // SAFETY: the only `free_value=1` Bytea producer is `parse_bytea`
+                // (postgres/DataCell.rs), which stores the ptr/len of a
+                // `Box<[u8]>` of exactly `len` bytes, so the layout matches.
                 unsafe { drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len))) };
             }
             Tag::Array => {
@@ -228,33 +186,10 @@ impl SQLDataCell {
                 }
                 array.deinit();
             }
-            Tag::TypedArray => {
-                // SAFETY: tag == TypedArray ⇒ `typed_array` is active.
-                let ta = unsafe { self.value.typed_array };
-                if !ta.head_ptr.is_null() && ta.byte_len != 0 {
-                    // Build the fat pointer with the safe
-                    // `ptr::slice_from_raw_parts_mut` (no `&mut` reference
-                    // materialized); only `Box::from_raw` is unsafe.
-                    // `len` is the *element* count (consumed by SQLClient.cpp
-                    // as the typed-array length); for any element wider than u8
-                    // that under-reports the allocation size, and
-                    // `Box::<[u8]>::from_raw`'s layout must match the
-                    // allocation, hence `byte_len`.
-                    // SAFETY: head_ptr was allocated via the global allocator
-                    // when free_value != 0. This branch is live: the postgres
-                    // binary-array path (DataCell.rs `from_bytes_typed_array`)
-                    // produces `free_value=1` cells whose `head_ptr` is
-                    // `Box::into_raw` of a `Box<[u8]>` of exactly `byte_len`
-                    // bytes, so the layout below matches the allocation.
-                    unsafe {
-                        drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
-                            ta.head_ptr,
-                            ta.byte_len as usize,
-                        )))
-                    };
-                }
+            Tag::Numbers => {
+                // SAFETY: tag == Numbers ⇒ `numbers` is the active union field.
+                unsafe { &mut self.value.numbers }.deinit();
             }
-
             _ => {}
         }
     }
@@ -276,13 +211,13 @@ impl SQLDataCell {
 
     /// Tags the cell with the column it was decoded for, in the encoding
     /// SQLClient.cpp's `DataCell` reads: `is_indexed_column` is 0 for a named
-    /// column, 1 for an all-digits name (the object key is that number, not the
+    /// column, 1 for an array-index name (the object key is that number, not the
     /// ordinal `position`, so indexed cells can land out of order) and 2 for a
     /// duplicate, which object-mode results skip.
     #[inline]
     pub(crate) fn set_column(&mut self, position: u32, column: &ColumnIdentifier) {
         self.is_indexed_column = match column {
-            ColumnIdentifier::Duplicate => 2,
+            ColumnIdentifier::Duplicate(_) => 2,
             ColumnIdentifier::Index(_) => 1,
             ColumnIdentifier::Name(_) => 0,
         };
@@ -355,17 +290,6 @@ impl SQLDataCell {
         }
     }
 
-    #[inline]
-    pub(crate) fn date_with_tz(value: f64) -> SQLDataCell {
-        SQLDataCell {
-            tag: Tag::DateWithTimeZone,
-            value: Value {
-                date_with_time_zone: value,
-            },
-            ..Default::default()
-        }
-    }
-
     /// Owned string cell: clones `bytes` into a WTFStringImpl, freed via
     /// `free_value = 1`. Empty input becomes a null pointer, which the C++
     /// side (SQLClient.cpp) renders as the empty string.
@@ -392,6 +316,45 @@ impl SQLDataCell {
                 json: clone_utf8_or_null(bytes),
             },
             free_value: 1,
+            ..Default::default()
+        }
+    }
+
+    /// Owned array cell: `deinit` releases the cells, then the `Vec`'s allocation.
+    pub(crate) fn array(cells: Vec<SQLDataCell>) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Array,
+            value: Value {
+                array: Array::new(cells),
+            },
+            free_value: 1,
+            ..Default::default()
+        }
+    }
+
+    /// An array of numbers and nulls. A GC cell among them would not be kept alive.
+    pub(crate) fn numbers(values: Vec<JSValue>) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Numbers,
+            value: Value {
+                numbers: Array::new(values),
+            },
+            free_value: 1,
+            ..Default::default()
+        }
+    }
+
+    /// `tag` is `Int32Array` or `Float32Array`. `elements` is borrowed, as the bytes of `raw` are: for each
+    /// element 4 bytes of size and 4 of value, big-endian, which is what the PostgreSQL server sends.
+    pub(crate) fn typed_array(tag: Tag, elements: &[[u8; 8]]) -> SQLDataCell {
+        SQLDataCell {
+            tag,
+            value: Value {
+                raw: Raw {
+                    ptr: elements.as_ptr().cast(),
+                    len: elements.len() as u64,
+                },
+            },
             ..Default::default()
         }
     }
@@ -486,7 +449,7 @@ impl SQLDataCell {
     }
 }
 
-/// Coercion helper for `raw()` call sites. Lets callers pass `&Data`, `&mut Data`,
+/// Coercion helper for `raw()` call sites. Lets callers pass `&Data`,
 /// `Option<&Data>`, or `Option<&mut Data>` without wrapping.
 pub trait IntoOptionalData<'a> {
     fn into_optional_data(self) -> Option<&'a Data>;
@@ -495,12 +458,6 @@ impl<'a> IntoOptionalData<'a> for &'a Data {
     #[inline]
     fn into_optional_data(self) -> Option<&'a Data> {
         Some(self)
-    }
-}
-impl<'a> IntoOptionalData<'a> for &'a mut Data {
-    #[inline]
-    fn into_optional_data(self) -> Option<&'a Data> {
-        Some(&*self)
     }
 }
 impl<'a> IntoOptionalData<'a> for Option<&'a Data> {
@@ -553,16 +510,18 @@ pub(crate) fn dedupe_columns<'a>(
 
     let mut flags = Flags::default();
     for name_or_index in columns {
-        match &*name_or_index {
+        // The verdict of an earlier pass, when the other columns may have had other names.
+        if let ColumnIdentifier::Duplicate(name) = &mut *name_or_index {
+            *name_or_index = ColumnIdentifier::init(core::mem::take(name)).unwrap_or_oom();
+        }
+        match &mut *name_or_index {
             ColumnIdentifier::Name(name) => {
-                // reshaped for borrowck — compute `found_existing` before
-                // mutating `*name_or_index`.
                 let found_existing = seen_fields
                     .get_or_put(name.slice())
                     .unwrap_or_oom()
                     .found_existing;
                 if found_existing {
-                    *name_or_index = ColumnIdentifier::Duplicate;
+                    *name_or_index = ColumnIdentifier::Duplicate(core::mem::take(name));
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
                 }
 
@@ -571,7 +530,10 @@ pub(crate) fn dedupe_columns<'a>(
             ColumnIdentifier::Index(index) => {
                 let index = *index;
                 if seen_numbers.contains(&index) {
-                    *name_or_index = ColumnIdentifier::Duplicate;
+                    let mut digits = bun_core::fmt::ItoaBuf::new();
+                    *name_or_index = ColumnIdentifier::Duplicate(Data::Owned(
+                        bun_core::fmt::itoa(&mut digits, index).to_vec(),
+                    ));
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
                 } else {
                     seen_numbers.push(index);
@@ -579,9 +541,7 @@ pub(crate) fn dedupe_columns<'a>(
 
                 flags.insert(Flags::HAS_INDEXED_COLUMNS);
             }
-            ColumnIdentifier::Duplicate => {
-                flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
-            }
+            ColumnIdentifier::Duplicate(_) => unreachable!(),
         }
     }
 

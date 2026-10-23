@@ -1,7 +1,7 @@
 // Shim for Node's `internal/util/inspect` as consumed by the ported
 // node:repl / internal/readline stack. getStringWidth/stripVTControlCharacters
 // go straight to the native bindings so `require("node:readline")` does not
-// pull in the 99 KB internal/util/inspect; inspect/format load it lazily on
+// pull in the 99 KB internal/util/inspect; inspect loads it lazily on
 // first access (REPL output / completion rendering).
 
 const stripANSI = Bun.stripANSI;
@@ -30,11 +30,5 @@ export default {
   stripVTControlCharacters,
   get inspect() {
     return load().inspect;
-  },
-  get format() {
-    return load().format;
-  },
-  get formatWithOptions() {
-    return load().formatWithOptions;
   },
 };

@@ -1,6 +1,6 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //
-// `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
+// `TokenList::{parse, parse_into, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
@@ -51,8 +51,9 @@ mod ext {
         // SAFETY: `url` borrows the parser source/arena which outlives the
         // `add_import_record` call (same lifetime erasure as `src_str`).
         let url: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+        let end_pos = input.position();
         let import_record_idx =
-            input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
+            input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
         Ok(Url {
             import_record_idx,
             loc: dependencies::Location::from_source_location(loc),
@@ -162,7 +163,7 @@ mod ext {
 
 // ─── Token protocol impls ──────────────────────────────────────────────────
 // `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
-// their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`
+// their `hash` bodies in css_parser.rs forward to `generic::implement_*`
 // which bound on these traits — provide them here so the cycle closes and
 // `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
 // `Token(Token)` arm. Hand-written (not derived) because `Token` carries
@@ -281,7 +282,7 @@ impl<'bump> DeepClone<'bump> for Token {
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
         // All `&'static [u8]` payloads borrow the parser source/arena (`'static`
         // is a placeholder) — identity copy is correct. `Num`/`Dimension` are POD.
-        self.clone()
+        *self
     }
 }
 
@@ -480,10 +481,6 @@ impl TokenList {
         Ok(TokenList { v: tokens })
     }
 
-    pub fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> Result<TokenList> {
-        Self::parse(input, options, 0)
-    }
-
     pub(crate) fn parse_raw(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
@@ -501,7 +498,7 @@ impl TokenList {
             };
             match token {
                 Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
-                    let tok = token.clone();
+                    let tok = *token;
                     let closing_delimiter = match tok {
                         Token::OpenParen => Token::CloseParen,
                         Token::OpenSquare => Token::CloseSquare,
@@ -515,7 +512,7 @@ impl TokenList {
                     tokens.push(TokenOrValue::Token(closing_delimiter));
                 }
                 Token::Function(_) => {
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    tokens.push(TokenOrValue::Token(*token));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_raw(input2, tokens, options, depth + 1)
                     })?;
@@ -525,12 +522,12 @@ impl TokenList {
                     if token.is_parse_error() {
                         return Err(ParseError {
                             kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(
-                                token.clone(),
+                                *token,
                             )),
                             location: state.source_location(),
                         });
                     }
-                    tokens.push(TokenOrValue::Token(token.clone()));
+                    tokens.push(TokenOrValue::Token(*token));
                 }
             }
         }
@@ -571,7 +568,7 @@ impl TokenList {
                 break;
             };
             // Clone the token so we can call &mut methods on `input` below.
-            let tok = tok.clone();
+            let tok = *tok;
             match &tok {
                 Token::Whitespace(_) | Token::Comment(_) => {
                     // Skip whitespace if the last token was a delimiter.
@@ -611,7 +608,7 @@ impl TokenList {
                             }
                         }
                     }
-                    if strings::eql(*f, b"url") {
+                    if strings::eql(*f, b"url") && !input.flags.raw_url_tokens() {
                         input.reset(&state);
                         tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
                         last_is_delim = false;
@@ -660,7 +657,7 @@ impl TokenList {
                     last_is_whitespace = false;
                     continue;
                 }
-                Token::UnquotedUrl(_) => {
+                Token::UnquotedUrl(_) if !input.flags.raw_url_tokens() => {
                     input.reset(&state);
                     tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
                     last_is_delim = false;
@@ -684,7 +681,7 @@ impl TokenList {
                         Token::OpenCurly => Token::CloseCurly,
                         _ => unreachable!(),
                     };
-                    tokens.push(TokenOrValue::Token(tok.clone()));
+                    tokens.push(TokenOrValue::Token(tok));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_into(input2, tokens, options, depth + 1)
                     })?;
@@ -703,7 +700,7 @@ impl TokenList {
                     } else if let Ok(resolution) = Resolution::try_from_token(&tok) {
                         TokenOrValue::Resolution(resolution)
                     } else {
-                        TokenOrValue::Token(tok.clone())
+                        TokenOrValue::Token(tok)
                     };
 
                     tokens.push(value);
@@ -1377,7 +1374,7 @@ impl Clone for TokenList {
 impl Clone for TokenOrValue {
     fn clone(&self) -> Self {
         match self {
-            TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
+            TokenOrValue::Token(t) => TokenOrValue::Token(*t),
             TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
             TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
             // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
@@ -1564,16 +1561,6 @@ pub enum CustomPropertyName {
     Custom(DashedIdent),
     /// An unknown CSS property.
     Unknown(Ident),
-}
-
-// `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
-// intentionally don't derive `PartialEq` (pointer-eq would be wrong).
-// `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
-impl PartialEq for CustomPropertyName {
-    fn eq(&self, other: &Self) -> bool {
-        // SAFETY: arena-owned slices live for the parse session.
-        unsafe { (&*self.as_ptr()).eq(&*other.as_ptr()) }
-    }
 }
 
 impl CustomPropertyName {

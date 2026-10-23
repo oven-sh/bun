@@ -52,7 +52,7 @@ public:
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
-    WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
@@ -72,9 +72,6 @@ public:
     unsigned getMaxListeners() const { return m_maxListeners; };
 
     void setMaxListeners(unsigned count);
-
-    Vector<Identifier> eventTypes();
-    const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
 
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
@@ -105,6 +102,7 @@ private:
     {
     }
 
+    bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&);
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 
     EventEmitterData m_eventTargetData;

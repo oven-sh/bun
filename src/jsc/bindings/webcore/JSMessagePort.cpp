@@ -80,7 +80,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSMessagePortPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSMessagePortPrototype* ptr = new (NotNull, JSC::allocateCell<JSMessagePortPrototype>(vm)) JSMessagePortPrototype(vm, globalObject, structure);
+        JSMessagePortPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessagePortPrototype))) JSMessagePortPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -94,7 +94,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -118,11 +118,7 @@ template<> JSValue JSMessagePortDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSMessagePortDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "MessagePort"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSMessagePort::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "MessagePort"_s, JSMessagePort::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -144,8 +140,8 @@ const ClassInfo JSMessagePortPrototype::s_info = { "MessagePort"_s, &Base::s_inf
 void JSMessagePortPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMessagePort::info(), JSMessagePortPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSMessagePort::info(), JSMessagePortPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSMessagePort::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePort) };
@@ -410,12 +406,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef, (JSGlobalObject 
 
 JSC::GCClient::IsoSubspace* JSMessagePort::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessagePort, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessagePort.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessagePort = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessagePort.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessagePort = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSMessagePort, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessagePort, m_subspaceForMessagePort));
 }
 
 template<typename Visitor>

@@ -1556,6 +1556,15 @@ impl JSValue {
         Ok(out)
     }
 
+    /// `json_stringify_fast` for a `%j` format specifier only: a cyclic value is the text `[Circular]`.
+    pub fn json_stringify_for_format(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
+        let mut out = bun_core::String::EMPTY;
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jsonStringifyForFormat(self, global, &mut out)
+        })?;
+        Ok(out)
+    }
+
     pub fn temporal_type(self) -> TemporalType {
         crate::cpp::Bun__JSValue__temporalType(self)
     }
@@ -1977,6 +1986,11 @@ unsafe extern "C" {
         out: &mut bun_core::String,
     );
     safe fn JSC__JSValue__jsonStringifyFast(
+        this: JSValue,
+        global: &JSGlobalObject,
+        out: &mut bun_core::String,
+    );
+    safe fn JSC__JSValue__jsonStringifyForFormat(
         this: JSValue,
         global: &JSGlobalObject,
         out: &mut bun_core::String,

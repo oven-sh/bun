@@ -2552,7 +2552,7 @@ pub mod formatter {
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
-                                let str = next_value.json_stringify_fast(global)?;
+                                let str = next_value.json_stringify_for_format(global)?;
                                 writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
                             }

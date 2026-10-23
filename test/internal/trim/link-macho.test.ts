@@ -456,6 +456,60 @@ describeEachMachine("Mach-O $name", machine => {
   });
 
   describe("the graph reader", () => {
+    const mainReading = (name: string) => `
+      ${start}
+      extern const long ${name};
+      int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : (int)${name} == 0; }
+    `;
+    const objectsWithText = ["feature_code", "entry", "text", "embedder", "main"];
+
+    test.skipIf(machine.isArm64)("follows the difference of a string and a symbol in four bytes", async () => {
+      using dir = tempDir("trim-macho-reader", {
+        ...sources,
+        "text.S": `.section __TEXT,__cstring,cstring_literals\nL_first: .asciz "in front"\nL_text: .asciz "reached by a difference"\n.section __TEXT,__const\n.globl _offset_of_text\n.p2align 3\n_offset_of_text: .long L_text - _offset_of_text\n.long 0\n.subsections_via_symbols\n`,
+        "main.c": mainReading("offset_of_text"),
+      });
+      const { linkOutput, stringAt } = await linked(machine, String(dir), { objects: objectsWithText });
+      expect(statisticOf(linkOutput, "stringsNotFound")).toBe(0);
+      expect(statisticOf(linkOutput, "stringsRetained")).toBe(0);
+      expect(stringAt("reached by a difference")).toBeGreaterThan(0);
+      expect(() => stringAt("in front")).toThrow();
+    });
+
+    // zstd holds `" " + 2`, and for x86-64 the compiler writes that as the name of the string and an addend.
+    test("follows the name of a string whatever is added to it", async () => {
+      using dir = tempDir("trim-macho-reader", {
+        ...sources,
+        "text.S": `.section __TEXT,__cstring,cstring_literals\nl_first: .asciz "in front"\nl_named_text: .asciz "text"\n.section __DATA,__const\n.globl _past_text\n.p2align 3\n_past_text: .quad l_named_text + 5\n.quad l_named_text + 4096\n.subsections_via_symbols\n`,
+        "main.c": mainReading("past_text"),
+      });
+      const { linkOutput, stringAt, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: objectsWithText,
+      });
+      expect(statisticOf(linkOutput, "stringsNotFound")).toBe(0);
+      expect(statisticOf(linkOutput, "stringsRetained")).toBe(0);
+      expect(stringAt("text")).toBeGreaterThan(0);
+      expect(() => stringAt("in front")).toThrow();
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    test("names a reference to a string that it cannot follow, and retains every string", async () => {
+      using dir = tempDir("trim-macho-reader", {
+        ...sources,
+        "text.S": `.section __TEXT,__objc_methname,cstring_literals\nl_selector: .asciz "aSelector"\n.section __DATA,__const\n.globl _cell_of_selector\n.p2align 3\n_cell_of_selector: .quad l_selector\n.subsections_via_symbols\n`,
+        "main.c": mainReading("cell_of_selector"),
+      });
+      const { linkOutput, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: objectsWithText,
+      });
+      expect(statisticOf(linkOutput, "stringsNotFound")).toBe(1);
+      expect(statisticOf(linkOutput, "stringsFollowed")).toBe(0);
+      expect(linkOutput).toMatch(
+        /^graph: a string is not followed: \S*text\.o: \S*_cell_of_selector: "aSelector" is not among the strings of the image$/m,
+      );
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
     test("follows a pointer that only the fixups show into a single unit of the interpreter's assembly", async () => {
       const cellHolding = (value: string) =>
         `.section __DATA,__const\n.globl _retained_cell\n.p2align 3\n_retained_cell: .quad ${value}\n.subsections_via_symbols\n`;

@@ -112,6 +112,7 @@ interface Connections {
   stringReferrers: Map<number, Set<number>>;
   failures: GraphFailure[];
   stringsNotFound: number;
+  stringsNotFoundAt: string[];
   literalsNotFollowed: number;
   symbolsOutsideGraph: number;
 }
@@ -360,6 +361,7 @@ function connectReferences(
   const stringReferrers = new Map<number, Set<number>>();
   const failures: GraphFailure[] = [];
   let stringsNotFound = 0;
+  const stringsNotFoundAt: string[] = [];
   let literalsNotFollowed = 0;
   let symbolsOutsideGraph = 0;
   const definedExternals = new Set<string>();
@@ -384,10 +386,13 @@ function connectReferences(
     if (referrers === undefined) stringReferrers.set(node, new Set([file]));
     else referrers.add(file);
   };
-  const connectString = (referrers: number[], from: number, text: string) => {
+  const connectString = (referrers: number[], source: string, from: number, text: string) => {
     const node = stringByText.get(text);
     if (node === undefined) {
       stringsNotFound++;
+      stringsNotFoundAt.push(
+        `${files.get(referrers[0]!)}: ${source}: ${JSON.stringify(text.slice(0, 80))} is not among the strings of the image`,
+      );
       return;
     }
     successors[from]!.add(node);
@@ -402,6 +407,7 @@ function connectReferences(
   for (const [file, read] of objects) {
     if (read === undefined) continue;
     stringsNotFound += read.unreadStrings;
+    for (const place of read.unreadStringPlaces) stringsNotFoundAt.push(`${files.get(file)}: ${place}`);
     literalsNotFollowed += read.unreadLiterals;
     for (const name of read.retained) {
       const node = findInFile(file, name) ?? findInAnyFile(name);
@@ -423,11 +429,12 @@ function connectReferences(
           case "G": {
             connectAtom(file, source, from, false, value);
             const externalString = externalStrings.get(value);
-            if (externalString !== undefined) connectString([file, externalString.file], from, externalString.text);
+            if (externalString !== undefined)
+              connectString([file, externalString.file], source, from, externalString.text);
             break;
           }
           case "S":
-            connectString([file], from, value);
+            connectString([file], source, from, value);
             break;
           case "W":
             connectLiteral(from, value);
@@ -445,6 +452,7 @@ function connectReferences(
     stringReferrers,
     failures,
     stringsNotFound,
+    stringsNotFoundAt,
     literalsNotFollowed,
     symbolsOutsideGraph,
   };
@@ -598,6 +606,8 @@ export function readMachOGraph(
     recordSections,
     resolve: createResolver(files, index),
     failures: [...findUnreadInputs(inputs, index.fileOfNode), ...connections.failures],
+    // One string that is not followed keeps every string of the image.
+    remarks: connections.stringsNotFoundAt.map(place => `a string is not followed: ${place}`),
     statistics: {
       stringsFollowed: stringHash.size - stringsRetained,
       stringsRetained,

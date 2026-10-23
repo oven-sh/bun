@@ -165,9 +165,19 @@ function laidOut(root: string, side: Side) {
   return folder;
 }
 
-async function spawned(cmd: string[], folder: string, env: Record<string, string | undefined>, timeout: number) {
+async function spawned(cmd: string[], folder: string, env: Record<string, string | undefined>, timeout: number, afterItsFirstWords?: number) {
   await using child = Bun.spawn({ cmd, cwd: folder, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  let end: ReturnType<typeof setTimeout> | undefined;
+  const textOf = async (stream: ReadableStream<Uint8Array>) => {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+      if (afterItsFirstWords !== undefined) end ??= setTimeout(() => child.kill("SIGKILL"), afterItsFirstWords);
+    }
+    return Buffer.concat(chunks).toString();
+  };
+  const [stdout, stderr, exitCode] = await Promise.all([textOf(child.stdout), textOf(child.stderr), child.exited]);
+  clearTimeout(end);
   const said = (text: string) => text.replaceAll(folder, "<folder>").replaceAll("program.exe", "program").replace(packageChosenAtRandom, "$1<package> ");
   return { stdout: said(stdout), stderr: said(stderr), exitCode: child.signalCode ?? exitCode };
 }
@@ -186,7 +196,8 @@ const printsTheIdOf = (build: { stdout: string }) => ({ stdout: /^ +build id +([
 async function started(folder: string, name: string, options?: string, args: string[] = []) {
   const cmd = [join(folder, "program"), ...args];
   if (!neverEnd.includes(name)) return await spawned(cmd, folder, { ...bunEnv, BUN_OPTIONS: options }, 60_000);
-  const killed = await spawned(cmd, folder, { ...bunEnv, BUN_OPTIONS: options }, 5_000);
+  // Not a time from its start: the first start of a new executable on a busy Mac has taken more than five seconds.
+  const killed = await spawned(cmd, folder, { ...bunEnv, BUN_OPTIONS: options }, 60_000, 2_000);
   return { ...killed, stdout: eachLineOnce(killed.stdout), stderr: eachLineOnce(killed.stderr) };
 }
 

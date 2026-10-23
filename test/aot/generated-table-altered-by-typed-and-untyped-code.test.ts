@@ -2,7 +2,7 @@
 // AOT_GENERATED, AOT_GENERATED_FLAGS and AOT_GENERATED_KEEP are those of ./generated/run-generated.ts, AOT_GENERATED_ALONE that of ./generated/case-files.ts. In the folder that is kept, answers.tsv holds one row for each program.
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import {
   classesOf,
@@ -21,7 +21,8 @@ const mayBeRefused = /^\S+ store-text/;
 const wanted = process.env.AOT_GENERATED ?? "";
 const all = programs();
 const names = all.map(({ name }) => name);
-const inEveryRun = new Set(spread(names, Number(process.env.AOT_GENERATED_ALONE ?? 320)));
+// Each program is a build and the first start of a new executable, which a Mac signs and checks: 200 programs took CI's five minutes there, 320 take Linux two.
+const inEveryRun = new Set(spread(names, Number(process.env.AOT_GENERATED_ALONE ?? (isMacOS ? 100 : 320))));
 const chosen = all
   .filter(({ name }) => (wanted === "all" ? true : wanted ? name.includes(wanted) : inEveryRun.has(name)))
   // A debug or ASAN build of Bun is many times slower.

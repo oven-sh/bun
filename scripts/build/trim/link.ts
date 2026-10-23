@@ -74,6 +74,7 @@ const demanglerOption = "--demangler=";
 const responseFileArgument = /^((?:\/clang:)?-Wl,)?@(.*)$/;
 const rangeCountMargin = 1.25;
 const maxListedOutputs = 8;
+const maxListedRemarks = 20;
 const linkerFormats = { elf, macho: machO, coff } satisfies Record<ObjectFormat, (linker: Linker) => LinkerFormat>;
 
 export class Stopwatch {
@@ -619,6 +620,7 @@ export function printSummary(layout: Layout, { model, uses, format, stopwatch }:
   console.log(`${megabytes(partition.unexplainedBytes)} are in the image without a known reference and are retained`);
   const statistics = Object.entries(reading.statistics).map(([name, count]) => `${name} ${count}`);
   if (statistics.length > 0) console.log(`graph: ${statistics.join(", ")}`);
+  for (const remark of (reading.remarks ?? []).slice(0, maxListedRemarks)) console.log(`graph: ${remark}`);
   console.log(
     "needed only by features, in output sections that cannot be reordered: " +
       unmovableOutputBytes(layout, format)

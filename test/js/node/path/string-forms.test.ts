@@ -102,61 +102,73 @@ function createPaths(seed: number, count: number) {
   });
 }
 
+// CI's runner collects garbage at every call of a matcher, and there are over a million comparisons here: a test gathers
+// what differs and calls one matcher.
+function createComparison() {
+  const different: unknown[][] = [];
+  const compare = (label: unknown[], narrow: unknown, inWideStorage: unknown) => {
+    if (!Bun.deepEquals(narrow, inWideStorage, true)) different.push([...label, narrow, inWideStorage]);
+  };
+  return { different, compare };
+}
+
 const platforms = { posix: path.posix, win32: path.win32 };
 const ofOnePath = ["basename", "dirname", "extname", "isAbsolute", "normalize", "parse", "resolve", "join"] as const;
 
 describe.each(Object.entries(platforms))("path.%s", (_, p) => {
   test.each(Object.entries(forms))("a %s is read as the same characters in 16-bit storage are", (_, form) => {
     const paths = createPaths(1, 1500);
+    const { different, compare } = createComparison();
     paths.forEach((a, index) => {
       const b = paths[(index + 1) % paths.length];
       const c = paths[(index + 2) % paths.length];
-      for (const name of ofOnePath) expect([a, name, p[name](form(a))]).toEqual([a, name, p[name](wide(a))]);
+      for (const name of ofOnePath) compare([a, name], p[name](form(a)), p[name](wide(a)));
       for (const suffix of [a.slice(-(index % 6)), ".ts", "é", a, a + "x"])
-        expect([a, suffix, p.basename(form(a), form(suffix))]).toEqual([a, suffix, p.basename(wide(a), wide(suffix))]);
-      expect([a, b, p.relative(form(a), form(b))]).toEqual([a, b, p.relative(wide(a), wide(b))]);
-      expect([a, b, p.relative(form(a), form(a + "/" + b))]).toEqual([a, b, p.relative(wide(a), wide(a + "/" + b))]);
-      expect([a, b, p.relative(form(a + "/" + b), form(a))]).toEqual([a, b, p.relative(wide(a + "/" + b), wide(a))]);
-      expect([a, b, c, p.join(form(a), form(b), form(c))]).toEqual([a, b, c, p.join(wide(a), wide(b), wide(c))]);
-      expect([a, b, c, p.resolve(form(a), form(b), form(c))]).toEqual([a, b, c, p.resolve(wide(a), wide(b), wide(c))]);
-      expect([a, p.dirname(p.dirname(form(a)))]).toEqual([a, p.dirname(p.dirname(wide(a)))]);
-      expect([a, p.join(p.dirname(form(a)), p.basename(form(a)))]).toEqual([
-        a,
+        compare([a, suffix], p.basename(form(a), form(suffix)), p.basename(wide(a), wide(suffix)));
+      compare([a, b], p.relative(form(a), form(b)), p.relative(wide(a), wide(b)));
+      compare([a, b, "down"], p.relative(form(a), form(a + "/" + b)), p.relative(wide(a), wide(a + "/" + b)));
+      compare([a, b, "up"], p.relative(form(a + "/" + b), form(a)), p.relative(wide(a + "/" + b), wide(a)));
+      compare([a, b, c, "join"], p.join(form(a), form(b), form(c)), p.join(wide(a), wide(b), wide(c)));
+      compare([a, b, c, "resolve"], p.resolve(form(a), form(b), form(c)), p.resolve(wide(a), wide(b), wide(c)));
+      compare([a, "dirname twice"], p.dirname(p.dirname(form(a))), p.dirname(p.dirname(wide(a))));
+      compare(
+        [a, "joined again"],
+        p.join(p.dirname(form(a)), p.basename(form(a))),
         p.join(p.dirname(wide(a)), p.basename(wide(a))),
-      ]);
+      );
     });
+    expect(different).toEqual([]);
   });
 
   test("every length around the widths that are read at once", () => {
+    const { different, compare } = createComparison();
     for (let length = 0; length <= 70; ++length) {
       for (const at of [0, 1, length >> 1, length - 2, length - 1]) {
         for (const inserted of ["/", "//", "/.", "/./", "/..", "/../", ".", "..", "\\", "é"]) {
           for (const start of ["", "/"]) {
             const text = start + "x".repeat(Math.max(at, 0)) + inserted + "y".repeat(Math.max(length - at, 0));
-            for (const name of ofOnePath)
-              expect([text, name, p[name](flat(text))]).toEqual([text, name, p[name](wide(text))]);
-            expect([text, p.join(flat(text), flat(text))]).toEqual([text, p.join(wide(text), wide(text))]);
-            expect([text, p.resolve(flat(text), flat(text))]).toEqual([text, p.resolve(wide(text), wide(text))]);
-            expect([text, p.relative(flat(text), flat("/" + text + "/z"))]).toEqual([
-              text,
+            for (const name of ofOnePath) compare([text, name], p[name](flat(text)), p[name](wide(text)));
+            compare([text, "join"], p.join(flat(text), flat(text)), p.join(wide(text), wide(text)));
+            compare([text, "resolve"], p.resolve(flat(text), flat(text)), p.resolve(wide(text), wide(text)));
+            compare(
+              [text, "relative from"],
+              p.relative(flat(text), flat("/" + text + "/z")),
               p.relative(wide(text), wide("/" + text + "/z")),
-            ]);
-            expect([text, p.relative(flat("/x/" + text + "/z"), flat(text))]).toEqual([
-              text,
+            );
+            compare(
+              [text, "relative to"],
+              p.relative(flat("/x/" + text + "/z"), flat(text)),
               p.relative(wide("/x/" + text + "/z"), wide(text)),
-            ]);
+            );
           }
         }
       }
     }
+    expect(different).toEqual([]);
   });
 
   test("every short path made of a slash, a dot and a letter", () => {
-    // 650,000 comparisons: CI's runner collects garbage at every call of a matcher, so there is one call.
-    const different: unknown[][] = [];
-    const compare = (label: unknown[], narrow: unknown, inWideStorage: unknown) => {
-      if (!Bun.deepEquals(narrow, inWideStorage, true)) different.push([...label, narrow, inWideStorage]);
-    };
+    const { different, compare } = createComparison();
     const resolved: string[] = [];
     for (let length = 0; length <= 7; ++length) {
       for (let number = 0; number < 3 ** length; ++number) {
@@ -204,18 +216,20 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
     }
     Bun.gc(true);
     const separator = p.sep;
+    const expected: string[] = [];
     for (let i = 0; i < 2000; ++i) {
       const folder =
         p === path.posix ? `/folder-${i}/another-folder` : `${separator}folder-${i}${separator}another-folder`;
-      expect(answers.slice(i * 6, i * 6 + 6)).toEqual([
+      expected.push(
         `/folder-${i}/another-folder`,
         `file-${i}.extension`,
         ".extension",
         `file-${i}`,
         `${folder}${separator}file-${i}.extension`,
         `${folder}${separator}file-${i}.extension${separator}leaf-${i}`,
-      ]);
+      );
     }
+    expect(answers).toEqual(expected);
   });
 
   test("what is no string", () => {

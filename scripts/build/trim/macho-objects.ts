@@ -63,6 +63,8 @@ export interface MachOReferences {
   retained: string[];
   liveWithoutReference: string[];
   unreadStrings: number;
+  /** Where each of `unreadStrings` is, for the report of the link. */
+  unreadStringPlaces: string[];
   unreadLiterals: number;
   textOfExternalName: Map<string, string>;
   recordSections: { bytes: Buffer; references: Map<number, string> }[];
@@ -301,9 +303,15 @@ function readSectionReferences(
       if ((target.type & N_TYPE) !== N_SECT) {
         addReference(result, from, "G" + target.name);
       } else if (isCStringSection(target.section)) {
-        const text = enclosingString(target.section, target.value + addend + embeddedAddend(word, field));
-        if (text === undefined) result.unreadStrings++;
-        else addReference(result, from, "S" + text);
+        // The linker keeps the string that the symbol names and adds the addend to its address, wherever that leads:
+        // `" " + 2`, one past the end, is a pointer that a program may hold. What lies there in this object is kept too.
+        const named = enclosingString(target.section, target.value);
+        const reached = enclosingString(target.section, target.value + addend + embeddedAddend(word, field));
+        if (named === undefined) {
+          result.unreadStrings++;
+          result.unreadStringPlaces.push(`${from}: ${target.name} lies outside the section of strings it is listed in`);
+        } else addReference(result, from, "S" + named);
+        if (reached !== undefined && reached !== named) addReference(result, from, "S" + reached);
       } else if (literalSize(target.section) !== undefined) {
         addLiteralReference(from, target.section, target.value + addend + embeddedAddend(word, field));
       } else {
@@ -312,18 +320,31 @@ function readSectionReferences(
       continue;
     }
     const bytesAfterField = isX64 && relocationLength(word) === LENGTH_LONG ? x64BytesAfterField.get(type) : undefined;
-    if (bytesAfterField === undefined && !isPointer) {
-      if (isCStringSection(symbolNumber(word))) result.unreadStrings++;
-      else if (literalSize(symbolNumber(word)) !== undefined) result.unreadLiterals++;
+    // `.long L_string - _symbol`, which only the x86-64 assembler takes: as the linker does, read the field as the address.
+    const isShortAddress = isX64 && type === RELOC_UNSIGNED && relocationLength(word) === LENGTH_LONG;
+    if (bytesAfterField === undefined && !isPointer && !isShortAddress) {
+      if (isCStringSection(symbolNumber(word))) {
+        result.unreadStrings++;
+        result.unreadStringPlaces.push(
+          `${from}: a relocation of type ${type} and length ${relocationLength(word)} against the section of strings`,
+        );
+      } else if (literalSize(symbolNumber(word)) !== undefined) result.unreadLiterals++;
       continue;
     }
     const address =
-      bytesAfterField === undefined
-        ? Number(readContents().readBigUInt64LE(field))
-        : section.address + field + 4 + readContents().readInt32LE(field) + bytesAfterField;
+      bytesAfterField !== undefined
+        ? section.address + field + 4 + readContents().readInt32LE(field) + bytesAfterField
+        : isPointer
+          ? Number(readContents().readBigUInt64LE(field))
+          : readContents().readInt32LE(field);
     const targetSection = sectionNumberAt(address);
     if (isCStringSection(targetSection)) {
       addReference(result, from, "S" + enclosingString(targetSection, address)!);
+      continue;
+    }
+    if (isShortAddress && isCStringSection(symbolNumber(word))) {
+      result.unreadStrings++;
+      result.unreadStringPlaces.push(`${from}: 0x${address.toString(16)} is outside the section of strings`);
       continue;
     }
     if (literalSize(targetSection) !== undefined) {
@@ -347,6 +368,7 @@ function readObject(readFrom: ReadBytes): MachOReferences | UnreadReason {
     retained: [],
     liveWithoutReference: [],
     unreadStrings: 0,
+    unreadStringPlaces: [],
     unreadLiterals: 0,
     textOfExternalName: new Map(),
     recordSections: [],
@@ -363,8 +385,10 @@ function readObject(readFrom: ReadBytes): MachOReferences | UnreadReason {
     )
       continue;
     const text = lookup.enclosingString(symbol.section, symbol.value);
-    if (text === undefined) result.unreadStrings++;
-    else result.textOfExternalName.set(symbol.name, text);
+    if (text === undefined) {
+      result.unreadStrings++;
+      result.unreadStringPlaces.push(`${symbol.name}: an external name outside the section of strings it is listed in`);
+    } else result.textOfExternalName.set(symbol.name, text);
   }
   for (const entry of alternateEntries) {
     const atom = lookup.atomAt(entry.section, entry.value);

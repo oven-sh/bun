@@ -49,6 +49,16 @@ const lanes = {
 };
 
 const aotStepOf = stepKey => stepKey.replace(/-test-bun$/, "-test-aot");
+// `aotTests` of .buildkite/ci.ts: what the test-aot steps run.
+const aotTests = [
+  "aot/",
+  "bundler/bundler_compile_aot",
+  "bundler/compile-aot",
+  "bundler/compile-trim",
+  "bundler/trim-runtime-icu/",
+  "cli/aot-",
+];
+const isAotTest = path => aotTests.some(group => path.startsWith(group));
 
 const api = async path => {
   for (let attempt = 0; ; attempt++) {
@@ -234,14 +244,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   };
   const previous = JSON.parse(readFileSync(outputPath, "utf8"));
   for (const p of Object.keys(previous)) {
-    if (p.startsWith("aot/") && (existsSync(join(dirname(outputPath), p)) || partsOfOneTestFile.includes(p)))
-      paths.add(p);
+    if (isAotTest(p) && (existsSync(join(dirname(outputPath), p)) || partsOfOneTestFile.includes(p))) paths.add(p);
   }
   for (const p of [...paths].sort()) {
     const entry = {};
     for (const lane of Object.keys(lanes)) {
       if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
-      else if (p.startsWith("aot/") && previous[p]?.[lane] !== undefined) entry[lane] = previous[p][lane];
+      else if (isAotTest(p) && previous[p]?.[lane] !== undefined) entry[lane] = previous[p][lane];
     }
     out[p] = entry;
   }

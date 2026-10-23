@@ -76,6 +76,8 @@ export interface GraphReading {
   resolve(object: string, reference: string): ResolvedReference | undefined;
   failures: GraphFailure[];
   statistics: Record<string, number>;
+  /** What the report of the link says besides the numbers. */
+  remarks?: string[];
 }
 
 const unplacedAddress = -1;

@@ -876,6 +876,17 @@ interface TestOptions {
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
 type AotTests = "all" | "a tenth";
 
+// With test/aot go the tests of --aot and --trim that lie beside the bundler's and the command line's. Each of them builds
+// executables: on macOS, where test-bun has two shards, they took as long as everything else in those shards.
+const aotTests = [
+  "aot/",
+  "bundler/bundler_compile_aot",
+  "bundler/compile-aot",
+  "bundler/compile-trim",
+  "bundler/trim-runtime-icu/",
+  "cli/aot-",
+];
+
 const aotSources = [
   "src/aot/",
   "src/sema/",
@@ -909,7 +920,7 @@ const aotSources = [
   "src/jsc/bindings/RemovableFeatures.h",
   "src/jsc/bindings/RemovedFeature.cpp",
   "packages/bun-sound/",
-  "test/aot/",
+  ...aotTests.map(group => `test/${group}`),
   "scripts/build/aot",
   "scripts/build/trim/",
   "scripts/build/deps/webkit.ts",
@@ -973,11 +984,11 @@ function getAotParallelism(platform: Platform, aot: AotTests): number {
   const excludes = getAotExcludes(platform, aot);
   let milliseconds = 0;
   for (const [path, durations] of Object.entries(getExpectedDurations())) {
-    if (!path.startsWith("aot/") || excludes.some(group => path.includes(group))) continue;
+    if (!aotTests.some(group => path.startsWith(group)) || excludes.some(group => path.includes(group))) continue;
     milliseconds += Number(durations?.[lane] ?? durations?.["default"]) || 0;
   }
   const shards = Math.ceil(milliseconds / getAotFileDraw(platform, aot) / (12 * 60_000)) || (aot === "all" ? 20 : 3);
-  return Math.min(shards, os === "darwin" ? 8 : arch === "x64" ? 24 : 13);
+  return Math.min(shards, os === "darwin" ? 8 : arch === "x64" ? 27 : 16);
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
@@ -990,14 +1001,15 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   }
 
   if (aot) {
-    args.push("--include=aot/", "--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
+    args.push(...aotTests.map(group => `--include=${group}`));
+    args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
     // TODO: until all code that is generated directly has been seen to run on arm64 (test/aot/joined-programs.ts).
     if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/joined-programs-all-code-direct");
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   } else {
-    args.push("--exclude=aot/");
+    args.push(...aotTests.map(group => `--exclude=${group}`));
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
     // source-tree lints and build-script unit tests that never touch the built

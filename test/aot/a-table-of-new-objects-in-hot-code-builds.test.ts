@@ -41,17 +41,34 @@ async function run(cmd: string[], cwd: string) {
 }
 
 // The back end takes most of a minute and gigabytes for a body of that size. A debug or ASAN build takes many times that.
-test.skipIf(isDebug || isASAN)("a table of new objects whose entries all stay live builds where every function is hot", async () => {
-  using folder = tempDir("aot-table-of-new-objects", files);
-  const cwd = String(folder);
-  const executable = join(cwd, "program");
-  const built = await run(
-    [bunExe(), ...compileCommand, withThreads(1), "--aot-heat=everything-is-hot", ...withoutDebugInformation(), "main.ts", "--outfile", executable],
-    cwd,
-  );
-  expect({ stderr: built.exitCode === 0 ? "" : built.stderr.slice(-2000), exitCode: built.exitCode, signal: built.signal }).toEqual({ stderr: "", exitCode: 0, signal: null });
-  const plain = await run([bunExe(), "main.ts"], cwd);
-  const compiled = await run([executable], cwd);
-  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-  expect(plain.stdout).toBe(`${(entries * (entries - 1)) / 2} message 7 error k0 ${entries}\n`);
-}, 600_000);
+test.skipIf(isDebug || isASAN)(
+  "a table of new objects whose entries all stay live builds where every function is hot",
+  async () => {
+    using folder = tempDir("aot-table-of-new-objects", files);
+    const cwd = String(folder);
+    const executable = join(cwd, "program");
+    const built = await run(
+      [
+        bunExe(),
+        ...compileCommand,
+        withThreads(1),
+        "--aot-heat=everything-is-hot",
+        ...withoutDebugInformation(),
+        "main.ts",
+        "--outfile",
+        executable,
+      ],
+      cwd,
+    );
+    expect({
+      stderr: built.exitCode === 0 ? "" : built.stderr.slice(-2000),
+      exitCode: built.exitCode,
+      signal: built.signal,
+    }).toEqual({ stderr: "", exitCode: 0, signal: null });
+    const plain = await run([bunExe(), "main.ts"], cwd);
+    const compiled = await run([executable], cwd);
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+    expect(plain.stdout).toBe(`${(entries * (entries - 1)) / 2} message 7 error k0 ${entries}\n`);
+  },
+  600_000,
+);

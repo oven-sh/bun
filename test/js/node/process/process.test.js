@@ -10,7 +10,7 @@ import {
   isDebug,
   isLinux,
   isMacOS,
-  isMusl,
+  isPosix,
   isRoot,
   isWindows,
   tempDir,
@@ -424,17 +424,17 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", a
 });
 
 // https://github.com/oven-sh/bun/issues/32409
-// Linux-only: the process cwd can grow past PATH_MAX via repeated relative
-// chdir, after which getcwd fails and the logical path no longer fits either. chdir must not throw, and once the cached cwd can no longer
+// The process cwd can grow past PATH_MAX via repeated relative chdir, after
+// which getcwd fails and the logical path no longer fits either. chdir must not throw, and once the cached cwd can no longer
 // follow the process it must stop being used as a base: a later relative
 // chdir must not derive a wrong but existing directory from it.
-it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH_MAX", async () => {
+it.skipIf(!isPosix)("process.chdir() does not throw when the cwd grows past PATH_MAX", async () => {
   using dir = tempDir("process-chdir-long", {
     "index.js": `
       const fs = require("node:fs");
       const seg = Buffer.alloc(200, "d").toString();
-      // 40 * ~201 bytes is well past PATH_MAX (4096): getcwd() starts failing
-      // partway down, but each short relative chdir still succeeds.
+      // 40 * ~201 bytes is well past PATH_MAX on every platform: getcwd()
+      // starts failing partway down, but each short relative chdir succeeds.
       // process.chdir() returns the cached cwd.
       let cached;
       for (let i = 0; i < 40; i++) {
@@ -466,9 +466,12 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // glibc's getcwd reports a cwd past PATH_MAX as ERANGE; musl passes the
-  // kernel's ENAMETOOLONG through unchanged.
-  expect(JSON.parse(stdout)).toEqual({ cwdError: isMusl ? "ENAMETOOLONG" : "ERANGE", cacheFrozen: true });
+  // Which error getcwd reports for a cwd past PATH_MAX depends on the libc
+  // (glibc: ERANGE, musl and the BSDs: the kernel's ENAMETOOLONG or ERANGE).
+  expect(JSON.parse(stdout)).toEqual({
+    cwdError: expect.stringMatching(/^(ERANGE|ENAMETOOLONG)$/),
+    cacheFrozen: true,
+  });
   expect(exitCode).toBe(0);
 });
 

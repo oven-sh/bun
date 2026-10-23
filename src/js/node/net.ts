@@ -1214,8 +1214,9 @@ const ServerHandlers = {
     //     callback finally resolves. The native side parks the connection
     //     (BoringSSL select-certificate retry) until then.
     // Nothing is cached - the callback runs per-connection the way Node's
-    // does. The native dispatch passes the listener's `data` (the owning
-    // tls.Server) and the accepted connection's handle.
+    // does. The native dispatch passes the `data` that holds `_SNICallback`
+    // (the tls.Server for an accepted connection, the TLSSocket for an
+    // adopted one) and the connection's handle, whose `data` is its TLSSocket.
     const cb = server?._SNICallback;
     if (typeof cb !== "function" || !servername) return undefined;
     const state: SNIState = {
@@ -1227,7 +1228,9 @@ const ServerHandlers = {
       suspended: false,
     };
     try {
-      cb.$call(server, servername, onSNIResolution.bind(null, state));
+      // Node calls it as a method of the connection's TLSSocket:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L215
+      cb.$call(socketHandle?.data, servername, onSNIResolution.bind(null, state));
     } catch (err) {
       state.settled = true;
       state.failed = toSNIError(err);

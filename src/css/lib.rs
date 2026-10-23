@@ -119,7 +119,7 @@ unsafe fn arena_str(p: Str) -> &'static [u8] {
 pub(crate) use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
-pub use properties::custom::{TokenList, TokenListFns};
+pub use properties::custom::{RawTokens, RawTokensContext, TokenList};
 pub use values::ident::IdentFns;
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 

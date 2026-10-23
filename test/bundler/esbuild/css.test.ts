@@ -1303,6 +1303,36 @@ b {
     },
   });
 
+  // The block of an unknown at-rule is not a declaration value: `#f00` is an ID selector,
+  // not the color red. A `url()` in the block is still an import.
+  for (const backend of ["cli", "api"] as const) {
+    for (const minify of [false, true]) {
+      itBundled(`css/UnknownAtRuleKeepsIDSelector${backend === "api" ? "API" : ""}${minify ? "Minified" : ""}`, {
+        backend,
+        files: {
+          "/entry.css": /* css */ `
+            @foo {
+              a#f00:hover { background: url(./example.png) }
+            }
+          `,
+          "/example.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        },
+        outfile: "/out.css",
+        minifyWhitespace: minify,
+        minifySyntax: minify,
+        onAfterBundle(api) {
+          api
+            .expectFile("/out.css")
+            .toBe(
+              minify
+                ? `@foo{a#f00:hover { background: url(data:image/png;base64,iVBORw0KGgo=) }}\n`
+                : `/* entry.css */\n@foo {\n  a#f00:hover { background: url("data:image/png;base64,iVBORw0KGgo=") }\n}\n`,
+            );
+        },
+      });
+    }
+  }
+
   itBundled("css/PackageURLsInCSS", {
     files: {
       "/entry.css": /* css */ `

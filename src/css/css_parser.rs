@@ -58,7 +58,7 @@ pub use crate::media_query::{self, MediaFeatureType, MediaList};
 pub use crate::properties::{
     self as css_properties, Property, PropertyId, PropertyIdTag,
     css_modules::Composes,
-    custom::{TokenList, TokenListFns},
+    custom::{RawTokens, RawTokensContext},
 };
 pub use crate::rules::{
     self as css_rules, CssRule, CssRuleList, Location, MinifyContext, StyleContext,
@@ -362,7 +362,7 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     let name: &'static [u8] = unsafe { src_str(name) };
     options.warn(&input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
-    let tokens = TokenListFns::parse(input, options, 0)?;
+    let tokens = RawTokens::parse(input, RawTokensContext::AtRule)?;
     Ok(AtRulePrelude::Unknown { name, tokens })
 }
 
@@ -891,7 +891,7 @@ pub enum AtRulePrelude<T> {
     Unknown {
         name: &'static [u8], // TODO: lifetime
         /// The tokens of the prelude
-        tokens: TokenList,
+        tokens: RawTokens,
     },
     Custom(T),
 }
@@ -1878,7 +1878,7 @@ mod rule_parsers {
                     this.rules.v.push(CssRule::Unknown(UnknownAtRule {
                         name,
                         prelude: tokens,
-                        block: Some(TokenListFns::parse(input, this.options, 0)?),
+                        block: Some(RawTokens::parse(input, RawTokensContext::AtRule)?),
                         loc,
                     }));
                     Ok(())

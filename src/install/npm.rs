@@ -1419,18 +1419,10 @@ pub mod package_manifest {
                             let _ = bun_sys::unlinkat(tmpdir, tmp_path);
                         }
 
-                        // On Darwin `Errno::EOPNOTSUPP` resolves to 102 while
-                        // the kernel reports errno **45** (ENOTSUP), so match
-                        // `ENOTSUP` as well to keep the macOS
-                        // `renameat2(.exchange)` fallback reachable. On
-                        // Linux/FreeBSD the two names alias the same value,
-                        // so compare by equality (a `matches!` pattern would
-                        // flag the alias as unreachable).
                         let errno = err.get_errno();
                         if errno == bun_sys::Errno::EEXIST
                             || errno == bun_sys::Errno::ENOTEMPTY
-                            || errno == bun_sys::Errno::ENOTSUP
-                            || errno == bun_sys::Errno::EOPNOTSUPP
+                            || bun_errno::is_not_supported(errno)
                         {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(

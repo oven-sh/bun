@@ -1352,8 +1352,9 @@ impl<'a> Linker<'a> {
         let errno = err.get_errno();
         if !matches!(
             errno,
-            sys::Errno::EEXIST | sys::Errno::EPERM | sys::Errno::EACCES | sys::Errno::EOPNOTSUPP
-        ) {
+            sys::Errno::EEXIST | sys::Errno::EPERM | sys::Errno::EACCES
+        ) && !bun_errno::is_not_supported(errno)
+        {
             return Err(err.into());
         }
 

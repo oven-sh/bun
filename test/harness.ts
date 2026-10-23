@@ -2577,6 +2577,63 @@ export const dtUnknownReaddir = {
 };
 
 /**
+ * Runs bun on macOS as if the file system refused some calls, without needing
+ * such a volume (HFS+ and exFAT refuse `clonefileat`, exFAT refuses `linkat`):
+ * `env()` inserts a dyld interposer that fails each call in `refuse` with the
+ * errno named for it. A call that would fail with ENOENT or EEXIST still does,
+ * as in the kernel. Each refusal appends the name of the call to the file
+ * `log`; assert on it, otherwise a test here passes vacuously if bun ever stops
+ * making the call.
+ */
+export const refusedSyscalls = {
+  /** macOS with a C compiler; `skipIf(!refusedSyscalls.available)`. */
+  get available(): boolean {
+    return isMacOS && !!(which("cc") || which("clang"));
+  },
+  /**
+   * Compiles the interposer into `dir`, a `tempDir` of the test, and returns
+   * its path. Call it from `beforeAll`: the compiler can take several seconds
+   * on a loaded machine.
+   */
+  async compile(dir: string): Promise<string> {
+    const cc = which("cc") || which("clang");
+    if (!cc) throw new Error("refusedSyscalls: no C compiler (cc/clang) found in $PATH");
+    const shim = join(dir, "refuse-syscalls-shim.dylib");
+    const source = join(import.meta.dir, "fixtures", "refuse-syscalls-shim.c");
+    // dyld loads it into bun, so it has bun's architecture.
+    const arch = process.arch === "arm64" ? "arm64" : "x86_64";
+    const proc = Bun.spawn({
+      cmd: [cc, "-arch", arch, "-dynamiclib", "-O2", "-o", shim, source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0)
+      throw new Error(`refusedSyscalls: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+    return shim;
+  },
+  /**
+   * `shim` is what `compile()` returned. `refuse` maps a call (`symlink` is
+   * only refused in a `.bin` directory) to an errno name such as `"ENOTSUP"`.
+   */
+  env(
+    shim: string,
+    refuse: Partial<Record<"clonefileat" | "linkat" | "symlink" | "fcopyfile", string>>,
+    log: string,
+  ): NodeJS.Dict<string> {
+    return {
+      ...bunEnv,
+      DYLD_INSERT_LIBRARIES: bunEnv.DYLD_INSERT_LIBRARIES ? `${shim}:${bunEnv.DYLD_INSERT_LIBRARIES}` : shim,
+      REFUSE_SYSCALLS: Object.entries(refuse)
+        .map(([call, errno]) => `${call}=${errno}`)
+        .join(","),
+      REFUSED_SYSCALLS_LOG: log,
+    };
+  },
+};
+
+/**
  * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
  * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.
  */

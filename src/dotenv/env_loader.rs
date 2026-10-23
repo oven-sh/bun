@@ -800,6 +800,7 @@ impl Loader {
                 use bun_sys::E;
                 match err.get_errno() {
                     // A unix socket: ENXIO on Linux, EOPNOTSUPP on macOS and FreeBSD.
+                    #[allow(deprecated)] // open(2) on a socket: 102 is the value wanted
                     E::EISDIR | E::ENOENT | E::ENXIO | E::EOPNOTSUPP => {
                         // prevent retrying
                         self.default_files_loaded.insert(env_file);

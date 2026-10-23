@@ -9146,6 +9146,8 @@ pub(crate) fn renameat_concurrently_without_fallback(
 
             // Windows doesn't have any equivalent of renameat with swap
             #[cfg(not(windows))]
+            #[allow(deprecated)]
+            // inert on macOS: RENAME_EXCL fails with ENOTSUP only when RENAME_SWAP fails too
             {
                 // Fallback path: the folder exists in the cache dir, it might be in a strange state
                 // let's attempt to atomically replace it with the temporary folder's version

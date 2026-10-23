@@ -96,8 +96,8 @@ pub struct LinkerContext<'a> {
     /// We may need to refer to the CommonJS "module" symbol for exports
     pub(crate) unbound_module_ref: Ref,
 
-    /// We may need to refer to the "__promiseAll" runtime symbol
-    pub(crate) promise_all_runtime_ref: Ref,
+    /// The unbound `Promise` whose `all` joins async dependencies (`InsideWrapperPrefix`).
+    pub(crate) promise_ref: Ref,
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
@@ -164,7 +164,7 @@ impl<'a> Default for LinkerContext<'a> {
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
-            promise_all_runtime_ref: Ref::NONE,
+            promise_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
@@ -597,10 +597,6 @@ impl<'a> LinkerContext<'a> {
             .get(b"__commonJS")
             .expect("infallible: runtime export")
             .ref_;
-        self.promise_all_runtime_ref = runtime_named_exports
-            .get(b"__promiseAll")
-            .expect("infallible: runtime export")
-            .ref_;
         // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
         self.preload_runtime_ref = runtime_named_exports
             .get(b"__preload")
@@ -608,6 +604,12 @@ impl<'a> LinkerContext<'a> {
         self.chunks_runtime_ref = runtime_named_exports
             .get(b"__chunks")
             .map_or(Ref::NONE, |export| export.ref_);
+
+        self.promise_ref = self.graph.generate_new_symbol(
+            Index::RUNTIME.get(),
+            bun_ast::symbol::Kind::Unbound,
+            b"Promise",
+        );
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(
@@ -2360,23 +2362,11 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 // Replace the statement with a call to "init()"
-                let init_call = Expr::init(
-                    E::Call {
-                        target: Expr::init_identifier(wrapper_ref, loc),
-                        ..Default::default()
-                    },
+                stmts.inside_wrapper_prefix.append_dependency(
+                    wrapper_ref,
                     loc,
-                );
-
-                if other_flags.is_async_or_has_async_dependency {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
-                } else {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_sync_dependency(init_call)?;
-                }
+                    other_flags.is_async_or_has_async_dependency,
+                )?;
             }
         }
 
@@ -3547,29 +3537,6 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                // Count async dependencies to determine if we need __promiseAll
-                let mut async_import_count: usize = 0;
-                {
-                    let import_records =
-                        self.graph.ast.items_import_records()[source_index as usize].as_slice();
-                    let meta_flags = self.graph.meta.items_flags();
-
-                    for record in import_records {
-                        if !record.source_index.is_valid() {
-                            continue;
-                        }
-                        let other_flags = meta_flags[record.source_index.get() as usize];
-                        if other_flags.is_async_or_has_async_dependency {
-                            async_import_count += 1;
-                            if async_import_count >= 2 {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let needs_promise_all = async_import_count >= 2;
-
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
@@ -3578,25 +3545,9 @@ impl<'a> LinkerContext<'a> {
                     &[]
                 };
 
-                let promise_all_parts: &[u32] = if needs_promise_all
-                    && wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
-                } else {
-                    &[]
-                };
-
-                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let mut dependencies =
-                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
+                // generate a dummy part that depends on the "__esm" symbol
+                let mut dependencies = DependencyList::init_capacity(esm_parts.len());
                 for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
-                }
-                for &part in promise_all_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
                         source_index: bun_ast::Index::RUNTIME,
@@ -3635,19 +3586,6 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("OOM");
-
-                    // Only mark __promiseAll as used if we have multiple async dependencies
-                    if needs_promise_all {
-                        self.graph
-                            .generate_symbol_import_and_use(
-                                source_index,
-                                part_index,
-                                self.promise_all_runtime_ref,
-                                1,
-                                crate::Index::RUNTIME,
-                            )
-                            .expect("OOM");
-                    }
                 }
             }
             WrapKind::None => {}
@@ -5189,157 +5127,234 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
+/// A wrapper's dependency statements in source order. `joined` starts at the first async one.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
-    pub(crate) sync_dependencies_end: usize,
-    // if true it will exist at `sync_dependencies_end`
-    pub(crate) has_async_dependency: bool,
+    joined: Vec<Joined>,
+}
+
+enum Joined {
+    /// `init_x` of an async dependency. Every call returns the same promise.
+    Async(Ref, Loc),
+    Sync(Stmt),
+}
+
+fn init_call(wrapper_ref: Ref, loc: Loc) -> Expr {
+    Expr::init(
+        E::Call {
+            target: Expr::init_identifier(wrapper_ref, loc),
+            ..Default::default()
+        },
+        loc,
+    )
 }
 
 impl InsideWrapperPrefix {
     fn init() -> Self {
         Self {
             stmts: Vec::new(),
-            sync_dependencies_end: 0,
-            has_async_dependency: false,
+            joined: Vec::new(),
         }
     }
 
-    // deinit → Drop (Vec frees automatically); reset is explicit
-
     pub(crate) fn reset(&mut self) {
         self.stmts.clear();
-        self.sync_dependencies_end = 0;
-        self.has_async_dependency = false;
+        self.joined.clear();
     }
-}
 
-impl InsideWrapperPrefix {
+    pub(crate) fn has_joined(&self) -> bool {
+        !self.joined.is_empty()
+    }
+
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
-        self.stmts.push(stmt);
+        if self.joined.is_empty() {
+            self.stmts.push(stmt);
+            return Ok(());
+        }
+
+        if let bun_ast::StmtData::SLocal(local) = stmt.data {
+            let binds_identifiers = local
+                .decls
+                .iter()
+                .all(|decl| matches!(decl.binding.data, bun_ast::binding::Data::BIdentifier(_)));
+            debug_assert!(binds_identifiers);
+            if binds_identifiers {
+                // `var ns = value;` becomes `var ns;` above and `ns = value;` in order.
+                let mut hoisted = G::DeclList::init_capacity(local.decls.len());
+                for decl in local.decls.iter() {
+                    hoisted.push(G::Decl {
+                        binding: decl.binding,
+                        value: None,
+                    });
+                    if let (Some(value), bun_ast::binding::Data::BIdentifier(id)) =
+                        (decl.value, decl.binding.data)
+                    {
+                        self.joined.push(Joined::Sync(Stmt::alloc(
+                            S::SExpr {
+                                value: Expr::assign(
+                                    Expr::init_identifier(id.get().r#ref, decl.binding.loc),
+                                    value,
+                                ),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        )));
+                    }
+                }
+                self.stmts.push(Stmt::alloc(
+                    S::Local {
+                        decls: hoisted,
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ));
+                return Ok(());
+            }
+        }
+
+        self.joined.push(Joined::Sync(stmt));
         Ok(())
     }
 
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
-        self.stmts.extend_from_slice(stmts);
+        for &stmt in stmts {
+            self.append_non_dependency(stmt)?;
+        }
         Ok(())
     }
 
-    fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
-        self.stmts.insert(
-            self.sync_dependencies_end,
-            Stmt::alloc(
-                S::SExpr {
-                    value: call_expr,
-                    ..Default::default()
-                },
-                call_expr.loc,
-            ),
-        );
-        self.sync_dependencies_end += 1;
-        Ok(())
-    }
-
-    fn append_async_dependency(
+    /// `wrapper_ref` is the `init_x` of a wrapped ESM dependency.
+    pub(crate) fn append_dependency(
         &mut self,
-        call_expr: Expr,
-        promise_all_ref: Ref,
+        wrapper_ref: Ref,
+        loc: Loc,
+        is_async: bool,
     ) -> Result<(), AllocError> {
-        if !self.has_async_dependency {
-            self.has_async_dependency = true;
-            self.stmts.insert(
-                self.sync_dependencies_end,
-                Stmt::alloc(
-                    S::SExpr {
-                        value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                ),
-            );
+        if is_async {
+            self.joined.push(Joined::Async(wrapper_ref, loc));
             return Ok(());
         }
+        self.append_non_dependency(Stmt::alloc(
+            S::SExpr {
+                value: init_call(wrapper_ref, loc),
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
 
-        // Note: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
-        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` panics on
-        // shape mismatch.
-        let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
-            .data
-            .s_expr_mut()
-            .unwrap()
-            .value
-            .data
-            .e_await_mut()
-            .expect("infallible: variant checked")
-            .value;
-        let call = first_dep_call_expr
-            .data
-            .e_call_mut()
-            .expect("infallible: variant checked");
+    /// Moves the statements to the end of `out`, the `await` last.
+    pub(crate) fn finish(&mut self, promise_ref: Ref, out: &mut Vec<Stmt>) {
+        out.append(&mut self.stmts);
+        if self.joined.is_empty() {
+            return;
+        }
 
-        if call
-            .target
-            .data
-            .e_identifier()
-            .expect("infallible: variant checked")
-            .ref_
-            .eql(promise_all_ref)
-        {
-            // `await __promiseAll` already in place, append to the array argument
-            call.args
-                .mut_(0)
-                .data
-                .e_array_mut()
-                .expect("infallible: variant checked")
-                .items
-                .push(call_expr);
-        } else {
-            // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
-
-            let promise_all = Expr::init(
-                E::Identifier {
-                    ref_: promise_all_ref,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            );
-
-            let mut items = bun_ast::ExprNodeList::init_capacity(2);
-            items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
-
+        let promise_method = |name: &'static [u8], argument: Expr| {
             let mut args = bun_ast::ExprNodeList::init_capacity(1);
-            args.append_assume_capacity(Expr::init(
-                E::Array {
-                    items,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            ));
-
-            let promise_all_call = Expr::init(
+            args.append_assume_capacity(argument);
+            Expr::init(
                 E::Call {
-                    target: promise_all,
+                    target: Expr::init(
+                        E::Dot {
+                            target: Expr::init_identifier(promise_ref, Loc::EMPTY),
+                            name: name.into(),
+                            name_loc: Loc::EMPTY,
+                            ..Default::default()
+                        },
+                        Loc::EMPTY,
+                    ),
                     args,
                     ..Default::default()
                 },
                 Loc::EMPTY,
-            );
+            )
+        };
 
-            // replace the `await init_` expr with `await __promiseAll`
-            self.stmts[self.sync_dependencies_end] = Stmt::alloc(
-                S::SExpr {
-                    value: Expr::init(
+        let last_sync = self
+            .joined
+            .iter()
+            .rposition(|item| matches!(item, Joined::Sync(_)));
+        let mut awaited = bun_ast::ExprNodeList::init_capacity(self.joined.len());
+        for (index, item) in self.joined.iter().enumerate() {
+            match *item {
+                Joined::Sync(stmt) => out.push(stmt),
+                Joined::Async(wrapper_ref, loc) => {
+                    awaited.push(init_call(wrapper_ref, loc));
+                    if last_sync.is_some_and(|last| index < last) {
+                        // `Promise.resolve(init_a()).catch(() => {})`: a later statement can throw.
+                        let mut handler = bun_ast::ExprNodeList::init_capacity(1);
+                        handler.append_assume_capacity(Expr::init(E::Arrow::default(), Loc::EMPTY));
+                        out.push(Stmt::alloc(
+                            S::SExpr {
+                                value: Expr::init(
+                                    E::Call {
+                                        target: Expr::init(
+                                            E::Dot {
+                                                target: promise_method(
+                                                    b"resolve",
+                                                    init_call(wrapper_ref, loc),
+                                                ),
+                                                name: b"catch".into(),
+                                                name_loc: Loc::EMPTY,
+                                                ..Default::default()
+                                            },
+                                            Loc::EMPTY,
+                                        ),
+                                        args: handler,
+                                        ..Default::default()
+                                    },
+                                    Loc::EMPTY,
+                                ),
+                                ..Default::default()
+                            },
+                            loc,
+                        ));
+                    }
+                }
+            }
+        }
+
+        let value = match (awaited.len(), &self.joined[0]) {
+            // `init_a() && await init_a()`: `undefined` is a call back into an import cycle.
+            (1, &Joined::Async(wrapper_ref, loc)) => Expr::init(
+                E::Binary {
+                    op: bun_ast::OpCode::BinLogicalAnd,
+                    left: init_call(wrapper_ref, loc),
+                    right: Expr::init(
                         E::Await {
-                            value: promise_all_call,
+                            value: init_call(wrapper_ref, loc),
                         },
                         Loc::EMPTY,
                     ),
-                    ..Default::default()
                 },
                 Loc::EMPTY,
-            );
-        }
-        Ok(())
+            ),
+            // `await Promise.all([init_a(), init_d()])`
+            _ => Expr::init(
+                E::Await {
+                    value: promise_method(
+                        b"all",
+                        Expr::init(
+                            E::Array {
+                                items: awaited,
+                                ..Default::default()
+                            },
+                            Loc::EMPTY,
+                        ),
+                    ),
+                },
+                Loc::EMPTY,
+            ),
+        };
+        out.push(Stmt::alloc(
+            S::SExpr {
+                value,
+                ..Default::default()
+            },
+            Loc::EMPTY,
+        ));
+        self.joined.clear();
     }
 }
 

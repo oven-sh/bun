@@ -2593,7 +2593,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("await init_async()");
+      expect(out).toContain("await (init_async() || Promise.resolve().then(() => init_async()))");
       expect(out).toContain("init_sync()");
     },
   });
@@ -4378,6 +4378,620 @@ describe("bundler", () => {
     },
     run: { stdout: "m user" },
   });
+
+  // The dependencies of a lazily wrapped module run in source order, like the
+  // module graph evaluates them. An `import()` of a module anywhere in the
+  // bundle is what wraps it. The expected output is what node prints for the
+  // unbundled files.
+  itBundled("edgecase/WrappedExportStarKeepsImportOrder", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry");
+      `,
+      "/a.js": /* js */ `
+        export * from "./p.js";
+        import { q } from "./q.js";
+        console.log("eval a", q);
+      `,
+      "/p.js": /* js */ `console.log("eval p"); export const p = 1;`,
+      "/q.js": /* js */ `
+        console.log("eval q"); export const q = 1;
+        import("./a.js").then(ns => console.log("dyn a ok", Object.keys(ns).join()));
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        eval p
+        eval q
+        eval a 1
+        entry
+        dyn a ok p
+      `,
+    },
+  });
+  itBundled("edgecase/WrappedAsyncDependencyKeepsImportOrder", {
+    files: {
+      "/entry.js": /* js */ `import "./x.js"; console.log("entry");`,
+      "/x.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        console.log("x body");
+      `,
+      "/a.js": /* js */ `
+        console.log("a start");
+        await 0;
+        console.log("a end");
+      `,
+      "/b.js": /* js */ `
+        console.log("b");
+        setTimeout(() => import("./x.js").then(() => console.log("dyn x")));
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a start
+        b
+        a end
+        x body
+        entry
+        dyn x
+      `,
+    },
+    onAfterBundle(api) {
+      // a starts, then b, then the wrapper waits for a. The `.catch` gives
+      // a's promise a handler for when b throws.
+      expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain(
+        "Promise.resolve(init_a()).catch(() => {}); init_b(); init_a() && await init_a();",
+      );
+    },
+  });
+  itBundled("edgecase/UnwrappedEntryAsyncDependencyKeepsImportOrder", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        console.log("entry");
+      `,
+      "/a.js": /* js */ `
+        console.log("a start");
+        await 0;
+        console.log("a end");
+      `,
+      "/b.js": /* js */ `
+        console.log("b");
+        import("./a.js");
+        import("./b.js");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a start
+        b
+        a end
+        entry
+      `,
+    },
+  });
+  // The CommonJS module's exports are a thenable: joining the `require_c()`
+  // with the awaited dependencies must not await them.
+  itBundled("edgecase/WrappedCommonJSDependencyAfterAsyncDependencyKeepsImportOrder", {
+    files: {
+      "/entry.js": /* js */ `import "./x.js"; console.log("entry");`,
+      "/x.js": /* js */ `
+        import "./a.js";
+        import c from "./c.cjs";
+        import "./b.js";
+        console.log("x body", c.value);
+      `,
+      "/a.js": /* js */ `
+        console.log("a start");
+        await 0;
+        console.log("a end");
+      `,
+      "/b.js": /* js */ `
+        console.log("b");
+        setTimeout(() => import("./x.js").then(() => console.log("dyn x")));
+      `,
+      "/c.cjs": /* js */ `
+        console.log("c");
+        module.exports = { value: "C", then(resolve) { console.log("then called"); resolve(); } };
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a start
+        c
+        b
+        a end
+        x body C
+        entry
+        dyn x
+      `,
+    },
+  });
+  itBundled("edgecase/ExportStarOfAsyncDependencyIsAwaited", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as A from "./a.js";
+        console.log("entry: A.r =", A.r);
+        import("./r.js").then(() => console.log("dyn done"));
+      `,
+      "/a.js": /* js */ `
+        export * from "./r.js";
+        import * as self from "./a.js";
+        console.log("a body: r =", self.r);
+        export const a = 1;
+      `,
+      "/r.js": /* js */ `
+        console.log("r start");
+        await 0;
+        console.log("r end");
+        export let r = "initialised";
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        r start
+        r end
+        a body: r = initialised
+        entry: A.r = initialised
+        dyn done
+      `,
+    },
+  });
+  // The re-exporter's `__reExport(...)` of its first async dependency joins
+  // the awaited list.
+  itBundled("edgecase/ExportStarOfAsyncDependencyWithDynamicFallback", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as X from "./x.js";
+        console.log("entry", X.c);
+        import("./x.js").then(() => console.log("dyn"));
+      `,
+      "/x.js": /* js */ `export * from "./r.js";`,
+      "/r.js": /* js */ `
+        export * from "./c.cjs";
+        console.log("r start");
+        await 0;
+        console.log("r end");
+      `,
+      "/c.cjs": /* js */ `module.exports = { c: 1 };`,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        r start
+        r end
+        entry 1
+        dyn
+      `,
+    },
+  });
+  itBundled("edgecase/ExportStarOfRejectedAsyncDependencyRejects", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as A from "./a.js";
+        console.log("entry: A.r =", A.r);
+        import("./r.js").then(() => console.log("dyn done"), e => console.log("dyn rejected", e.message));
+      `,
+      "/a.js": /* js */ `
+        export * from "./r.js";
+        console.log("a body");
+        export const a = 1;
+      `,
+      "/r.js": /* js */ `
+        console.log("r start");
+        await Promise.reject(new Error("E-r"));
+        console.log("r end");
+        export let r = "initialised";
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `r start`,
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toContain("error: E-r");
+      },
+    },
+  });
+  // a and b both wait for d. a also imports s, after d. a is first in import
+  // order, so it continues first when d settles.
+  itBundled("edgecase/ImportersOfOneAsyncModuleContinueInImportOrder", {
+    files: {
+      "/entry.js": /* js */ `import "./x.js"; console.log("entry");`,
+      "/x.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        console.log("x body");
+        setTimeout(() => import("./x.js"));
+      `,
+      "/a.js": /* js */ `
+        import "./d.js";
+        import "./s.js";
+        console.log("A");
+      `,
+      "/b.js": /* js */ `
+        import "./d.js";
+        console.log("B");
+      `,
+      "/d.js": /* js */ `
+        console.log("d start");
+        await 0;
+        console.log("d end");
+      `,
+      "/s.js": /* js */ `console.log("s");`,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        d start
+        s
+        d end
+        A
+        B
+        x body
+        entry
+      `,
+    },
+  });
+  // plugin.js waits for registry.js and also imports a sync module. It
+  // continues as soon as registry.js settles, before the entry that awaits
+  // the `import()` of registry.js.
+  itBundled("edgecase/ImporterOfAsyncModuleContinuesBeforeImportCallback", {
+    files: {
+      "/entry.js": /* js */ `
+        const registry = import("./registry.js");
+        import("./plugin.js");
+        const { plugins } = await registry;
+        console.log("plugins:", JSON.stringify(plugins));
+      `,
+      "/plugin.js": /* js */ `
+        import { plugins } from "./registry.js";
+        import { tag } from "./util.js";
+        plugins.push(tag("p1"));
+      `,
+      "/registry.js": /* js */ `
+        export const plugins = [];
+        await 0;
+      `,
+      "/util.js": /* js */ `
+        const seen = new Map(Object.entries({}));
+        export const tag = name => (seen.set(name, true), "plugin:" + name);
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `plugins: ["plugin:p1"]`,
+    },
+  });
+  // b is async only because it imports a, and a is still in its first
+  // synchronous segment when b runs. An import cycle does not wait for that:
+  // b runs at once, before the later dependencies of a.
+  itBundled("edgecase/ImportCycleMemberRunsBeforeLaterDependency", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js"; console.log("entry");`,
+      "/a.js": /* js */ `
+        import "./b.js";
+        import "./t.js";
+        import "./s.js";
+        console.log("a body");
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        globalThis.bReady = true;
+        console.log("b body");
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        await 0;
+        console.log("t end");
+      `,
+      "/s.js": /* js */ `
+        console.log("s sees b:", globalThis.bReady);
+        setTimeout(() => import("./a.js"));
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        b body
+        t start
+        s sees b: true
+        t end
+        a body
+        entry
+      `,
+    },
+  });
+  // b throws after a started. The import fails with b's error, d does not
+  // start, and the later rejection of a has a handler: no unhandled rejection.
+  itBundled("edgecase/SyncDependencyThrowsAfterAsyncDependencyStarted", {
+    files: {
+      "/entry.js": /* js */ `
+        import("./x.js").catch(e => console.log("caught", e.message));
+      `,
+      "/x.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        import "./d.js";
+        export const x = 1;
+      `,
+      "/a.js": /* js */ `
+        console.log("a start");
+        await Promise.reject(new Error("a failed"));
+      `,
+      "/b.js": /* js */ `
+        console.log("b start");
+        throw new Error("b failed");
+      `,
+      "/d.js": /* js */ `
+        console.log("d start");
+        await 0;
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a start
+        b start
+        caught b failed
+      `,
+    },
+  });
+  // b runs inside a's first synchronous segment, where `init_a()` returns
+  // `undefined`: `init_a().then` would throw.
+  itBundled("edgecase/DynamicImportOfEvaluatingAsyncParent", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry done");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        console.log("a before await");
+        await 0;
+        console.log("a after await");
+        export const a = 1;
+      `,
+      "/b.js": /* js */ `
+        console.log("eval b");
+        import("./a.js").then(ns => console.log("dyn a ok", ns.a), e => console.log("dyn a ERR", e.message));
+        export const b = 2;
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        eval b
+        a before await
+        a after await
+        entry done
+        dyn a ok 1
+      `,
+    },
+  });
+  // m7 imports m10, which is async through the cycle m10 -> m12 -> m5 -> m10
+  // and m5's re-export of m13. A depth-first walk reaches m7 while m10 is
+  // still on its stack, so m7 must learn that m10 is async afterwards, or its
+  // wrapper is a plain arrow that contains `await`.
+  itBundled("edgecase/AsyncWrapperPropagatesThroughImportCycle", {
+    files: {
+      "/entry.js": /* js */ `import d0 from "./m0.js"; console.log("entry ok");`,
+      "/m0.js": /* js */ `
+        export * as star5 from "./m5.js";
+        export default "d0";
+        export class v0 {}
+      `,
+      "/m5.js": /* js */ `
+        export * as star10 from "./m10.js";
+        export * as star13 from "./m13.js";
+        export const v5 = "C5";
+        let dl5 = "dl5"; export { dl5 as default };
+      `,
+      "/m10.js": /* js */ `
+        import d15 from "./m15.js";
+        export { v12 as re_v12 } from "./m12.js";
+        export default function d10() { return typeof v10; }
+        export class v10 {}
+      `,
+      "/m12.js": /* js */ `
+        import { v5 } from "./m5.js";
+        export class v12 {}
+        export default function d12() { return typeof v12; }
+      `,
+      "/m13.js": /* js */ `
+        import { v15 } from "./m15.js";
+        export class v13 {}
+        console.log("m13 before await"); await 0; console.log("m13 after await");
+        export default class {}
+      `,
+      "/m15.js": /* js */ `
+        import { v7 } from "./m7.js";
+        import * as self15 from "./m15.js";
+        export default function d15() { return typeof v15; }
+        export let v15 = "L15";
+        import("./m13.js");
+      `,
+      "/m7.js": /* js */ `
+        import { v10 } from "./m10.js";
+        export let v7 = "L7";
+        export default function d7() { return typeof v7; }
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        m13 before await
+        m13 after await
+        entry ok
+      `,
+    },
+  });
+
+  // s and r import each other, s imports c (top-level await), and p (in a cycle
+  // with q) imports r: all five are async. q missed the flag when s had the
+  // lower source index, and its plain arrow got an `await`. The index order of
+  // s.mjs and p.mjs follows the hash of their paths, so the second build swaps
+  // which file has which role. The metafile lists the inputs in index order.
+  test.concurrent("edgecase/AsyncWrapperOnImportCycleInBothSourceIndexOrders", async () => {
+    const graph = (sRole: string, pRole: string) => ({
+      "entry.mjs": `
+        const first = await import("./s.mjs");
+        const second = await import("./p.mjs");
+        const { s, p, viaQ } = { ...first, ...second };
+        console.log(s() + " " + p() + " " + viaQ());
+      `,
+      [`${sRole}.mjs`]: `
+        import { r } from "./r.mjs";
+        import { c } from "./c.mjs";
+        export const s = () => "s:" + r + ":" + c;
+      `,
+      "r.mjs": `
+        import { s } from "./${sRole}.mjs";
+        export const r = "r";
+        export function getS() { return s; }
+      `,
+      "c.mjs": `export const c = await Promise.resolve("c");`,
+      [`${pRole}.mjs`]: `
+        import { q, getP } from "./q.mjs";
+        import { r } from "./r.mjs";
+        export const p = () => "p:" + q + ":" + r;
+        export const viaQ = () => getP()();
+      `,
+      "q.mjs": `
+        import { p } from "./${pRole}.mjs";
+        export const q = "q";
+        export function getP() { return p; }
+      `,
+    });
+    using dir = tempDir("async-cycle-index-order", graph("s", "p"));
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const expected = { stdout: "s:r:c p:q:r p:q:r\n", stderr: "", exitCode: 0 };
+
+    const results: Record<string, unknown> = {};
+    const sRoleIsFirst: boolean[] = [];
+    for (const [sRole, pRole] of [
+      ["s", "p"],
+      ["p", "s"],
+    ]) {
+      for (const [name, contents] of Object.entries(graph(sRole, pRole))) {
+        writeFileSync(join(String(dir), name), contents);
+      }
+      const source = await run("entry.mjs");
+      const build = await run("build", "./entry.mjs", `--outdir=out-${sRole}`, `--metafile=meta-${sRole}.json`);
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      results[`${sRole}.mjs imports c.mjs`] = { source, bundle: await run(`out-${sRole}/entry.js`) };
+
+      const inputs = Object.keys((await Bun.file(join(String(dir), `meta-${sRole}.json`)).json()).inputs);
+      sRoleIsFirst.push(inputs.indexOf(`${sRole}.mjs`) < inputs.indexOf(`${pRole}.mjs`));
+    }
+    expect(results).toEqual({
+      "s.mjs imports c.mjs": { source: expected, bundle: expected },
+      "p.mjs imports c.mjs": { source: expected, bundle: expected },
+    });
+    expect(sRoleIsFirst.toSorted()).toEqual([false, true]);
+  });
+  // The same graph behind one `import()`: s also re-exports from p. q missed
+  // the flag here whatever the source indices were.
+  itBundled("edgecase/AsyncWrapperOnImportCycleBehindOneImport", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = await import("./s.js");
+        console.log(m.s + " " + m.p + " " + m.viaQ());
+      `,
+      "/s.js": /* js */ `
+        import { r } from "./r.js";
+        import { c } from "./c.js";
+        export { p, viaQ } from "./p.js";
+        export const s = "s:" + r + ":" + c;
+      `,
+      "/r.js": /* js */ `
+        import { s } from "./s.js";
+        export const r = "r";
+        export function getS() { return s; }
+      `,
+      "/c.js": /* js */ `export const c = await Promise.resolve("c");`,
+      "/p.js": /* js */ `
+        import { q, getP } from "./q.js";
+        import { r } from "./r.js";
+        export const p = "p:" + q + ":" + r;
+        export const viaQ = () => getP();
+      `,
+      "/q.js": /* js */ `
+        import { p } from "./p.js";
+        export const q = "q";
+        export function getP() { return p; }
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "s:r:c p:q:r p:q:r",
+    },
+  });
+
+  // `a.mjs` imports a CommonJS file, then an ES module that a lazy route also
+  // reaches, so the bundle wraps both. `init_w()` stays below the `require_c()`
+  // of the import before it: every bundle prints what the source prints.
+  // `exports.x = 1` keeps its wrapper because `Object.keys(d)` holds the
+  // default import as a value. `module.exports = {...}` always keeps it.
+  for (const [name, commonjs] of [
+    ["LiftedExportsHeldAsValue", `exports.x = 1;`],
+    ["ModuleExportsObject", `module.exports = { x: 1 };`],
+  ]) {
+    test.concurrent(`edgecase/WrappedESMImportAfterCommonJSImport${name}`, async () => {
+      using dir = tempDir("cjs-then-wrapped-esm", {
+        "entry.mjs": `import "./a.mjs";\nimport("./lazy.mjs");\n`,
+        "a.mjs": `import d from "./c.cjs";\nimport "./w.mjs";\nconsole.log("a", Object.keys(d).join());\n`,
+        "c.cjs": `console.log("cjs");\nglobalThis.ready = true;\n${commonjs}\n`,
+        "lazy.mjs": `import "./w.mjs";\n`,
+        "w.mjs": `console.log("w, ready =", globalThis.ready);\n`,
+      });
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      const source = await run("entry.mjs");
+      expect(source).toEqual({ stdout: "cjs\nw, ready = true\na x\n", stderr: "", exitCode: 0 });
+
+      const modes = {
+        bun: ["--target=bun"],
+        node: ["--target=node"],
+        browser: ["--target=browser"],
+        minify: ["--target=bun", "--minify"],
+      };
+      const bundles = await Promise.all(
+        Object.entries(modes).map(async ([mode, flags]) => {
+          const build = await run("build", ...flags, "entry.mjs", `--outdir=out-${mode}`);
+          expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+          return [mode, await run(`out-${mode}/entry.js`)];
+        }),
+      );
+      expect(Object.fromEntries(bundles)).toEqual({ bun: source, node: source, browser: source, minify: source });
+    });
+  }
 });
 
 for (const backend of ["api", "cli"] as const) {

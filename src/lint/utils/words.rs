@@ -4,6 +4,7 @@
 use std::cmp::Ordering;
 
 /// What words are sorted by.
+#[derive(Clone, Copy)]
 pub enum By {
     Bytes,
     /// The bytes, with ASCII letters in lowercase.

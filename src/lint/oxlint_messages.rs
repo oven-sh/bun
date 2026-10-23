@@ -41,6 +41,12 @@ struct Table {
     entries: Vec<Entry>,
 }
 
+/// `delimiter` is ASCII.
+fn split_once(text: &str, delimiter: u8) -> Option<(&str, &str)> {
+    let at = bun_core::strings::index_of_char_usize(text.as_bytes(), delimiter)?;
+    Some((text.get(..at)?, text.get(at + 1..)?))
+}
+
 impl Table {
     /// Release builds embed the file compressed. It's inflated and read for the first report with an oxlint config.
     fn get() -> &'static Table {
@@ -54,9 +60,9 @@ impl Table {
             // Which range of which entry the messages belong to.
             let mut current = None;
             let mut rest = std::str::from_utf8(text).unwrap_or_default();
-            while let Some((line, after)) = rest.split_once('\n') {
+            while let Some((line, after)) = split_once(rest, b'\n') {
                 if let Some((plugin, name)) =
-                    line.strip_prefix("# ").and_then(|it| it.split_once(' '))
+                    line.strip_prefix("# ").and_then(|it| split_once(it, b' '))
                 {
                     let at = entries
                         .iter()
@@ -73,7 +79,7 @@ impl Table {
                         messages.len()..messages.len();
                     current = Some((at, usize::from(plugin == "typescript")));
                 } else if let (Some((id, text)), Some((at, plugin))) =
-                    (line.split_once(' '), current)
+                    (split_once(line, b' '), current)
                 {
                     let with_break = rest
                         .get(id.len() + 1..=line.len())

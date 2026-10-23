@@ -4823,6 +4823,7 @@ impl<'a> Resolver<'a> {
             ));
         }
 
+        // Unlike esbuild, a target without "./" also joins onto this (tsc's `getPathsBasePath`).
         let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
 
         // The explicit base URL should take precedence over the implicit base URL

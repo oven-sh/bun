@@ -83,6 +83,27 @@ test("auto-install in a project whose package.json has a name and version", asyn
   expect(exitCode).toBe(1);
 });
 
+// A tsconfig `paths` target that is not relative, with no `baseUrl`, names a
+// folder of the project. When the alias was dropped, the import went to the
+// registry in a tree with no node_modules, and the package of that name ran.
+test.concurrent("a tsconfig `paths` alias with a target that is not relative is not a package", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-tsconfig-paths", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "no-deps/*": ["no-deps/*"] } } }),
+    "no-deps/index.ts": `console.log("the project's own file");`,
+    "main.ts": `import "no-deps/index";`,
+    "bunfig.toml": registry.bunfig,
+  });
+  const result = await runAutoInstall(String(dir), "main.ts");
+
+  expect({ ...result, requests: registry.requests }).toEqual({
+    stdout: "the project's own file\n",
+    stderr: "",
+    exitCode: 0,
+    requests: [],
+  });
+});
+
 // Serves test/cli/install/registry/packages: `/<name>` is the manifest and
 // `/<name>/-/<file>.tgz` a tarball. Everything else is a 404. `requests` has
 // the path of every request, in order, so a test can tell which version

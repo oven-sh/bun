@@ -2057,6 +2057,7 @@ impl Lockfile {
                 if let Err(_e) = TextLockfile::Stringifier::save_from_binary(
                     self,
                     load_result,
+                    options,
                     config_version,
                     &mut writer_buf,
                 ) {

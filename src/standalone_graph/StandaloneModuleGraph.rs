@@ -4,6 +4,7 @@
 
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
+use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -1491,6 +1492,14 @@ fn encode_text_module(
 /// The embedded bunfs key for an output file, relative to the prefix.
 fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
+}
+
+/// The name a file is embedded under: valid UTF-8, because a JS string path can find nothing else.
+pub fn embedded_name(dest_path: &[u8]) -> Cow<'_, [u8]> {
+    match bstr::ByteSlice::to_str_lossy(bun_core::strings::remove_leading_dot_slash(dest_path)) {
+        Cow::Borrowed(name) => Cow::Borrowed(name.as_bytes()),
+        Cow::Owned(name) => Cow::Owned(name.into_bytes()),
+    }
 }
 
 /// Every region of the serialized graph is addressed by a `StringPointer`, a `u32` offset and

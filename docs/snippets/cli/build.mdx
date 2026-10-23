@@ -130,7 +130,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">
-  Chunk CSS files together to reduce duplication (only when multiple entry points import CSS)
+  Chunk CSS files together to reduce duplication (only when multiple entry points import CSS). A `.css` entry point and
+  an entry point that needs exactly that CSS share one file. The file has the name of the `.css` entry point
 </ParamField>
 
 ### Minification & Optimization

@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -2277,6 +2278,60 @@ c {
     entryPoints: ["/foo/entry.js", "/bar/entry.js"],
     entryNaming: "[ext]/[hash]",
     outdir: "/",
+  });
+  for (const entryPoints of [
+    ["/app.js", "/s.css"],
+    ["/s.css", "/app.js"],
+  ]) {
+    const order = entryPoints[0].slice(1) + "-first";
+
+    // With CSS chunking on, a JS entry point and a CSS entry point that have the same import order share one
+    // stylesheet. The stylesheet has the name of the CSS entry point in each entry order.
+    itBundled(`css/CSSChunkingCSSEntryPointNamesSharedStylesheet/${order}`, {
+      files: {
+        "/app.js": `import "./s.css"; console.log("app");`,
+        "/s.css": `.s { color: green }`,
+      },
+      entryPoints,
+      cssChunking: true,
+      metafile: true,
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).sort()).toEqual(["app.js", "s.css"]);
+        const { outputs } = JSON.parse(api.readFile("/metafile.json"));
+        expect({ cssBundle: outputs["./app.js"].cssBundle, entryPoint: outputs["./s.css"].entryPoint }).toEqual({
+          cssBundle: "./s.css",
+          entryPoint: "s.css",
+        });
+      },
+    });
+
+    // The stylesheet of the JS entry point and the CSS entry point have one output path.
+    // Without CSS chunking this build fails: "Multiple files share the same output path".
+    itBundled(`css/CSSChunkingCSSEntryPointAtPathOfJSEntryPointStylesheet/${order}`, {
+      files: {
+        "/x/app.js": `import "./app.css"; console.log("app");`,
+        "/x/app.css": `.s { color: green }`,
+      },
+      entryPoints: entryPoints.map(entryPoint => "/x" + entryPoint.replace("s.css", "app.css")),
+      cssChunking: true,
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).sort()).toEqual(["app.css", "app.js"]);
+      },
+    });
+  }
+  // In an executable the shared stylesheet has the name of the CSS entry point too.
+  itBundled("css/CSSChunkingCSSEntryPointNamesSharedStylesheetCompile", {
+    files: {
+      "/app.js": `import "./s.css"; console.log(JSON.stringify(Bun.embeddedFiles.map(file => file.name)));`,
+      "/s.css": `.s { color: green }`,
+    },
+    entryPointsRaw: ["./app.js", "./s.css"],
+    cssChunking: true,
+    compile: true,
+    outfile: "dist/out",
+    run: { file: "dist/out", stdout: `["s.css"]` },
   });
   itBundled("css/DeduplicateRules", {
     // GENERATED

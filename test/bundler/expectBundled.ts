@@ -152,6 +152,7 @@ function resolveBackend(opts: BundlerTestInput): "cli" | "api" {
   const hasValidate = !Array.isArray(run) && (run as BundlerTestRunOptions | undefined)?.validate;
   return opts.dotenv ||
     typeof opts.production !== "undefined" ||
+    opts.cssChunking ||
     opts.bundling === false ||
     opts.emitDCEAnnotations ||
     opts.bundleWarnings ||
@@ -281,6 +282,8 @@ export interface BundlerTestInput {
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
   production?: boolean;
+  /** Passes --css-chunking. `production` with an HTML entry point turns it on too. */
+  cssChunking?: boolean;
 
   // pass subprocess.env
   env?: Record<string, any>;
@@ -561,6 +564,7 @@ function expectBundled(
     emitDCEAnnotations,
     deprecatedNamespaceObjectSetters,
     production,
+    cssChunking,
     // @ts-expect-error
     _referenceFn,
     expectExactFilesize,
@@ -912,6 +916,7 @@ function expectBundled(
               bytecode && "--bytecode",
               bytecodeDepth !== undefined && `--bytecode-depth=${bytecodeDepth}`,
               production && "--production",
+              cssChunking && "--css-chunking",
             ]
           : [
               ESBUILD_PATH,

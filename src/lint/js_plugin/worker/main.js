@@ -719,9 +719,11 @@ function espreePath() {
 
 // `languageOptions.parser`, with which a rule parses another file than the one that is linted. `parser`: `null`, or what
 // `describeParser` in `evaluate-eslint.js` says about it. It is loaded when one of its functions is called.
-function addParser({ languageOptions, parser: known }) {
+function addParser({ languageOptions, parser: known, freezes, isLegacy }) {
   let loaded;
   if (known === null) {
+    // ESLint's `normalizeLanguageOptions`: "Espree expects this information to be passed in".
+    if (!freezes && !isLegacy) languageOptions.parserOptions.sourceType = languageOptions.sourceType;
     const load = path => (path === undefined ? null : require(path));
     const get = () => (loaded ??= load(espreePath())) ?? undefined;
     Object.defineProperty(languageOptions, "parser", { get, enumerable: true, configurable: true });

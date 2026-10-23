@@ -1129,9 +1129,10 @@ impl<'a> VNode<'a> {
                 // ESLint strips a byte order mark from the text.
                 Dialect::Espree => {
                     let whole = Span::new(if file.has_bom() { 3 } else { 0 }, file.span().end);
-                    // In espree 9 the range goes from the first token to the last.
-                    let tokens = (file.language().eslint_8.as_ref())
-                        .and_then(|_| Some((file.first_token(whole)?, file.last_token(whole)?)));
+                    // Before ESLint 10, espree's range starts at the first token and ends at the last.
+                    let tokens = (file.language().eslint_major < 10)
+                        .then(|| Some((file.first_token(whole)?, file.last_token(whole)?)))
+                        .flatten();
                     tokens.map_or(whole, |(first, last)| first.span().to(last.span()))
                 }
             }),

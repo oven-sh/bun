@@ -375,6 +375,54 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // From ESLint 8.57.1, 9.39.5 and 10.12.0, with their own parser.
+  test.each([
+    ["8.57.1", { "a.js": [6, 8], "b.cjs": [22, 26], "c.mjs": [0, 18], "d.js": [0, 0] }],
+    ["9.39.5", { "a.js": [6, 8], "b.cjs": [22, 26], "c.mjs": [0, 18], "d.js": [0, 0] }],
+    ["10.12.0", { "a.js": [0, 15], "b.cjs": [0, 29], "c.mjs": [0, 18], "d.js": [0, 0] }],
+  ])(
+    "the Program of the default parser and its parserOptions are those of eslint %s",
+    async (version, ranges) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `
+            const dump = {
+              create: context => ({
+                Program(node) {
+                  const { parserOptions, sourceType } = context.languageOptions;
+                  const message = JSON.stringify({ range: node.range, end: node.loc.end, parserOptions, sourceType });
+                  context.report({ node, message });
+                },
+              }),
+            };
+            export default [{
+              files: ["?.*"],
+              plugins: { api: { rules: { dump } } },
+              languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+              rules: { "api/dump": "error" },
+            }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": "// c\n\na;\n// d\n\n",
+          "b.cjs": "#!/usr/bin/env node\n  a; b  \n",
+          "c.mjs": "// only a comment\n",
+          "d.js": "",
+        },
+        ["-f", "json", "a.js", "b.cjs", "c.mjs", "d.js"],
+      );
+      const found = (JSON.parse(raw) as any[]).map(file => ({
+        ...file.messages[0],
+        ...JSON.parse(file.messages[0].message),
+      }));
+      expect(found.map(it => it.range)).toEqual(Object.values(ranges));
+      expect(found.map(it => [it.endLine, it.endColumn])).toEqual(found.map(it => [it.end.line, it.end.column + 1]));
+      expect(found.map(it => it.sourceType)).toEqual(["module", "commonjs", "module", "module"]);
+      expect(found.map(it => it.parserOptions)).toEqual(
+        found.map(it => ({ ecmaFeatures: { jsx: true }, sourceType: it.sourceType })),
+      );
+    },
+    timeout,
+  );
+
   test(
     "provides tokens, comments, scopes and locations",
     async () => {

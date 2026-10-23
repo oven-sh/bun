@@ -2336,7 +2336,10 @@ extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work
         return env.invalid_arg();
     };
     // SAFETY: the work holds a ref on its env.
-    debug_assert!(core::ptr::eq(env.to_js(), unsafe { &*work.env.get() }.to_js()));
+    debug_assert!(core::ptr::eq(
+        env.to_js(),
+        unsafe { &*work.env.get() }.to_js()
+    ));
     napi_async_work::destroy(work_);
     env.ok()
 }
@@ -2350,7 +2353,10 @@ extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work)
         return env.invalid_arg();
     };
     // SAFETY: the work holds a ref on its env.
-    debug_assert!(core::ptr::eq(env.to_js(), unsafe { &*work.env.get() }.to_js()));
+    debug_assert!(core::ptr::eq(
+        env.to_js(),
+        unsafe { &*work.env.get() }.to_js()
+    ));
     if !work.schedule() {
         return env.cannot_run_js();
     }
@@ -2366,7 +2372,10 @@ extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work
         return env.invalid_arg();
     };
     // SAFETY: the work holds a ref on its env.
-    debug_assert!(core::ptr::eq(env.to_js(), unsafe { &*work.env.get() }.to_js()));
+    debug_assert!(core::ptr::eq(
+        env.to_js(),
+        unsafe { &*work.env.get() }.to_js()
+    ));
     if work.cancel() {
         return env.ok();
     }

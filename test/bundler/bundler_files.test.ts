@@ -602,6 +602,57 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
+  // One in-memory file under two `with { type }` loaders is two modules. The
+  // plugin variant sends both imports through the resolver that runs after an
+  // onResolve plugin declines.
+  for (const withPlugin of [false, true]) {
+    test(`in-memory file imported under two import attributes${withPlugin ? " (onResolve declines)" : ""}`, async () => {
+      const deferred: string[] = [];
+      const result = await Bun.build({
+        entrypoints: ["/entry.js"],
+        target: "bun",
+        metafile: true,
+        files: {
+          "/entry.js": `
+            import obj from "./data.json";
+            import { text } from "./as-text.js";
+            console.log(typeof obj, typeof text);
+          `,
+          "/as-text.js": `import text from "./data.json" with { type: "text" }; export { text };`,
+          "/data.json": `{"k":1}`,
+        },
+        plugins: withPlugin
+          ? [
+              {
+                name: "decline",
+                setup(build) {
+                  build.onResolve({ filter: /\.json$/ }, args => {
+                    deferred.push(args.path);
+                    return undefined;
+                  });
+                },
+              },
+            ]
+          : [],
+      });
+
+      expect(result.success).toBe(true);
+      expect(deferred).toEqual(withPlugin ? ["./data.json", "./data.json"] : []);
+
+      const name = (key: string) => key.split(/[\\/]/).pop()!;
+      expect(Object.keys(result.metafile!.inputs).map(name).sort()).toEqual([
+        "as-text.js",
+        "data.json",
+        "data.json with { type: 'text' }",
+        "entry.js",
+      ]);
+
+      const output = await result.outputs[0].text();
+      expect(output).toContain("k: 1");
+      expect(output).toMatch(/["'`]\{\\?"k\\?":1\}["'`]/);
+    });
+  }
+
   // Specifiers are joined onto the importer's directory to find a matching
   // in-memory file. A specifier longer than a path buffer (4096 bytes on
   // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These

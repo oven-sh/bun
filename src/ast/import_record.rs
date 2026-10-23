@@ -107,6 +107,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// The bundler keyed this record's module by (path, loader), not by path alone.
+        const KEYED_BY_LOADER = 1 << 19;
     }
 }
 

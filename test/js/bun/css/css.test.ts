@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -5028,6 +5028,62 @@ describe("css tests", () => {
     minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
     minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
 
+    // A name stays a string when its identifiers do not read back as the same name.
+    // A parser reads a generic family as the first identifier before it reads a name,
+    // so a browser drops `font-family: Serif Gothic`.
+    minify_test('.foo { font-family: "Serif Gothic"; }', '.foo{font-family:"Serif Gothic"}');
+    minify_test('.foo { font-family: "SERIF Gothic"; }', '.foo{font-family:"SERIF Gothic"}');
+    minify_test(
+      '.foo { font-family: Arial, "Sans-Serif Pro", sans-serif; }',
+      '.foo{font-family:Arial,"Sans-Serif Pro",sans-serif}',
+    );
+    minify_test('.foo { font: 12px "Cursive standard", cursive; }', '.foo{font:12px "Cursive standard",cursive}');
+    minify_test(
+      '@font-face { font-family: "Serif Gothic"; src: local("Monospace Neue"); }',
+      '@font-face{font-family:"Serif Gothic";src:local("Monospace Neue")}',
+    );
+    minify_test(
+      '@font-palette-values --p { font-family: "Serif Gothic"; }',
+      '@font-palette-values --p{font-family:"Serif Gothic"}',
+    );
+    for (const keyword of [
+      ...["serif", "sans-serif", "cursive", "fantasy", "monospace", "system-ui", "emoji", "math", "fangsong"],
+      ...["ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded"],
+    ]) {
+      minify_test(`.foo { font-family: "${keyword} x"; }`, `.foo{font-family:"${keyword} x"}`);
+    }
+    // Identifiers are joined by one blank, so an empty word changes the name.
+    minify_test('.foo { font-family: "HW Impey  Bold"; }', '.foo{font-family:"HW Impey  Bold"}');
+    minify_test('.foo { font-family: " a"; }', '.foo{font-family:" a"}');
+    minify_test('.foo { font-family: "a "; }', '.foo{font-family:"a "}');
+    minify_test('.foo { font-family: " "; }', '.foo{font-family:" "}');
+    minify_test('.foo { font: 12px "a  b", serif; }', '.foo{font:12px "a  b",serif}');
+    minify_test(
+      '@font-face { font-family: "a  b"; src: local(" a"); }',
+      '@font-face{font-family:"a  b";src:local(" a")}',
+    );
+    minify_test('@font-palette-values --p { font-family: "a  b"; }', '@font-palette-values --p{font-family:"a  b"}');
+    // The same names, each written as one identifier with escaped blanks.
+    minify_test(".foo { font-family: serif\\ x; }", '.foo{font-family:"serif x"}');
+    minify_test(".foo { font-family: a\\ \\ b; }", '.foo{font-family:"a  b"}');
+    minify_test(".foo { font-family: \\ a; }", '.foo{font-family:" a"}');
+    // Only a whole first word that is a generic family keeps the quotes.
+    minify_test('.foo { font-family: "x serif"; }', ".foo{font-family:x serif}");
+    minify_test('.foo { font-family: "test inherit"; }', ".foo{font-family:test inherit}");
+    minify_test('.foo { font-family: "Apple Color Emoji"; }', ".foo{font-family:Apple Color Emoji}");
+    minify_test('.foo { font-family: "Serifa Std"; }', ".foo{font-family:Serifa Std}");
+    minify_test('.foo { font-family: "EmojiOne Color"; }', ".foo{font-family:EmojiOne Color}");
+    minify_test('.foo { font-family: "serif-x y"; }', ".foo{font-family:serif-x y}");
+    // A lone keyword keeps the quotes in any case, and with a blank beside it.
+    minify_test(".foo { font-family: 'SERIF'; }", '.foo{font-family:"SERIF"}');
+    minify_test(".foo { font-family: 'INHERIT'; }", '.foo{font-family:"INHERIT"}');
+    minify_test(".foo { font-family: Arial, ' sans-serif'; }", '.foo{font-family:Arial," sans-serif"}');
+    // A name that is written as identifiers prints as written.
+    minify_test(".foo { font-family: -webkit-body, monospace; }", ".foo{font-family:-webkit-body,monospace}");
+    minify_test(".foo { font-family: -webkit-body x; }", ".foo{font-family:-webkit-body x}");
+    // A backslash in a name is a character of the name.
+    minify_test('.foo { font-family: "se\\\\72 if"; }', ".foo{font-family:se\\\\72 if}");
+
     prefix_test(
       `
       .foo {
@@ -8345,5 +8401,61 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bun build keeps the quotes of a family name that its identifiers would change", async () => {
+    using dir = tempDir("css-family-name-quotes", {
+      "a.css": [
+        `.a { font-family: Arial, "Sans-Serif Pro", sans-serif }`,
+        `.b { font: 12px "HW Impey  Bold", serif }`,
+        `@font-face { font-family: "Serif Gothic"; src: local(" a") }`,
+        `.c { font-family: "Times New Roman", "x serif" }`,
+        "",
+      ].join("\n"),
+    });
+    const build = async (...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...flags, "a.css"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const [minified, pretty] = await Promise.all([build("--minify"), build()]);
+
+    expect(minified).toEqual({
+      stdout:
+        `.a{font-family:Arial,"Sans-Serif Pro",sans-serif}.b{font:12px "HW Impey  Bold",serif}` +
+        `@font-face{font-family:"Serif Gothic";src:local(" a")}.c{font-family:Times New Roman,x serif}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(pretty).toEqual({
+      stdout:
+        indoc`
+          /* a.css */
+          .a {
+            font-family: Arial, "Sans-Serif Pro", sans-serif;
+          }
+
+          .b {
+            font: 12px "HW Impey  Bold", serif;
+          }
+
+          @font-face {
+            font-family: "Serif Gothic";
+            src: local(" a");
+          }
+
+          .c {
+            font-family: Times New Roman, x serif;
+          }
+        ` + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

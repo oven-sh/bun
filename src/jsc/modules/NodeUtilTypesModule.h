@@ -28,6 +28,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSetIterator,
 namespace Zig {
 
 // Hardcoded module "node:util/types"
-DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes);
+DEFINE_NATIVE_MODULE(NodeUtilTypes);
 
 } // namespace Zig

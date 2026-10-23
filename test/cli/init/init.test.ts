@@ -312,15 +312,38 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
+    // `bun init` loaded this package.json, so it sets no `type` and no `private`.
     expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
       name: "x",
       scripts: { typecheck: "bun check" },
       devDependencies: { "@types/bun": "latest" },
       peerDependencies: { typescript: "^7" },
       module: "index.ts",
+    });
+  }, 30_000);
+
+  test("bun init gives an empty package.json the defaults of a new one", async () => {
+    // `bun init` does not load a 0-byte package.json, so this file gets `type` and `private`.
+    await using temp = tempDir("bun-init-empty-package-json", { "package.json": "" });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
+      name: path.basename(temp).toLowerCase().replaceAll(" ", "-"),
+      module: "index.ts",
       type: "module",
       private: true,
+      scripts: { typecheck: "bun check" },
+      devDependencies: { "@types/bun": "latest" },
+      peerDependencies: { typescript: "^7" },
     });
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
   }, 30_000);
 
   test("bun init writes a typecheck script that is the type checker where `bun check` is a script", async () => {
@@ -630,5 +653,148 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "README.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+  });
+});
+
+// Every package.json here lists the two dependencies that `bun init` adds, so
+// no nested `bun install` runs and these tests need no install cache.
+describe.concurrent("bun init over an existing package.json", () => {
+  const initDeps = { devDependencies: { "@types/bun": "latest" }, peerDependencies: { typescript: "^7" } };
+  const directoryName = (dir: string) => path.basename(dir).toLowerCase().replaceAll(" ", "-");
+
+  async function runInit(cwd: string, args: string[], stdin: "ignore" | "pipe" = "ignore") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", ...args],
+      cwd,
+      stdio: [stdin, "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const entryFields = [
+    { entry: "no entry field", fields: {} },
+    { entry: "module", fields: { module: "esm.js" } },
+    { entry: "main", fields: { main: "main.js" } },
+    { entry: "main and module", fields: { main: "main.js", module: "esm.js" } },
+  ];
+  const privateValues = [undefined, true, false, "yes"];
+  const label = (value: unknown) => (value === undefined ? "absent" : JSON.stringify(value));
+
+  test.each(
+    [undefined, "module", "commonjs", 123].flatMap((type, t) =>
+      entryFields.map(({ entry, fields }, e) => {
+        const isPrivate = privateValues[(t + e) % privateValues.length];
+        return { type, isPrivate, entry, fields, typeLabel: label(type), privateLabel: label(isPrivate) };
+      }),
+    ),
+  )(
+    "bun init -y does not change type ($typeLabel) or private ($privateLabel) with $entry",
+    async ({ type, isPrivate, entry, fields }) => {
+      // JSON.stringify drops a key whose value is undefined, so that key is absent from the file.
+      const manifest = { name: "app", version: "1.0.0", type, private: isPrivate, ...fields, ...initDeps };
+      await using temp = tempDir("bun-init-keeps-values", {
+        "package.json": JSON.stringify(manifest, null, 2) + "\n",
+        "index.js": "module.exports = 1;\n",
+        "main.js": "module.exports = 1;\n",
+        "esm.js": "export default 1;\n",
+      });
+
+      const { stdout, stderr, exitCode } = await runInit(String(temp), ["-y"]);
+
+      // A package.json with no entry field gains one key: the entry point that `bun init` found.
+      const found = entry === "no entry field" ? { module: "index.js" } : {};
+      expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(
+        JSON.parse(JSON.stringify({ ...manifest, ...found })),
+      );
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    },
+  );
+
+  // A CommonJS package that can be published.
+  const commonjsManifest = { name: "cjs-app", version: "1.0.0", type: "commonjs", private: false, ...initDeps };
+  const commonjsFiles = {
+    "package.json": JSON.stringify(commonjsManifest, null, 2) + "\n",
+    "index.js": `const os = require("os");\nconsole.log(os.platform());\n`,
+  };
+  const commonjsAfterInit = { ...commonjsManifest, module: "index.js" };
+
+  test.each([
+    { run: "bun init -y", args: ["-y"], stdin: "ignore" as const, folder: "" },
+    { run: "bun init with a stdin pipe", args: [], stdin: "pipe" as const, folder: "" },
+    { run: "bun init -y <folder>", args: ["-y", "app"], stdin: "ignore" as const, folder: "app" },
+  ])("$run keeps type commonjs and private false", async ({ args, stdin, folder }) => {
+    await using temp = tempDir("bun-init-commonjs", folder ? { [folder]: commonjsFiles } : commonjsFiles);
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), args, stdin);
+
+    expect(await Bun.file(path.join(temp, folder, "package.json")).json()).toEqual(commonjsAfterInit);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test("bun init on a TTY keeps type commonjs and private false", async () => {
+    await using temp = tempDir("bun-init-commonjs-tty", commonjsFiles);
+
+    const decoder = new TextDecoder();
+    let output = "";
+    // `bun init` prints this note only when its stdin is a TTY.
+    const note = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      // A terminal that spawn creates reports EOF after the child exits and all of its output arrived.
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("package.json already exists")) note.resolve();
+        },
+        exit() {
+          note.reject(new Error(`bun init did not print its TTY note:\n${output}`));
+        },
+      },
+    });
+    const [exitCode] = await Promise.all([proc.exited, note.promise]);
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(commonjsAfterInit);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    {
+      title: "does not add private to the package.json of the Library template",
+      manifest: { name: "lib", module: "index.ts", type: "module", scripts: { typecheck: "bun check" }, ...initDeps },
+      after: (_name: string): object => ({
+        name: "lib",
+        module: "index.ts",
+        type: "module",
+        scripts: { typecheck: "bun check" },
+        ...initDeps,
+      }),
+    },
+    {
+      title: "adds no type and no private to the package.json that `bun add` writes in an empty directory",
+      manifest: { dependencies: {}, ...initDeps },
+      after: (name: string): object => ({
+        dependencies: {},
+        ...initDeps,
+        name,
+        module: "index.ts",
+        scripts: { typecheck: "bun check" },
+      }),
+    },
+  ])("bun init -y $title", async ({ manifest, after }) => {
+    await using temp = tempDir("bun-init-no-defaults", {
+      "package.json": JSON.stringify(manifest, null, 2) + "\n",
+      "index.ts": "export {};\n",
+    });
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), ["-y"]);
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(after(directoryName(String(temp))));
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
   });
 });

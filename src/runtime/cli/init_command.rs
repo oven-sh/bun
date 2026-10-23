@@ -667,16 +667,19 @@ impl InitCommand {
             if !fields.entry_point.is_empty() {
                 if object.has_property(b"module") {
                     object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
                 } else if object.has_property(b"main") {
                     object.put_string(&bump, b"main", &fields.entry_point)?;
                 } else {
                     object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
+                    // A loaded package.json keeps its "type": it decides how node loads every .js file.
+                    if !did_load_package_json {
+                        object.put_string(&bump, b"type", b"module")?;
+                    }
                 }
             }
 
-            if fields.private {
+            // A loaded package.json keeps its "private": it decides whether the package can be published.
+            if fields.private && !did_load_package_json {
                 object.put(
                     &bump,
                     b"private",

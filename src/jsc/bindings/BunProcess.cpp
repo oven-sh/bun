@@ -442,6 +442,7 @@ extern "C" void* CrashHandler__beginDlOpenAction(const char* path);
 extern "C" void CrashHandler__endDlOpenAction(void* guard);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
+extern "C" void Bun__loadMuslCxxRuntimeIfPresent();
 
 // Drops only this load's reference. A library that registered modules on an earlier load is still referenced by that load.
 static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
@@ -594,6 +595,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg.toString());
         }
     }
+    Bun__loadMuslCxxRuntimeIfPresent();
 #endif
     // Keep the addon's name in crash reports until this call returns, because its init functions run after dlopen().
     auto endDlOpenAction = WTF::makeScopeExit([guard = CrashHandler__beginDlOpenAction(utf8.legacyCStringPointer())] { CrashHandler__endDlOpenAction(guard); });

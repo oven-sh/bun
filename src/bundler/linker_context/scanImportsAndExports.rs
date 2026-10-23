@@ -625,12 +625,11 @@ pub(crate) fn scan_imports_and_exports(
 
                 let ast_flags = col_ref!(ast_flags_list)[source_index];
                 let is_lifted_commonjs = ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+                let wrapper_has_exports =
+                    ast_flags.intersects(AstFlags::USES_EXPORTS_REF | AstFlags::USES_MODULE_REF);
                 if flag.wrap == WrapKind::Cjs
                     && (is_lifted_commonjs
-                        // Any other file with lifted exports, when neither flag gives its
-                        // wrapper the parameter yet.
-                        || (!ast_flags
-                            .intersects(AstFlags::USES_EXPORTS_REF | AstFlags::USES_MODULE_REF)
+                        || (!wrapper_has_exports
                             && col_ref!(commonjs_named_exports)[source_index].count() > 0))
                 {
                     // The wrapper prints `exports.x = ...` again, so it takes `exports`.

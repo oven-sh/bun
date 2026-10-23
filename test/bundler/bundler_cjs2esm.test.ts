@@ -1706,10 +1706,8 @@ describe("bundler", () => {
       stdout: "helped:in",
     },
   });
-  // A wrapped file prints its lifted `exports.x = ...` statements as written, so
-  // its wrapper takes `exports`. The parser makes each of these files CommonJS
-  // and counts no use of `exports` for it: the code that does so is dead, or its
-  // statement is removed.
+  // A wrapped file prints its lifted `exports.x = ...` as written, so its wrapper takes `exports`.
+  // Here dead code or a removed statement makes the file CommonJS and counts no use of `exports`.
   const wrappedWithNoUseOfExports: Record<string, string> = {
     "/dead-branch.cjs": `exports.a = 1; if (false) { console.log(this); }`,
     "/dead-ternary.cjs": `exports.a = 1; exports.b = true ? 2 : this;`,
@@ -1818,9 +1816,7 @@ describe("bundler", () => {
       run: { stdout: "1 undefined" },
     });
   }
-  // The parser lifts this file and does not make it CommonJS. The linker wraps it
-  // for the default import, and its `import` keeps it out of the files the linker
-  // already gave `exports`.
+  // The linker wraps this file for the default import. No parser mark is involved.
   itBundled("cjs2esm/LinkerWrappedFileWithLiftedExportsTakesExports", {
     files: {
       "/entry.js": `import React from "react"; console.log(React.a);`,

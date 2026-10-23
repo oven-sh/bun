@@ -2,7 +2,15 @@ $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
   var stream = Bun.stdin.stream();
 
-  var decoder = new TextDecoder("utf-8", { fatal: false });
+  var decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
+  // stdin is one UTF-8 stream: only the first three bytes that this iterator reads can be a byte order mark.
+  var bomUndecided = true;
+  function skipByteOrderMark() {
+    // Fewer than three bytes and no line yet: the next chunk can complete a mark.
+    if (i === -1 && actualChunk.length < 3) return;
+    bomUndecided = false;
+    if (actualChunk[0] === 0xef && actualChunk[1] === 0xbb && actualChunk[2] === 0xbf) last = 3;
+  }
   var indexOf = Bun.indexOfLine;
   var actualChunk: Uint8Array;
   var i: number = -1;
@@ -80,6 +88,7 @@ export function asyncIterator(this: Console) {
           last = 0;
           // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
           i = indexOf(actualChunk, last);
+          if (bomUndecided) skipByteOrderMark();
           while (i !== -1) {
             // This yield may end the function, in that case we need to be able to recover state
             // if the iterator was fired up again.

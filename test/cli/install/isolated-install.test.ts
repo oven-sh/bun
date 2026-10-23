@@ -24,6 +24,7 @@ import { chmod, mkdir, readlink, rm, symlink } from "fs/promises";
 import {
   bunEnv,
   bunExe,
+  canMount,
   githubTarball,
   isLinux,
   isWindows,
@@ -3910,15 +3911,9 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
     expect(out).toContain("(no changes)");
   });
 
-  // Mounting needs a private user and mount namespace. Skipped where those are turned off, as in most containers.
-  const canMount =
-    isLinux &&
-    Bun.which("unshare") !== null &&
-    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
-
   // docker-compose: a volume for each node_modules, and the source of a package mounted into one.
   // Bind mounts of `vol/*`, so what the installs leave in them can be read after the namespace is gone.
-  test.skipIf(!canMount).concurrent.each([
+  test.skipIf(!canMount()).concurrent.each([
     { linkers: ["isolated"], root: [".bun", "@acme", "dep", "mine"], web: ["lib"] },
     { linkers: ["isolated", "hoisted"], root: ["@acme", "dep", "lib", "mine", "web"], web: [] },
   ])(
@@ -8820,6 +8815,53 @@ describe.concurrent("hoist", () => {
         join(packageDir, "node_modules", ".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
       ).json(),
     ).toMatchObject({ name: "no-deps", version: "1.1.0" });
+  });
+
+  // Linux checks that the mount is writable before it looks up the name to remove. So on a
+  // read-only mount, the removal of a fallback directory that is not there fails with EROFS.
+  test.skipIf(!canMount())("hoist = false removes no fallback directory on a read-only mount", async () => {
+    using dir = tempDir("hoist-false-read-only", {
+      "project/package.json": JSON.stringify({ name: "hoist-read-only", dependencies: { dep: "file:./dep" } }),
+      "project/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "project/bunfig.toml": `[install]\nlinker = "isolated"\nhoist = false\n`,
+    });
+    const project = join(String(dir), "project");
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") };
+    await runBunInstall(env, project);
+
+    const installReadOnly = async () => {
+      await using proc = spawn({
+        cmd: [
+          "unshare",
+          "-Urm",
+          "/bin/sh",
+          "-c",
+          'mount -o bind project project && mount -o remount,bind,ro project && cd project && exec "$0" install',
+          bunExe(),
+        ],
+        cwd: String(dir),
+        env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    expect(await installReadOnly()).toEqual({
+      stdout: expect.stringContaining("(no changes)"),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // A fallback directory that is there stays an error.
+    mkdirSync(join(project, "node_modules", ".bun", "node_modules", "leftover"), { recursive: true });
+    expect(await installReadOnly()).toMatchObject({
+      stderr:
+        "EROFS: Read-only file system: hoist is disabled, but the existing './node_modules/.bun/node_modules' could not be removed (unlink)\n",
+      exitCode: 1,
+    });
   });
 
   test("hoistPattern set after an install removes the fallback links it does not match", async () => {

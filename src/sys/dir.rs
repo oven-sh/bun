@@ -275,6 +275,7 @@ impl Dir {
                 Ok(()) => return Ok(None),
                 Err(e) => match e.get_errno() {
                     E::ENOENT => return Ok(None),
+                    E::EROFS if removal_target_is_missing(self.fd, sub_path) => return Ok(None),
                     // Linux: EISDIR. POSIX: EPERM when target is a directory.
                     E::EISDIR => {}
                     // Returned on ENOTDIR: the path is a file that cannot be deleted.

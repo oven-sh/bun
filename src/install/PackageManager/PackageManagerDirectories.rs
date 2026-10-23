@@ -1305,18 +1305,19 @@ pub fn save_lockfile(
                     LoadResult::Ok(ok) => ok.format,
                 };
 
-                match sys::unlinkat(
-                    Fd::cwd(),
-                    if delete_format == LockfileFormat::Text {
-                        bun_paths::path_literal!("bun.lock")
-                    } else {
-                        bun_paths::path_literal!("bun.lockb")
-                    },
-                ) {
+                let lockfile = if delete_format == LockfileFormat::Text {
+                    bun_paths::path_literal!("bun.lock")
+                } else {
+                    bun_paths::path_literal!("bun.lockb")
+                };
+                match sys::unlinkat(Fd::cwd(), lockfile) {
                     Ok(()) => {}
                     Err(err) => {
                         // we don't care
-                        if err.get_errno() == sys::E::ENOENT {
+                        if err.get_errno() == sys::E::ENOENT
+                            || (err.get_errno() == sys::E::EROFS
+                                && sys::removal_target_is_missing(Fd::cwd(), lockfile.as_bytes()))
+                        {
                             if had_any_diffs {
                                 return Ok(false);
                             }

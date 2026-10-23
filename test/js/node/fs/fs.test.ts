@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  canMount,
   gc,
   getMaxFD,
   isBroken,
@@ -3738,6 +3739,96 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(true);
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
+  });
+
+  // Linux checks that the mount is writable before it looks up the name to remove.
+  // So on a read-only mount, unlink(2) of a missing name fails with EROFS, not ENOENT.
+  it.skipIf(!canMount())("a missing path on a read-only mount is missing, not read-only", async () => {
+    using dir = tempDir("rm-read-only-mount", {
+      "ro/file.txt": "",
+      "ro/dir/file.txt": "",
+      "fixture.js": /* js */ `
+        const fs = require("node:fs");
+        const cells = {
+          "missing, force": ["ro/missing", { force: true }],
+          "missing, force, recursive": ["ro/missing", { force: true, recursive: true }],
+          "missing/, force": ["ro/missing/", { force: true }],
+          "missing/, force, recursive": ["ro/missing/", { force: true, recursive: true }],
+          "missing": ["ro/missing", {}],
+          "missing, recursive": ["ro/missing", { recursive: true }],
+          "file, force": ["ro/file.txt", { force: true }],
+          "file/, force": ["ro/file.txt/", { force: true }],
+          "file/, force, recursive": ["ro/file.txt/", { force: true, recursive: true }],
+          "dangling symlink, force": ["ro/dangling", { force: true }],
+          "dangling symlink, force, recursive": ["ro/dangling", { force: true, recursive: true }],
+          "directory": ["ro/dir", {}],
+          "directory, force": ["ro/dir", { force: true }],
+          "directory, force, recursive": ["ro/dir", { force: true, recursive: true }],
+        };
+        const forms = {
+          rmSync: async (path, options) => fs.rmSync(path, options),
+          rm: (path, options) => new Promise((resolve, reject) => fs.rm(path, options, err => (err ? reject(err) : resolve()))),
+          "promises.rm": (path, options) => fs.promises.rm(path, options),
+          unlinkSync: async path => fs.unlinkSync(path),
+        };
+        const outcome = fn => fn().then(() => "ok", err => err.code + " " + err.syscall);
+        (async () => {
+          const result = {};
+          for (const form in forms) {
+            result[form] = {};
+            for (const cell in cells) {
+              if (form === "unlinkSync" && cell !== "missing") continue;
+              result[form][cell] = await outcome(() => forms[form](...cells[cell]));
+            }
+          }
+          console.log(JSON.stringify(result));
+        })();
+      `,
+    });
+    symlinkSync("nowhere", join(String(dir), "ro", "dangling"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        "unshare",
+        "-Urm",
+        "/bin/sh",
+        "-c",
+        'mount -o bind ro ro && mount -o remount,bind,ro ro && exec "$0" fixture.js',
+        bunExe(),
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const rm = {
+      "missing, force": "ok",
+      "missing, force, recursive": "ok",
+      "missing/, force": "ok",
+      "missing/, force, recursive": "ok",
+      "missing": "ENOENT lstat",
+      "missing, recursive": "ENOENT lstat",
+      "file, force": "EROFS rm",
+      // lstat fails here too, but with ENOTDIR: the file exists.
+      "file/, force": "EROFS rm",
+      "file/, force, recursive": "EROFS rm",
+      "dangling symlink, force": "EROFS rm",
+      "dangling symlink, force, recursive": "EROFS rm",
+      "directory": "ERR_FS_EISDIR rm",
+      "directory, force": "ERR_FS_EISDIR rm",
+      "directory, force, recursive": "EROFS rm",
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      rmSync: rm,
+      rm,
+      "promises.rm": rm,
+      // The kernel's answer for the same missing name. unlink has no `force`, and Node reports EROFS too.
+      unlinkSync: { "missing": "EROFS unlink" },
+    });
+    expect(exitCode).toBe(0);
   });
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is

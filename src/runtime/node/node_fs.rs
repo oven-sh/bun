@@ -7829,7 +7829,9 @@ impl NodeFS {
         let dest = args.path.slice_z(&mut self.sync_error_buf);
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
-            if e1 == E::ENOENT {
+            if e1 == E::ENOENT
+                || (e1 == E::EROFS && sys::removal_target_is_missing(FD::cwd(), dest.as_bytes()))
+            {
                 if args.force {
                     return Ok(());
                 }
@@ -9765,9 +9767,16 @@ pub(crate) fn zig_delete_tree(
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
     let initial_iterable_dir =
-        match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
-            Some(d) => d,
-            None => return Ok(()),
+        match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint) {
+            Ok(Some(d)) => d,
+            Ok(None) => return Ok(()),
+            // Only the unlink of `sub_path` itself reports this, before anything is removed.
+            Err(crate::Error::ReadOnlyFileSystem)
+                if sys::removal_target_is_missing(self_.fd, sub_path) =>
+            {
+                return Err(dt_err(E::ENOENT));
+            }
+            Err(err) => return Err(err),
         };
 
     // PERF: a Vec

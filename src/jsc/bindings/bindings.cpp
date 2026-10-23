@@ -6778,7 +6778,20 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    auto fail = [&](JSC::JSValue thrown) {
+        *exception = JSC::JSValue::encode(thrown);
+        // Set _error on the globalObject directly (not globalThis proxy)
+        Bun::putDirectNamed(vm, globalObject, "_error"_s, thrown);
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    };
+
+    // WTF::String::fromUTF8 returns a null string for ill-formed UTF-8, and a null source evaluates to nothing.
+    WTF::String source = sourceLen > 0
+        ? Zig::convertUTF8ToString(std::span { sourcePtr, sourceLen })
+        : WTF::emptyString();
+    if (source.isNull()) [[unlikely]]
+        return fail(JSC::createOutOfMemoryError(globalObject));
     WTF::String filename = filenameLen > 0
         ? WTF::String::fromUTF8(std::span { filenamePtr, filenameLen })
         : "[repl]"_s;
@@ -6796,21 +6809,11 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     WTF::NakedPtr<JSC::Exception> evalException;
     JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
 
-    if (evalException) {
-        *exception = JSC::JSValue::encode(evalException->value());
-        // Set _error on the globalObject directly (not globalThis proxy)
-        Bun::putDirectNamed(vm, globalObject, "_error"_s, evalException->value());
-        scope.clearException();
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
+    if (evalException)
+        return fail(evalException->value());
 
-    if (scope.exception()) {
-        *exception = JSC::JSValue::encode(scope.exception()->value());
-        // Set _error on the globalObject directly (not globalThis proxy)
-        Bun::putDirectNamed(vm, globalObject, "_error"_s, scope.exception()->value());
-        scope.clearException();
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
+    if (scope.exception())
+        return fail(scope.exception()->value());
 
     // Note: _ is now set in src/runtime/cli/repl.rs after extracting the value
     // from the REPL transform wrapper. We don't set it here anymore.
@@ -6848,7 +6851,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     WTF::String prefix = prefixLen > 0
         ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
-        : WTF::String();
+        : WTF::emptyString();
+    // No name starts with a prefix that is not UTF-8.
+    if (prefix.isNull())
+        return JSC::JSValue::encode(JSC::jsUndefined());
 
     // Walk the prototype chain as JSObject::getPropertyNames does (the builder dedups,
     // the depth cap stops misbehaving proxy chains), but skip own index names where that

@@ -339,6 +339,90 @@ test.concurrent("spyOn and mock.module on an imported builtin", async () => {
   expect(exitCode).toBe(0);
 });
 
+// node:util and node:readline define their lazy exports with defineLazyProperties (internal/shared). Those are data
+// properties, not accessors, so the readout is the number of functions on the heap: internal/util/inspect adds about
+// 230 when it loads.
+test.concurrent("node:util: importing the module does not load internal/util/inspect", async () => {
+  const result = await runEntry(`
+    import { heapStats } from "bun:jsc";
+    import { createRequire } from "node:module";
+    import { print } from "./helper.mjs";
+    const require = createRequire(import.meta.url);
+    const util = require("node:util");
+    const functions = () => heapStats().objectTypeCounts.Function;
+    const beforeImport = functions();
+    const ns = await import("node:util");
+    const afterImport = functions();
+    const inspect = ns.inspect;
+    const afterRead = functions();
+    const readline = await import("node:readline");
+    print({
+      importLoadedInspect: afterImport - beforeImport > 100,
+      readLoadedInspect: afterRead - afterImport > 100,
+      sameFunction: inspect === util.inspect && ns.format === util.format,
+      readlinePromises: readline.promises === require("node:readline/promises"),
+    });
+  `);
+  expect(result).toEqual({
+    importLoadedInspect: false,
+    readLoadedInspect: true,
+    sameFunction: true,
+    readlinePromises: true,
+  });
+});
+
+// Node's ESM facade for a builtin copies the exports when the facade is created. A value that user code stored
+// before that is what gets bound.
+test.concurrent("node:util: a value stored before the first import is what gets bound", async () => {
+  const result = await runEntry(`
+    import { createRequire } from "node:module";
+    import { print } from "./helper.mjs";
+    const util = createRequire(import.meta.url)("node:util");
+    const stub = () => "stub";
+    util.format = stub;
+    const ns = await import("node:util");
+    print({ format: ns.format === stub, inspect: ns.inspect === util.inspect });
+  `);
+  expect(result).toEqual({ format: true, inspect: true });
+});
+
+// A lazy binding of node:util is read on first use, from the module's own values. So a spy on the exports object does
+// not reach it, during the spy or after mockRestore(). In Node, the facade keeps the module's values too.
+test.concurrent("node:util: a spy on the exports object does not reach the ESM bindings", async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "namespace.mjs": `import * as util from "node:util";\nexport const viaNamespace = (...args) => util.format(...args);\n`,
+      "named.mjs": `import { format } from "node:util";\nexport const viaNamed = (...args) => format(...args);\n`,
+      "spy.test.mjs": `
+        import { expect, spyOn, test } from "bun:test";
+        import util from "node:util";
+        import { viaNamespace } from "./namespace.mjs";
+
+        test("the first read of each binding happens during the spy", async () => {
+          const spy = spyOn(util, "format").mockReturnValue("mocked");
+          try {
+            expect(util.format("%s", "x")).toBe("mocked");
+            expect(viaNamespace("%s", "x")).toBe("x");
+            const { viaNamed } = await import("./named.mjs");
+            expect(viaNamed("%s", "y")).toBe("y");
+          } finally {
+            spy.mockRestore();
+          }
+        });
+
+        test("the bindings still format after mockRestore", async () => {
+          const { viaNamed } = await import("./named.mjs");
+          expect([viaNamespace("%s!", "a"), viaNamed("%s!", "b"), util.format("%s!", "c")]).toEqual(["a!", "b!", "c!"]);
+        });
+      `,
+    },
+    ["test", "./spy.test.mjs"],
+  );
+  expect(stderr).toContain(" 2 pass\n");
+  expect(stderr).toContain(" 0 fail\n");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent('"bun": re-exports construct the properties that get bound, not the rest of the object', async () => {
   const result = await runEntry(
     `

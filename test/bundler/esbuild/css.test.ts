@@ -2144,6 +2144,141 @@ c {
     outfile: "/out.css",
   });
 
+  // Safari 14, in the default browser targets, has no `resolution` media
+  // feature. It only knows `-webkit-device-pixel-ratio`.
+  itBundled("css/MediaResolutionVendorPrefix", {
+    files: {
+      "/entry.css": /* css */ `
+        @media (min-resolution: 2dppx) { .a { color: red } }
+        @media (min-resolution: 2dppx) { .b { color: green } }
+      `,
+
+      // The bundler copies the list of an inlined "@import" to a "@media" rule.
+      "/import.css": /* css */ `
+        @import "./shared.css";
+        @import "./shared.css" (min-resolution: 2dppx);
+        @import "./shared.css" (max-resolution: 192dpi), print;
+      `,
+      "/shared.css": `.shared { color: red }`,
+
+      // The first import is redundant, but it still declares its layer.
+      "/layer.css": /* css */ `
+        @import "./shared.css" layer(first) (min-resolution: 2dppx);
+        @import "./other.css" layer(second);
+        @import "./shared.css" layer(first) (min-resolution: 2dppx);
+      `,
+      "/other.css": `.other { color: green }`,
+
+      "/external.css": /* css */ `
+        @import "https://example.com/external.css" (min-resolution: 2dppx);
+      `,
+
+      // The external import of the inner file and the rules of the inner file
+      // get the same condition.
+      "/nested.css": /* css */ `
+        @import "./inner.css" (min-resolution: 2dppx);
+      `,
+      "/inner.css": /* css */ `
+        @import "https://example.com/external.css" (min-width: 600px);
+        .inner { color: red }
+      `,
+
+      // The two lists are equal after minify, so the first import is redundant.
+      "/duplicate.css": /* css */ `
+        @import "./shared.css" (min-resolution: 2dppx);
+        @import "./shared.css" (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx);
+      `,
+    },
+    entryPoints: ["/entry.css", "/import.css", "/layer.css", "/external.css", "/nested.css", "/duplicate.css"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  .a {
+    color: red;
+  }
+
+  .b {
+    color: green;
+  }
+}
+`);
+      api.expectFile("/out/import.css").toEqualIgnoringWhitespace(/* css */ `
+/* shared.css */
+.shared {
+  color: red;
+}
+
+/* shared.css */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  .shared {
+    color: red;
+  }
+}
+
+/* shared.css */
+@media (-webkit-max-device-pixel-ratio: 2), (max-resolution: 192dpi), print {
+  .shared {
+    color: red;
+  }
+}
+
+/* import.css */
+`);
+      api.expectFile("/out/layer.css").toEqualIgnoringWhitespace(/* css */ `
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  @layer first;
+}
+
+/* other.css */
+@layer second {
+  .other {
+    color: green;
+  }
+}
+
+/* shared.css */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  @layer first {
+    .shared {
+      color: red;
+    }
+  }
+}
+
+/* layer.css */
+`);
+      api.expectFile("/out/external.css").toEqualIgnoringWhitespace(/* css */ `
+@import "https://example.com/external.css" (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx);
+
+/* external.css */
+`);
+      api.expectFile("/out/nested.css").toEqualIgnoringWhitespace(/* css */ `
+@import "data:text/css,@import \\"https://example.com/external.css\\" (min-width: 600px);" (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx);
+
+/* inner.css */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  .inner {
+    color: red;
+  }
+}
+
+/* nested.css */
+`);
+      api.expectFile("/out/duplicate.css").toEqualIgnoringWhitespace(/* css */ `
+/* shared.css */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  .shared {
+    color: red;
+  }
+}
+
+/* duplicate.css */
+`);
+    },
+  });
+
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     files: {

@@ -2397,6 +2397,7 @@ mod stylesheet_impl {
             let mut minify_ctx = MinifyContext {
                 arena,
                 targets: &options.targets,
+                resolution_prefixes: MediaList::resolution_prefixes(&options.targets),
                 handler: &mut handler,
                 important_handler: &mut important_handler,
                 handler_context: ctx,

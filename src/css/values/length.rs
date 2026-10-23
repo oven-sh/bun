@@ -59,8 +59,9 @@ impl LengthPercentageOrAuto {
     }
 }
 
-const PX_PER_IN: f32 = 96.0;
-const PX_PER_CM: f32 = PX_PER_IN / 2.54;
+pub(crate) const PX_PER_IN: f32 = 96.0;
+pub(crate) const CM_PER_IN: f32 = 2.54;
+const PX_PER_CM: f32 = PX_PER_IN / CM_PER_IN;
 const PX_PER_MM: f32 = PX_PER_CM / 10.0;
 const PX_PER_Q: f32 = PX_PER_CM / 40.0;
 const PX_PER_PT: f32 = PX_PER_IN / 72.0;

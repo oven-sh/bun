@@ -7043,6 +7043,26 @@ h();
       });
     });
 
+    // From ESLint 8.57.1 and 9.39.5.
+    test.each([
+      ["8.57.1", ["String(x)", "Number(x)", "Number(x)", "Boolean(x)", "String(x)", "s = String(s)"], []],
+      ["9.39.5", ["Boolean(x)"], ["String(x)", "Number(x)", "Number(x)", "String(x)", "s = String(s)"]],
+    ])("what no-implicit-coercion suggests was a fix in ESLint 8: eslint %s", async (version, fixes, suggestions) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [{
+            rules: { "no-implicit-coercion": ["error", { disallowTemplateShorthand: true }] },
+          }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": 'export const f = x => ["" + x, +x, x * 1, !!x, `${x}`];\nlet s = "a";\ns += "";\nexport { s };\n',
+        },
+        ["-f", "json", "a.js"],
+      );
+      const messages = JSON.parse(raw)[0].messages as any[];
+      expect(messages.flatMap(it => (it.fix ? [it.fix.text] : []))).toEqual(fixes);
+      expect(messages.flatMap(it => (it.suggestions ?? []).map((it: any) => it.fix.text))).toEqual(suggestions);
+    });
+
     // From typescript-eslint 8.71.1 under ESLint 9.39.5 and 10.12.0, and 7.18.0 under ESLint 8.57.1.
     test.each([
       ["8.57.1", ["1:5 Variable 'a' should be initialized on declaration."]],

@@ -655,6 +655,19 @@ describe("color-mix() percentage range", () => {
   });
 });
 
+describe("rem() in a channel", () => {
+  // CSS Values 4: rem() keeps the sign of the dividend, so rem(-40, 7) is -5. mod(-40, 7) is 2.
+  test.each([
+    ["lab(50% rem(-40, 7) 30)", "lab(50% -5 30)"],
+    ["lab(50% rem(40, -7) 30)", "lab(50% 5 30)"],
+    ["lab(50% mod(-40, 7) 30)", "lab(50% 2 30)"],
+    // The channel keywords of a relative color reach the same fold.
+    ["lab(from lab(50% -40 30) l rem(a, 7) b)", "lab(50% -5 30)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
 describe("rgb() channel order and legacy syntax", () => {
   // Distinct channel values, so any two channels ending up in each other's
   // place shows in the output. The legacy comma syntax gives the channels on a

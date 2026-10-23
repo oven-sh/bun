@@ -1175,7 +1175,10 @@ pub mod fs {
             };
             if let Some(original) = in_place {
                 // SAFETY: BSSMap-owned; entries_mutex held.
-                unsafe { (*original).data.clear() };
+                unsafe {
+                    entries.inherit_case_verdict(&*original);
+                    (*original).data.clear();
+                }
             }
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle;
@@ -1493,10 +1496,12 @@ pub mod fs {
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
                         Ok(new_entry) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            unsafe {
+                                new_entry.inherit_case_verdict(&*e_ptr);
+                                (*e_ptr).data.clear();
+                                *e_ptr = new_entry;
+                            }
                         }
                         Err(err) => {
                             // SAFETY: see above.
@@ -2314,6 +2319,40 @@ pub mod cache {
 }
 
 pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
+
+/// Error path: `specifier` respelled with the listed name it differs from
+/// only in case, if the cached listing of its directory holds one.
+pub fn case_near_miss(specifier: &[u8], source_dir: &[u8]) -> Option<Vec<u8>> {
+    if !(specifier.starts_with(b"./")
+        || specifier.starts_with(b"../")
+        || bun_paths::Platform::AUTO.is_absolute(specifier))
+        || bun_paths::Platform::AUTO.is_separator(*specifier.last()?)
+        || !bun_paths::Platform::AUTO.is_absolute(source_dir)
+        || !fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire)
+    {
+        return None;
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let target = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+        source_dir,
+        &mut buf[..],
+        &[specifier],
+    )?;
+    let target_dir =
+        bun_paths::strings::paths::without_trailing_slash_windows_path(bun_paths::dirname(target)?);
+    let target_base = bun_paths::basename(target);
+    let rfs = &mut fs::FileSystem::instance().fs;
+    let _guard = rfs.entries_mutex.lock_guard();
+    let actual = match rfs.entries.get(target_dir)? {
+        fs::EntriesOption::Entries(e) => e.case_near_miss(target_base)?,
+        fs::EntriesOption::Err(_) => return None,
+    };
+    let spec_base = bun_paths::basename(specifier);
+    let mut out = Vec::with_capacity(specifier.len() - spec_base.len() + actual.len());
+    out.extend_from_slice(&specifier[..specifier.len() - spec_base.len()]);
+    out.extend_from_slice(actual);
+    Some(out)
+}
 
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.

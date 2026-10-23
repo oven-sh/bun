@@ -16,7 +16,7 @@ import {
   indent,
   InternalFieldAccessor,
   isIfPassed,
-  type JSClass,
+  kindTests,
   memberIdentifier,
   type Method,
   type ModuleDefinition,
@@ -25,13 +25,11 @@ import {
   OptionalType,
   type Origin,
   type OverloadDispatch,
-  OwnedStringType,
-  OwnedUtf8Type,
+  refusesNonObjects,
   rustIdent,
   type RustScope,
   Signature,
   snakeCase,
-  StringType,
   type Type,
   UnionType,
   UnitType,
@@ -152,21 +150,6 @@ const externType = (type: Type): string =>
     : `Bun::Bindgen::ExternOf<${type.idlType}>`;
 const toExtern = (variable: string) => `Bun::Bindgen::toExtern(${variable})`;
 
-/** How C++ tells that a value is of a kind: `ofValue` if it is not a cell, `ofCell` of `cell`, by its type byte. */
-const kindTests: Record<Exclude<ValueKind, JSClass>, { ofValue?: (value: string) => string; ofCell?: string }> = {
-  undefined: { ofValue: value => `${value}.isUndefined()` },
-  null: { ofValue: value => `${value}.isNull()` },
-  boolean: { ofValue: value => `${value}.isBoolean()` },
-  number: { ofValue: value => `${value}.isNumber()` },
-  bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "cell->isHeapBigInt()" },
-  string: { ofCell: "cell->isString()" },
-  stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
-  array: { ofCell: "JSC::isJSArray(cell)" },
-  arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
-  arrayBufferView: { ofCell: "cell->inherits<JSC::JSArrayBufferView>()" },
-  callable: { ofCell: "cell->isCallable()" },
-};
-
 /**
  * C++ that declares `choice`, an index into the `outcomes` it returns: the distinct values of `byKind`, "other"'s first.
  * `condition`, if the choice is that simple, is true of `outcomes[1]` and false of `outcomes[0]`.
@@ -236,25 +219,22 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
       const { name, type: alternative } = type.alternatives[i];
       const member = `result.${name}`;
       const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "");
-      if (alternative instanceof DictionaryType && i !== candidates.at(-1))
-        return `if (value.isObject()) {
-    result.tag = ${i};
-    scope.release();
-${indent(cppEmplace(member, convert), 4)}
-    return;
-}`;
-      if (alternative.refuses && !(alternative instanceof DictionaryType))
+      if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn;`;
+      const take = `result.tag = ${i};
+scope.release();
+${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
+return;`;
+      // As the last, its own conversion reports what is not an object.
+      if (refusesNonObjects(alternative))
+        return i === candidates.at(-1) ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
+      if (alternative.refuses)
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
     ${member} = WTF::move(*converted);
     result.tag = ${i};
     return;
 }
 RETURN_IF_EXCEPTION(scope, void());`;
-      if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn;`;
-      return `result.tag = ${i};
-scope.release();
-${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
-return;`;
+      return take;
     })
     .join("\n");
 }
@@ -267,10 +247,10 @@ function cppHeaderForUnion(type: UnionType): string {
     .map(a => a.type.idlType)
     .join(", ");
   const { outcomes, code } = cppChooseByKind("value", type.alternativesByKind);
-  const mayMatchNone = (candidates: readonly number[]) =>
-    candidates.length === 0 ||
-    (!!alternatives[candidates.at(-1)!].type.refuses &&
-      !(alternatives[candidates.at(-1)!].type instanceof DictionaryType));
+  const mayMatchNone = (candidates: readonly number[]) => {
+    const last = alternatives[candidates.at(-1) ?? -1]?.type;
+    return !last || (!!last.refuses && !refusesNonObjects(last));
+  };
   const cases = outcomes.flatMap((candidates, index) =>
     candidates.length === 0
       ? []
@@ -1218,7 +1198,7 @@ ${cppPrologue}
   return cppHostFunctionBody(defineHostFunction, name, fn, symbol, takeThis);
 }
 
-/** `define`, then the braces. Its overloads are named after `name`. */
+/** The function that `define` opens. The function of each overload is `name` plus a suffix. */
 function cppHostFunctionBody(
   define: string,
   name: string,
@@ -1307,7 +1287,11 @@ export function cppSource(file: SchemaFile): string {
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
   if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
-  if (file.functions.some(fn => fn.signatures[0].rejects)) systemHeaders.push("JavaScriptCore/JSPromise.h");
+  const functions = [
+    ...file.functions,
+    ...file.types.flatMap(type => (type instanceof ClassType ? type.nativeFunctions : [])),
+  ];
+  if (functions.some(fn => fn.signatures[0].rejects)) systemHeaders.push("JavaScriptCore/JSPromise.h");
   if (file.types.some(type => type instanceof ClassType)) systemHeaders.unshift("JavaScriptCore/HeapAnalyzer.h");
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
   if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");
@@ -1397,13 +1381,7 @@ function rustArgumentName(arg: { name: string }): string {
   return rustIdent(name);
 }
 
-/** A dictionary or a string stays in the frame of the thunk, and the body borrows it. */
-function rustBorrow(type: Type) {
-  const inner = type instanceof DefaultType ? type.inner : type;
-  const isString =
-    inner instanceof StringType && !(inner instanceof OwnedUtf8Type) && !(inner instanceof OwnedStringType);
-  return inner instanceof DictionaryType || isString ? "&" : "";
-}
+const rustBorrow = (type: Type) => ((type instanceof DefaultType ? type.inner : type).borrowedByBody ? "&" : "");
 const rustExternParameters = (signature: Signature, scope: RustScope) =>
   signature.args.map(
     arg => `${rustArgumentName(arg)}: ${isPassedByPointer(arg.type) ? "*mut " : ""}${arg.type.rustExternType(scope)}`,

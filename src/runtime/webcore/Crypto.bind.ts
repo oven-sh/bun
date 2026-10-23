@@ -2,9 +2,6 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::webcore::crypto" });
 
-/** What is not a string is not converted: it is "hex". */
-export const UUIDEncoding = b.union({ label: b.string.utf8, ignored: b.any });
-
 /** `bytes` is a `Buffer`, for the encoding "buffer". */
 export const EncodedUUID = b.union({ text: b.string, bytes: b.bufferSource });
 
@@ -13,7 +10,8 @@ export const randomUUIDv5 = b.fn({
     name: b.bytes({ from: ["string", "buffer"] }),
     /** A string is a UUID or the name of one. A buffer is its 16 bytes. */
     namespace: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }),
-    encoding: UUIDEncoding,
+    /** What is not a string means "hex". */
+    encoding: b.string.utf8.otherAsNull,
   },
   returns: EncodedUUID,
   capability: "heap",
@@ -24,7 +22,7 @@ export const randomUUIDv5 = b.fn({
 /** `clock` is the time now. */
 export const UUIDTimestamp = b.union({ clock: b.undefined, time: b.f64.allowDate });
 
-/** Alone, what is not a string is the timestamp. Before a timestamp it is as in `UUIDEncoding`. */
+/** Without a second argument, a first one that is not a string is the timestamp. With one, it means "hex". */
 export const UUIDEncodingOrTimestamp = b.union({
   label: b.string.utf8,
   clock: b.undefined,
@@ -35,6 +33,7 @@ export const UUIDEncodingOrTimestamp = b.union({
 /** `randomUUIDv7(timestamp)` takes the timestamp. `randomUUIDv7(timestamp, undefined)` takes the clock's. */
 export const randomUUIDv7 = b.fn({
   args: { encoding: UUIDEncodingOrTimestamp, timestamp: UUIDTimestamp.ifPassed },
+  expected: { timestamp: "timestamp must be a number or Date" },
   returns: EncodedUUID,
   capability: "heap",
   throws: true,

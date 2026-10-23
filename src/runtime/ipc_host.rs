@@ -310,7 +310,7 @@ pub(crate) fn emit_handle_ipc_message<'a>(
         MessageTarget::Subprocess(subprocess) => {
             subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
         }
-        MessageTarget::Absent | MessageTarget::Ignored(_) => {}
+        MessageTarget::Missing | MessageTarget::Ignored(_) => {}
         MessageTarget::ThisProcess => {
             // Cluster-internal replies that carried a descriptor (shared dgram
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to

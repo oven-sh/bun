@@ -109,9 +109,28 @@ type ValueKinds = readonly ValueKind[] | "any";
 
 const dateInstance: JSClass = { cpp: "JSC::DateInstance" };
 
+/** How C++ tells that a value is of a kind: `ofValue` if it is not a cell, `ofCell` of `cell`, by its type byte. */
+export const kindTests: Record<
+  Exclude<ValueKind, JSClass>,
+  { ofValue?: (value: string) => string; ofCell?: string }
+> = {
+  undefined: { ofValue: value => `${value}.isUndefined()` },
+  null: { ofValue: value => `${value}.isNull()` },
+  boolean: { ofValue: value => `${value}.isBoolean()` },
+  number: { ofValue: value => `${value}.isNumber()` },
+  bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "cell->isHeapBigInt()" },
+  string: { ofCell: "cell->isString()" },
+  stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
+  array: { ofCell: "JSC::isJSArray(cell)" },
+  arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
+  arrayBufferView: { ofCell: "cell->inherits<JSC::JSArrayBufferView>()" },
+  callable: { ofCell: "cell->isCallable()" },
+};
+
 const primitiveKinds: readonly (ValueKind | "other")[] = ["undefined", "null", "boolean", "number", "bigint", "string"];
-/** What a type that takes any object `refuses`. */
+/** What a type that takes every object `refuses`. */
 const nonObjects = "what is not an object";
+export const refusesNonObjects = (type: Type) => type.refuses === nonObjects;
 
 const takes = (type: Type, kind: ValueKind | "other") =>
   type.valueKinds === "any" || (kind !== "other" && type.valueKinds.includes(kind));
@@ -134,10 +153,11 @@ function alternativesByKind(alternatives: readonly Type[]): Map<ValueKind | "oth
         if (!takes(type, kind) || list.some(earlier => alternatives[earlier].refuses === type.refuses)) continue;
         list.push(i);
         if (!type.refuses) break;
+        if (refusesNonObjects(type) && kind !== "other" && !primitiveKinds.includes(kind)) break;
       }
-      // Left as the last, it reports the value.
+      // A primitive skips an alternative that takes only objects, unless it is the last: that one reports it.
       if (primitiveKinds.includes(kind)) {
-        for (let i = list.length - 2; i >= 0; i--) if (alternatives[list[i]].refuses === nonObjects) list.splice(i, 1);
+        for (let i = list.length - 2; i >= 0; i--) if (refusesNonObjects(alternatives[list[i]])) list.splice(i, 1);
       }
       if (!lists.has(`${list}`)) lists.set(`${list}`, list);
       return [kind, lists.get(`${list}`)!];
@@ -183,6 +203,10 @@ export abstract class Type {
   get ifPassed(): OptionalType {
     return new OptionalType(this, "ifPassed");
   }
+  /** Every value it does not take means absent. */
+  get otherAsNull(): OptionalType {
+    return new OptionalType(this, "otherAsNull");
+  }
   /** Also the argument itself: `(T, JsLocal<'a>)`. Only for an argument. */
   get withValue(): WithValueType {
     return new WithValueType(this);
@@ -213,12 +237,31 @@ export abstract class Type {
   get refuses(): string | null {
     return null;
   }
-  /** Written `.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull`, `.ifPassed` or `.default()`: as an argument with only such after it, it is one a caller leaves out. */
+  /** A C++ condition that is true of the values it takes. Only for a type whose kinds tell, or that takes every object. */
+  cppTakes(value: string): string {
+    if (refusesNonObjects(this)) return `${value}.isObject()`;
+    const kinds = this.valueKinds;
+    assert(kinds !== "any" && !this.refuses, `${this.tsType}: only converting a value tells whether it takes it`);
+    const ofValue = kinds.flatMap(kind => (typeof kind === "object" ? [] : (kindTests[kind].ofValue?.(value) ?? [])));
+    const ofCell = kinds
+      .flatMap(kind => (typeof kind === "object" ? `cell->inherits<${kind.cpp}>()` : (kindTests[kind].ofCell ?? [])))
+      .map(test => test.replace("cell", `${value}.asCell()`));
+    return [...ofValue, ...(ofCell.length > 0 ? [`(${value}.isCell() && (${ofCell.join(" || ")}))`] : [])].join(" || ");
+  }
+  /** Written `.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull`, `.otherAsNull`, `.ifPassed` or `.default()`: as an argument with only such after it, it is one a caller leaves out. */
   get isOptional(): boolean {
     return false;
   }
   /** The host function passes the argument itself along: `ExternWithValue`. Only for an argument. */
   get passesValue(): boolean {
+    return false;
+  }
+  /** Why it is not an element, a member, an alternative or a result, if it is only for an argument. */
+  get onlyArgument(): string | null {
+    return this.passesValue ? "b.bytes and .withValue are only for an argument" : null;
+  }
+  /** As an argument it stays in the frame of the thunk, and the body borrows it: `&T`. */
+  get borrowedByBody(): boolean {
     return false;
   }
   /** `rustFromExtern` is a `bindgen::Result`. Only for an argument. */
@@ -309,6 +352,10 @@ export abstract class Type {
   /** A Rust expression of type `bindgen::Result<'a, bindgen::JsLocal<'a>>` that consumes `value`; `heap` is in scope. */
   rustToJS(value: string, scope: RustScope): string {
     throw new TypeError(`${this.tsType} cannot be returned to JavaScript`);
+  }
+  /** The same for `value`, a `Vec` of it, where one call makes the whole array. */
+  rustArrayToJS(value: string): string | null {
+    return null;
   }
 }
 
@@ -552,6 +599,7 @@ export class DoubleType extends PrimitiveType {
   }
   /** `ToNumber`: WebIDL's `unrestricted double`. */
   get loose(): LooseDoubleType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictDouble", ".loose follows b.f64");
     return new LooseDoubleType("WebCore::IDLUnrestrictedDouble", "any");
   }
 }
@@ -659,6 +707,9 @@ export class StringType extends Type {
   get nullRepresentation() {
     return "pointer" as const;
   }
+  get borrowedByBody(): boolean {
+    return true;
+  }
   toCpp(value: unknown): string {
     assert(typeof value === "string", `${util.inspect(value)} is not a string`);
     return `WTF::String { ${asciiLiteral(value)} }`;
@@ -681,6 +732,9 @@ export class StringType extends Type {
   rustToJS(value: string): string {
     return `bindgen::to_js::string(heap, ${value})`;
   }
+  rustArrayToJS(value: string): string | null {
+    return `bindgen::to_js::string_array(heap, ${value})`;
+  }
 }
 
 export class LocalStringResultType extends ResultType {
@@ -698,6 +752,15 @@ export class LocalStringResultType extends ResultType {
 }
 
 export class OwnedStringType extends StringType {
+  get onlyArgument(): string {
+    return ".owned is only for an argument: everywhere else the string is already by value";
+  }
+  get borrowedByBody(): boolean {
+    return false;
+  }
+  get local(): never {
+    throw new TypeError(".local follows b.string");
+  }
   get loose(): never {
     throw new TypeError("write b.string.loose.owned");
   }
@@ -714,6 +777,12 @@ export class OwnedStringType extends StringType {
 
 /** UTF-8 to keep: the JS string's own buffer, shared, when it is 8-bit ASCII, otherwise a transcoded copy. */
 export class OwnedUtf8Type extends StringType {
+  get borrowedByBody(): boolean {
+    return false;
+  }
+  rustArrayToJS(): null {
+    return null;
+  }
   get owned(): never {
     throw new TypeError("already .owned");
   }
@@ -1224,6 +1293,9 @@ export class PromisePtrType extends Type {
   get idlType(): string {
     return "Bun::Bindgen::IDLPromisePtr";
   }
+  get onlyArgument(): string {
+    return "the context of a promise reaction is only an argument";
+  }
   get conversionThrows(): boolean {
     return false;
   }
@@ -1239,9 +1311,6 @@ export class PromisePtrType extends Type {
   }
   rustFromExtern(expr: string): string {
     return `${expr}.cast::<${this.pointee}>()`;
-  }
-  rustToJS(): never {
-    throw new TypeError("the context of a promise reaction is only an argument");
   }
 }
 
@@ -1261,24 +1330,26 @@ export class NativePromiseContextType extends PromisePtrType {
   }
 }
 
-const isNativePromiseContext = (type: Type) => type instanceof NativePromiseContextType;
-
 // ───────────────────────────── combinators ─────────────────────────────
 
 export class OptionalType extends Type {
   readonly inner: Type;
-  readonly modifier: "optional" | "nullable" | "falsyAsNull" | "emptyStringAsNull" | "ifPassed";
+  readonly modifier: "optional" | "nullable" | "falsyAsNull" | "emptyStringAsNull" | "otherAsNull" | "ifPassed";
   constructor(inner: Type, modifier: OptionalType["modifier"]) {
     super();
     assert(!(inner instanceof OptionalType), "already optional");
     assert(!(inner instanceof DefaultType), "put .default() last");
     assert(!(inner instanceof WithValueType), "put .withValue last");
-    if (modifier === "ifPassed") {
-      // Every type: what it does with `undefined` is its own.
-    } else if (inner instanceof AnyType) {
-      assert(modifier === "emptyStringAsNull", "b.any already accepts undefined and null");
-    } else {
-      assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
+    assert(inner.passesValue || !inner.onlyArgument, inner.onlyArgument ?? "");
+    // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it.
+    if (modifier !== "ifPassed") {
+      if (inner instanceof AnyType)
+        assert(modifier === "emptyStringAsNull", "b.any already accepts undefined and null");
+      else assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
+    }
+    if (modifier === "otherAsNull") {
+      assert(!(inner instanceof IntegerType), "an integer type reports a number it does not take: b.f64.otherAsNull");
+      assert(inner.valueKinds !== "any" || inner.refuses, `${inner.tsType} takes every value`);
     }
     assert(
       !(inner instanceof BytesType) || inner.canBe(modifier),
@@ -1293,12 +1364,15 @@ export class OptionalType extends Type {
       nullable: "WebCore::IDLNullable",
       falsyAsNull: "Bun::Bindgen::IDLFalsyAsNull",
       emptyStringAsNull: "Bun::Bindgen::IDLEmptyStringAsNull",
+      otherAsNull: "Bun::Bindgen::IDLOtherAsNull",
       ifPassed: "Bun::Bindgen::IDLNotPassedAsNull",
     }[this.modifier];
     return `${template}<${this.inner.idlType}>`;
   }
   get tsType(): string {
-    return `${this.inner.tsType} | ${this.modifier === "optional" ? "undefined" : "null | undefined"}`;
+    if (this.modifier === "otherAsNull") return "any";
+    const absent = this.modifier === "optional" || this.modifier === "ifPassed" ? "undefined" : "null | undefined";
+    return `${this.inner.tsType} | ${absent}`;
   }
   get takesUndefined(): boolean {
     return true;
@@ -1306,9 +1380,11 @@ export class OptionalType extends Type {
   get isOptional(): boolean {
     return true;
   }
+  get onlyArgument(): string | null {
+    return this.modifier === "ifPassed" ? ".ifPassed is only for an argument" : super.onlyArgument;
+  }
   get valueKinds(): ValueKinds {
-    if (this.inner.valueKinds === "any" || this.modifier === "falsyAsNull" || this.modifier === "emptyStringAsNull")
-      return "any";
+    if (this.inner.valueKinds === "any" || !["optional", "nullable", "ifPassed"].includes(this.modifier)) return "any";
     return [...this.inner.valueKinds, "undefined", ...(this.modifier === "nullable" ? (["null"] as const) : [])];
   }
   get dependencies(): readonly Type[] {
@@ -1327,6 +1403,7 @@ export class OptionalType extends Type {
     return this.inner.cppReadLast(target, value);
   }
   #cppIsPresent(value: string): string {
+    if (this.modifier === "otherAsNull") return this.inner.cppTakes(value);
     return {
       optional: `!${value}.isUndefined()`,
       nullable: `!${value}.isUndefinedOrNull()`,
@@ -1396,8 +1473,8 @@ export class WithValueType extends Type {
   readonly inner: Type;
   constructor(inner: Type) {
     super();
-    assert(!inner.passesValue, "it already holds the argument");
-    assert(!inner.returnsValueUnchanged, "it is the argument");
+    assert(!inner.passesValue, ".withValue: b.bytes already passes the argument");
+    assert(!inner.returnsValueUnchanged, ".withValue: the type is the argument itself");
     assert(!isIfPassed(inner), ".ifPassed has no argument to give when it is absent");
     this.inner = inner;
   }
@@ -1458,9 +1535,6 @@ export class WithValueType extends Type {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `(${this.inner.rustFromExtern(`${expr}.converted`, scope)}, bindgen::JsLocal::from_extern(${expr}.value, heap))`;
   }
-  rustToJS(): never {
-    throw new TypeError(".withValue is only for an argument");
-  }
 }
 
 export const isIfPassed = (type: Type) => type instanceof OptionalType && type.modifier === "ifPassed";
@@ -1474,6 +1548,7 @@ export class DefaultType extends Type {
   constructor(inner: Type, value: unknown) {
     super();
     assert(!(inner instanceof DefaultType), "already has a default");
+    assert(!(inner instanceof WithValueType), "put .withValue last");
     if (inner instanceof OptionalType) {
       assert(inner.modifier === "nullable", ".default() follows a type or .nullable");
       this.inner = inner.inner;
@@ -1557,8 +1632,7 @@ export class ArrayType extends Type {
     super();
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
-    assert(!element.passesValue, "b.bytes and .withValue are only for an argument");
-    assert(!isIfPassed(element), ".ifPassed is only for an argument");
+    assert(!element.onlyArgument, element.onlyArgument ?? "");
     assert(
       !element.borrowsCell,
       "an instance that Rust takes as &T cannot be in an array or a dictionary: only an argument's slot in the frame keeps it alive",
@@ -1616,7 +1690,10 @@ export class ArrayType extends Type {
     return `Vec<${this.element.rustResultFieldType(scope)}>`;
   }
   rustToJS(value: string, scope: RustScope): string {
-    return `bindgen::to_js::array(heap, ${value}, |heap, value| ${this.element.rustToJS("value", scope)})`;
+    return (
+      this.element.rustArrayToJS(value) ??
+      `bindgen::to_js::array(heap, ${value}, |heap, value| ${this.element.rustToJS("value", scope)})`
+    );
   }
 }
 
@@ -1809,8 +1886,7 @@ export class DictionaryType extends NamedType {
       "fields",
     );
     for (const { name, type } of this.members) {
-      assert(!type.passesValue, `${name}: b.bytes and .withValue are only for an argument`);
-      assert(!isIfPassed(type), `${name}: .ifPassed is only for an argument`);
+      assert(!type.onlyArgument, `${name}: ${type.onlyArgument}`);
       assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
     }
     assert(
@@ -1845,6 +1921,9 @@ export class DictionaryType extends NamedType {
   }
   get refuses(): string | null {
     return this.nonObjectAsEmpty ? null : nonObjects;
+  }
+  get borrowedByBody(): boolean {
+    return true;
   }
   get nullPrototype(): boolean {
     return !!this.options.nullPrototype;
@@ -1937,7 +2016,7 @@ export class UnionType extends NamedType {
       assert(!(type instanceof UnionType), `${name}: list the alternatives of the other union here`);
       assert(!(type instanceof OptionalType), `${name}: add b.null as an alternative`);
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
-      assert(!type.passesValue, `${name}: b.bytes and .withValue are only for an argument`);
+      assert(!type.onlyArgument, `${name}: ${type.onlyArgument}`);
       assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
@@ -2032,7 +2111,7 @@ export interface SignatureOptions {
   capability?: Capability;
   /** The body returns `Result<T, E>` for any `E: bindgen::IntoError`. */
   throws?: boolean;
-  /** It returns a promise. What it throws, or the conversion of an argument throws, is the reason of a rejected one instead. */
+  /** The function returns a promise: what the body or the conversion of an argument throws rejects one, and nothing is thrown. */
   rejects?: boolean;
   /** Path of the Rust function. Defaults to the module's path plus the export's name in snake_case. */
   rustPath?: string;
@@ -2055,6 +2134,10 @@ export interface FunctionOptions extends SignatureOptions {
 /** What `b.value` takes. */
 export type ValueOptions = Pick<SignatureOptions, "capability" | "throws" | "rustPath"> & { returns: Type };
 
+/** A range, absent or not: its converter takes the name and no context. */
+const reportsItsOwnName = (type: Type) =>
+  (type instanceof OptionalType || type instanceof DefaultType ? type.inner : type) instanceof RangeType;
+
 export class Signature {
   readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
   readonly returns: Type;
@@ -2075,6 +2158,7 @@ export class Signature {
     }));
     for (const [name, types] of Object.entries(expected)) {
       assert(name in args, `expected: ${name} is not an argument`);
+      assert(!reportsItsOwnName(args[name]), `expected: ${name} is a range, which reports what Node does`);
       assert(types.length > 0, `expected: ${name} expects nothing`);
     }
     this.returns = options.returns ?? new UnitType("undefined");
@@ -2108,12 +2192,17 @@ export class Signature {
       pinned.length === 0 || !this.args.some(arg => arg.type.borrowsHeap),
       'held: "pinned" moves the bytes of a small typed array, which another argument that is held: "borrowed" can be',
     );
-    const taken = this.args.findIndex(({ type }) => [type, ...type.dependencies].some(isNativePromiseContext));
+    // Of the modifiers, only `.withValue` goes on one.
+    const taken = this.args.findIndex(
+      ({ type }) => (type instanceof WithValueType ? type.inner : type) instanceof NativePromiseContextType,
+    );
     assert(
       taken < 0 || this.args.slice(taken + 1).every(arg => !arg.type.conversionThrows),
       "b.nativePromiseContext takes the pointer out of the cell: if a later argument throws, nothing releases it",
     );
     assert(!(this.returns instanceof DefaultType), "a result has no default");
+    assert(!this.returns.onlyArgument, this.returns.onlyArgument ?? "");
+    assert(!this.rejects || this.returns.holdsJSValue, "rejects: the result is a promise");
     assert(
       !this.returns.holdsJSValue || this.capability !== "none" || hasThisValue,
       'returning a JS value takes capability: "heap" or "js"',
@@ -2179,6 +2268,11 @@ export class FunctionDefinition {
     assert(
       this.signatures.every(signature => signature.rejects === this.signatures[0].rejects),
       "its overloads have one rejects",
+    );
+    assert(
+      this.signatures.length === 1 ||
+        !this.signatures.some(signature => signature.args.some(arg => isIfPassed(arg.type))),
+      ".ifPassed is not for overloads: the kind of an argument chooses one, and an argument that is not passed has none",
     );
     const nodes = new Map<string, OverloadDispatch>();
     this.dispatch = this.dispatchOn(this.signatures, 0, nodes);
@@ -2691,7 +2785,10 @@ export class NamespaceDefinition {
     this.functions = Object.entries(functions).map(([name, options]) => {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
       assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);
-      const fn = new FunctionDefinition(Array.isArray(options) ? options : [options]);
+      const signatures: readonly SignatureOptions[] = Array.isArray(options) ? options : [options];
+      for (const key of ["passThis", "passCallee", "export"])
+        assert(!signatures.some(signature => key in signature), `${name}: a function of a namespace has no ${key}`);
+      const fn = new FunctionDefinition(signatures);
       fn.name = name;
       return fn;
     });

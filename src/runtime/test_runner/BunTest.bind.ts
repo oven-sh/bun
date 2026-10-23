@@ -12,9 +12,9 @@ const hook = (name: string) =>
     export: `Bun__BunTest__${name}`,
     args: { first: DescriptionOrCallback, second: CallbackOrOptions, third: CallbackOrOptions },
     expected: {
-      first: "The first argument must be a named class, named function, number, or string",
-      second: "The second argument must be a function, number, or object",
-      third: "The third argument must be a function, number, or object",
+      first: `${name}() expects a function as the first argument`,
+      second: `${name}() expects a number or object as the second argument`,
+      third: `${name}() expects a number or object as the third argument`,
     },
     length: 1,
     ...js,

@@ -27,7 +27,7 @@ const reaction = {
 export const onPromiseResolve = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseResolve" });
 export const onPromiseReject = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseReject" });
 
-export const CronOptions = b.dictionary({ tz: b.string.utf8.nullable }, { allowArray: true });
+export const CronOptions = b.dictionary({ tz: b.string.utf8.nullable }, { allowArray: true, reportedAs: "options" });
 
 const signature = { export: "Bun__Cron__cron", capability: "js", throws: true } as const;
 

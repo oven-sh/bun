@@ -818,9 +818,9 @@ console.log(JSON.stringify(results));`,
     // A mode that cannot be mapped must not mean `disable`.
     "sslMode object": "ERR_INVALID_ARG_TYPE",
     "sslMode string": "ERR_INVALID_ARG_TYPE",
-    "sslMode negative": "ERR_INVALID_ARG_TYPE",
-    "sslMode out of range": "ERR_INVALID_ARG_TYPE",
-    "sslMode fraction": "ERR_INVALID_ARG_TYPE",
+    "sslMode negative": "ERR_OUT_OF_RANGE",
+    "sslMode out of range": "ERR_OUT_OF_RANGE",
+    "sslMode fraction": "ERR_OUT_OF_RANGE",
   });
   expect(exitCode).toBe(0);
 });

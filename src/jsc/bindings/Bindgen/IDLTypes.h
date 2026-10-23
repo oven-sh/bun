@@ -41,6 +41,10 @@ struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
 template<typename IDL>
 struct IDLEmptyStringAsNull : WebCore::IDLNullable<IDL> {};
 
+// Treats every value that IDL does not take as null.
+template<typename IDL>
+struct IDLOtherAsNull : WebCore::IDLNullable<IDL> {};
+
 // Treats the empty value, which stands for an argument the call does not have, as null.
 template<typename IDL>
 struct IDLNotPassedAsNull : WebCore::IDLNullable<IDL> {};

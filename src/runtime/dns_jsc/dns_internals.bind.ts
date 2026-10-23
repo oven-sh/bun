@@ -4,9 +4,6 @@ export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
 export const getRuntimeDefaultResultOrderOption = b.fn({ returns: b.string });
 
-/** A non-string means "A". */
-export const RecordTypeArgument = b.union({ label: b.string.utf8, ignored: b.any });
-
 const method = { capability: "js", throws: true } as const;
 
 const query = {
@@ -18,7 +15,8 @@ const query = {
 const getServers = { ...method, returns: b.any } as const;
 const resolve = {
   ...method,
-  args: { name: b.string.utf8, record: RecordTypeArgument },
+  /** A `record` that is not a string means "A". */
+  args: { name: b.string.utf8, record: b.string.utf8.otherAsNull },
   expected: { name: ["string"] },
   returns: b.any,
 } as const;

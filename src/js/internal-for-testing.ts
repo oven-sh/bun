@@ -300,6 +300,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   objectEcho: $bindgen("bindgen_test.bind.ts", "objectEcho"),
   absenceEcho: $bindgen("bindgen_test.bind.ts", "absenceEcho"),
   callbackOrDelay: $bindgen("bindgen_test.bind.ts", "callbackOrDelay"),
+  presentOnes: $bindgen("bindgen_test.bind.ts", "presentOnes"),
   finiteLater: $bindgen("bindgen_test.bind.ts", "finiteLater"),
   integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
   looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),

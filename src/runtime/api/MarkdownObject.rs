@@ -1,8 +1,8 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use crate::generated_bindgen::markdown_object::{
-    AnsiTheme, Autolinks, CallbackOrIgnored, ComponentOverrides, Headings, MarkdownOptions,
-    NumberOrIgnored, ReactOptions, RenderCallbacks,
+    AnsiTheme, Autolinks, ComponentOverrides, Headings, MarkdownOptions, ReactOptions,
+    RenderCallbacks,
 };
 use bun_core::StackCheck;
 use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
@@ -155,17 +155,14 @@ pub(crate) fn set_max_markdown_block_bytes_for_testing(limit: f64) -> usize {
 pub(crate) fn ansi<'a>(
     cx: &mut JsScope<'a>,
     input: JsBytes<'a>,
-    theme: &AnsiTheme<'a>,
+    theme: &AnsiTheme,
 ) -> JsResult<Box<[u8]>> {
     let theme = md::AnsiTheme {
         colors: theme.colors.unwrap_or(true),
         hyperlinks: theme.hyperlinks.unwrap_or(false),
         kitty_graphics: theme.kitty_graphics.unwrap_or(false),
         light: theme.light.unwrap_or_else(md::detect_light_background),
-        columns: match theme.columns {
-            NumberOrIgnored::Number(columns) => columns as u16,
-            NumberOrIgnored::Ignored(_) => 80,
-        },
+        columns: theme.columns.map_or(80, |columns| columns as u16),
         remote_image_paths: None,
         image_base_dir: None,
     };
@@ -251,12 +248,12 @@ pub(crate) fn react<'a>(
     cx: &mut JsScope<'a>,
     input: JsLocal<'a>,
     components: &ComponentOverrides<'a>,
-    options: &ReactOptions<'a>,
+    options: &ReactOptions,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
     let react_version: u8 = match options.react_version {
         // react.element (React 18 and older)
-        NumberOrIgnored::Number(version) if version as i32 <= 18 => 0,
+        Some(version) if version as i32 <= 18 => 0,
         // react.transitional.element (React 19+)
         _ => 1,
     };
@@ -1056,7 +1053,7 @@ impl<'a> JsCallbackRenderer<'a> {
     fn extract_callbacks(&mut self, callbacks: &RenderCallbacks<'_>) {
         macro_rules! extract {
             ($($field:ident),* $(,)?) => {$(
-                if let CallbackOrIgnored::Callback(callback) = callbacks.$field {
+                if let Some(callback) = callbacks.$field {
                     self.callbacks.$field = callback.to_js();
                 }
             )*};

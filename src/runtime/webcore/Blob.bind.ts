@@ -39,10 +39,10 @@ export const Blob = b.class({
   },
 });
 
-/** What `JSValue::as_class_ref::<Blob>` finds a `Blob` in. */
+/** A `Blob`, or an output of `Bun.build()`, which holds one. */
 export const BlobOrBuildArtifact = b.union({ blob: Blob, buildArtifact: BuildArtifact });
 
-/** What is not a string is not a type, and nor is `""`. A `String` object of it is the type `""`. */
+/** Anything but a string is ignored, and so is `""`. `new String("")` sets the type to `""`. */
 export const BlobType = b.union({ text: b.string, stringObject: b.string.allowStringObject, ignored: b.any });
 /** What `Bun.file` reads of its options, unless the path is `s3://`. */
 export const BunFileOptions = b.dictionary(
@@ -55,7 +55,7 @@ export const file = b.fn({ ...js, args: { path: b.any, options: b.any }, returns
 /** What `Bun.write` itself reads of its options. */
 export const BunWriteOptions = b.dictionary(
   { createPath: b.bool.emptyStringAsNull, mode: b.f64.nullable },
-  { allowArray: true, fromJS: true },
+  { allowArray: true, fromJS: true, reportedAs: "options" },
 );
 /** `options` is also what a write to S3 takes. */
 export const write = b.fn({ ...method, args: { destination: b.any, data: b.any, options: b.any }, length: 1 });

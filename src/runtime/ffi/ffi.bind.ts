@@ -28,12 +28,10 @@ export const dlopen = b.fn({
 export const callback = b.fn({ ...method, export: "Bun__FFI__callback", args: { options: b.any, callback: b.any } });
 export const linkSymbols = b.fn({ ...method, export: "Bun__FFI__linkSymbols", args: { symbols: b.any } });
 export const closeCallback = b.fn({ export: "Bun__FFI__closeCallback", args: { callback: b.any } });
-/** What is not a string is ignored. */
-export const FunctionName = b.union({ name: b.string.allowStringObject, ignored: b.any });
 export const cfunction = b.fn({
   ...method,
   export: "Bun__FFI__cfunction",
-  args: { options: b.any, name: FunctionName },
+  args: { options: b.any, name: b.string.allowStringObject.otherAsNull },
 });
 
 export const cc = b.fn({ ...method, args: { options: b.any }, returns: FFI });

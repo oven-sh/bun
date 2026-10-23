@@ -665,31 +665,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    pub(crate) fn create_not_enough_arguments(
-        &self,
-        name_: &'static str,
-        expected: usize,
-        got: usize,
-    ) -> JSValue {
-        self.to_type_error(
-            JscError::MISSING_ARGS,
-            format_args!(
-                "Not enough arguments to '{}'. Expected {}, got {}.",
-                name_, expected, got
-            ),
-        )
-    }
-
-    /// Not enough arguments passed to function named `name_`
-    pub fn throw_not_enough_arguments(
-        &self,
-        name_: &'static str,
-        expected: usize,
-        got: usize,
-    ) -> JsError {
-        self.throw_value(self.create_not_enough_arguments(name_, expected, got))
-    }
-
     pub(crate) fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async(false);

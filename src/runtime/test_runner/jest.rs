@@ -19,7 +19,7 @@ use crate::generated_bindgen::bun_test::{
     Bun__BunTest__beforeEach, Bun__BunTest__onTestFinished,
 };
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
-use crate::generated_bindgen::jest::{Bun__Jest__setDefaultTimeout, TestFilePath};
+use crate::generated_bindgen::jest::Bun__Jest__setDefaultTimeout;
 use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
@@ -473,14 +473,14 @@ pub(crate) mod Jest {
 }
 
 /// `Bun.jest(path)`
-pub(crate) fn jest(cx: &mut JsScope<'_>, path: TestFilePath<'_>) -> JsResult<JSValue> {
+pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValue> {
     let global_object = cx.global();
     let vm = global_object.bun_vm();
 
     if vm.is_in_preload || Jest::runner().is_none() {
         // in preload, no arguments needed
     } else {
-        let TestFilePath::Path(path) = path else {
+        let Some(path) = path else {
             return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
         };
 

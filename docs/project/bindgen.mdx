@@ -113,7 +113,7 @@ A namespace that can itself be called, like `Bun.hash`, names the function that 
 `b.namespace({ wyhash: { .. }, crc32: { .. } }, { call: "wyhash" })`. The object is then a
 function named after the namespace.
 
-An array in place of a function is its [overloads](#overloads).
+A function with [overloads](#overloads) is an array of its signatures. A function of a namespace has no `passThis`, `passCallee` or `export`.
 
 ### What a function may do: `capability`
 
@@ -182,7 +182,7 @@ export const read = b.overloads(
 );
 ```
 
-`passThis`, `passCallee`, `export` and `rejects` are of the function, so every signature writes the same.
+`passThis`, `passCallee`, `export` and `rejects` belong to the JS function, so every signature gives them the same value.
 
 Use it when the type of one argument says what the others are. A union for each
 argument would accept combinations that mean nothing, and leave the body to sort them out.
@@ -247,27 +247,29 @@ field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
 Only the promise calls a reaction, with the context it was given, so nothing tests that argument.
 `b.promisePtr` is the `*mut T` that `JSValue::then` was given. `b.nativePromiseContext` is what `take` of the cell
-returns: `None` if the pointer was taken back before the promise settled. A generic `T` is written as its
-instantiation.
+returns: `None` if the pointer was taken back before the promise settled. No argument after it has a conversion that
+throws: nothing would release the pointer. A generic `T` is written as its instantiation.
 
-These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.emptyStringAsNull` applies to it):
+These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.emptyStringAsNull` and `.ifPassed` apply to it):
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
-- `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. It goes on every type, and only on an argument.
+- `.otherAsNull`: every value the type does not take means absent; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. An object is what a dictionary takes, which still reports its members. It is not for an integer type, which reports a number it does not take.
+- `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. It also goes on a type that takes `undefined`, like `b.any`. It is only for an argument, and not for one of an overload.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
 `.withValue` on an argument also gives the body the argument itself, `(T, JsLocal<'a>)`: for one that reads the
-internal fields of an instance, or returns the argument when there is nothing to change.
+internal fields of an instance, or returns the argument when there is nothing to change. It comes after all of these,
+and not with `.ifPassed`.
 
-As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
-is `IntoIterator`. `b.bufferSource` as a result is what
+As results, `b.string.utf8` is anything that is `AsRef<[u8]>`, `b.array(T)` anything that
+is `IntoIterator`, and `b.array(b.string)` anything that is `AsRef<[bun_core::String]>`: one call makes the array. `b.bufferSource` as a result is what
 `heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
 `heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
-`heap.create_buffer_from_box(bytes)` made, and `b.jsArray` what `heap.create_array(items, to_js::u8)` made. The last two take over the allocation, and the two
-before them copy.
+`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
+before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_js::u8)` made.
 
 These are results only:
 
@@ -315,8 +317,7 @@ JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 
 A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
-The argument's slot in the frame holds the instance, so it is only for an argument, alone or in
-`.nullable` or a union.
+The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above.
 
 ### Dictionaries
 
@@ -346,13 +347,13 @@ each one on it. An `.optional` member that is `None` is left out.
 
 The second argument of `b.dictionary` takes:
 
-| Key                | What it does                                                                                                                                                                                                      |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
-| `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
-| `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                   |
-| `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, as Node's validators are given it                              |
-| `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                            |
+| Key                | What it does                                                                                                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `allowArray`       | an array is read like any other object, not refused                                                                                                                                                                                  |
+| `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default                    |
+| `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                                      |
+| `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, for a Node function that validates under the bare name (`validateUint32(N, "N")`) |
+| `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                                               |
 
 ### Enumerations
 
@@ -377,22 +378,22 @@ in play apart:
 | ---------------------------------- | -------------------------------------------------------------------------------- |
 | the bits of the value              | `undefined`, `null`, boolean, number                                             |
 | the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
-| the cell's type info               | what can be called                                                               |
+| `JSCell::isCallable`               | a function, or a proxy of one                                                    |
 | the cell's `ClassInfo`             | an instance of a class, a `Date`                                                 |
 
 A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
-`.validateInteger`, `b.any`, `b.bytes`, a dictionary.
+`.validateInteger`, `.otherAsNull`, `b.any`, `b.bytes`, `b.object`, a dictionary.
 
 **A value goes to the first alternative, in written order, that takes its kind.** That
 alternative then converts it, and reports what is wrong with it: `1.5` given to
 `b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
 The buffer types refuse some values of their kinds (a shared buffer); those go on to the next alternative that takes
-the kind and does not refuse the same. So does a value that is not an object from a dictionary or `b.object`, unless the dictionary is the last
-to take it, which then reports it. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
+the kind and does not refuse the same. A dictionary and `b.object` refuse what is not an object, and it goes on the same way. As the last
+alternative to take the kind, they get the value anyway and report it. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
-kind goes last. An alternative that can never be chosen is an error when the schema is
+value goes last. An alternative that can never be chosen is an error when the schema is
 loaded. Choosing tests whether the value is a cell once, loads the type byte once and
 repeats no test. Strings as UTF-8, dictionaries and unions are then converted in the
 place they end up in.

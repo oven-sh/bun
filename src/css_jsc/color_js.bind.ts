@@ -2,11 +2,15 @@ import * as b from "../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::color_js" });
 
-/** From 0 to 1. What is not a number is opaque. */
-export const ColorAlpha = b.union({ number: b.f64, ignored: b.any });
 export const ColorChannels = b.dictionary(
-  { r: b.f64, g: b.f64, b: b.f64, a: ColorAlpha },
-  { allowArray: true, fromJS: true },
+  {
+    r: b.f64,
+    g: b.f64,
+    b: b.f64,
+    /** From 0 to 1. What is not a number is opaque. */
+    a: b.f64.otherAsNull,
+  },
+  { allowArray: true, fromJS: true, reportedAs: "input" },
 );
 
 /**
@@ -44,6 +48,8 @@ export const OutputColorFormat = b.enumeration({
 export const ColorOutputChannels = b.dictionary({ r: b.u8, g: b.u8, b: b.u8, a: b.f64.optional });
 export const ColorOutput = b.union({
   text: b.string,
+  /** As the CSS printer writes it. */
+  css: b.string.utf8,
   number: b.u32,
   /** Of 3 or 4 bytes. */
   list: b.jsArray,

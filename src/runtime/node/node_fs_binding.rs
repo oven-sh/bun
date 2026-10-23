@@ -6,7 +6,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
-use crate::generated_bindgen::node_fs_binding::{MemfdSize, RmOptions};
+use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -422,7 +422,7 @@ pub(crate) fn string_to_flags_for_testing(
 
 pub(crate) fn create_memfd_for_testing(
     cx: &mut JsScope<'_>,
-    size: Option<MemfdSize>,
+    size: Option<f64>,
 ) -> JsResult<Option<i32>> {
     let global = cx.global();
     let Some(size) = size else {
@@ -439,13 +439,9 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let size = match size {
-            MemfdSize::Bytes(bytes) => bytes as i64,
-            MemfdSize::Empty => 0,
-        };
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
-                let _ = bun_sys::ftruncate(fd, size);
+                let _ = bun_sys::ftruncate(fd, size as i64);
                 Ok(Some(fd.native() as i32))
             }
             Err(err) => Err(global.throw_value(err.to_js(global))),

@@ -19,7 +19,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
-use crate::generated_bindgen::listener::{ListenerContext, ServerHandle, js_Listener as js};
+use crate::generated_bindgen::listener::js_Listener as js;
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -1594,10 +1594,8 @@ fn connect_finish<const IS_SSL: bool>(
 }
 
 /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
-pub(crate) fn set_secure_context(handle: ServerHandle<'_>, context: ListenerContext<'_>) {
-    let (ServerHandle::Listener(this), ListenerContext::SecureContext(secure_context)) =
-        (handle, context)
-    else {
+pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&SecureContext>) {
+    let (Some(this), Some(secure_context)) = (handle, context) else {
         return;
     };
     if !this.ssl {

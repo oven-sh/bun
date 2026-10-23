@@ -930,17 +930,9 @@ pub(crate) fn pbkdf2<'a>(
     iterations: u32,
     keylen: u32,
     digest: &[u8],
-    callback: Option<JsLocal<'a, Callable>>,
+    callback: JsLocal<'a, Callable>,
 ) -> JsResult<()> {
-    let global = cx.global();
-    let algorithm = pbkdf2::algorithm_from_digest(global, digest)?;
-    let Some(callback) = callback else {
-        return Err(global.throw_invalid_argument_type_value(
-            b"callback",
-            b"function",
-            JSValue::UNDEFINED,
-        ));
-    };
+    let algorithm = pbkdf2::algorithm_from_digest(cx.global(), digest)?;
 
     let password = isolate_for_job(cx, password)?;
     let salt = isolate_for_job(cx, salt)?;
@@ -1132,8 +1124,22 @@ pub(crate) fn scrypt_sync(
     Ok(buf)
 }
 
+/// rust-argon2 ignores the synthetic allocation limit. `hash_raw` reports real allocation failures.
+fn argon2_exceeds_allocation_limit(memory: u32, tag_length: u32) -> bool {
+    let limit = jsc::virtual_machine::synthetic_allocation_limit();
+    (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit
+}
+
+/// `index` is one of `kArgon2Types` of `crypto.ts`.
+fn argon2_variant(index: u8) -> rust_argon2::Variant {
+    match index {
+        0 => rust_argon2::Variant::Argon2d,
+        1 => rust_argon2::Variant::Argon2i,
+        _ => rust_argon2::Variant::Argon2id,
+    }
+}
+
 impl<Bytes: AsRef<[u8]>> Argon2<Bytes> {
-    /// `variant` is one of `kArgon2Types` of `crypto.ts`.
     fn new(
         message: Bytes,
         nonce: Bytes,
@@ -1145,17 +1151,6 @@ impl<Bytes: AsRef<[u8]>> Argon2<Bytes> {
         associated_data: Bytes,
         variant: u8,
     ) -> Self {
-        let variant = match variant {
-            0 => rust_argon2::Variant::Argon2d,
-            1 => rust_argon2::Variant::Argon2i,
-            _ => rust_argon2::Variant::Argon2id,
-        };
-
-        // rust-argon2 ignores the synthetic allocation limit, so check it
-        // here. `hash_raw` reports real allocation failures.
-        let limit = jsc::virtual_machine::synthetic_allocation_limit();
-        let failed = (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit;
-
         Argon2 {
             message,
             nonce,
@@ -1165,9 +1160,9 @@ impl<Bytes: AsRef<[u8]>> Argon2<Bytes> {
             tag_length,
             memory,
             passes,
-            variant,
+            variant: argon2_variant(variant),
             output: Vec::new(),
-            failed,
+            failed: argon2_exceeds_allocation_limit(memory, tag_length),
         }
     }
 

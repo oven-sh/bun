@@ -12,7 +12,7 @@ export const emitProcessErrorEvent = b.fn({
 /** Only `null` is this process. */
 export const MessageTarget = b.union({
   subprocess: Subprocess,
-  absent: b.undefined,
+  missing: b.undefined,
   thisProcess: b.null,
   ignored: b.any,
 });

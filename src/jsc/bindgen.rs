@@ -967,6 +967,17 @@ pub mod to_js {
     }
 
     #[inline]
+    pub fn string_array<'a>(
+        heap: &JsHeap<'a>,
+        strings: impl AsRef<[bun_core::String]>,
+    ) -> Result<'a, JsLocal<'a>> {
+        JsLocal::from_js_result(crate::bun_string_jsc::to_js_array(
+            heap.global_object(),
+            strings.as_ref(),
+        ))
+    }
+
+    #[inline]
     pub fn array<'a, I: IntoIterator>(
         heap: &JsHeap<'a>,
         items: I,

@@ -3,7 +3,7 @@
 #include "JSDOMConvertBase.h"
 #include "NativePromiseContext.h"
 
-// As for IDLPromisePtr.
+// No type test: only the promise calls a reaction, with the context it was given.
 template<> struct WebCore::Converter<Bun::Bindgen::IDLNativePromiseContext> : WebCore::DefaultConverter<Bun::Bindgen::IDLNativePromiseContext> {
     static void* convert(JSC::JSGlobalObject&, JSC::JSValue value)
     {

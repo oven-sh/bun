@@ -10,7 +10,7 @@ use bun_jsc::{JSGlobalObject, JSType, JSValue};
 
 use crate::JsResult;
 use crate::generated_bindgen::color_js::{
-    ColorAlpha, ColorChannels, ColorInput, ColorOutput, ColorOutputChannels, OutputColorFormat,
+    ColorChannels, ColorInput, ColorOutput, ColorOutputChannels, OutputColorFormat,
 };
 
 /// CSS spec says to clamp values to their valid range so we'll respect that here
@@ -47,15 +47,12 @@ fn rgba_from_list(global: &JSGlobalObject, list: JSValue) -> JsResult<RGBA> {
     })
 }
 
-fn rgba_from_channels(channels: &ColorChannels<'_>) -> RGBA {
+fn rgba_from_channels(channels: &ColorChannels) -> RGBA {
     RGBA {
         red: clamp_to_u8(channels.r),
         green: clamp_to_u8(channels.g),
         blue: clamp_to_u8(channels.b),
-        alpha: match channels.a {
-            ColorAlpha::Number(a) => clamp_to_u8(a * 255.0),
-            ColorAlpha::Ignored(_) => 255,
-        },
+        alpha: channels.a.map_or(255, |a| clamp_to_u8(a * 255.0)),
     }
 }
 
@@ -222,9 +219,7 @@ pub(crate) fn color<'a>(
         ColorInput::Buffer(buffer) => {
             let (global, buffer) = (cx.global(), buffer.to_js());
             Ok(CssColor::Rgba(if buffer.js_type() == JSType::DataView {
-                ColorChannels::from_js(global, buffer, |channels| {
-                    Ok(rgba_from_channels(&channels))
-                })?
+                rgba_from_channels(&ColorChannels::from_js(global, buffer)?)
             } else {
                 rgba_from_list(global, buffer)?
             }))
@@ -490,7 +485,7 @@ pub(crate) fn color<'a>(
             }
             drop(printer);
 
-            return Ok(Some(ColorOutput::Text(BunString::clone_utf8(&dest))));
+            return Ok(Some(ColorOutput::Css(dest)));
         }
     }
 }

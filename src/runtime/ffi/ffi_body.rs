@@ -23,7 +23,7 @@ use bun_jsc::{
 use bun_paths as path;
 use bun_resolver::fs as Fs;
 
-use crate::generated_bindgen::ffi::{FunctionName, js_FFI as js};
+use crate::generated_bindgen::ffi::js_FFI as js;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
@@ -1671,7 +1671,7 @@ impl FFI {
     pub(crate) fn cfunction<'a>(
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
-        name: FunctionName<'a>,
+        name: Option<bun_core::String>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let options = options.to_js();
@@ -1692,10 +1692,7 @@ impl FFI {
             )));
         };
 
-        let name = match name {
-            FunctionName::Name(name) => name,
-            FunctionName::Ignored(_) => bun_core::String::static_("CFunction"),
-        };
+        let name = name.unwrap_or_else(|| bun_core::String::static_("CFunction"));
         if let Some(err) = function.reject_napi_types_error(global) {
             return Ok(err);
         }

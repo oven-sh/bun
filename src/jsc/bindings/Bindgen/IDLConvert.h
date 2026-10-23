@@ -26,6 +26,11 @@ template<typename IDL>
 struct IDLHumanReadableName<Bindgen::IDLNotPassedAsNull<IDL>>
     : IDLHumanReadableName<IDL> {};
 
+template<> struct IDLHumanReadableName<Bindgen::IDLStrictDoubleOrDate> : BaseIDLHumanReadableName {
+    static constexpr bool isDisjunction = true;
+    static constexpr auto humanReadableName = std::to_array("number or Date");
+};
+
 template<HasIDLHumanReadableName IDL>
 struct IDLHumanReadableName<Bindgen::IDLArray<IDL>> : BaseIDLHumanReadableName {
     static constexpr bool hasPreposition = true;
@@ -367,6 +372,21 @@ struct WebCore::Converter<Bun::Bindgen::IDLEmptyStringAsNull<IDL>>
         if (Bun::Bindgen::isUndefinedOrNullOrEmptyString(value))
             return IDL::nullValue();
         return Bun::convertIDL<IDL>(globalObject, value, ctx);
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLOtherAsNull<IDL>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLOtherAsNull<IDL>> {
+
+    using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
+
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (auto converted = Bun::tryConvertIDL<IDL>(globalObject, value, ctx))
+            return WTF::move(*converted);
+        return IDL::nullValue();
     }
 };
 

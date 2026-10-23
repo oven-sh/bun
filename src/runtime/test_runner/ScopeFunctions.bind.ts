@@ -5,13 +5,13 @@ export default b.module({ rustPath: "crate::test_runner::scope_functions" });
 /** What `test`, `describe` and the hooks take in place of a timeout. */
 export const BunTestOptions = b.dictionary(
   { timeout: b.f64.optional, retry: b.f64.optional, repeats: b.f64.optional },
-  { allowArray: true },
+  { allowArray: true, reportedAs: "options" },
 );
 
 /** A function here is the callback if none follows it, and else what the test is named after. */
 export const DescriptionOrCallback = b.union({
   nothing: b.null,
-  callable: b.callable,
+  function: b.callable,
   text: b.string.utf8.owned,
   number: b.f64,
 });

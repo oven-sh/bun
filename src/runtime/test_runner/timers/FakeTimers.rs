@@ -6,7 +6,7 @@ use crate::generated_bindgen::fake_timers::{
     Bun__FakeTimers__advanceTimersByTime, Bun__FakeTimers__advanceTimersToNextTimer,
     Bun__FakeTimers__clearAllTimers, Bun__FakeTimers__getTimerCount, Bun__FakeTimers__isFakeTimers,
     Bun__FakeTimers__runAllTimers, Bun__FakeTimers__runOnlyPendingTimers,
-    Bun__FakeTimers__useFakeTimers, Bun__FakeTimers__useRealTimers, FakeTimersArgument,
+    Bun__FakeTimers__useFakeTimers, Bun__FakeTimers__useRealTimers, FakeTimersImplementationOrOptions,
 };
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
@@ -341,14 +341,14 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
 pub(crate) fn use_fake_timers(
     cx: &mut JsScope<'_>,
     this_value: JsLocal<'_>,
-    options: Option<FakeTimersArgument<'_>>,
+    options: Option<FakeTimersImplementationOrOptions<'_>>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     // SAFETY: FFI call into C++ JSMock
     let mut js_now = JSMock__getCurrentUnixTimeMs();
 
     // Jest 26 compat: useFakeTimers("modern" | "legacy") is a no-op.
-    if let Some(FakeTimersArgument::Options(options)) = options
+    if let Some(FakeTimersImplementationOrOptions::Options(options)) = options
         && let Some(now) = options.now
     {
         // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.

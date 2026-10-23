@@ -7,8 +7,8 @@ use bun_jsc::{JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
-use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams, UpgradeResponse};
-use crate::server::ServerWebSocket;
+use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams};
+use crate::server::{NodeHTTPResponse, ServerWebSocket};
 
 pub(crate) fn get_bun_server_all_closed_promise<'a>(
     cx: &mut JsScope<'a>,
@@ -47,7 +47,7 @@ pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
 /// longer be upgraded.
 pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     cx: &mut JsScope<'a>,
-    response: UpgradeResponse<'a>,
+    response: Option<&NodeHTTPResponse>,
     websocket: JsLocal<'a>,
     handlers: JsLocal<'a>,
     handshake: &[u8],
@@ -58,7 +58,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     const AUTO_PONG: i32 = 1 << 0;
     const SKIP_UTF8_VALIDATION: i32 = 1 << 1;
 
-    let UpgradeResponse::Response(response) = response else {
+    let Some(response) = response else {
         return Ok(JSValue::UNDEFINED);
     };
     let global = cx.global();

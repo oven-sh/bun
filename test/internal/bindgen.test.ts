@@ -109,11 +109,59 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "f: write what b.fn takes, without b.fn",
   );
   expect(() => b.namespace({ "not-a-name": {} })).toThrow("not-a-name: a function is named by an identifier");
+  for (const key of ["passThis", "passCallee", "export"]) {
+    expect(() => b.namespace({ f: { [key]: true } })).toThrow(`f: a function of a namespace has no ${key}`);
+  }
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
   const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
   expect(() => b.array(stringOrBuffer)).toThrow("the bytes of a buffer are only for an argument");
   expect(() => b.dictionary({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
   expect(() => b.union({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
+  for (const [type, reason] of [
+    [b.i32.withValue, "b.bytes and .withValue are only for an argument"],
+    [b.i32.ifPassed, ".ifPassed is only for an argument"],
+    [b.string.owned, ".owned is only for an argument"],
+    [b.promisePtr("T"), "the context of a promise reaction is only an argument"],
+    [b.nativePromiseContext("T"), "the context of a promise reaction is only an argument"],
+  ] as const) {
+    expect(() => b.array(type)).toThrow(reason);
+    expect(() => b.dictionary({ member: type })).toThrow(`member: ${reason}`);
+    expect(() => b.fn({ returns: type, capability: "heap" })).toThrow(reason);
+  }
+  for (const type of [b.i32.withValue, b.string.owned, b.promisePtr("T")]) {
+    expect(() => b.union({ alternative: type, nothing: b.null })).toThrow("alternative: ");
+  }
+  expect(() => b.string.owned.optional).toThrow(".owned is only for an argument");
+  expect(() => b.promisePtr("T").nullable).toThrow("the context of a promise reaction is only an argument");
+  expect(() => b.string.owned.owned).toThrow("already .owned");
+  expect(() => b.string.owned.local).toThrow(".local follows b.string");
+  expect(() => b.i32.withValue.optional).toThrow("put .withValue last");
+  expect(() => b.i32.withValue.default(0)).toThrow("put .withValue last");
+  expect(() => b.i32.ifPassed.withValue).toThrow(".ifPassed has no argument to give when it is absent");
+  expect(() => b.any.withValue).toThrow(".withValue: the type is the argument itself");
+  expect(() => b.bytes({ from: ["buffer"], held: "handle" }).withValue).toThrow(
+    ".withValue: b.bytes already passes the argument",
+  );
+  expect(() => b.f64.loose.allowDate).toThrow(".allowDate follows b.f64");
+  expect(() => b.f64.allowDate.loose).toThrow(".loose follows b.f64");
+  expect(() => b.any.otherAsNull).toThrow("b.any already accepts undefined and null");
+  expect(() => b.string.loose.otherAsNull).toThrow("any takes every value");
+  expect(() => b.i32.otherAsNull).toThrow("an integer type reports a number it does not take");
+  expect(() => b.fn({ args: { context: b.nativePromiseContext("T"), value: b.i32 }, export: "Bun__reaction" })).toThrow(
+    "b.nativePromiseContext takes the pointer out of the cell",
+  );
+  expect(() => b.overloads({ args: { a: b.i32.ifPassed } }, { args: { a: b.string } })).toThrow(
+    ".ifPassed is not for overloads",
+  );
+  expect(() => b.fn({ returns: b.i32, rejects: true })).toThrow("rejects: the result is a promise");
+  expect(() => b.fn({ args: { size: b.u8.validateInteger(0, 4) }, expected: { size: ["number"] } })).toThrow(
+    "expected: size is a range",
+  );
+  const point = b.dictionary({ x: b.f64 });
+  for (const later of [b.jsArray, b.callable, b.bufferSource, b.array(b.f64)]) {
+    expect(() => b.union({ point, later, text: b.string })).toThrow("later is never chosen");
+    expect(() => b.union({ object: b.object, later, text: b.string })).toThrow("later is never chosen");
+  }
   for (const held of ["handle", "copied", "pinned"] as const) {
     const bytes = b.bytes({ from: ["string", "buffer"], held });
     expect(() => b.array(bytes)).toThrow("b.bytes and .withValue are only for an argument");
@@ -734,11 +782,14 @@ describe("functions", () => {
     expect(bindgen.testNamespace.negate(true)).toBe(false);
   });
 
-  it("overloads have passThis and export, and tell a function from a number", () => {
+  it("overloads have passThis, passCallee and export, and tell a function from a number", () => {
     const { callbackOrDelay } = bindgen;
-    expect(callbackOrDelay.call(undefined, () => {})).toBe("callback, this is undefined: true");
-    expect(callbackOrDelay.call(undefined, new Proxy(() => {}, {}))).toBe("callback, this is undefined: true");
-    expect(callbackOrDelay.call({}, class {})).toBe("callback, this is undefined: false");
+    expect(callbackOrDelay.call(undefined, () => {})).toBe("callback, this is undefined: true, given itself: false");
+    expect(callbackOrDelay.call(undefined, new Proxy(() => {}, {}))).toBe(
+      "callback, this is undefined: true, given itself: false",
+    );
+    expect(callbackOrDelay.call({}, class {})).toBe("callback, this is undefined: false, given itself: false");
+    expect(callbackOrDelay.call({}, callbackOrDelay)).toBe("callback, this is undefined: false, given itself: true");
     expect(callbackOrDelay.call({}, 5)).toBe("delay 5, this is undefined: false");
     expect(() => callbackOrDelay({})).toThrow(TypeError);
   });
@@ -754,6 +805,28 @@ describe("functions", () => {
     expect(bindgen.isPassed(1, undefined)).toBe(true);
   });
 
+  it(".otherAsNull is absent for every value the type does not take", () => {
+    const { presentOnes } = bindgen;
+    expect(presentOnes()).toEqual([]);
+    expect(presentOnes(1.5, "", () => {}, { x: 1 }, new bindgen.TestCounter(1), {})).toEqual([
+      "number",
+      "text",
+      "callback",
+      "point",
+      "counter",
+      "options",
+    ]);
+    expect(presentOnes("1", 1, {}, 1, {}, 1)).toEqual([]);
+    expect(presentOnes(null, Symbol(), null, "x", null, null)).toEqual([]);
+    expect(presentOnes(NaN, new String("s"), new Proxy(() => {}, {}))).toEqual(["number", "text", "callback"]);
+    const options = (value: unknown) => presentOnes(0, 0, 0, 0, 0, value).slice(1);
+    expect(options({ size: 1, callback() {} })).toEqual(["options", "options.size", "options.callback"]);
+    expect(options({ size: "1", callback: {} })).toEqual(["options"]);
+    // An object is a dictionary, whose own members still report what is wrong with them.
+    expect(() => presentOnes(0, 0, 0, {})).toThrow("TestPoint.x is required");
+    expect(presentOnes.length).toBe(0);
+  });
+
   it(".withValue also gives the argument", () => {
     const text = { toString: () => "four" };
     expect(bindgen.lengthWithValue(text)).toEqual([4, text]);
@@ -764,7 +837,7 @@ describe("functions", () => {
     expect(() => bindgen.counterWithValue({})).toThrow(TypeError);
   });
 
-  it("b.string.owned is the string", () => {
+  it("b.string.owned takes what b.string takes", () => {
     expect(bindgen.keptString("kept")).toBe("kept");
     expect(bindgen.keptString("")).toBe("");
     expect(() => bindgen.keptString(1)).toThrow(TypeError);
@@ -784,8 +857,8 @@ describe("functions", () => {
     const [thrown, refused] = [bindgen.finiteLater(Infinity), bindgen.finiteLater("1")];
     expect(thrown).toBeInstanceOf(Promise);
     expect(refused).toBeInstanceOf(Promise);
-    expect(thrown).rejects.toThrow("value must be finite");
-    expect(refused).rejects.toThrow("value must be a number");
+    await expect(thrown).rejects.toThrow("value must be finite");
+    await expect(refused).rejects.toThrow("value must be a number");
   });
 });
 
@@ -813,8 +886,8 @@ describe("a dictionary of a node:* function", () => {
   });
 });
 
-describe("values as themselves", () => {
-  it("a union tells a function, an array and an object apart, and what is not an object passes a dictionary", () => {
+describe("b.callable, b.jsArray, b.object and b.undefined", () => {
+  it("a union tells a function, an array and an object apart, and what is not an object skips a dictionary that is not last", () => {
     expect(bindgen.describeHandle(undefined)).toBe("missing");
     expect(bindgen.describeHandle()).toBe("missing");
     expect(bindgen.describeHandle(null)).toBe("nothing");
@@ -826,7 +899,7 @@ describe("values as themselves", () => {
     expect(bindgen.describeHandle(3)).toBe("text 3");
     expect(bindgen.describeHandle(4n)).toBe("text 4");
     expect(bindgen.describeHandle("s")).toBe("text s");
-    expect(() => bindgen.describeHandle({})).toThrow("x");
+    expect(() => bindgen.describeHandle({})).toThrow("TestPoint.x is required");
     expect(() => bindgen.describeHandle(Symbol())).toThrow(TypeError);
   });
 

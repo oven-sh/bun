@@ -172,16 +172,19 @@ export const SocketFaultErrnoName = b.enumeration([
 ]);
 export const SocketFaultErrno = b.union({ name: SocketFaultErrnoName, code: b.i32 });
 const count = b.i32.wrap.emptyStringAsNull;
-export const SocketFaultRule = b.dictionary({
-  syscall: SocketFaultSyscall,
-  action: SocketFaultAction,
-  /** `errno` is a macro in C++. */
-  errno: { type: SocketFaultErrno.emptyStringAsNull, rustName: "error" },
-  bytes: count,
-  fd: count,
-  after: count,
-  repeat: count,
-});
+export const SocketFaultRule = b.dictionary(
+  {
+    syscall: SocketFaultSyscall,
+    action: SocketFaultAction,
+    /** `errno` is a macro in C++. */
+    errno: { type: SocketFaultErrno.emptyStringAsNull, rustName: "error" },
+    bytes: count,
+    fd: count,
+    after: count,
+    repeat: count,
+  },
+  { reportedAs: "rule" },
+);
 export const setSocketFault = b.fn({
   ...js,
   args: { rule: SocketFaultRule },

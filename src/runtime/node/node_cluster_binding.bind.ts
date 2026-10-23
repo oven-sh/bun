@@ -27,16 +27,16 @@ export const clusterValidateFd = b.fn({ args: { fd: b.f64, wantDgram: b.bool }, 
 export const clusterCloseHandle = b.fn({ args: { fd: b.f64 } });
 
 /** `process[kHandle]` of a `cluster.Worker`, which takes any object as its process. */
-export const ProcessHandle = b.union({ subprocess: Subprocess, ignored: b.any });
+const processHandle = Subprocess.otherAsNull;
 /** `null` when nothing was sent, `false` when the channel asks the sender to back off. */
 export const sendHelperPrimary = b.fn({
-  args: { processHandle: ProcessHandle, message: b.object, handle: b.object.nullable, callback: b.callable.optional },
+  args: { processHandle, message: b.object, handle: b.object.nullable, callback: b.callable.optional },
   returns: b.bool.nullable,
   length: 4,
   capability: "js",
   throws: true,
 });
 export const onInternalMessagePrimary = b.fn({
-  args: { handle: ProcessHandle, worker: b.any, callback: b.any },
+  args: { handle: processHandle, worker: b.any, callback: b.any },
   capability: "js",
 });

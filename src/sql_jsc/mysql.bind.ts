@@ -26,7 +26,7 @@ export const binding = b.namespace({
     returns: MySQLQuery,
     rustPath: "crate::mysql::js_my_sql_query::JSMySQLQuery::create_query",
   },
-  /** The arguments of `NativeCreateConnection` in `src/js/internal/sql/pool.ts`. The ones that are `b.any`, but `tls`, are for Postgres. */
+  /** The arguments of `NativeCreateConnection` in `src/js/internal/sql/pool.ts`. The ones that are `b.any`, except `tls`, are for Postgres. */
   createConnection: {
     ...js,
     args: {

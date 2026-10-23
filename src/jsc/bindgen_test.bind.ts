@@ -457,7 +457,26 @@ export const objectEcho = b.fn({ args: { value: b.object }, returns: b.object, c
 export const TestAbsence = b.union({ missing: b.undefined, nothing: b.null, number: b.f64 });
 export const absenceEcho = b.fn({ args: { value: TestAbsence }, returns: TestAbsence });
 
-const withThis = { passThis: true, export: "Bun__BindgenTest__callbackOrDelay", returns: b.string.utf8 };
+export const TestLenientOptions = b.dictionary({ size: b.f64.otherAsNull, callback: b.callable.otherAsNull });
+/** Which of its arguments, and of the members of `options`, are of their types. */
+export const presentOnes = b.fn({
+  args: {
+    number: b.f64.otherAsNull,
+    text: b.string.utf8.otherAsNull,
+    callback: b.callable.otherAsNull,
+    point: TestPoint.otherAsNull,
+    counter: TestCounter.otherAsNull,
+    options: TestLenientOptions.otherAsNull,
+  },
+  returns: b.array(b.string),
+});
+
+const withThis = {
+  passThis: true,
+  passCallee: true,
+  export: "Bun__BindgenTest__callbackOrDelay",
+  returns: b.string.utf8,
+};
 /** Told apart by whether the first argument can be called. */
 export const callbackOrDelay = b.overloads(
   { ...withThis, args: { callback: b.callable }, rustPath: "crate::bindgen_test::callback_or_delay_callback" },

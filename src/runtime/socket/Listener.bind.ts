@@ -36,7 +36,7 @@ export const addServerName = b.fn({
   rustPath: "crate::socket::Listener::add_server_name",
 });
 
-/** The `_handle` of a `tls.Server`. A cluster worker's is no `Listener`: JS wraps its connections. */
-export const ServerHandle = b.union({ listener: Listener, ignored: b.any });
-export const ListenerContext = b.union({ secureContext: SecureContext, ignored: b.any });
-export const setSecureContext = b.fn({ args: { handle: ServerHandle, context: ListenerContext } });
+/** `handle` is the `_handle` of a `tls.Server`. A cluster worker's is no `Listener`: JS wraps its connections. */
+export const setSecureContext = b.fn({
+  args: { handle: Listener.otherAsNull, context: SecureContext.otherAsNull },
+});

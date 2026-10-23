@@ -965,7 +965,7 @@ describe("apply", () => {
     // TODO: simple, multiline, multiple hunks
   });
 
-  // Each of these hits an error path in `parse_apply_args`. The native code must
+  // Each of these hits an error path in `apply`. The native code must
   // surface the failure as a catchable JS exception; it used to return a normal
   // value while the exception was still pending, which aborts debug/ASAN builds
   // with "Unexpected exception observed" (releaseAssertNoException).

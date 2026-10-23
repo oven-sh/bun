@@ -4,9 +4,7 @@ use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _};
 
-use crate::generated_bindgen::crypto::{
-    EncodedUUID, UUIDEncoding, UUIDEncodingOrTimestamp, UUIDTimestamp,
-};
+use crate::generated_bindgen::crypto::{EncodedUUID, UUIDEncodingOrTimestamp, UUIDTimestamp};
 use crate::node::Encoding;
 
 pub(crate) struct Crypto;
@@ -197,11 +195,11 @@ pub(crate) fn random_uuid_v5<'a>(
     heap: &JsHeap<'a>,
     name: &[u8],
     namespace: StringOrJsBytes<'a>,
-    encoding: UUIDEncoding<'a>,
+    encoding: Option<&[u8]>,
 ) -> bindgen::Result<'a, EncodedUUID<'a>> {
     let encoding = match encoding {
-        UUIDEncoding::Label(label) => encoding_from_label(heap, label)?,
-        UUIDEncoding::Ignored(_) => Encoding::Hex,
+        Some(label) => encoding_from_label(heap, label)?,
+        None => Encoding::Hex,
     };
     let invalid_value = |message: &str| {
         heap.error_with_code(

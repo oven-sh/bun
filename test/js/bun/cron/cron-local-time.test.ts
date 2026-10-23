@@ -268,7 +268,7 @@ describe.concurrent("Bun.cron.parse — { tz } option", () => {
 
   test("non-string tz throws", () => {
     // @ts-expect-error
-    expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: 42 })).toThrow(/Options\.tz must be a string/);
+    expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: 42 })).toThrow(/options\.tz must be a string/);
   });
 
   test("tz: undefined falls back to local", async () => {

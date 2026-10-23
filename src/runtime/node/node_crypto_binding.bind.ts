@@ -33,15 +33,15 @@ const randomUUID = {
   capability: "heap",
 } as const;
 
-const uint32 = b.u32.validateInteger().optional;
+const optionalUint32 = b.u32.validateInteger().optional;
 export const ScryptOptions = b.dictionary(
   {
-    N: uint32,
-    cost: uint32,
-    r: uint32,
-    blockSize: uint32,
-    p: uint32,
-    parallelization: uint32,
+    N: optionalUint32,
+    cost: optionalUint32,
+    r: optionalUint32,
+    blockSize: optionalUint32,
+    p: optionalUint32,
+    parallelization: optionalUint32,
     maxmem: b.u64.validateInteger().optional,
   },
   { allowArray: true, nonObjectAsEmpty: true, reportedAs: "" },
@@ -64,8 +64,7 @@ const argon2Parameters = (bytes: b.Type) => ({
 export const crypto = b.namespace({
   pbkdf2: [
     {
-      // The body reports a digest that does not exist before a callback that is missing.
-      args: { ...passwordAndSaltHandles, ...pbkdf2Parameters, digest: b.string.utf8, callback: b.callable.optional },
+      args: { ...passwordAndSaltHandles, ...pbkdf2Parameters, digest: b.string.utf8, callback: b.callable },
       expected: { ...passwordAndSaltNames, digest: ["string"], callback: ["function"] },
       rustPath: "crate::node::crypto::pbkdf2",
       length: 6,

@@ -7,10 +7,8 @@ export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
 
 const js = { capability: "js", throws: true } as const;
 
-/** Outside of `bun test`, and in a preload, `Bun.jest` takes anything. */
-export const TestFilePath = b.union({ path: b.string.utf8, other: b.any });
-/** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. */
-export const jest = b.fn({ args: { path: TestFilePath }, returns: b.any, ...js });
+/** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything. */
+export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b.any, ...js });
 /** Also `jest.setTimeout`. */
 export const setDefaultTimeout = b.fn({
   export: "Bun__Jest__setDefaultTimeout",

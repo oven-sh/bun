@@ -546,7 +546,7 @@ pub(crate) fn parse_arguments<'a>(
         // callback
         // callback, options
         (
-            DescriptionOrCallback::Callable(callback),
+            DescriptionOrCallback::Function(callback),
             options @ (CallbackOrOptions::Nothing | CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)),
             CallbackOrOptions::Nothing,
         ) => (DescriptionOrCallback::Nothing, CallbackOrOptions::Callback(callback), options),
@@ -600,7 +600,7 @@ pub(crate) fn parse_arguments<'a>(
 
     result.description = match description {
         DescriptionOrCallback::Nothing => None,
-        DescriptionOrCallback::Callable(callable) => Some(name_of_callable(global, callable, signature)?),
+        DescriptionOrCallback::Function(callable) => Some(name_of_callable(global, callable, signature)?),
         DescriptionOrCallback::Text(text) => Some(text.into_vec()),
         DescriptionOrCallback::Number(number) => Some(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec()),
     };

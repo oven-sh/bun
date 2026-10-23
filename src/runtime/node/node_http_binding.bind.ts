@@ -21,8 +21,6 @@ export const BunServer = b.union({
 export const getBunServerAllClosedPromise = b.fn({ args: { server: BunServer }, returns: b.any, capability: "js" });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
-/** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */
-export const UpgradeResponse = b.union({ response: NodeHTTPResponse, ignored: b.any });
 export const DeflateParams = b.dictionary({
   serverMaxWindowBits: b.f64.loose.nullable.default(15),
   clientMaxWindowBits: b.f64.loose.nullable.default(15),
@@ -31,7 +29,8 @@ export const DeflateParams = b.dictionary({
 });
 export const upgradeNodeHTTPResponseToWebSocket = b.fn({
   args: {
-    response: UpgradeResponse,
+    /** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */
+    response: NodeHTTPResponse.otherAsNull,
     websocket: b.any,
     handlers: b.any,
     handshake: b.string.utf8,

@@ -139,7 +139,7 @@ describe("invalid inputs", () => {
     (err as any).code = "ERR_CRYPTO_INVALID_DIGEST";
     let thrown: NodeJS.ErrnoException;
     try {
-      crypto.pbkdf2("password", "salt", 1, 1, "md55");
+      crypto.pbkdf2("password", "salt", 1, 1, "md55", () => {});
       expect.unreachable();
     } catch (e) {
       thrown = e as Error;
@@ -382,6 +382,12 @@ test("pbkdf2 takes a proxy of a function as its callback", async () => {
 });
 
 test("pbkdf2 reports its arguments as Node does", () => {
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, "md55")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "callback" argument must be of type function. Received undefined',
+    }),
+  );
   expect(() => crypto.pbkdf2("p", "s", 1, 1, "md55", 5)).toThrow(
     expect.objectContaining({
       code: "ERR_INVALID_ARG_TYPE",

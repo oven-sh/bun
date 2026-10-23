@@ -11,7 +11,7 @@ use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::node_cluster_binding::{
-    BindAddress, BindAddressType, BindResult, BoundHandle, ProcessHandle,
+    BindAddress, BindAddressType, BindResult, BoundHandle,
 };
 
 // Struct lives in `crate::ipc` —
@@ -70,7 +70,7 @@ pub(crate) fn handle_internal_message_child(
 
 pub(crate) fn send_helper_primary<'a>(
     cx: &mut JsScope<'a>,
-    process_handle: ProcessHandle<'a>,
+    process_handle: Option<&Subprocess>,
     message: JsLocal<'a, JSObject>,
     handle: Option<JsLocal<'a, JSObject>>,
     callback: Option<JsLocal<'a, Callable>>,
@@ -80,7 +80,7 @@ pub(crate) fn send_helper_primary<'a>(
     // `cluster.Worker({ process })` accepts any object, so `process[kHandle]`
     // is `undefined` unless `cluster.fork()` created the process; Node's
     // `sendHelper` returns false for a worker with no IPC channel.
-    let ProcessHandle::Subprocess(subprocess) = process_handle else {
+    let Some(subprocess) = process_handle else {
         return Ok(None);
     };
     let global = cx.global();
@@ -184,13 +184,13 @@ pub(crate) fn send_helper_primary<'a>(
 
 pub(crate) fn on_internal_message_primary<'a>(
     cx: &mut JsScope<'a>,
-    handle: ProcessHandle<'a>,
+    handle: Option<&Subprocess>,
     worker: JsLocal<'a>,
     callback: JsLocal<'a>,
 ) {
     // Same guard as `send_helper_primary`: nothing to subscribe to when the
     // worker's process has no native child handle.
-    let ProcessHandle::Subprocess(subprocess) = handle else {
+    let Some(subprocess) = handle else {
         return;
     };
     let Some(ipc_data) = subprocess.ipc() else {

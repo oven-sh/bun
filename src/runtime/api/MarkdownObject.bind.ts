@@ -7,14 +7,12 @@ const input = b.bytes({ from: ["string", "buffer"], shared: "copied", held: "han
 const expected = { input: "Expected a string or buffer to render" } as const;
 
 /** What is not an object is ignored. */
-const bag = { allowArray: true, nonObjectAsEmpty: true } as const;
+const ignoresNonObjects = { allowArray: true, nonObjectAsEmpty: true } as const;
 const flag = b.bool.loose.optional;
-/** What is not a number is ignored. */
-export const NumberOrIgnored = b.union({ number: b.f64, ignored: b.any });
 
-export const AutolinkOptions = b.dictionary({ url: flag, www: flag, email: flag }, bag);
+export const AutolinkOptions = b.dictionary({ url: flag, www: flag, email: flag }, ignoresNonObjects);
 export const Autolinks = b.union({ all: b.bool, each: AutolinkOptions });
-export const HeadingOptions = b.dictionary({ ids: flag, autolink: flag }, bag);
+export const HeadingOptions = b.dictionary({ ids: flag, autolink: flag }, ignoresNonObjects);
 export const Headings = b.union({ all: b.bool, each: HeadingOptions });
 
 const options = {
@@ -34,20 +32,19 @@ const options = {
   noHtmlSpans: { type: flag, altNames: ["no_html_spans"] },
   tagFilter: { type: flag, altNames: ["tag_filter"] },
 } as const;
-export const MarkdownOptions = b.dictionary(options, bag);
-export const ReactOptions = b.dictionary({ reactVersion: NumberOrIgnored, ...options }, bag);
+export const MarkdownOptions = b.dictionary(options, ignoresNonObjects);
+export const ReactOptions = b.dictionary({ reactVersion: b.f64.otherAsNull, ...options }, ignoresNonObjects);
 
 export const AnsiTheme = b.dictionary(
-  { colors: flag, hyperlinks: flag, kittyGraphics: flag, light: flag, columns: NumberOrIgnored },
-  bag,
+  { colors: flag, hyperlinks: flag, kittyGraphics: flag, light: flag, columns: b.f64.otherAsNull },
+  ignoresNonObjects,
 );
 
 const members = <Name extends string, T>(type: T, names: readonly Name[]) =>
   Object.fromEntries(names.map(name => [name, type])) as Record<Name, T>;
 
-export const CallbackOrIgnored = b.union({ callback: b.callable, ignored: b.any });
 export const RenderCallbacks = b.dictionary(
-  members(CallbackOrIgnored, [
+  members(b.callable.otherAsNull, [
     "heading",
     "paragraph",
     "blockquote",
@@ -70,7 +67,7 @@ export const RenderCallbacks = b.dictionary(
     "strikethrough",
     "text",
   ]),
-  bag,
+  ignoresNonObjects,
 );
 
 /** The `type` of the elements of each tag. A boolean is ignored. */
@@ -106,7 +103,7 @@ export const ComponentOverrides = b.dictionary(
     "u",
     "br",
   ]),
-  bag,
+  ignoresNonObjects,
 );
 
 const js = { capability: "js", throws: true } as const;

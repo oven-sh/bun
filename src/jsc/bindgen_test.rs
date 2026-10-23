@@ -10,10 +10,10 @@ use crate::bindgen::{
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
-    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
-    TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes,
-    TestValue, js_TestCounter, js_TestError, js_TestNonFinal, js_TestNote, js_TestRefCounted,
-    js_TestRefCountedNote,
+    TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestLenientOptions,
+    TestNames, TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOuter,
+    TestPoint, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestNonFinal,
+    js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -946,14 +946,50 @@ pub(crate) fn absence_echo(value: TestAbsence) -> TestAbsence {
     value
 }
 
-pub(crate) fn callback_or_delay_callback(
-    this_value: JsLocal<'_>,
-    _: JsLocal<'_, Callable>,
-) -> Vec<u8> {
-    format!("callback, this is undefined: {}", this_value.is_undefined()).into_bytes()
+pub(crate) fn present_ones(
+    number: Option<f64>,
+    text: Option<&[u8]>,
+    callback: Option<JsLocal<'_, Callable>>,
+    point: Option<TestPoint>,
+    counter: Option<&TestCounter>,
+    options: Option<TestLenientOptions<'_>>,
+) -> Vec<bun_core::String> {
+    let members = options.map(|options| (options.size, options.callback));
+    let (size, member) = members.unwrap_or((None, None));
+    [
+        ("number", number.is_some()),
+        ("text", text.is_some()),
+        ("callback", callback.is_some()),
+        ("point", point.map(|point| point.x).is_some()),
+        ("counter", counter.is_some()),
+        ("options", members.is_some()),
+        ("options.size", size.is_some()),
+        ("options.callback", member.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, is_present)| *is_present)
+    .map(|(name, _)| bun_core::String::static_(name))
+    .collect()
 }
 
-pub(crate) fn callback_or_delay_delay(this_value: JsLocal<'_>, delay: f64) -> Vec<u8> {
+pub(crate) fn callback_or_delay_callback(
+    this_value: JsLocal<'_>,
+    callee: JsLocal<'_>,
+    callback: JsLocal<'_, Callable>,
+) -> Vec<u8> {
+    format!(
+        "callback, this is undefined: {}, given itself: {}",
+        this_value.is_undefined(),
+        callee.to_js() == callback.to_js()
+    )
+    .into_bytes()
+}
+
+pub(crate) fn callback_or_delay_delay(
+    this_value: JsLocal<'_>,
+    _: JsLocal<'_>,
+    delay: f64,
+) -> Vec<u8> {
     format!(
         "delay {delay}, this is undefined: {}",
         this_value.is_undefined()

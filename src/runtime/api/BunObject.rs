@@ -86,9 +86,9 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
-    BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, InspectDepth,
-    InspectOptions, InspectOptionsOrDepth, InspectOptionsOrIgnored, MMapOptions, TabularData,
-    WhichOptions, ZlibCompressionOptions, ZlibDecompressionOptions, ZstdCompressionOptions,
+    BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, InspectOptions,
+    InspectOptionsOrDepth, MMapOptions, WhichOptions, ZlibCompressionOptions,
+    ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
 
@@ -339,9 +339,9 @@ pub(crate) fn which<'a>(
 fn apply_inspect_options(
     format_options: &mut ConsoleObject::FormatOptions,
     global_this: &JSGlobalObject,
-    options: &InspectOptions<'_>,
+    options: &InspectOptions,
 ) -> JsResult<()> {
-    if let InspectDepth::Number(depth) = options.depth {
+    if let Some(depth) = options.depth {
         format_options.set_depth(global_this, depth)?;
     }
     if let Some(colors) = options.colors {
@@ -359,8 +359,8 @@ fn apply_inspect_options(
 /// `Bun.inspect.table(tabularData, options)`
 pub(crate) fn table<'a>(
     cx: &mut JsScope<'a>,
-    tabular_data: TabularData<'a>,
-    options: InspectOptionsOrIgnored<'a>,
+    tabular_data: Option<JsLocal<'a, JSObject>>,
+    options: Option<InspectOptions>,
 ) -> JsResult<Vec<u8>> {
     print_table(cx, tabular_data, JSValue::UNDEFINED, options)
 }
@@ -368,21 +368,21 @@ pub(crate) fn table<'a>(
 /// `Bun.inspect.table(tabularData, properties, options)`
 pub(crate) fn table_with_properties<'a>(
     cx: &mut JsScope<'a>,
-    tabular_data: TabularData<'a>,
+    tabular_data: Option<JsLocal<'a, JSObject>>,
     properties: JsLocal<'a, JSArray>,
-    options: InspectOptionsOrIgnored<'a>,
+    options: Option<InspectOptions>,
 ) -> JsResult<Vec<u8>> {
     print_table(cx, tabular_data, properties.to_js(), options)
 }
 
 fn print_table(
     cx: &mut JsScope<'_>,
-    tabular_data: TabularData<'_>,
+    tabular_data: Option<JsLocal<'_, JSObject>>,
     properties: JSValue,
-    options: InspectOptionsOrIgnored<'_>,
+    options: Option<InspectOptions>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
-    let TabularData::Object(value) = tabular_data else {
+    let Some(value) = tabular_data else {
         return Ok(Vec::new());
     };
     let value = value.to_js();
@@ -397,7 +397,7 @@ fn print_table(
         single_line: true,
         ..Default::default()
     };
-    if let InspectOptionsOrIgnored::Options(options) = options {
+    if let Some(options) = options {
         apply_inspect_options(&mut format_options, global_this, &options)?;
     }
 

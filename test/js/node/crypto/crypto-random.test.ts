@@ -4,7 +4,7 @@ import { statSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
 
-describe("as Node", () => {
+describe("arguments are validated as in Node", () => {
   it("a proxy of a function is a callback", async () => {
     const called = (call: (callback: (err: Error | null) => void) => void) =>
       new Promise<void>((resolve, reject) => call(new Proxy(err => (err ? reject(err) : resolve()), {})));

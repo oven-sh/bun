@@ -93,11 +93,9 @@ export const indexOfLine = b.fn({
 
 export const inflateSync = zlib("inflate_sync", ZlibDecompressionOptions);
 
-/** What is not a number is ignored. */
-export const InspectDepth = b.union({ number: b.f64, ignored: b.any });
 export const InspectOptions = b.dictionary(
   {
-    depth: InspectDepth,
+    depth: b.f64.otherAsNull,
     colors: b.bool.loose.optional,
     sorted: b.bool.loose.optional,
     compact: b.bool.loose.optional,
@@ -105,7 +103,6 @@ export const InspectOptions = b.dictionary(
   { allowArray: true },
 );
 export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, ignored: b.any });
-export const InspectOptionsOrIgnored = b.union({ options: InspectOptions, ignored: b.any });
 
 /**
  * `(value, options)` or `(value, depth, colors)`. `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is
@@ -187,19 +184,19 @@ export const sleepSync = b.fn({
 });
 
 /** The table of what is not an object is `""`. */
-export const TabularData = b.union({ object: b.object, ignored: b.any });
+const tabularData = b.object.otherAsNull;
 const printer = { export: "Bun__BunObject__table", returns: b.string.utf8, capability: "js", throws: true } as const;
 /** `Bun.inspect.table` */
 export const table = b.overloads(
   {
     ...printer,
-    args: { tabularData: TabularData, properties: b.jsArray, options: InspectOptionsOrIgnored },
+    args: { tabularData, properties: b.jsArray, options: InspectOptions.otherAsNull },
     length: 3,
     rustPath: "crate::api::bun_object::table_with_properties",
   },
   {
     ...printer,
-    args: { tabularData: TabularData, options: InspectOptionsOrIgnored },
+    args: { tabularData, options: InspectOptions.otherAsNull },
     rustPath: "crate::api::bun_object::table",
   },
 );

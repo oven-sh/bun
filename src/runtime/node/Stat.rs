@@ -179,7 +179,7 @@ pub(crate) fn create_stats_for_ino(cx: &mut JsScope<'_>, ino: Ino, big: bool) ->
     let mut stat_: PosixStat = bun_core::ffi::zeroed();
     stat_.ino = match ino {
         Ino::Number(number) => JSValue::js_number(number).to_uint64_no_truncate(),
-        Ino::Big(ino) => ino,
+        Ino::Bigint(ino) => ino,
     };
     Stats::init(&stat_, big).to_js_newly_created(cx.global())
 }

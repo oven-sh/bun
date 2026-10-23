@@ -14,7 +14,7 @@ function reactions(debug: boolean, mux: boolean, ssl: boolean) {
     });
   return [
     reaction("onResolve", "on_resolve"),
-    // With no claim left to take, it takes what the cell holds.
+    // After an upgrade the cell holds the server, which reports the rejection.
     reaction("onReject", "on_reject", b.nativePromiseContext(rustPath).withValue),
     reaction("onResolveStream", "on_resolve_stream"),
     reaction("onRejectStream", "on_reject_stream"),

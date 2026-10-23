@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer, type S3Server } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -952,11 +952,13 @@ for (let credentials of allCredentials) {
 
         it("should allow ending with forward slash", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
-          const s3file = s3(`${randomUUID()}/`, options);
+          const name = randomUUID();
+          const s3file = s3(`${name}/`, options);
           await s3file.write("Hello Bun!");
-          await s3file.exists();
+          // The `/` is part of the key: the object without it was not written.
+          const stored = { text: await s3file.text(), withoutSlash: await s3(name, options).exists() };
           await s3file.unlink();
-          expect().pass();
+          expect(stored).toEqual({ text: "Hello Bun!", withoutSlash: false });
         });
 
         it("should allow ending with backslash", async () => {
@@ -2168,5 +2170,145 @@ describe("presigned url signature", () => {
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
     }
+  });
+});
+
+// `dir/` is the folder marker of the S3 console, and another object than `dir`. Each test has a
+// server of its own, which checks the SigV4 signature against the path it received.
+describe("object key separators", () => {
+  // `prefix` is what a path has before the key. `root` is what the request target has before it.
+  const styles = {
+    "path style": (server: S3Server) => ({
+      options: server.clientOptions("bucket"),
+      prefix: "",
+      root: "/bucket/",
+    }),
+    "virtual hosted-style": (server: S3Server) => ({
+      options: { ...server.clientOptions(), endpoint: server.virtualHostedUrl("bucket"), virtualHostedStyle: true },
+      prefix: "",
+      root: "/",
+    }),
+    "bucket in the path": (server: S3Server) => ({
+      options: server.clientOptions(),
+      prefix: "bucket/",
+      root: "/bucket/",
+    }),
+    "s3:// URL": (server: S3Server) => ({
+      options: server.clientOptions(),
+      prefix: "s3://bucket/",
+      root: "/bucket/",
+    }),
+  };
+
+  /** What the server received: the request line, the key that it found there, and its error. */
+  function received(server: S3Server) {
+    return server.requests.map(({ operation, method, url, key, errorCode }) => ({
+      request: `${operation}: ${method} ${new URL(url).pathname}`,
+      key,
+      error: errorCode,
+    }));
+  }
+
+  describe.each(Object.keys(styles) as (keyof typeof styles)[])("%s", style => {
+    // [the key as given, the key that is sent]: every trailing `/` stays, a leading `/` does not.
+    it.concurrent.each([
+      ["dir", "dir"],
+      ["dir/", "dir/"],
+      ["a/b/", "a/b/"],
+      ["dir//", "dir//"],
+      ["/dir/", "dir/"],
+    ])("sends the key %j as %j", async (given, key) => {
+      await using server = serve({ buckets: ["bucket"] });
+      const { options, prefix, root } = styles[style](server);
+      const client = new S3Client(options);
+      const path = prefix + given;
+      const url = "s3://" + (prefix && "bucket/") + given;
+
+      await client.write(path, "value");
+      const read = {
+        exists: await client.exists(path),
+        text: await client.file(path).text(),
+        slice: await client.file(path).slice(0, 2).text(),
+        stream: await new Response(client.file(path).stream()).text(),
+        fetch: await (await fetch(url, { s3: options })).text(),
+      };
+      await fetch(url, { method: "PUT", body: "value", s3: options });
+      await fetch(url, { method: "PUT", body: new Blob(["value"]).stream(), s3: options });
+      await Bun.write(client.file(path), "value");
+      await client.delete(path);
+
+      const target = root + key;
+      expect({ signed: new URL(client.presign(path)).pathname, read, received: received(server) }).toEqual({
+        signed: target,
+        read: { exists: true, text: "value", slice: "va", stream: "value", fetch: "value" },
+        received: [
+          { request: `PutObject: PUT ${target}`, key, error: undefined },
+          { request: `HeadObject: HEAD ${target}`, key, error: undefined },
+          { request: `GetObject: GET ${target}`, key, error: undefined },
+          { request: `GetObject: GET ${target}`, key, error: undefined },
+          { request: `GetObject: GET ${target}`, key, error: undefined },
+          { request: `GetObject: GET ${target}`, key, error: undefined },
+          { request: `PutObject: PUT ${target}`, key, error: undefined },
+          { request: `PutObject: PUT ${target}`, key, error: undefined },
+          { request: `PutObject: PUT ${target}`, key, error: undefined },
+          { request: `DeleteObject: DELETE ${target}`, key, error: undefined },
+        ],
+      });
+    });
+  });
+
+  it("delete of a folder marker leaves the object of the same name", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    await client.write("report", "the report");
+    await client.write("report/", "");
+
+    await client.delete("report/");
+    expect({
+      report: await client.file("report").text(),
+      marker: await client.exists("report/"),
+    }).toEqual({ report: "the report", marker: false });
+  });
+
+  it("each key that list() returns reads its own object", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const objects = { "photos": "a file", "photos/": "", "photos/cat.txt": "a cat" };
+    for (const [key, value] of Object.entries(objects)) await client.write(key, value);
+
+    const listed = (await client.list()).contents!.map(entry => entry.key);
+    const values = await Promise.all(listed.map(key => client.file(key).text()));
+    expect(Object.fromEntries(listed.map((key, i) => [key, values[i]]))).toEqual(objects);
+  });
+
+  it("a multipart upload sends each part to the key", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const partSize = 5 * 1024 * 1024;
+
+    const writer = client.file("uploads/").writer({ partSize });
+    writer.write(Buffer.alloc(partSize + 1, "a"));
+    await writer.end();
+
+    expect(received(server)).toEqual([
+      { request: "CreateMultipartUpload: POST /bucket/uploads/", key: "uploads/", error: undefined },
+      { request: "UploadPart: PUT /bucket/uploads/", key: "uploads/", error: undefined },
+      { request: "UploadPart: PUT /bucket/uploads/", key: "uploads/", error: undefined },
+      { request: "CompleteMultipartUpload: POST /bucket/uploads/", key: "uploads/", error: undefined },
+    ]);
+  });
+
+  it("a leading separator and a trailing backslash are not part of the key", () => {
+    // Nothing is sent to this endpoint: this test only signs.
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+      endpoint: "https://s3.example.com",
+    });
+    const paths = ["/dir", "//dir", "\\dir", "dir\\"];
+    expect(paths.map(path => new URL(client.presign(path)).pathname)).toEqual(paths.map(() => "/bucket/dir"));
+    expect(["/dir", "\\dir", "dir\\"].map(path => client.file(path).name)).toEqual(["dir", "dir", "dir"]);
+    expect(() => client.presign("/")).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
   });
 });

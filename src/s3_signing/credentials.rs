@@ -354,7 +354,8 @@ impl S3Credentials {
             }
         }
 
-        let path = normalize_name(path);
+        // A trailing `/` is part of the key: `dir/` is a folder marker. Other outer separators are not.
+        let path = strings::trim_right(strings::trim_left(path, b"/\\"), b"\\");
         let bucket = normalize_name(bucket);
 
         // if we allow path.len == 0 it will list the bucket for now we disallow

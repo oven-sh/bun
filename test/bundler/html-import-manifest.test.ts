@@ -1263,7 +1263,10 @@ console.log("✓ Both import types work correctly");
           if ((await build("./plain.js", middle)).length === 0) low = middle;
           else high = middle - 1;
         }
-        console.log(JSON.stringify(await build("./server.js", low)));
+        // An entry point that fails is skipped while other files are still parsed, so it runs a few times.
+        const entryPoint = new Set();
+        for (let i = 0; i < 5; i++) entryPoint.add(JSON.stringify(await build("./client.html", low)));
+        console.log(JSON.stringify({ imported: await build("./server.js", low), entryPoint: [...entryPoint].map(JSON.parse) }));
       `,
     });
     await using build = Bun.spawn({
@@ -1274,15 +1277,16 @@ console.log("✓ Both import types work correctly");
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect({ logs: stdout && JSON.parse(stdout), stderr }).toEqual({
-      logs: [
-        ["JSON document is too deeply nested"],
-        [
-          `Could not bundle "./client.html" for the browser: a "define" value did not parse for its scripts`,
-          "The scripts of an HTML file get a define table of their own. Each value is parsed again for it, " +
-            "with less stack than the first time. Use a value with less nesting.",
-        ],
+    const logs = [
+      ["JSON document is too deeply nested"],
+      [
+        `Could not bundle "./client.html" for the browser: a "define" value did not parse for its scripts`,
+        "The scripts of an HTML file get a define table of their own. Each value is parsed again for it, " +
+          "with less stack than the first time. Use a value with less nesting.",
       ],
+    ];
+    expect({ logs: stdout && JSON.parse(stdout), stderr }).toEqual({
+      logs: { imported: logs, entryPoint: [logs] },
       stderr: "",
     });
     expect(exitCode).toBe(0);

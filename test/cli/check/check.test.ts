@@ -15635,6 +15635,90 @@ declare function Ov(p: { req: string; children?: string }): JSX.Element; declare
       expect(exitCode).toBe(1);
     });
 
+    test("reports an instantiation limit that's reached while JSX attributes are checked at the attributes", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve"}}`,
+        "function.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+export const x = (
+  <C
+    // @ts-expect-error
+    name="a"
+    other={1}
+  />
+);
+`,
+        "type-arguments.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+export const x = <C<string> /* comment */ name="a" other={1} />;
+`,
+        "nested.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+declare function D(props: { id: string; element: JSX.Element }): JSX.Element;
+export const x = <D id="a" element={<C name="a" other={1} />} />;
+`,
+        "class.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare class C<T> { constructor(props: { name: T; other: W<T> }); props: { name: T; other: W<T> }; }
+export const x = <C name="a" other={1} />;
+`,
+        "overloads.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T>; a: 1 }): JSX.Element;
+declare function C<T>(props: { name: T; other: W<T>; b: 1 }): JSX.Element;
+export const x = <C name="a" other={1} b={1} />;
+`,
+        "children.tsx": `declare global { namespace JSX { interface Element {} interface ElementChildrenAttribute { children: {} } } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T, children: [W<T>, T] }): JSX.Element;
+export const x = <C name="a">{1}{"a"}</C>;
+`,
+        "child.tsx": `declare global { namespace JSX { interface Element {} interface ElementChildrenAttribute { children: {} } } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T, children: W<T> }): JSX.Element;
+export const x = <C name="a">{1}</C>;
+`,
+        "no-attributes.tsx": `declare global { namespace JSX { interface Element {} interface ElementChildrenAttribute { children: {} } } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { children: W<T>[] }): JSX.Element;
+export const x = <C<string>   >{1}{2}</C>;
+`,
+        "no-initializer.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+export const x = <C name="a" other />;
+`,
+        "spread.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: W<T> }): JSX.Element;
+declare const rest: { name: "a"; other: 1 };
+export const x = <C {...rest} />;
+`,
+        "function-attribute.tsx": `declare namespace JSX { interface Element {} interface ElementClass {} interface ElementAttributesProperty { props: {} } }
+type W<T, N extends 0[] = []> = T extends string ? (N["length"] extends 120 ? T : W<T, [...N, 0]> | N["length"]) : never;
+declare function C<T>(props: { name: T; other: (x: W<T>) => void }): JSX.Element;
+export const x = <C name="a" other={x => {}} />;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "child.tsx(4,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        children.tsx(4,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        class.tsx(4,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        function-attribute.tsx(4,37): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        nested.tsx(5,40): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        no-attributes.tsx(4,28): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        no-initializer.tsx(4,18): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        overloads.tsx(5,21): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        spread.tsx(5,18): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        type-arguments.tsx(4,43): error TS5114: Instantiations of type 'W' appear infinitely circular."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS1117 and TS17001 for a name repeated in an object literal or in JSX attributes", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve"}}`,

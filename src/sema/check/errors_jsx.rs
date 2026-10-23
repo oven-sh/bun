@@ -453,7 +453,9 @@ impl Checker<'_, '_> {
         // `resolveUntypedCall`, `resolveErrorCall`: the attributes are checked regardless of how the tag resolves.
         let unresolved = |c: &mut Self, ret: TypeId| {
             if !is_jsx_open_fragment {
+                let outer = c.enter_jsx_attributes(file, e);
                 c.jsx_attributes_type(file, e);
+                c.expression_without_query = outer;
             }
             ResolvedCall { sig: None, ret }
         };
@@ -586,6 +588,7 @@ impl Checker<'_, '_> {
         is_checked_once: bool,
     ) -> TypeId {
         self.push_contextual_type(file, e, Some(contextual_type), false);
+        let outer_expression = self.enter_jsx_attributes(file, e);
         let ty = if is_checked_once {
             self.inference_contexts.push(InferenceContextInfo {
                 file,
@@ -617,8 +620,18 @@ impl Checker<'_, '_> {
                 |c, _| c.jsx_attributes_type(file, e),
             )
         };
+        self.expression_without_query = outer_expression;
         self.pop_contextual_type();
         ty
+    }
+
+    /// The start of `checkExpressionEx(node.Attributes(), ..)` for the element `e`. Returns the value to restore
+    /// `expression_without_query` to.
+    fn enter_jsx_attributes(&mut self, file: FileId, e: ExprId) -> Option<(CurrentNode, usize)> {
+        self.reset_instantiation_count();
+        let attributes = self.hir(file).node(e).with(Part::Attributes);
+        self.expression_without_query
+            .replace((CurrentNode::Node(file, attributes), self.stack.len()))
     }
 
     /// `checkApplicableSignatureForJsxCallLikeElement`

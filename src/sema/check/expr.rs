@@ -202,9 +202,9 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         };
         // `checkExpressionEx` restores `currentNode` after this function returns.
-        let outer_argument =
-            self.instantiating_generic_argument
-                .replace((file, e, self.stack.len()));
+        let outer_expression = self
+            .expression_without_query
+            .replace((CurrentNode::Expr(file, e), self.stack.len()));
         let instantiated = self.with_inference_context(level, |c, n| {
             let returns_plain_function = n.sig.is_some_and(|sig| {
                 let returned = c.sig_return(sig);
@@ -258,7 +258,7 @@ impl<'p, 's> Checker<'p, 's> {
                 c.is_assignable(s, t)
             })
         });
-        self.instantiating_generic_argument = outer_argument;
+        self.expression_without_query = outer_expression;
         match instantiated {
             Some(instantiated) => self.type_of_signature(instantiated, construct),
             None => ty,

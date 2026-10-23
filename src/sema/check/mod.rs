@@ -1036,7 +1036,7 @@ impl<'s> Program<'s> {
             unresolved_renamed_params: Default::default(),
             pinned_restrictive_instantiations: Default::default(),
             left_a_renamed_param_unchanged: Default::default(),
-            instantiating_generic_argument: None,
+            expression_without_query: None,
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
@@ -2027,9 +2027,10 @@ pub struct Checker<'p, 's> {
     pinned_restrictive_instantiations: crate::util::FxHashMap<TypeId, TypeId>,
     /// True if the restrictive instantiation in progress left such a type parameter unchanged.
     left_a_renamed_param_unchanged: std::cell::Cell<bool>,
-    /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
-    /// instantiating, and the depth of `stack` when it began. `currentNode` is still the argument.
-    instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
+    /// A node that `checkExpressionEx` is checking while no query for it is in `stack`, and the depth of `stack` when
+    /// that began. It's the argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
+    /// instantiating, or the `JsxAttributes` of an element.
+    expression_without_query: Option<(CurrentNode, usize)>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
@@ -3180,11 +3181,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// type node reached through any other query is resolved on demand and doesn't change `currentNode`. Returns
     /// `None` if `currentNode` is what `checkSourceElement` set, see `current_source_element`.
     pub(super) fn current_node(&self) -> Option<CurrentNode> {
-        if let Some((file, e, depth)) = self.instantiating_generic_argument
+        if let Some((node, depth)) = self.expression_without_query
             && !(self.stack.iter().zip(&self.frames).skip(depth))
                 .any(|(&q, frame)| !frame.is_quick_type && self.is_check_expression(q))
         {
-            return Some(CurrentNode::Expr(file, e));
+            return Some(node);
         }
         let innermost_expr = (self.stack.iter().zip(&self.frames))
             .rposition(|(&q, frame)| !frame.is_quick_type && self.is_check_expression(q));

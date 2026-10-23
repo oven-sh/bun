@@ -1723,7 +1723,11 @@ impl Checker<'_, '_> {
             },
             NodeData::Part(Part::Body | Part::Literal, row) => self.end_of_node(file, row),
             NodeData::Part(
-                Part::Extends | Part::Implements | Part::DeclarationList | Part::CatchClause,
+                Part::Extends
+                | Part::Implements
+                | Part::DeclarationList
+                | Part::CatchClause
+                | Part::Attributes,
                 _,
             ) => {
                 let mut last = Node::NONE;
@@ -1788,6 +1792,20 @@ impl Checker<'_, '_> {
                 self.error_start_inside_parentheses(file, e),
                 self.error_end_inside_parentheses(file, e),
             ),
+            // `NodeIsMissing(errorNode)`: an element without attributes.
+            NodeData::Part(Part::Attributes, row) if hir.start(node) == 0 => {
+                let spans = self.spans(file);
+                let pos = match hir.data(row) {
+                    NodeData::Expr(e) => match hir[e].kind {
+                        ExprKind::Jsx(j) => {
+                            spans.type_args(hir[j].type_args, spans.expr(hir[j].tag))
+                        }
+                        _ => 0,
+                    },
+                    _ => 0,
+                };
+                (pos as u32, pos as u32)
+            }
             NodeData::Stmt(s) => self.error_range_of_stmt(file, s),
             NodeData::Member(m) => self.error_range_of_member(file, m),
             NodeData::Prop(_) if hir.function_of(node).is_some() => {

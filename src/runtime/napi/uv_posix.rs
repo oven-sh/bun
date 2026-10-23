@@ -1306,9 +1306,7 @@ const _: () = assert!(core::mem::size_of::<UvWork>() <= UV_WORK_T_SIZE);
 /// that never call `uv_cancel` ignore the status. The V8 API would also still enter JS.
 struct UvWorkJob;
 
-/// The request while it is queued or running. Dropped on the JS thread once the job
-/// completed or was released unrun: either way the loop's count of work in flight
-/// goes down, which the VM pointer reaches even after `after_work_cb` freed the request.
+/// The queued request. Its drop (JS thread, on every exit path) ends the loop's count of it.
 struct QueuedUvWork {
     req: JsPtr<UvWork>,
     vm: NonNull<VirtualMachine>,

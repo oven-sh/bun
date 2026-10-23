@@ -423,6 +423,41 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // From ESLint 8.57.1, 9.39.5 and 10.12.0. `unicorn/prefer-string-slice` of eslint-plugin-unicorn 56 passes a number.
+  test.each([
+    ["8.57.1", "1 + 2;\n", "", 0],
+    ["9.39.5", "1 + 2;\n", "", 0],
+    ["10.12.0", "f;\n", "'text' must be a string", 2],
+  ])(
+    "only ESLint 10 refuses a fix whose text isn't a string: eslint %s",
+    async (version, fixed, error, code) => {
+      const { files, stderr, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `const number = {
+              meta: { fixable: "code" },
+              create: context => ({
+                Identifier: node =>
+                  context.report({
+                    node,
+                    message: "no",
+                    fix: fixer => [fixer.replaceText(node, 1), fixer.insertTextAfter(node, " + "), fixer.insertTextAfter(node, 2)],
+                  }),
+              }),
+            };
+            export default [{ plugins: { demo: { rules: { number } } }, rules: { "demo/number": "error" } }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": "f;\n",
+        },
+        ["--fix", "a.js"],
+        ["a.js"],
+      );
+      expect(files).toEqual({ "a.js": fixed });
+      expect(stderr).toContain(error);
+      expect(exitCode).toBe(code);
+    },
+    timeout,
+  );
+
   test(
     "provides tokens, comments, scopes and locations",
     async () => {

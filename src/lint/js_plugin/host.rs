@@ -753,7 +753,8 @@ impl<'e> Host<'e> {
             | (u32::from(file.language().is_oxlint) << 4)
             | (source_type_for_oxlint(file) << 5)
             | (u32::from(ast::shortens_nodes(file)) << 8)
-            | (u32::from(types.is_some()) << 9);
+            | (u32::from(types.is_some()) << 9)
+            | (u32::from(file.language().eslint_major < 10) << 10);
         wire::words(
             &mut message,
             &[

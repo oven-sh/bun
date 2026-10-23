@@ -397,11 +397,12 @@ describe.concurrent("--update-snapshots", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("\n 1 pass");
+    const scopes = Buffer.alloc(depth * 2, "d ").toString();
     expect({
       snapshot: fs.readFileSync(join(String(dir), "__snapshots__", "a.test.ts.snap"), "utf8"),
       exitCode,
     }).toEqual({
-      snapshot: snap({ "skipped 1": `"s"`, [`${"d ".repeat(depth)}leaf 1`]: `"new"` }),
+      snapshot: snap({ "skipped 1": `"s"`, [`${scopes}leaf 1`]: `"new"` }),
       exitCode: 0,
     });
   });

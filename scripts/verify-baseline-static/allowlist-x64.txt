@@ -1397,3 +1397,12 @@ _ZN3bun10N_AVX3_SPR13OddBlocksImplEPKhmPm          [AVX, AVX2, AVX512BW, AVX512D
 _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's count of instructions per pass. Gate: cap_user_rdpmc
+# of the perf_event_open() page, which the kernel sets where user code may read the
+# counter; otherwise the count comes from read(). Every x86-64 processor has RDPMC.
+# (1 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOT17InstructionCounts15ofCurrentThreadEv  [RDPMC]

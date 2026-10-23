@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use super::entries::build_entries;
 use super::keys::MergedKeys;
 use super::module_marks::{exported_variable_key, holds_exports_in_variable, is_filled_by_loader};

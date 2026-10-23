@@ -1,0 +1,27 @@
+# A name that is read or stored is a member. It is required where a use of its value throws without it, optional otherwise.
+members.js:4 parameter `point` = { x?: number; y?: number; }
+members.js:6 parameter `logger` = { log: Function; }
+members.js:8 parameter `o` = { Type: Function; }
+members.js:10 parameter `o` = { name?: any; }
+members.js:12 parameter `options` = { timeout?: any; }
+members.js:14 parameter `o` = { a: { b?: any; }; }
+members.js:16 parameter `o` = { a?: { b?: any; }; }
+members.js:18 parameter `o` = { a: { b?: any; }; }
+members.js:20 parameter `o` = { list: string | any[]; }
+members.js:22 parameter `o` = { count?: number; label?: string; }
+members.js:24 parameter `o` = { a: { b?: number; }; }
+members.js:26 parameter `o` = { [kState]?: boolean; }
+members.js:28 parameter `o` = { [kState]?: any; }
+members.js:30 parameter `o` = { cache?: any; }
+members.js:33 parameter `o` = object
+members.js:33 parameter `k` = any
+members.js:35 parameter `o` = object
+members.js:37 parameter `o` = object
+members.js:39 parameter `o` = object
+members.js:41 parameter `o` = { list: string | any[]; }
+members.js:43 parameter `o` = { flag?: any; kind?: any; }
+members.js:45 parameter `o` = { table: object; }
+members.js:47 parameter `o` = { f?: Function; }
+members.js:50 parameter `o` = object
+members.js:52 parameter `o` = object
+members.js:54 parameter `o` = { table: object; }

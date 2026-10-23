@@ -23,3 +23,6 @@ fn collect_lines(value_of: impl Fn(StatisticId) -> u64, out: &mut Vec<ReportEntr
 pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
     collect_lines(|id| input.statistics.get(id), out);
 }
+
+#[cfg(test)]
+mod tests;

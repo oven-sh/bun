@@ -192,3 +192,48 @@ fn resolve_listed_position(
 ) -> Option<SourcePosition> {
     positions.resolve(listed_position(names, location)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::TextRange;
+    use crate::ir::ids::ABSENT_WORD;
+
+    fn record_with_source(source: u32) -> FunctionReportRecord {
+        FunctionReportRecord {
+            source,
+            role: TextRange {
+                offset: 0,
+                length: 0,
+            },
+            code_bytes: 0,
+            accesses: [0; 3],
+            calls: [0; 3],
+            first_operation: 0,
+            operation_count: 0,
+            access_costs: [0; 4],
+        }
+    }
+
+    fn index_of(functions: &FunctionIndex, function: u32) -> Option<u64> {
+        functions.get(Some(FunctionId::from_word(function)))
+    }
+
+    #[test]
+    fn source_function_index_is_first_record() {
+        let sources = [5, 2, 5, ABSENT_WORD, 2, 0];
+        let functions = index_functions(&sources.map(record_with_source));
+        assert_eq!(index_of(&functions, 5), Some(0));
+        assert_eq!(index_of(&functions, 2), Some(1));
+        assert_eq!(index_of(&functions, 0), Some(5));
+    }
+
+    #[test]
+    fn absent_function_has_no_index() {
+        let functions = index_functions(&[1, ABSENT_WORD].map(record_with_source));
+        assert_eq!(functions.get(None), None);
+        assert_eq!(index_of(&functions, 0), None);
+        assert_eq!(index_of(&functions, 2), None);
+        assert_eq!(index_of(&index_functions(&[]), 1), None);
+    }
+}

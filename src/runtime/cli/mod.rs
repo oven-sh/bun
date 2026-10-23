@@ -1044,7 +1044,7 @@ pub(crate) mod command {
                     #[link_name = "Bun__WebView__hostMain"]
                     safe fn host_main(fd: i32) -> !;
                 }
-                host_main(fd as i32);
+                bun_removable_features::call_removable!(WebView, Abort, host_main, fd as i32);
             }
         }
 

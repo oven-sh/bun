@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use super::ModuleRef;
 use bun_sema::atom::Atom;
 use bun_sema::import_sites::ImportSiteKind;

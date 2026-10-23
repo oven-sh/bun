@@ -103,3 +103,160 @@ impl Default for AotOptions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MEMBERS: [(ExplainSet, &str); 12] = [
+        (ExplainSet::TEXT, "ExplainSet(TEXT)"),
+        (ExplainSet::JSON, "ExplainSet(JSON)"),
+        (ExplainSet::CHECKS, "ExplainSet(CHECKS)"),
+        (ExplainSet::CHECKS_JSON, "ExplainSet(CHECKS_JSON)"),
+        (ExplainSet::RUNTIME_USE, "ExplainSet(RUNTIME_USE)"),
+        (ExplainSet::DECLINES, "ExplainSet(DECLINES)"),
+        (ExplainSet::ALLOCATIONS, "ExplainSet(ALLOCATIONS)"),
+        (
+            ExplainSet::ONLY_UNKNOWN_CODE,
+            "ExplainSet(ONLY_UNKNOWN_CODE)",
+        ),
+        (
+            ExplainSet::ONLY_UNPROVEN_TYPE,
+            "ExplainSet(ONLY_UNPROVEN_TYPE)",
+        ),
+        (ExplainSet::ONLY_MUTATION, "ExplainSet(ONLY_MUTATION)"),
+        (ExplainSet::STATISTICS, "ExplainSet(STATISTICS)"),
+        (ExplainSet::ONLY_LIMIT, "ExplainSet(ONLY_LIMIT)"),
+    ];
+
+    #[test]
+    fn default_is_plain_compile() {
+        let AotOptions {
+            heap,
+            embeds_function_source,
+            explain,
+            trim,
+            reports_type_mismatches,
+            erases_types,
+            emits_symbols,
+            omits_builtin_modules,
+            obfuscates,
+            forbids_text_evaluation,
+            admits_inspector,
+            ir_output_path,
+            build_report,
+            runs_in_place,
+            checks_only,
+            runs_tests,
+            before_read,
+            thread_count,
+            option_words,
+        } = AotOptions::default();
+        assert_eq!(heap, HeapSize::Standard);
+        assert_eq!(heap, HeapSize::default());
+        assert!(embeds_function_source);
+        assert!(explain.is_empty());
+        assert!(!trim.is_enabled());
+        assert!(trim.allow.is_empty());
+        assert!(!trim.logs);
+        assert!(!reports_type_mismatches);
+        assert!(!erases_types);
+        assert!(!emits_symbols);
+        assert!(!omits_builtin_modules);
+        assert!(!obfuscates);
+        assert!(!forbids_text_evaluation);
+        assert!(!admits_inspector);
+        assert!(ir_output_path.is_none());
+        assert!(build_report.is_none());
+        assert!(!runs_in_place);
+        assert!(!checks_only);
+        assert!(!runs_tests);
+        assert!(before_read.is_none());
+        assert!(thread_count.is_none());
+        assert!(option_words.is_empty());
+    }
+
+    #[test]
+    fn contains_needs_every_bit() {
+        let text_and_json = ExplainSet::TEXT | ExplainSet::JSON;
+        assert!(text_and_json.contains(ExplainSet::TEXT));
+        assert!(text_and_json.contains(text_and_json));
+        assert!(!ExplainSet::TEXT.contains(text_and_json));
+        assert!(!ExplainSet::TEXT.contains(ExplainSet::JSON));
+    }
+
+    #[test]
+    fn intersects_needs_one_bit() {
+        let text_and_json = ExplainSet::TEXT | ExplainSet::JSON;
+        assert!(ExplainSet::TEXT.intersects(text_and_json));
+        assert!(text_and_json.intersects(ExplainSet::JSON | ExplainSet::CHECKS));
+        assert!(!ExplainSet::TEXT.intersects(ExplainSet::JSON));
+    }
+
+    #[test]
+    fn empty_set_relations() {
+        let empty = ExplainSet::empty();
+        assert!(empty.is_empty());
+        assert!(!ExplainSet::TEXT.is_empty());
+        assert_eq!(empty, ExplainSet::default());
+        assert_eq!(empty.bits(), 0);
+        assert!(empty.contains(empty));
+        assert!(ExplainSet::TEXT.contains(empty));
+        assert!(!empty.contains(ExplainSet::TEXT));
+        assert!(!empty.intersects(empty));
+        assert!(!empty.intersects(ExplainSet::TEXT));
+        assert!(!ExplainSet::TEXT.intersects(empty));
+    }
+
+    #[test]
+    fn insert_is_idempotent() {
+        let mut set = ExplainSet::TEXT;
+        set.insert(ExplainSet::DECLINES);
+        let inserted_once = set;
+        set.insert(ExplainSet::DECLINES);
+        assert_eq!(set, inserted_once);
+        assert_eq!(set, ExplainSet::TEXT | ExplainSet::DECLINES);
+    }
+
+    #[test]
+    fn operators_combine_bits() {
+        let mut set = ExplainSet::empty();
+        set |= ExplainSet::JSON;
+        set |= ExplainSet::CHECKS;
+        assert_eq!(set, ExplainSet::JSON | ExplainSet::CHECKS);
+        assert_eq!(set.bits(), 0b110);
+        assert_eq!(set & ExplainSet::JSON, ExplainSet::JSON);
+        assert_eq!(set & ExplainSet::TEXT, ExplainSet::empty());
+        assert_eq!(ExplainSet::JSON.union(ExplainSet::CHECKS), set);
+    }
+
+    #[test]
+    fn members_are_single_bits() {
+        let mut seen = ExplainSet::empty();
+        for (member, _) in MEMBERS {
+            assert_eq!(member.bits().count_ones(), 1);
+            assert!(!seen.intersects(member));
+            seen.insert(member);
+        }
+        assert_eq!(seen.bits(), 0b1111_1111_1111);
+    }
+
+    #[test]
+    fn report_details_ascend() {
+        assert_eq!(ReportDetail::default(), ReportDetail::Summary);
+        assert!(ReportDetail::Summary < ReportDetail::Functions);
+        assert!(ReportDetail::Functions < ReportDetail::Sites);
+    }
+
+    #[test]
+    fn debug_lists_member_names() {
+        assert_eq!(
+            format!("{:?}", ExplainSet::DECLINES | ExplainSet::TEXT),
+            "ExplainSet(TEXT | DECLINES)"
+        );
+        assert_eq!(format!("{:?}", ExplainSet::empty()), "ExplainSet(0x0)");
+        for (member, expected) in MEMBERS {
+            assert_eq!(format!("{member:?}"), expected);
+        }
+    }
+}

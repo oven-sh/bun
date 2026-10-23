@@ -469,3 +469,238 @@ fn record_message(message: Msg, log: &mut Log) -> Result<(), Failed> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bundle_v2::api::JSBundler::{LoadSuccess, ResolveSuccess};
+    use std::time::Duration;
+
+    fn is_load_answer(reason: &WakeReason) -> bool {
+        matches!(
+            reason,
+            WakeReason::Answered(Answer::Load(LoadValue::NoMatch))
+        )
+    }
+
+    fn message(kind: Kind) -> Msg {
+        Msg {
+            kind,
+            ..Default::default()
+        }
+    }
+
+    fn counts(log: &Log) -> (u32, u32, usize) {
+        (log.errors, log.warnings, log.msgs.len())
+    }
+
+    fn resolve_success(namespace: &[u8], external: bool) -> ResolveValue {
+        ResolveValue::Success(ResolveSuccess {
+            path: Box::from(&b"/p/a.ts"[..]),
+            namespace: Box::from(namespace),
+            external,
+        })
+    }
+
+    fn file() -> Option<Cow<'static, [u8]>> {
+        Some(Cow::Borrowed(b"from file"))
+    }
+
+    fn is_file_source(loaded: &Result<Loaded, Failed>) -> bool {
+        matches!(
+            loaded,
+            Ok(Loaded::Source { contents, loader: Loader::Ts, is_from_plugin: false })
+                if &**contents == b"from file"
+        )
+    }
+
+    #[test]
+    fn answer_before_wait() {
+        let waiter = PluginWaiter::default();
+        waiter.answer_load(LoadValue::NoMatch);
+        assert!(is_load_answer(&waiter.wait()));
+    }
+
+    #[test]
+    fn answer_from_second_thread() {
+        let waiter = PluginWaiter::default();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(10));
+                waiter.answer_resolve(ResolveValue::NoMatch);
+            });
+            assert!(matches!(
+                waiter.wait(),
+                WakeReason::Answered(Answer::Resolve(ResolveValue::NoMatch))
+            ));
+        });
+    }
+
+    #[test]
+    fn defer_then_answer() {
+        let waiter = PluginWaiter::default();
+        waiter.defer();
+        assert!(matches!(waiter.wait(), WakeReason::Deferred));
+        waiter.answer_load(LoadValue::NoMatch);
+        assert!(matches!(
+            waiter.wait_for_answer(),
+            Answer::Load(LoadValue::NoMatch)
+        ));
+    }
+
+    #[test]
+    fn answer_wins_over_defer() {
+        let waiter = PluginWaiter::default();
+        waiter.defer();
+        waiter.answer_load(LoadValue::NoMatch);
+        assert!(is_load_answer(&waiter.wait()));
+    }
+
+    #[test]
+    fn pool_reuses_clean_waiter() {
+        let mut pool = WaiterPool::default();
+        let first = pool.acquire();
+        // SAFETY: the pool is alive.
+        unsafe { first.as_ref() }.defer();
+        // SAFETY: the pool is alive.
+        unsafe { first.as_ref() }.answer_drained();
+        pool.release(first);
+
+        let second = pool.acquire();
+        assert_eq!(first, second);
+        assert_eq!(pool.all.len(), 1);
+        // SAFETY: the pool is alive.
+        let state = unsafe { second.as_ref() }.state.lock();
+        assert!(!state.has_deferred);
+        assert!(state.answer.is_none());
+    }
+
+    #[test]
+    fn pool_creates_waiter_when_none_is_idle() {
+        let mut pool = WaiterPool::default();
+        let first = pool.acquire();
+        let second = pool.acquire();
+        assert_ne!(first, second);
+        assert_eq!(pool.all.len(), 2);
+    }
+
+    #[test]
+    fn defer_of_other_waiter_wakes_nobody() {
+        let waiter = PluginWaiter::default();
+        let other = PluginWaiter::default();
+        std::thread::scope(|scope| {
+            let sleeper = scope.spawn(|| is_load_answer(&waiter.wait()));
+            other.defer();
+            std::thread::sleep(Duration::from_millis(10));
+            assert!(!sleeper.is_finished());
+            waiter.answer_load(LoadValue::NoMatch);
+            assert!(sleeper.join().unwrap());
+        });
+    }
+
+    #[test]
+    fn resolve_answers() {
+        let mut log = Log::init();
+        assert!(matches!(
+            resolution_from_value(ResolveValue::NoMatch, &mut log),
+            Ok(Resolution::NotHandled)
+        ));
+        assert!(matches!(
+            resolution_from_value(resolve_success(b"virtual", false), &mut log),
+            Ok(Resolution::Module { namespace, path })
+                if namespace == b"virtual" && path == b"/p/a.ts"
+        ));
+        assert!(matches!(
+            resolution_from_value(resolve_success(b"", false), &mut log),
+            Ok(Resolution::Module { namespace, .. }) if namespace == FILE_NAMESPACE
+        ));
+        assert_eq!(counts(&log), (0, 0, 0));
+    }
+
+    #[test]
+    fn external_answer_carries_plugin_path() {
+        let mut log = Log::init();
+        for namespace in [&b""[..], b"virtual"] {
+            assert!(matches!(
+                resolution_from_value(resolve_success(namespace, true), &mut log),
+                Ok(Resolution::External { specifier }) if specifier == b"/p/a.ts"
+            ));
+        }
+        assert_eq!(counts(&log), (0, 0, 0));
+    }
+
+    #[test]
+    fn resolve_error_fails() {
+        let mut log = Log::init();
+        let value = ResolveValue::Err(message(Kind::Err));
+        let answer = resolution_from_value(value, &mut log);
+        assert!(answer.is_err());
+        assert_eq!(counts(&log), (1, 0, 1));
+    }
+
+    #[test]
+    fn resolve_warning_is_not_handled() {
+        let mut log = Log::init();
+        let value = ResolveValue::Err(message(Kind::Warn));
+        let answer = resolution_from_value(value, &mut log);
+        assert!(matches!(answer, Ok(Resolution::NotHandled)));
+        assert_eq!(counts(&log), (0, 1, 1));
+    }
+
+    #[test]
+    fn load_success_is_from_plugin() {
+        let mut log = Log::init();
+        let value = LoadValue::Success(LoadSuccess {
+            source_code: Box::from(&b"from plugin"[..]),
+            loader: Loader::Json,
+        });
+        let loaded = loaded_from_value(
+            value,
+            || unreachable!("an answered load reads no file"),
+            Loader::Ts,
+            &mut log,
+        );
+        assert!(matches!(
+            loaded,
+            Ok(Loaded::Source { contents, loader: Loader::Json, is_from_plugin: true })
+                if &*contents == b"from plugin"
+        ));
+    }
+
+    #[test]
+    fn declined_load_reads_file() {
+        let mut log = Log::init();
+        let loaded = loaded_from_value(LoadValue::NoMatch, file, Loader::Ts, &mut log);
+        assert!(is_file_source(&loaded));
+        assert_eq!(counts(&log), (0, 0, 0));
+    }
+
+    #[test]
+    fn declined_load_without_file_is_not_found() {
+        let mut log = Log::init();
+        let loaded = loaded_from_value(LoadValue::NoMatch, || None, Loader::Ts, &mut log);
+        assert!(matches!(loaded, Ok(Loaded::NotFound)));
+    }
+
+    #[test]
+    fn load_error_fails() {
+        let mut log = Log::init();
+        let loaded = loaded_from_value(
+            LoadValue::Err(message(Kind::Err)),
+            || unreachable!("a failed load reads no file"),
+            Loader::Ts,
+            &mut log,
+        );
+        assert!(loaded.is_err());
+        assert_eq!(counts(&log), (1, 0, 1));
+    }
+
+    #[test]
+    fn load_warning_reads_file() {
+        let mut log = Log::init();
+        let value = LoadValue::Err(message(Kind::Warn));
+        let loaded = loaded_from_value(value, file, Loader::Ts, &mut log);
+        assert!(is_file_source(&loaded));
+        assert_eq!(counts(&log), (0, 1, 1));
+    }
+}

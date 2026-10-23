@@ -1,0 +1,18 @@
+# The parent of a constructor function is the function or class to whose prototype object the file links the prototype object of the function.
+# A function that is an end of such a link is a constructor function, also where nothing is stored into `this` or into its prototype object.
+linked-by-built-ins.js:1 constructor function `Base` = computed instance false computed static false
+absent: linked-by-built-ins.js:1 constructor function parent `Base` = linked-by-built-ins.js:1
+linked-by-built-ins.js:2 constructor function `Relinked` = computed instance false computed static false
+linked-by-built-ins.js:2 constructor function parent `Relinked` = linked-by-built-ins.js:1
+linked-by-built-ins.js:4 constructor function parent `Reflected` = linked-by-built-ins.js:1
+linked-by-built-ins.js:6 constructor function parent `Created` = linked-by-built-ins.js:1
+linked-by-built-ins.js:8 constructor function parent `CreatedWithDescriptors` = linked-by-built-ins.js:1
+linked-by-built-ins.js:10 constructor function parent `UnderAnInstance` = linked-by-built-ins.js:1
+linked-by-built-ins.js:12 constructor function parent `UnderALiteral` = linked-by-built-ins.js:1
+linked-by-built-ins.js:14 constructor function parent `StoredLink` = linked-by-built-ins.js:1
+linked-by-built-ins.js:16 constructor function parent `RelinkedLiteral` = linked-by-built-ins.js:1
+linked-by-built-ins.js:19 constructor function parent `ThroughAnAlias` = linked-by-built-ins.js:1
+linked-by-built-ins.js:21 constructor function parent `function () {}` = linked-by-built-ins.js:1
+linked-by-built-ins.js:23 constructor function parent `Twice` = linked-by-built-ins.js:1
+linked-by-built-ins.js:27 constructor function parent `UnderAClass` = linked-by-built-ins.js:26
+linked-by-built-ins.js:29 constructor function parent `Below` = linked-by-built-ins.js:2

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use super::program_keys::{
     KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
 };

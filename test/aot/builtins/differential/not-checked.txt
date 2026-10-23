@@ -1,5 +1,5 @@
-# The hand-written overloads that test/aot/builtins/differential.test.ts does not call or that do not pass: `<overload>: <why>`.
-# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts
+# The hand-written overloads that test/aot/builtins/differential-cases.ts does not call or that do not pass: `<overload>: <why>`.
+# Written by: AOT_BUILTINS_UPDATE=1 TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts
 AtomicsWait/0: it is not called: it blocks the thread
 AtomicsWait/1: it is not called: it blocks the thread
 BunBuild/0: it is not called: it blocks, starts a process or opens a socket

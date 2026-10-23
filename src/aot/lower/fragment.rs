@@ -242,6 +242,11 @@ impl FragmentBuilder {
         self.function_keys.key_of(function)
     }
 
+    #[cfg(test)]
+    pub(crate) fn function_keys(&self) -> &[FunctionKey] {
+        &self.function_keys.keys
+    }
+
     pub(crate) fn layout_key(&self, layout: LayoutId) -> LayoutKey {
         self.layout_keys.key_of(layout)
     }

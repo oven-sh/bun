@@ -1,0 +1,11 @@
+# A member of a library mapped type is written if its source is. A mapped type of another `.d.ts` has the trust of the type it maps, and its members are unwritten.
+mapped.ts:4 has `Partial<Config>` = a Field number checked number optional
+mapped.ts:5 has `Record<"a", number>` = a Field number checked number
+mapped.ts:6 has `Partial<Host>` = port Field unwritten checked number optional
+mapped.ts:7 shape `Mine<Config>` = Object
+mapped.ts:7 has `Mine<Config>` = a Field unwritten checked number
+mapped.ts:9 has `Partial<HostOptions>` = port Field unwritten checked number optional
+mapped.ts:10 index `Partial<HostTable>` = String unwritten checked number | undefined
+mapped.ts:11 has `Renamed<Host>` = get_port Field unwritten checked number
+mapped.ts:12 has `Partial<Record<"a", number>>` = a Field number checked number optional
+mapped.ts:13 index `Readonly<Record<string, number>>` = String number checked number

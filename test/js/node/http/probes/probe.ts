@@ -1,5 +1,5 @@
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import type { AddressInfo, Socket } from "node:net";
+import net, { type AddressInfo, type Socket } from "node:net";
 import { RawHttpConnection, get } from "../raw-http-client.ts";
 
 export type Log = (...parts: unknown[]) => void;
@@ -150,7 +150,30 @@ export function nextTurn() {
   return new Promise<void>(resolve => setImmediate(resolve));
 }
 
+async function connectToItself() {
+  const accepted = Promise.withResolvers<Socket>();
+  const listener = net.createServer(accepted.resolve);
+  await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
+  const near = net.connect((listener.address() as AddressInfo).port, "127.0.0.1");
+  const far = await accepted.promise;
+  listener.close();
+  return { near: near.unref(), far: far.unref() };
+}
+
+let ownConnection: ReturnType<typeof connectToItself> | undefined;
+
+// The loopback interface delivers in order, but not at once on every system: when a byte sent now has arrived, this
+// event loop has heard of every connection that was closed before. One connection serves the whole process: a new one
+// for each wait would use up the ports.
+async function untilEarlierClosesWereHeard() {
+  const { near, far } = await (ownConnection ??= connectToItself());
+  const arrived = new Promise<void>(resolve => far.once("data", () => resolve()));
+  near.write(".");
+  await arrived;
+}
+
 export async function untilDestroyed(socket: Socket | undefined) {
+  if (socket) await untilEarlierClosesWereHeard();
   for (let turn = 0; socket && turn < 1000; turn++) {
     const destroyed = attempt(() => socket.destroyed);
     if (destroyed === "true" || (destroyed !== "false" && turn === 20)) return;

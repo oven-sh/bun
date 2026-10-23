@@ -398,3 +398,283 @@ pub(super) fn add_views_of_literals(layouts: &mut Vec<Layout>, views: Vec<Layout
         layouts.push(view);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{FunctionId, PropertyKeyId, StringId, TypeSiteId};
+    use crate::link::testing::{reverse, test_class_key, test_object_type_key};
+
+    fn field(key: usize, declared: DeclaredType, flags: FieldFlags) -> Field {
+        Field {
+            key: Some(PropertyKeyId::new(key)),
+            declared,
+            flags,
+            ..Field::default()
+        }
+    }
+
+    fn checked(ty: crate::ir::TypeId, site: Option<usize>) -> DeclaredType {
+        let site = site.map(TypeSiteId::new);
+        DeclaredType::new(Mapped::checked(ty), site, PositionFlags::default())
+    }
+
+    fn layout(name: Option<usize>, fields: Vec<Field>) -> Layout {
+        Layout {
+            name: name.map(StringId::new),
+            fields,
+            ..Layout::default()
+        }
+    }
+
+    fn unite(first: Layout, others: Vec<Layout>) -> (Layout, TypeTable) {
+        let mut types = TypeTable::new();
+        let mut layouts = vec![first];
+        let others = others.into_iter().map(|other| (LayoutId::new(0), other));
+        unite_layout_definitions(&mut layouts, vec![others.collect()], &mut types, &reverse);
+        (layouts.remove(0), types)
+    }
+
+    fn maker_of(ty: usize) -> Layout {
+        Layout {
+            kind: LayoutKind::Instance,
+            constructor: Some(FunctionId::new(0)),
+            supertypes: vec![LayoutId::new(ty)],
+            ..Layout::default()
+        }
+    }
+
+    // The layout, then its views.
+    fn unite_with_views(first: Layout, others: Vec<Layout>, types: &mut TypeTable) -> Vec<Layout> {
+        let mut layouts = vec![first, maker_of(0)];
+        let others = others.into_iter().map(|other| (LayoutId::new(0), other));
+        let views = unite_layout_definitions(&mut layouts, vec![others.collect()], types, &reverse);
+        add_views_of_literals(&mut layouts, views);
+        layouts.remove(1);
+        layouts
+    }
+
+    fn tagged(name: usize, tag: crate::ir::TypeId, site: Option<usize>) -> Layout {
+        let required = FieldFlags::IS_REQUIRED;
+        let fields = vec![
+            field(0, checked(tag, site), required),
+            field(1, checked(TypeTable::STRING, None), required),
+        ];
+        layout(Some(name), fields)
+    }
+
+    #[test]
+    fn definitions_with_different_literals_stay_as_views_below_the_layout() {
+        let mut types = TypeTable::new();
+        let integer = |types: &mut TypeTable, value| types.intern(Type::integers(value, value));
+        let (one, five) = (integer(&mut types, 1), integer(&mut types, 5));
+        let definitions = vec![tagged(11, five, None), tagged(12, one, None)];
+        let layouts = unite_with_views(tagged(10, one, Some(3)), definitions, &mut types);
+        assert_eq!(layouts.len(), 3);
+        assert_eq!(
+            *types.get(layouts[0].fields[0].declared.ty),
+            Type::integers(1, 5)
+        );
+        for (view, (name, tag)) in layouts[1..].iter().zip([(10, one), (11, five)]) {
+            assert_eq!(view.name, Some(StringId::new(name)));
+            assert_eq!(view.fields[0].declared, checked(tag, None));
+            assert_eq!(view.fields[1].declared, checked(TypeTable::STRING, None));
+            assert_eq!(view.supertypes, vec![LayoutId::new(0)]);
+            assert_eq!(view.flags, LayoutFlags::IS_NEVER_ALLOCATED);
+        }
+    }
+
+    #[test]
+    fn definitions_with_one_literal_need_no_view() {
+        let mut types = TypeTable::new();
+        let one = types.intern(Type::integers(1, 1));
+        let layouts = unite_with_views(
+            tagged(10, one, None),
+            vec![tagged(11, one, None)],
+            &mut types,
+        );
+        assert_eq!(layouts.len(), 1);
+        let plain = || tagged(10, TypeTable::NUMBER, None);
+        assert_eq!(
+            unite_with_views(plain(), vec![plain()], &mut types).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn literal_beside_wider_type_stays_as_view() {
+        let mut types = TypeTable::new();
+        let text = types.intern(Type::string_literal(StringId::new(7)));
+        let wide = tagged(10, TypeTable::STRING, None);
+        let layouts = unite_with_views(wide, vec![tagged(11, text, None)], &mut types);
+        assert_eq!(layouts.len(), 2);
+        assert_eq!(layouts[1].name, Some(StringId::new(11)));
+        assert_eq!(layouts[1].fields[0].declared, checked(text, None));
+    }
+
+    #[test]
+    fn view_takes_over_that_a_name_is_never_written() {
+        let mut types = TypeTable::new();
+        let integer = |types: &mut TypeTable, value| types.intern(Type::integers(value, value));
+        let (one, five) = (integer(&mut types, 1), integer(&mut types, 5));
+        let mut layouts = vec![tagged(10, one, None), maker_of(0)];
+        let others = vec![(LayoutId::new(0), tagged(11, five, None))];
+        let views = unite_layout_definitions(&mut layouts, vec![others], &mut types, &reverse);
+        layouts[0].fields[1].flags = FieldFlags::IS_NEVER_WRITTEN;
+        add_views_of_literals(&mut layouts, views);
+        assert_eq!(layouts[2].fields[0].flags, FieldFlags::IS_REQUIRED);
+        assert_eq!(layouts[2].fields[1].flags, FieldFlags::IS_NEVER_WRITTEN);
+    }
+
+    #[test]
+    fn views_stay_only_below_the_types_of_the_objects_of_a_maker() {
+        let mut types = TypeTable::new();
+        let integer = |types: &mut TypeTable, value| types.intern(Type::integers(value, value));
+        let (one, five) = (integer(&mut types, 1), integer(&mut types, 5));
+        let mut count_with = |above: Vec<LayoutId>, last: Layout| {
+            let mut shared = tagged(10, one, None);
+            shared.supertypes = above;
+            let mut layouts = vec![shared, layout(Some(12), Vec::new()), last];
+            let others = vec![(LayoutId::new(0), tagged(11, five, None))];
+            let views = unite_layout_definitions(&mut layouts, vec![others], &mut types, &reverse);
+            assert_eq!(views.len(), 2);
+            add_views_of_literals(&mut layouts, views);
+            layouts.len() - 3
+        };
+        let base = || vec![LayoutId::new(1)];
+        assert_eq!(count_with(base(), maker_of(1)), 2);
+        assert_eq!(count_with(Vec::new(), maker_of(1)), 0);
+        assert_eq!(count_with(base(), layout(Some(13), Vec::new())), 0);
+        let mut heir = maker_of(1);
+        heir.flags |= LayoutFlags::HAS_HERITAGE;
+        assert_eq!(count_with(base(), heir), 0);
+    }
+
+    #[test]
+    fn only_plain_object_without_home_has_united_definitions() {
+        assert!(has_united_definitions(&test_object_type_key(1)));
+        assert!(!has_united_definitions(&test_class_key(0, 0)));
+    }
+
+    #[test]
+    fn field_has_union_of_types_and_first_site() {
+        let all = FieldFlags::IS_REQUIRED;
+        let first = layout(
+            None,
+            vec![field(0, checked(TypeTable::STRING, Some(3)), all)],
+        );
+        let second = layout(None, vec![field(0, checked(TypeTable::NUMBER, None), all)]);
+        let (united, mut types) = unite(first, vec![second]);
+        let declared = united.fields[0].declared;
+        assert_eq!(
+            declared.ty,
+            types.union(TypeTable::STRING, TypeTable::NUMBER)
+        );
+        assert_eq!(declared.site, Some(TypeSiteId::new(3)));
+        assert!(!declared.is_expected());
+        assert_eq!(united.fields[0].flags, all);
+    }
+
+    #[test]
+    fn flag_stays_only_if_every_definition_gives_it() {
+        let method = FieldFlags::IS_REQUIRED | FieldFlags::IS_METHOD | FieldFlags::IS_IMMUTABLE;
+        let declared = checked(TypeTable::STRING, None);
+        let first = layout(
+            None,
+            vec![field(0, declared, method), field(1, declared, method)],
+        );
+        let plain = FieldFlags::IS_METHOD;
+        let second = layout(
+            None,
+            vec![field(0, declared, method), field(1, declared, plain)],
+        );
+        let (united, _) = unite(first, vec![second]);
+        assert_eq!(united.fields[0].flags, method);
+        assert_eq!(united.fields[1].flags, FieldFlags::IS_METHOD);
+    }
+
+    #[test]
+    fn expected_position_of_one_definition_makes_field_expected() {
+        let promise = PositionFlags::IS_INT32_PROMISE;
+        let promised = DeclaredType::new(Mapped::checked(TypeTable::INT32), None, promise);
+        let expected = DeclaredType::new(
+            Mapped::expected(TypeTable::INT32),
+            None,
+            PositionFlags::default(),
+        );
+        let flags = FieldFlags::default();
+        let both = layout(None, vec![field(0, promised, flags)]);
+        let (united, _) = unite(both.clone(), vec![both.clone()]);
+        assert_eq!(united.fields[0].declared, promised);
+        let (united, _) = unite(both, vec![layout(None, vec![field(0, expected, flags)])]);
+        assert_eq!(united.fields[0].declared, expected);
+    }
+
+    #[test]
+    fn untyped_position_of_one_definition_makes_field_untyped() {
+        let flags = FieldFlags::default();
+        let first = layout(
+            None,
+            vec![field(0, checked(TypeTable::STRING, Some(1)), flags)],
+        );
+        let second = layout(None, vec![field(0, DeclaredType::untyped(), flags)]);
+        let (united, _) = unite(first, vec![second]);
+        assert_eq!(united.fields[0].declared, DeclaredType::untyped());
+    }
+
+    #[test]
+    fn fields_are_matched_by_key() {
+        let flags = FieldFlags::default();
+        let (string, number) = (
+            checked(TypeTable::STRING, None),
+            checked(TypeTable::NUMBER, None),
+        );
+        let first = layout(None, vec![field(0, string, flags), field(1, number, flags)]);
+        let second = layout(None, vec![field(1, number, flags), field(0, string, flags)]);
+        let (united, _) = unite(first.clone(), vec![second]);
+        assert_eq!(united, first);
+    }
+
+    #[test]
+    fn name_of_first_definition_stays() {
+        let named = |name| layout(name, Vec::new());
+        let first = Some(StringId::new(1));
+        assert_eq!(unite(named(Some(1)), vec![named(Some(1))]).0.name, first);
+        assert_eq!(unite(named(Some(1)), vec![named(Some(2))]).0.name, first);
+        assert_eq!(
+            unite(named(Some(1)), vec![named(None), named(Some(1))])
+                .0
+                .name,
+            first
+        );
+        assert_eq!(unite(named(None), vec![named(Some(1))]).0.name, None);
+    }
+
+    #[test]
+    fn definition_that_is_said_again_changes_nothing() {
+        let unite_copies = |others: &[usize]| {
+            let mut types = TypeTable::new();
+            let either = types.union(TypeTable::STRING, TypeTable::NUMBER);
+            let all = FieldFlags::IS_REQUIRED | FieldFlags::IS_METHOD;
+            let definitions = [
+                layout(
+                    Some(1),
+                    vec![field(0, checked(TypeTable::STRING, Some(3)), all)],
+                ),
+                layout(
+                    Some(2),
+                    vec![field(0, checked(either, Some(4)), FieldFlags::IS_METHOD)],
+                ),
+            ];
+            let mut layouts = vec![definitions[0].clone()];
+            let others = others
+                .iter()
+                .map(|&other| (LayoutId::new(0), definitions[other].clone()));
+            unite_layout_definitions(&mut layouts, vec![others.collect()], &mut types, &reverse);
+            (layouts.remove(0), types.len())
+        };
+        let once = unite_copies(&[1]);
+        assert_eq!(unite_copies(&[1, 1, 1]), once);
+        assert_eq!(unite_copies(&[0, 1, 0, 1]), once);
+    }
+}

@@ -825,3 +825,251 @@ impl WrappedModules {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::run_serially;
+    use crate::modules::testing::{file_named, with_graph};
+
+    const BUN: &str = r#"var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
+var __esmRethrows = (fn, res, err) => () => {
+  if (fn)
+    try {
+      res = fn((fn = 0));
+    } catch (e) {
+      err = [e];
+    }
+  if (err) throw err[0];
+  return res;
+};
+"#;
+
+    /// The names of the holders of the inner modules of `main.mjs`, each with `!` if it keeps its error.
+    fn holders_in(body: &str) -> Vec<String> {
+        let main = format!("{BUN}{body}");
+        holders_of(&[("main.mjs", main.as_str())], "main.mjs")
+    }
+
+    fn holders_of(files: &[(&str, &str)], name: &str) -> Vec<String> {
+        with_graph(files, |_, bind_input| {
+            let files = bind_input.files;
+            let helpers = KnownHelpers::compute(files, &run_serially);
+            let wrapped = WrappedModules::compute(files, &helpers, &run_serially);
+            let file = file_named(bind_input, name);
+            let modules = wrapped.of_file(file).iter();
+            modules
+                .map(|module| {
+                    let name = files.bound(file).symbol(module.holder).name;
+                    let name = String::from_utf8_lossy(files.atoms.bytes(name)).into_owned();
+                    match module.keeps_error {
+                        true => name + "!",
+                        false => name,
+                    }
+                })
+                .collect()
+        })
+    }
+
+    #[test]
+    fn a_chain_of_wrapped_modules_is_found() {
+        let body = r#"var require_a = __commonJS((exports) => { exports.a = 1; });
+var require_b = __commonJS((exports, module) => { var a = require_a(); module.exports = a; });
+var value;
+var init_c = __esm(() => { value = require_b(); });
+var init_d = __esmRethrows(() => { init_c(); });
+init_d();
+export default require_b();
+"#;
+        assert_eq!(
+            holders_in(body),
+            ["require_a", "require_b", "init_c", "init_d!"]
+        );
+    }
+
+    // The helpers as esbuild and rolldown write them: the function is the one member of a literal.
+    #[test]
+    fn a_function_that_is_the_first_member_of_a_literal_is_found() {
+        let body = r#"var require_a = __commonJS({ "src/a.js"(exports) { exports.a = 1; } });
+var require_b = __commonJS({ "src/b.js"(exports, module) { module.exports = require_a(); } });
+var value;
+var init_c = __esm({ "src/c.js"() { value = require_b(); } });
+init_c();
+"#;
+        let by_keys = r#"var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[Object.keys(fn)[0]])(fn = 0)), res;
+};
+"#;
+        let by_own_names = r#"var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+"#;
+        for helpers in [by_keys, by_own_names] {
+            let main = format!("{helpers}{body}");
+            let found = with_graph(&[("main.mjs", main.as_str())], |_, bind_input| {
+                let files = bind_input.files;
+                let helpers = KnownHelpers::compute(files, &run_serially);
+                let wrapped = WrappedModules::compute(files, &helpers, &run_serially);
+                wrapped.of_file(file_named(bind_input, "main.mjs")).len()
+            });
+            assert_eq!(found, 3, "{helpers}");
+        }
+    }
+
+    #[test]
+    fn a_holder_that_is_more_than_called_is_a_plain_variable() {
+        let uses = [
+            "console.log(require_a);",
+            "require_a(1);",
+            "require_a?.();",
+            "new require_a();",
+            "export { require_a };",
+            "require_a = null;",
+            "eval(\"\");",
+        ];
+        for other_use in uses {
+            let body = format!(
+                "var require_a = __commonJS((exports) => {{ exports.a = 1; }});\nrequire_a();\n{other_use}"
+            );
+            assert_eq!(holders_in(&body), [""; 0], "{other_use}");
+        }
+    }
+
+    #[test]
+    fn a_function_that_sees_how_it_is_called_is_a_plain_function() {
+        let callbacks = [
+            "function (exports) { exports.a = arguments.length; }",
+            "function (exports) { exports.a = this; }",
+            "function (exports) { exports.a = new.target; }",
+            "function named(exports) { exports.a = 1; }",
+            "(exports) => { exports = {}; }",
+            "(exports, module) => { module.id; }",
+            "(exports, module) => { delete module.exports; }",
+            "(exports, module, more) => {}",
+            "(exports = {}) => {}",
+            "async (exports) => {}",
+            "(exports) => exports",
+        ];
+        for callback in callbacks {
+            let body = format!("var require_a = __commonJS({callback});\nrequire_a();");
+            assert_eq!(holders_in(&body), [""; 0], "{callback}");
+        }
+        let own =
+            "(exports) => { exports.f = function () { return [this, arguments, new.target]; }; }";
+        let body = format!("var require_a = __commonJS({own});\nrequire_a();");
+        assert_eq!(holders_in(&body), ["require_a"]);
+        let returns = "var init_a = __esm(() => { return 1; });\ninit_a();";
+        assert_eq!(holders_in(returns), [""; 0]);
+    }
+
+    #[test]
+    fn a_call_that_may_come_ahead_of_the_definition_keeps_the_variable() {
+        let ahead = "require_a();\nvar require_a = __commonJS((exports) => {});";
+        assert_eq!(holders_in(ahead), [""; 0]);
+        let through_a_declaration = r#"function lazy() { return require_a(); }
+globalThis.hook(lazy);
+var require_a = __commonJS((exports) => {});
+"#;
+        assert_eq!(holders_in(through_a_declaration), [""; 0]);
+        let declaration_in_the_head = r#"function lazy() { return require_a(); }
+var require_a = __commonJS((exports) => {});
+globalThis.hook(lazy);
+"#;
+        assert_eq!(holders_in(declaration_in_the_head), ["require_a"]);
+        let through_another_body = r#"var require_b = __commonJS((exports) => { require_a(); });
+require_b();
+var require_a = __commonJS((exports) => {});
+"#;
+        assert_eq!(holders_in(through_another_body), ["require_b"]);
+        let behind_code = r#"var require_b = __commonJS((exports) => { require_a(); });
+globalThis.effect();
+var require_a = __commonJS((exports) => {});
+require_b();
+"#;
+        assert_eq!(holders_in(behind_code), ["require_b", "require_a"]);
+    }
+
+    #[test]
+    fn a_function_declaration_that_others_can_call_early_keeps_the_variables() {
+        let bundle = format!(
+            "import {{ one }} from \"./leaf.mjs\";\n{BUN}var require_a = __commonJS((exports) => {{ exports.a = one; }});\nexport function run() {{ return require_a().a; }}\n"
+        );
+        let holders = |main: &str, leaf: &str, other: &str| {
+            let files = [
+                ("main.mjs", main),
+                ("bundle.mjs", bundle.as_str()),
+                ("leaf.mjs", leaf),
+                ("other.cjs", other),
+            ];
+            holders_of(&files, "bundle.mjs")
+        };
+        let main = "import \"./other.cjs\";\nimport { run } from \"./bundle.mjs\";\nrun();";
+        let leaf = "export const one = 1;";
+        assert_eq!(holders(main, leaf, ""), ["require_a"]);
+        let on_a_cycle = "import { run } from \"./bundle.mjs\";\nexport const one = run;";
+        assert_eq!(holders(main, on_a_cycle, ""), [""; 0]);
+        let required = "globalThis.hook = () => require(\"./bundle.mjs\").run();";
+        assert_eq!(holders(main, leaf, required), [""; 0]);
+        let importer_on_a_cycle = "import \"./other.cjs\";\nimport \"./main.mjs\";\nimport { run } from \"./bundle.mjs\";\nexport function early() { return run(); }";
+        assert_eq!(holders(importer_on_a_cycle, leaf, ""), [""; 0]);
+        let imported_later =
+            "import \"./other.cjs\";\nimport(\"./bundle.mjs\").then(bundle => bundle.run());";
+        assert_eq!(holders(imported_later, leaf, ""), ["require_a"]);
+    }
+
+    #[test]
+    fn a_call_in_a_default_or_a_case_is_a_call_like_any_other() {
+        for call in [
+            "const { a = require_a() } = {};",
+            "const [a = require_a()] = [];",
+            "switch (1) { case require_a(): }",
+            "function late({ a = require_a() }) {} late({});",
+            "class C { m(k) { switch (k) { case super.k: return new.target; } } }\nrequire_a();",
+        ] {
+            let body =
+                format!("var require_a = __commonJS((exports) => {{ exports.a = 1; }});\n{call}");
+            assert_eq!(holders_in(&body), ["require_a"], "{call}");
+        }
+    }
+
+    #[test]
+    fn a_statement_that_declares_something_else_too_keeps_its_code() {
+        let two_holders =
+            "var require_a = __commonJS((exports) => {}), require_b = __commonJS((exports) => {});";
+        assert_eq!(holders_in(two_holders), ["require_a", "require_b"]);
+        let another_variable = "var require_a = __commonJS((exports) => {}), other = 1;";
+        assert_eq!(holders_in(another_variable), [""; 0]);
+    }
+
+    #[test]
+    fn the_exports_of_an_inner_module_are_found_by_binding() {
+        let main = format!(
+            "{BUN}var require_a = __commonJS((e, m) => {{ e.a = 1; m.exports.b = 2; }});\nrequire_a();"
+        );
+        with_graph(&[("main.mjs", main.as_str())], |_, bind_input| {
+            let files = bind_input.files;
+            let helpers = KnownHelpers::compute(files, &run_serially);
+            let wrapped = WrappedModules::compute(files, &helpers, &run_serially);
+            let file = file_named(bind_input, "main.mjs");
+            let [module] = wrapped.of_file(file) else {
+                panic!("the file has one inner module");
+            };
+            let hir = files.hir(file);
+            let expressions = (0..hir.exprs.len() as u32).map(ExprId);
+            let found = expressions
+                .filter(|&it| wrapped.is_exports_object(files, file, it) == Some(module.callback));
+            assert_eq!(found.count(), 2);
+            assert!(wrapped.is_erased_statement(files, file, module.statement));
+        });
+    }
+}

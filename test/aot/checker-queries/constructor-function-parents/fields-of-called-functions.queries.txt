@@ -1,0 +1,27 @@
+# A function that hands its `this` to another function stores what that function stores, at the place of the call.
+fields-of-called-functions.js:6 constructor function member `Middle` = name Field ThisStore 8 unwritten checked any optional
+fields-of-called-functions.js:6 constructor function member `Middle` = ready Field ThisStore 8 unwritten checked boolean optional
+# Through two calls, in the order in which the stores run. A name that the function stores itself stays its own.
+ordered: fields-of-called-functions.js:11 constructor function member `Leaf` = before Field ThisStore 12 unwritten checked number optional
+ordered: fields-of-called-functions.js:11 constructor function member `Leaf` = name Field ThisStore 12 unwritten checked any optional
+ordered: fields-of-called-functions.js:11 constructor function member `Leaf` = after Field ThisStore 12 unwritten checked number optional
+absent: fields-of-called-functions.js:11 constructor function member `Leaf` = ready Field ThisStore 12 unwritten checked false optional
+# The first call that stores a name has it.
+fields-of-called-functions.js:16 constructor function member `Both` = name Field ThisStore 18 unwritten checked any optional
+fields-of-called-functions.js:16 constructor function member `Both` = ready Field ThisStore 18 unwritten checked boolean optional
+fields-of-called-functions.js:16 constructor function member `Both` = before Field ThisStore 19 unwritten checked number optional
+fields-of-called-functions.js:16 constructor function member `Both` = after Field ThisStore 19 unwritten checked number optional
+absent: fields-of-called-functions.js:16 constructor function member `Both` = name Field ThisStore 19 unwritten checked any optional
+# `this` of an arrow function is that of the function around it.
+fields-of-called-functions.js:25 constructor function member `InAnArrowFunction` = name Field ThisStore 27 unwritten checked any optional
+# Functions that call each other have the names of both.
+fields-of-called-functions.js:37 constructor function member `First` = second Field ThisStore 39 unwritten checked number optional
+fields-of-called-functions.js:41 constructor function member `Second` = first Field ThisStore 43 unwritten checked number optional
+# Another receiver, the `this` of another function, a binding that names no one function, removed code, a receiver behind a spread argument, another member.
+absent: fields-of-called-functions.js:21 constructor function member `OtherReceiver` = name Field ThisStore 23 unwritten checked any optional
+absent: fields-of-called-functions.js:30 constructor function member `InAnInnerFunction` = name Field ThisStore 33 unwritten checked any optional
+absent: fields-of-called-functions.js:51 constructor function member `CallsReassigned` = lost Field ThisStore 53 unwritten checked 1 optional
+absent: fields-of-called-functions.js:51 constructor function member `CallsReassigned` = lost Field ThisStore 53 unwritten checked 2 optional
+absent: fields-of-called-functions.js:55 constructor function member `InRemovedCode` = name Field ThisStore 57 unwritten checked any optional
+absent: fields-of-called-functions.js:59 constructor function member `BehindASpread` = name Field ThisStore 61 unwritten checked any optional
+absent: fields-of-called-functions.js:63 constructor function member `OtherMember` = name Field ThisStore 65 unwritten checked any optional

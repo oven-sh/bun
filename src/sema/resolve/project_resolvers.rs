@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 pub struct ProjectResolvers<'h>(SmallMemo<usize, Resolver<'h>>);
 
 impl<'h> ProjectResolvers<'h> {

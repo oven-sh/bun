@@ -588,8 +588,8 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
         FlowGaveUp | EvaluatesText | RunsUnseenCode => program_features
             .iter()
             .filter(|feature| {
-                let is_added_for_cause =
-                    cause == RunsUnseenCode && *feature == Feature::NativeAddons;
+                let is_added_for_cause = *feature == Feature::ProcessInformation
+                    || (cause == RunsUnseenCode && *feature == Feature::NativeAddons);
                 is_added_for_cause || (feature.is_engine() && !outside_language.contains(feature))
             })
             .collect(),

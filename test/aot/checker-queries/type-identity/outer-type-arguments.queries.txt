@@ -1,0 +1,7 @@
+# A type declared inside a generic function is a different type for each type argument of the function. Only a call gives such a type: `ReturnType<typeof box<number>>` reads a result that nobody wrote, so as a written type it is unknown.
+outer-type-arguments.ts:14 origin `box(1)` = type literal outer-type-arguments.ts:4
+outer-type-arguments.ts:16 origin `pair(1)` = type literal outer-type-arguments.ts:10
+different: outer-type-arguments.ts:14 identity `box(1)` <=> outer-type-arguments.ts:15 identity `box("a")`
+different: outer-type-arguments.ts:16 identity `pair(1)` <=> outer-type-arguments.ts:17 identity `pair("a")`
+same: outer-type-arguments.ts:14 identity `box(1)` <=> outer-type-arguments.ts:18 identity `box(2)`
+same: outer-type-arguments.ts:16 identity `pair(1)` <=> outer-type-arguments.ts:19 identity `pair(2)`

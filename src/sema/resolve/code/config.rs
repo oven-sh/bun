@@ -481,3 +481,6 @@ fn is_declaration_substitution(written: &[u8]) -> bool {
         start.is_some_and(|start| written[start..].eq_ignore_ascii_case(extension))
     })
 }
+
+#[cfg(test)]
+mod tests;

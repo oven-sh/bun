@@ -1,5 +1,7 @@
 mod commonjs;
 mod entries;
+#[cfg(test)]
+mod tests;
 
 pub(super) use entries::collect_export_entries;
 

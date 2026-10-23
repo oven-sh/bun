@@ -1,4 +1,6 @@
 mod module_items;
+#[cfg(test)]
+mod tests;
 mod write_bindings;
 mod write_expressions;
 mod write_statements;

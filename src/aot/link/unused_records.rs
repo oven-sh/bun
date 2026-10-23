@@ -141,3 +141,81 @@ pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) 
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Program;
+    use crate::link::testing::link_sources_without_bun_modules;
+
+    const MAIN: &str = r#"
+import { make } from "./maker";
+interface View { _viewBrand: any; id: number }
+interface Made { id: number; label: string }
+interface Stored { late: number }
+export function read(view: View, made: Made): number { return view.id + made.id + make(1).id; }
+export function store(stored: Stored): void { stored.late = 1; }
+"#;
+
+    const MAKER: &str = r#"
+export interface Made { id: number; label: string }
+export function make(id: number): Made { return { id, label: "made" }; }
+"#;
+
+    fn find_layout<'a>(program: &'a Program, name: &str) -> &'a Layout {
+        let has_name = |layout: &&Layout| {
+            layout
+                .name
+                .is_some_and(|id| program.strings.get(id) == name.as_bytes())
+        };
+        program.layouts.iter().find(has_name).expect(name)
+    }
+
+    fn flags_of_field(program: &Program, layout: &Layout, name: &str) -> FieldFlags {
+        let has_name = |key: PropertyKeyId| {
+            let text = program.property_keys.get(key).text;
+            text.is_some_and(|id| program.strings.get(id) == name.as_bytes())
+        };
+        let field = layout
+            .fields
+            .iter()
+            .find(|field| field.key.is_some_and(has_name));
+        field.expect(name).flags
+    }
+
+    #[test]
+    fn a_record_is_allocated_if_any_file_allocates_it() {
+        let linked = link_sources_without_bun_modules(&[("main.ts", MAIN), ("maker.ts", MAKER)]);
+        let program = &linked.expect("the program links").program;
+        let never_allocated = LayoutFlags::IS_NEVER_ALLOCATED;
+        assert!(!find_layout(program, "Made").flags.contains(never_allocated));
+        assert!(find_layout(program, "View").flags.contains(never_allocated));
+        assert!(
+            find_layout(program, "Stored")
+                .flags
+                .contains(never_allocated)
+        );
+    }
+
+    #[test]
+    fn a_name_is_written_if_any_file_writes_it_into_any_object() {
+        let linked = link_sources_without_bun_modules(&[("main.ts", MAIN), ("maker.ts", MAKER)]);
+        let program = &linked.expect("the program links").program;
+        let view = find_layout(program, "View");
+        assert_eq!(
+            flags_of_field(program, view, "_viewBrand"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+        assert_eq!(flags_of_field(program, view, "id"), FieldFlags::IS_REQUIRED);
+        let stored = find_layout(program, "Stored");
+        assert_eq!(
+            flags_of_field(program, stored, "late"),
+            FieldFlags::IS_REQUIRED
+        );
+        let made = find_layout(program, "Made");
+        assert_eq!(
+            flags_of_field(program, made, "label"),
+            FieldFlags::IS_REQUIRED
+        );
+    }
+}

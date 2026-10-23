@@ -1,0 +1,2 @@
+# An argument's contextual type is the parameter type of the resolved signature.
+resolved-signature-argument.ts:4 contextual `{ port: 1 }` = Options

@@ -1,0 +1,6 @@
+# `import`, `export` and `new.target` outside the positions JavaScript allows are EarlyError. `import a = require()` is TypeScript syntax, so its position error is TypeScriptGrammar.
+module-sites.ts:2 diagnostic TS1232 = EarlyError StopsBuild
+module-sites.ts:3 diagnostic TS1233 = EarlyError StopsBuild
+module-sites.ts:4 diagnostic TS17013 = EarlyError StopsBuild
+
+module-sites.ts:5 diagnostic TS1232 = TypeScriptGrammar StopsBuild

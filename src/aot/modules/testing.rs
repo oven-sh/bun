@@ -69,6 +69,18 @@ pub(crate) fn describe_module(
     text
 }
 
+/// What the module asks for at last, one request a line.
+pub(crate) fn describe_requests_of(
+    graph: &ModuleGraph,
+    input: &BindInput<'_, '_>,
+    module: ModuleRef,
+) -> Vec<String> {
+    let requests = graph.requests_of(module).iter();
+    requests
+        .map(|&request| describe_request(input, request))
+        .collect()
+}
+
 fn describe_request(input: &BindInput<'_, '_>, request: ModuleRequest) -> String {
     let target = describe_module_ref(input, request.target);
     let mut line = format!("request {target}");

@@ -1,3 +1,12 @@
+#[cfg(test)]
+mod family_tests;
+#[cfg(test)]
+mod late_answer_tests;
+#[cfg(test)]
+mod library_base_tests;
+#[cfg(test)]
+mod tests;
+
 use bun_sema::util::SharedSort;
 
 use super::beside::{Beside, run_beside};

@@ -1,0 +1,7 @@
+# Unions are flat and drop `never`; a type parameter is a member like any other.
+unions.ts:4 shape `"a" | "b"` = Union("a" | "b")
+unions.ts:5 shape `B` = Union("a" | "b" | "c")
+unions.ts:6 shape `string | boolean` = Union(string | boolean)
+unions.ts:7 shape `number | never` = Number
+unions.ts:8 shape `string | any` = Anything(Any)
+unions.ts:9 shape `T | undefined` = Union(undefined | T)

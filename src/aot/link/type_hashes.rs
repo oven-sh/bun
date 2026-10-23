@@ -194,3 +194,213 @@ pub(super) fn hash_types(
         nesting_depths: hasher.nesting_depths,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins::id::{BuiltinClass, BuiltinId};
+    use crate::ir::{FunctionKey, LayoutKey, OpaqueKind, Primitives};
+    use crate::link::InProject;
+    use crate::link::testing::{test_class_key, test_function_key};
+    use crate::load::ProjectId;
+    use crate::lower::FragmentBuilder;
+    use bun_sema::check::aot::{ClassRef, FunctionRef};
+    use bun_sema::hir::{ClassId, FnId};
+    use bun_sema::program::FileId;
+
+    fn dog_key() -> LayoutKey {
+        test_class_key(9, 0)
+    }
+
+    fn animal_key() -> LayoutKey {
+        test_class_key(9, 1)
+    }
+
+    fn environment_key() -> LayoutKey {
+        LayoutKey::Environment {
+            file: FileId(9),
+            environment: 0,
+        }
+    }
+
+    fn layout_set(layouts: [LayoutId; 2]) -> Type {
+        Type {
+            layouts: layouts.to_vec(),
+            ..Type::default()
+        }
+    }
+
+    fn literal_set(strings: [StringId; 2]) -> Type {
+        Type {
+            strings: strings.to_vec(),
+            ..Type::default()
+        }
+    }
+
+    fn function_set(functions: [FunctionId; 2]) -> Type {
+        Type {
+            functions: functions.to_vec(),
+            ..Type::default()
+        }
+    }
+
+    fn hash_declared_types(builder: &FragmentBuilder, project: ProjectId) -> TypeHashes {
+        let layout_keys = builder.layout_keys().iter();
+        let layout_keys: Vec<ProgramLayoutKey> =
+            layout_keys.map(|&key| InProject { project, key }).collect();
+        let function_keys = builder.function_keys().iter();
+        let function_keys: Vec<ProgramFunctionKey> = function_keys
+            .map(|&key| InProject { project, key })
+            .collect();
+        hash_types(
+            &builder.types,
+            &builder.strings,
+            &layout_keys,
+            &function_keys,
+        )
+    }
+
+    fn hash_type(create_type: impl FnOnce(&mut FragmentBuilder) -> Type) -> ContentHash {
+        let mut builder = FragmentBuilder::new(FileId(0));
+        let ty = create_type(&mut builder);
+        let id = builder.types.intern(ty);
+        hash_declared_types(&builder, ProjectId::Application).types[id.index()]
+    }
+
+    #[test]
+    fn layout_set_hash_ignores_declaration_order() {
+        let hash_layout_set = |keys: [LayoutKey; 2]| {
+            hash_type(|builder| layout_set(keys.map(|key| builder.declare_layout(key))))
+        };
+        let hash = hash_layout_set([dog_key(), animal_key()]);
+        assert_eq!(hash_layout_set([animal_key(), dog_key()]), hash);
+        assert_ne!(hash_layout_set([dog_key(), environment_key()]), hash);
+    }
+
+    #[test]
+    fn layout_hash_includes_project() {
+        let mut builder = FragmentBuilder::new(FileId(0));
+        let layout = builder.declare_layout(dog_key());
+        let id = builder.types.intern(Type::layout(layout));
+        let [application, runtime] =
+            ProjectId::ALL.map(|project| hash_declared_types(&builder, project).types[id.index()]);
+        assert_ne!(application, runtime);
+    }
+
+    #[test]
+    fn function_set_hash_ignores_declaration_order() {
+        let hash_function_set = |keys: [FunctionKey; 2]| {
+            hash_type(|builder| function_set(keys.map(|key| builder.declare_function(key))))
+        };
+        let [first, second, third] = [0, 1, 2].map(|function| test_function_key(9, function));
+        let hash = hash_function_set([first, second]);
+        assert_eq!(hash_function_set([second, first]), hash);
+        assert_ne!(hash_function_set([first, third]), hash);
+    }
+
+    #[test]
+    fn function_hash_includes_project() {
+        let mut builder = FragmentBuilder::new(FileId(0));
+        let function = builder.declare_function(test_function_key(9, 0));
+        let id = builder.types.intern(Type::function(function));
+        let [application, runtime] =
+            ProjectId::ALL.map(|project| hash_declared_types(&builder, project).types[id.index()]);
+        assert_ne!(application, runtime);
+    }
+
+    #[test]
+    fn function_type_hash_differs_from_definition_hash() {
+        let declaration = FunctionRef {
+            file: FileId(9),
+            function: FnId(0),
+        };
+        let class = ClassRef {
+            file: FileId(9),
+            class: ClassId(0),
+        };
+        let keys = [
+            FunctionKey::Source(declaration),
+            FunctionKey::Signature(declaration),
+            FunctionKey::ImplicitConstructor(class),
+            FunctionKey::ClassSignature(class),
+        ];
+        let hashes =
+            keys.map(|key| hash_type(|builder| Type::function(builder.declare_function(key))));
+        let mut distinct_hashes = hashes.to_vec();
+        distinct_hashes.sort_unstable();
+        distinct_hashes.dedup();
+        assert_eq!(distinct_hashes.len(), keys.len());
+    }
+
+    #[test]
+    fn literal_set_hash_ignores_intern_order() {
+        let hash_literal_set = |texts: [&[u8]; 2]| {
+            hash_type(|builder| literal_set(texts.map(|text| builder.strings.intern(text))))
+        };
+        let hash = hash_literal_set([b"x", b"y"]);
+        assert_eq!(hash_literal_set([b"y", b"x"]), hash);
+        assert_ne!(hash_literal_set([b"x", b"z"]), hash);
+    }
+
+    #[test]
+    fn literal_hash_separates_lengths_256_apart() {
+        let hash_zeros = |length: usize| {
+            hash_type(|builder| Type::string_literal(builder.strings.intern(&vec![0; length])))
+        };
+        assert_eq!(hash_zeros(256), hash_zeros(256));
+        assert_ne!(hash_zeros(0), hash_zeros(256));
+        assert_ne!(hash_zeros(3), hash_zeros(259));
+    }
+
+    #[test]
+    fn class_hash_includes_contents() {
+        let hash_array = |element_key: LayoutKey| {
+            hash_type(|builder| {
+                let layout = builder.declare_layout(element_key);
+                let element = builder.types.intern(Type::layout(layout));
+                Type::class(BuiltinClass::Array, &[element])
+            })
+        };
+        assert_eq!(hash_array(dog_key()), hash_array(dog_key()));
+        assert_ne!(hash_array(dog_key()), hash_array(animal_key()));
+    }
+
+    #[test]
+    fn environment_hash_differs_from_layout_hash() {
+        let key = environment_key();
+        let environment = hash_type(|builder| Type::environment(builder.declare_layout(key)));
+        let layout = hash_type(|builder| Type::layout(builder.declare_layout(key)));
+        assert_ne!(environment, layout);
+    }
+
+    #[test]
+    fn each_type_field_changes_hash() {
+        let mut builder = FragmentBuilder::new(FileId(0));
+        let layout = builder.declare_layout(dog_key());
+        let function = builder.declare_function(test_function_key(9, 0));
+        let text = builder.strings.intern(b"x");
+        let types = [
+            Type::never(),
+            Type::primitives(Primitives::NUMBER),
+            Type::any_function(),
+            Type::opaque(OpaqueKind::IteratorState),
+            Type::opaque(OpaqueKind::Exception),
+            Type::environment(layout),
+            Type::integers(0, 9),
+            Type::integers(-1, 9),
+            Type::integers(0, 10),
+            Type::string_literal(text),
+            Type::layout(layout),
+            Type::class(BuiltinClass::Array, &[TypeTable::NUMBER]),
+            Type::builtin(BuiltinId::GlobalThis),
+            Type::builtin(BuiltinId::AsyncFunction),
+            Type::function(function),
+        ];
+        let ids = types.map(|ty| builder.types.intern(ty));
+        let hashes = hash_declared_types(&builder, ProjectId::Application).types;
+        let mut distinct_hashes = ids.map(|id| hashes[id.index()]).to_vec();
+        distinct_hashes.sort_unstable();
+        distinct_hashes.dedup();
+        assert_eq!(distinct_hashes.len(), ids.len());
+    }
+}

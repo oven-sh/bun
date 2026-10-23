@@ -44,6 +44,8 @@ declare const IS_BUN_DEVELOPMENT: boolean;
 declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
 /** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
 declare const CAN_BE_CLUSTER_WORKER: boolean;
+/** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
+declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;

@@ -237,3 +237,114 @@ pub(super) fn write_position_members(json: &mut JsonWriter, position: &SourcePos
     json.number("line", u64::from(position.line));
     json.number("column", u64::from(position.column));
 }
+
+#[cfg(test)]
+mod tests {
+    use core::time::Duration;
+
+    use bstr::{BString, ByteSlice};
+
+    use super::*;
+
+    fn object_with(write: impl FnOnce(&mut JsonWriter)) -> BString {
+        let mut json = JsonWriter::object();
+        write(&mut json);
+        BString::from(json.finish())
+    }
+
+    fn count_of(document: &BString, text: &str) -> usize {
+        document.find_iter(text).count()
+    }
+
+    #[test]
+    fn present_position_has_three_members() {
+        let position = SourcePosition {
+            path: b"src/a.ts".to_vec(),
+            line: 3,
+            column: 5,
+        };
+        let object = object_with(|json| write_position(json, "witness", Some(&position)));
+        assert_eq!(
+            object,
+            r#"{"witness":{"file":"src/a.ts","line":3,"column":5}}"#
+        );
+    }
+
+    #[test]
+    fn absent_position_is_null() {
+        let object = object_with(|json| write_position(json, "witness", None));
+        assert_eq!(object, r#"{"witness":null}"#);
+    }
+
+    #[test]
+    fn limits_list_every_limit_once() {
+        let reached = LimitId::MaxTypeNodes;
+        let mut statistics = Statistics::default();
+        statistics.gave_up(reached, None);
+        let value_of = |limit: LimitId| limit as u64;
+        let document = object_with(|json| write_limit_list(json, &value_of, &statistics));
+        for limit in LimitId::ALL {
+            let element = format!(
+                r#"{{"name":"{}","value":{},"hits":{}}}"#,
+                limit.name(),
+                limit as u64,
+                u64::from(limit == reached),
+            );
+            let expected = usize::from(limit != LimitId::None);
+            assert_eq!(count_of(&document, &element), expected, "{limit:?}");
+        }
+        assert_eq!(count_of(&document, r#"{"name":"#), LimitId::COUNT - 1);
+    }
+
+    #[test]
+    fn statistics_list_every_statistic_once() {
+        let mut statistics = Statistics::default();
+        statistics.count(StatisticId::SourceLines, 7);
+        let document = object_with(|json| write_statistics(json, &statistics));
+        for id in StatisticId::ALL {
+            let key = format!(r#""{}":"#, id.name());
+            let expected = usize::from(id != StatisticId::None);
+            assert_eq!(count_of(&document, &key), expected, "{id:?}");
+        }
+        assert_eq!(count_of(&document, r#"":"#), StatisticId::COUNT);
+        assert_eq!(count_of(&document, r#""SourceLines":7,"#), 1);
+    }
+
+    #[test]
+    fn stages_leave_out_any_and_run_time() {
+        let mut statistics = Statistics::default();
+        statistics.add_time(Stage::Load, Duration::from_nanos(5));
+        statistics.add_time(Stage::RunTime, Duration::from_nanos(9));
+        let document = object_with(|json| write_stages(json, &statistics));
+        for stage in Stage::ALL {
+            let name = format!(r#"{{"name":"{}","#, stage.name());
+            let expected = usize::from(!matches!(stage, Stage::Any | Stage::RunTime));
+            assert_eq!(count_of(&document, &name), expected, "{stage:?}");
+        }
+        assert_eq!(count_of(&document, r#"{"name":"Load","nanoseconds":5}"#), 1);
+    }
+
+    #[test]
+    fn passes_without_record_have_zero_runs() {
+        let timed = PassId::AnalyzeFlow;
+        let mut statistics = Statistics::default();
+        statistics.count(timed.changes(), 3);
+        let records = [PassTimeRecord {
+            pass: timed,
+            reserved: 0,
+            runs: 2,
+            wall_nanoseconds: 11,
+            cpu_nanoseconds: 40,
+        }];
+        let document = object_with(|json| write_pass_list(json, &records, &statistics));
+        for pass in PassId::ALL {
+            let (runs, changes, nanoseconds) = if pass == timed { (2, 3, 40) } else { (0, 0, 0) };
+            let element = format!(
+                r#"{{"name":"{}","runs":{runs},"changes":{changes},"nanoseconds":{nanoseconds}}}"#,
+                pass.name(),
+            );
+            let expected = usize::from(pass != PassId::None);
+            assert_eq!(count_of(&document, &element), expected, "{pass:?}");
+        }
+    }
+}

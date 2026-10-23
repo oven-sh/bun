@@ -5,6 +5,8 @@ mod int32_flows;
 mod shared;
 mod sink;
 mod spans;
+#[cfg(test)]
+mod tests;
 
 #[cfg(not(test))]
 use bun_aot_interface::diagnostics::shared;

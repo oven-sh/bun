@@ -497,3 +497,6 @@ pub(super) fn collect_list(
         list_entry(cause, input.names, &mut positions)
     });
 }
+
+#[cfg(test)]
+mod tests;

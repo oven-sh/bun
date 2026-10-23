@@ -1,0 +1,11 @@
+# A `this.name = v` adds an optional member only where `this` is an instance of the class and no member declares the name.
+this-stores.js:3 class member `T` = a Field ThisStore 6 unwritten checked number
+this-stores.js:3 class member `T` = b Field ThisStore 12 unwritten checked number optional
+this-stores.js:3 class member `T` = c Field ThisStore 13 unwritten checked number optional
+this-stores.js:3 class member `T` = f Field ThisStore 16 unwritten checked number optional
+absent: this-stores.js:3 class member `T` = declared Field ThisStore 7 unwritten checked 2 optional
+absent: this-stores.js:3 class member `T` = k Field ThisStore 8 unwritten checked 3 optional
+absent: this-stores.js:3 class member `T` = n Field ThisStore 9 unwritten checked 1 optional
+absent: this-stores.js:3 class member `T` = d Field ThisStore 14 unwritten checked 1 optional
+absent: this-stores.js:3 class member `T` = h Field ThisStore 17 unwritten checked 1 optional
+absent: this-stores.js:3 class member `T` = h Field StaticStore 17 unwritten checked 1 static optional

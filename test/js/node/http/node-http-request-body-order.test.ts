@@ -222,6 +222,13 @@ const bodies: Record<string, string | Buffer> = {
   empty: head + "Content-Length: 0\r\n\r\n",
 };
 
+function isWhole(answer: string) {
+  const headEnd = answer.indexOf("\r\n\r\n");
+  if (headEnd < 0) return false;
+  const length = /^content-length: *(\d+)/im.exec(answer.slice(0, headEnd));
+  return length ? answer.length >= headEnd + 4 + Number(length[1]) : answer.endsWith("\r\n0\r\n\r\n");
+}
+
 async function record(
   port: number,
   setScene: (scene: http.RequestListener) => void,
@@ -231,17 +238,28 @@ async function record(
   const lines: string[] = [];
   const log: Log = text => void lines.push(text);
   const { promise, resolve } = Promise.withResolvers<void>();
+  let answer = "";
+  let isServerDone = false;
+  // The answer may arrive after the server is done with it: the loopback interface does not deliver at once on every system.
+  const leaveWhenAnswered = () => void (isServerDone && isWhole(answer) && socket.destroy());
   setScene((req, res) => {
     log(`begins ${look(req)}`);
     res.on("close", () => {
       log(`response closed ${look(req)}`);
-      setImmediate(() => setImmediate(() => socket.destroy()));
+      setImmediate(() =>
+        setImmediate(() => {
+          isServerDone = true;
+          leaveWhenAnswered();
+        }),
+      );
     });
     scene(req, res, log);
   });
   const socket = net.connect(port, "127.0.0.1", () => socket.write(body));
-  let answer = "";
-  socket.on("data", chunk => void (answer += chunk));
+  socket.on("data", chunk => {
+    answer += chunk;
+    leaveWhenAnswered();
+  });
   socket.on("error", () => {});
   socket.on("close", () => {
     log(`answered ${answer.split("\r\n")[0]} ${answer.split("\r\n\r\n")[1]?.length}`);

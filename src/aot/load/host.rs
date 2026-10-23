@@ -749,3 +749,6 @@ impl CodeHost for LoadHost<'_> {
         answers
     }
 }
+
+#[cfg(test)]
+mod tests;

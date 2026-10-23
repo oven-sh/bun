@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use super::bindings::{ModuleRequest, SpelledModule};
 use super::exports::ExportTables;
 use super::failures::{

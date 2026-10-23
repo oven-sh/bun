@@ -7,9 +7,13 @@ mod config;
 mod exports;
 mod files;
 mod manifest;
+#[cfg(test)]
+pub(super) mod memory_host;
 mod options;
 mod packages;
 mod search;
+#[cfg(test)]
+mod tests;
 mod typed_versions;
 
 pub use self::config::{JsxRuntime, JsxSettings, TranspileSettings};

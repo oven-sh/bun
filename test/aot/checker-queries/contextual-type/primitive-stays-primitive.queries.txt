@@ -1,0 +1,3 @@
+# A primitive literal's contextual type is the primitive type, not its wrapper interface.
+primitive-stays-primitive.ts:2 contextual `1` = number
+primitive-stays-primitive.ts:3 contextual `"a"` = string

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use crate::builtins::RuntimeModule;
 use crate::ir::{FunctionKey, LayoutKey, VariableKey};
 use crate::load::{ProgramFile, ProjectId, Sources};

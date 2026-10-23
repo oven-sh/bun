@@ -379,3 +379,14 @@ pub(super) fn prepare_types(input: &TypeTableInput<'_>) -> Result<Vec<PreparedTy
     check_occurrences(input, &prepared)?;
     Ok(prepared)
 }
+
+#[cfg(test)]
+pub(super) fn build_type_table(input: &TypeTableInput<'_>) -> Result<TypeTable, LinkError> {
+    let prepared = remap_type_representatives(input);
+    let positions = intern_prepared_types(remap_type_representatives(input));
+    let table = positions.map_err(|positions| {
+        collision_between(input.units, input.type_representatives, positions)
+    })?;
+    check_occurrences(input, &prepared)?;
+    Ok(table)
+}

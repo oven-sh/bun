@@ -1,0 +1,17 @@
+# What is expected of an expression that the checker types `any` is what its variable or its receiver is inferred to be, or what its own uses say.
+expressions.js:6 predicted `rows` = { size: { w?: number; }; }[]
+expressions.js:6 predicted `rows.length` = number
+expressions.js:10 predicted `rows[i]` = { size: { w?: number; }; }
+expressions.js:10 predicted `rows[i].size` = { w?: number; }
+expressions.js:10 predicted `rows[i].size.w` = number
+expressions.js:17 predicted `JSON.parse(text)` = { name?: any; port?: number; }
+expressions.js:17 binding `data` = { name?: any; port?: number; }
+expressions.js:19 predicted `data.port` = number
+expressions.js:24 predicted `JSON.parse(text)` = { items: string | any[]; }
+expressions.js:24 predicted `JSON.parse(text).items` = string | any[]
+# A variable that the checker types `number` is int32, where it is declared and at each reference, if it starts as an integer, gets only integers and is a key.
+expressions.js:29 binding `at` = int32
+expressions.js:31 binding `pairs` = number
+expressions.js:34 predicted `at` = int32
+absent: expressions.js:34 predicted `pairs` = int32
+absent: expressions.js:36 predicted `pairs` = int32

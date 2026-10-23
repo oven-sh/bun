@@ -1,0 +1,8 @@
+# An intersection of a type of the program with one of a declaration file. A member is written if every part that declares it writes it: one that the program alone declares is, one that the declaration file declares, alone or too, is not.
+intersection-with-declaration-file-part.ts:5 member `both.own` = member own Field number checked number
+intersection-with-declaration-file-part.ts:6 member `both.shared` = member shared Field unwritten checked number
+intersection-with-declaration-file-part.ts:7 member `both.foreign` = member foreign Field unwritten checked string
+intersection-with-declaration-file-part.ts:4 has `Mine & Theirs` = own Field number checked number
+intersection-with-declaration-file-part.ts:4 has `Mine & Theirs` = shared Field unwritten checked number
+intersection-with-declaration-file-part.ts:4 has `Mine & Theirs` = foreign Field unwritten checked string
+intersection-with-declaration-file-part.ts:4 has `Mine` = shared Field number checked number

@@ -283,3 +283,6 @@ fn write_reached_limits(
         out.push(b')');
     }
 }
+
+#[cfg(test)]
+mod tests;

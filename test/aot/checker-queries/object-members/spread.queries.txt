@@ -1,0 +1,6 @@
+# A member that a spread copies stays written in the type of the literal; a member the literal adds is not. The type of a spread has no declared form, so an access on it is unwritten.
+spread.ts:7 has `typeof s` = a Field number checked number
+spread.ts:7 has `typeof s` = b Field unwritten checked number
+
+spread.ts:5 member `s.a` = member a Field unwritten checked number
+spread.ts:6 member `s.b` = member b Field unwritten checked number

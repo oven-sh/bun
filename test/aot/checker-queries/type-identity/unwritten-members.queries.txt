@@ -1,0 +1,4 @@
+# The untyped identity of an object literal depends only on the names and kinds of its members. The identity of its type is the literal's own.
+different: unwritten-members.ts:3 untyped identity `{ a: 1 }` <=> unwritten-members.ts:4 untyped identity `{ get a() { return 1; } }`
+same: unwritten-members.ts:2 untyped identity `{ a: 1, b: "x", m() {} }` <=> unwritten-members.ts:5 untyped identity `{ b: "y", m() {}, a: 2 }`
+different: unwritten-members.ts:2 identity `{ a: 1, b: "x", m() {} }` <=> unwritten-members.ts:5 identity `{ b: "y", m() {}, a: 2 }`

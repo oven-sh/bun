@@ -195,3 +195,402 @@ fn collect_object_entries<'s>(
     }
     Some(DataValue::Object(arena.alloc_slice_copy(&entries)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostics::Diagnostics;
+    use crate::load::source_provider::{
+        DeferredLoad, LoadRequest, Loaded, MacroCall, Resolution, ResolveRequest, WithoutServices,
+    };
+    use bstr::BStr;
+    use bun_ast::Log;
+    use bun_sema::fold::FoldOptions;
+    use bun_sema::session::Session;
+
+    const NESTING_DEPTH: usize = 100_000;
+
+    struct EmbeddingProvider;
+
+    impl SourceProvider for EmbeddingProvider {
+        fn fold_options<'s>(
+            &self,
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> FoldOptions<'s> {
+            WithoutServices.fold_options(arena, atoms, log)
+        }
+
+        fn resolve(
+            &self,
+            request: &ResolveRequest<'_>,
+            log: &mut Log,
+        ) -> Result<Resolution, Failed> {
+            WithoutServices.resolve(request, log)
+        }
+
+        fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+            WithoutServices.load(request, log)
+        }
+
+        fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+            WithoutServices.finish_deferred_loads(log)
+        }
+
+        fn parse_data<'s>(
+            &self,
+            file: &SourceFile<'_>,
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> Result<DataModule<'s>, Failed> {
+            let embedded_path = atoms.intern(file.path);
+            match file.loader {
+                Loader::Wasm => Ok(DataModule::RuntimeRequire {
+                    specifier: embedded_path,
+                    loader_type: None,
+                    member: None,
+                }),
+                Loader::File => Ok(DataModule::Value {
+                    default: arena.alloc(DataValue::String(embedded_path)),
+                    exports_keys: false,
+                }),
+                Loader::Html => Ok(DataModule::Page),
+                _ => WithoutServices.parse_data(file, arena, atoms, log),
+            }
+        }
+
+        fn run_macro<'s>(
+            &self,
+            call: &MacroCall<'_, 's>,
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> Result<&'s DataValue<'s>, Failed> {
+            WithoutServices.run_macro(call, arena, atoms, log)
+        }
+
+        fn bundle_pages<'s>(
+            &self,
+            pages: &[&[u8]],
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
+            WithoutServices.bundle_pages(pages, arena, atoms, log)
+        }
+
+        fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+            WithoutServices.check_embedded_files(log)
+        }
+    }
+
+    fn default_export(file: &File<'_>) -> ExprId {
+        let statements: Vec<_> = file.ids(file.body).collect();
+        let [statement] = statements[..] else {
+            panic!("expected one statement, found {}", statements.len());
+        };
+        let StmtKind::ExportDefault(value) = file[statement].kind else {
+            panic!("expected ExportDefault, found {:?}", file[statement].kind);
+        };
+        value
+    }
+
+    fn written_log(messages: &LoadMessages) -> Log {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.add_load_messages(messages);
+        assert!(!diagnostics.has_internal_errors());
+        let mut log = Log::init();
+        diagnostics.write_to(&mut log);
+        log
+    }
+
+    fn nesting_depth(mut value: &DataValue<'_>) -> usize {
+        let mut depth = 0;
+        while let DataValue::Array(items) = value {
+            depth += 1;
+            let Some(item) = items.first() else {
+                break;
+            };
+            value = item;
+        }
+        depth
+    }
+
+    #[test]
+    fn parses_every_json_value() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let parse = |text: &[u8]| parse_json(text, session.arena(), &atoms).copied();
+        assert_eq!(parse(b"null"), Some(DataValue::Null));
+        assert_eq!(parse(b"true"), Some(DataValue::Boolean(true)));
+        assert_eq!(parse(b"false"), Some(DataValue::Boolean(false)));
+        assert_eq!(parse(b"1.5"), Some(DataValue::Number(1.5)));
+        assert_eq!(parse(b"-2"), Some(DataValue::Number(-2.0)));
+        assert_eq!(
+            parse(b"\"a\\n\""),
+            Some(DataValue::String(atoms.intern(b"a\n")))
+        );
+        assert_eq!(parse(b"[]"), Some(DataValue::Array(&[])));
+        assert_eq!(parse(b"{}"), Some(DataValue::Object(&[])));
+        assert_eq!(
+            parse(br#"{"__proto__":[{}]}"#),
+            Some(DataValue::Object(&[(
+                atoms.intern(b"__proto__"),
+                DataValue::Array(&[DataValue::Object(&[])])
+            )]))
+        );
+        let Some(DataValue::Number(zero)) = parse(b"-0") else {
+            panic!("expected a number");
+        };
+        assert!(zero == 0.0 && zero.is_sign_negative());
+    }
+
+    #[test]
+    fn repeated_key_takes_last_value() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let value = parse_json(br#"{"a":1,"b":2,"a":3}"#, session.arena(), &atoms).unwrap();
+        assert_eq!(
+            *value,
+            DataValue::Object(&[
+                (atoms.intern(b"a"), DataValue::Number(3.0)),
+                (atoms.intern(b"b"), DataValue::Number(2.0)),
+            ])
+        );
+    }
+
+    #[test]
+    fn accepts_comments() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let text = b"// line\n{ /* block */ \"a\": true } // end";
+        let value = parse_json(text, session.arena(), &atoms).unwrap();
+        assert_eq!(
+            *value,
+            DataValue::Object(&[(atoms.intern(b"a"), DataValue::Boolean(true))])
+        );
+    }
+
+    #[test]
+    fn rejects_other_syntax() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let texts: [&[u8]; 12] = [
+            b"",
+            b" \n",
+            b"// only a comment",
+            b"{a: f()}",
+            b"{\"a\": f()}",
+            b"`x`",
+            b"'x'",
+            b"(1)",
+            b"[1 2]",
+            b"[1,,2]",
+            b"1 2",
+            b"{\"a\":",
+        ];
+        for text in texts {
+            let value = parse_json(text, session.arena(), &atoms);
+            assert_eq!(value, None, "{}", BStr::new(text));
+        }
+    }
+
+    #[test]
+    fn deep_nesting_fits_stack() {
+        const STACK_SIZE: usize = 4 << 20;
+        let parse = || {
+            bun_sema_standalone::native::set_stack_size(STACK_SIZE / 2);
+            let session = Session::new();
+            let atoms = Interner::new_in(&session);
+            let text = [vec![b'['; NESTING_DEPTH], vec![b']'; NESTING_DEPTH]].concat();
+            if let Some(value) = parse_json(&text, session.arena(), &atoms) {
+                assert_eq!(nesting_depth(value), NESTING_DEPTH);
+            }
+        };
+        let thread = std::thread::Builder::new().stack_size(STACK_SIZE);
+        thread.spawn(parse).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn computes_deep_tree_without_recursion() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let arena = session.arena();
+        let mut nested = DataValue::Array(&[]);
+        for _ in 1..NESTING_DEPTH {
+            nested = DataValue::Array(arena.alloc_slice_copy(&[nested]));
+        }
+        let module = DataModule::Value {
+            default: arena.alloc(nested),
+            exports_keys: false,
+        };
+        let mut hir = module_from_data(&module, &atoms, arena).file;
+        let root = default_export(&hir);
+        let statement = hir.ids(hir.body).next().unwrap();
+        hir[statement].kind = StmtKind::ExportAssign(root);
+        let value = compute_json_value(&hir, arena).unwrap();
+        assert_eq!(nesting_depth(&value), NESTING_DEPTH);
+    }
+
+    #[test]
+    fn failed_provider_gives_empty_module() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let messages = LoadMessages::default();
+        let source = SourceFile {
+            path: b"/project/a.toml",
+            contents: b"a = 1",
+            loader: Loader::Toml,
+        };
+        let parsed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
+        let default = default_export(&parsed.hir);
+        let ExprKind::Unary {
+            op: UnOp::Void,
+            operand,
+        } = parsed.hir[default].kind
+        else {
+            panic!("expected `void 0`");
+        };
+        assert!(matches!(parsed.hir[operand].kind, ExprKind::Number(_)));
+        assert_eq!(
+            parsed.host_values,
+            [(default, HostValue::Data(&DataValue::Undefined))]
+        );
+        assert!(parsed.web_assembly.is_none());
+        assert!(!parsed.is_page);
+        assert_eq!(written_log(&messages).errors, 1);
+    }
+
+    #[test]
+    fn failed_wasm_module_has_no_bytes() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let messages = LoadMessages::default();
+        let source = SourceFile {
+            path: b"/project/a.wasm",
+            contents: b"\0asm",
+            loader: Loader::Wasm,
+        };
+        let parsed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
+        assert!(parsed.web_assembly.is_none());
+        assert_eq!(written_log(&messages).errors, 1);
+    }
+
+    #[test]
+    fn only_wasm_loader_returns_bytes() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let messages = LoadMessages::default();
+        let parse = |loader| {
+            let source = SourceFile {
+                path: b"/project/a.wasm",
+                contents: b"\0asm",
+                loader,
+            };
+            parse_data_module(
+                &EmbeddingProvider,
+                &messages,
+                &source,
+                session.arena(),
+                &atoms,
+            )
+        };
+
+        let wasm = parse(Loader::Wasm);
+        assert_eq!(wasm.web_assembly.as_deref(), Some(b"\0asm".as_slice()));
+        assert!(wasm.hir.text.is_empty());
+        assert!(wasm.host_values.is_empty());
+        assert!(!wasm.is_page);
+
+        let file = parse(Loader::File);
+        assert!(file.web_assembly.is_none());
+        assert!(file.hir.text.is_empty());
+        let default = default_export(&file.hir);
+        assert!(matches!(file.hir[default].kind, ExprKind::String(_)));
+        assert!(!file.is_page);
+
+        assert!(written_log(&messages).msgs.is_empty());
+    }
+
+    #[test]
+    fn page_module_has_a_deferred_default() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let messages = LoadMessages::default();
+        let source = SourceFile {
+            path: b"/project/index.html",
+            contents: b"<html></html>",
+            loader: Loader::Html,
+        };
+        let page = parse_data_module(
+            &EmbeddingProvider,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
+        assert!(page.is_page);
+        let default = default_export(&page.hir);
+        assert_eq!(page.host_values, [(default, HostValue::Deferred)]);
+        assert!(page.web_assembly.is_none());
+        assert!(written_log(&messages).msgs.is_empty());
+
+        let failed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
+        assert!(!failed.is_page);
+        let default = default_export(&failed.hir);
+        assert_eq!(
+            failed.host_values,
+            [(default, HostValue::Data(&DataValue::Undefined))]
+        );
+        assert_eq!(written_log(&messages).errors, 1);
+    }
+
+    #[test]
+    fn host_values_come_back_with_the_tree() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let messages = LoadMessages::default();
+        let source = SourceFile {
+            path: b"/project/a.json",
+            contents: br#"{"a":1}"#,
+            loader: Loader::Json,
+        };
+        let parsed = parse_data_module(
+            &WithoutServices,
+            &messages,
+            &source,
+            session.arena(),
+            &atoms,
+        );
+        let [(root, HostValue::Data(value))] = *parsed.host_values else {
+            panic!("expected one value, found {:?}", parsed.host_values);
+        };
+        assert!(matches!(parsed.hir[root].kind, ExprKind::Object(_)));
+        assert_eq!(
+            *value,
+            DataValue::Object(&[(atoms.intern(b"a"), DataValue::Number(1.0))])
+        );
+        assert!(!parsed.is_page);
+        assert!(written_log(&messages).msgs.is_empty());
+    }
+}

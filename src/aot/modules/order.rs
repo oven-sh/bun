@@ -1,5 +1,8 @@
 //! When the bodies of the modules run, as far as the text of the program says it.
 
+#[cfg(test)]
+mod tests;
+
 use super::exports::{ExportTables, Resolution};
 use super::interop::{ImportPhase, ModuleKind, RequireResult};
 use super::module_set::ModuleSet;
@@ -180,6 +183,19 @@ pub(super) struct OrderParts {
     pub is_exposed: Vec<bool>,
     pub is_half: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
+}
+
+#[cfg(test)]
+impl OrderParts {
+    pub(super) fn without_sites(file_count: usize) -> OrderParts {
+        OrderParts {
+            numbers: ModuleNumbers::new(file_count, Vec::new()),
+            is_code_of_program: vec![false; file_count],
+            is_exposed: vec![false; file_count],
+            is_half: vec![false; file_count],
+            prefix_roots: Vec::new(),
+        }
+    }
 }
 
 // What a module exports under the name "module.exports" is what `require` answers in place of the namespace.

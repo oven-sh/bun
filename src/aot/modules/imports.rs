@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use super::bindings::{AccessedModule, Holder, ImportBinding, RequiredName};
 use super::exports::{ExportTables, Resolution};
 use super::failures::{FailureOrder, ModuleFailure, ModuleFailureKind, PendingFailure, SitePart};

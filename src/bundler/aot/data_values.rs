@@ -647,3 +647,6 @@ pub(crate) fn data_value_from_expr<'s>(
     write_expr(root, scratch, &mut builder)?;
     Ok(builder.finish())
 }
+
+#[cfg(test)]
+mod tests;

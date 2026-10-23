@@ -1,0 +1,9 @@
+# A member of the program's interface can decide by the type argument, so an argument that names a `.d.ts` alias makes the written type `unknown`. A library type keeps its name and takes the written form of the argument.
+inexact-argument-of-program-interface.ts:4 written `Field<Id>` = unknown
+absent: inexact-argument-of-program-interface.ts:4 written `Field<Id>` = Field<unknown>
+absent: inexact-argument-of-program-interface.ts:4 written `Field<Id>` = Field<string>
+inexact-argument-of-program-interface.ts:8 written `Field<string>` = Field<string>
+
+inexact-argument-of-program-interface.ts:5 written `Array<Id>` = unknown[]
+inexact-argument-of-program-interface.ts:6 written `Promise<Id>` = Promise<unknown>
+inexact-argument-of-program-interface.ts:7 written `Map<string, Id[]>` = Map<string, unknown[]>

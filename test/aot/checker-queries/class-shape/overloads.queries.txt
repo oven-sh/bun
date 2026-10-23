@@ -1,0 +1,4 @@
+# An overloaded method is one member, at its implementation.
+overloads.ts:2 class member `V` = m Method Member 5 unwritten checked { (a: number): void; (a: string): void; }
+absent: overloads.ts:2 class member `V` = m Method Member 3 unwritten checked { (a: number): void; (a: string): void; }
+absent: overloads.ts:2 class member `V` = m Method Member 4 unwritten checked { (a: number): void; (a: string): void; }

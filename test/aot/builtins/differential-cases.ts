@@ -7,7 +7,7 @@
 //   AOT_BUILTINS_UPDATE=1   checks every hand-written overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
 //   AOT_BUILTINS_FILTER=<r> only the entries whose path matches the regular expression
-//   AOT_SHARE=all           every entry: a run takes one in four, others for each commit, because all of them take twenty minutes of one core
+// All of it takes twenty minutes of one core, so it is run in parts: test/aot/parts.mts. By hand: TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
@@ -15,7 +15,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
-import { inShare } from "../run-programs";
 import { checkCall } from "./differential/check-call";
 import { formatDifference } from "./differential/compare";
 import { Realm } from "./differential/members";
@@ -44,8 +43,8 @@ const origins: Origin[] = ["Engine", "Host"];
 // The list says what the calls do where it is written.
 const callsOverloads = isGlibc && !isASAN && !isDebug;
 const notCheckedHeader =
-  "# The hand-written overloads that test/aot/builtins/differential.test.ts does not call or that do not pass: `<overload>: <why>`.\n" +
-  "# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts\n";
+  "# The hand-written overloads that test/aot/builtins/differential-cases.ts does not call or that do not pass: `<overload>: <why>`.\n" +
+  "# Written by: AOT_BUILTINS_UPDATE=1 TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts\n";
 
 const notChecked = new Map(
   readFileSync(notCheckedPath, "utf8")
@@ -58,109 +57,11 @@ const isChecked = (overload: DumpedOverload) =>
 
 type CheckedCall = { entry: DumpedEntry; mode: CallMode; overloads: DumpedOverload[] };
 
-const checkedCalls = dump.entries
-  .filter(entry => filter.test(entry.path) && (isUpdate || inShare(entry.path, 4)))
-  .flatMap((entry): CheckedCall[] => {
-    const overloads = entry.overloads.filter(isChecked);
-    return [...new Set(overloads.map(({ mode }) => mode))].map(mode => ({
-      entry,
-      mode,
-      overloads: overloads.filter(overload => overload.mode === mode),
-    }));
-  });
-
 const keyOf = (entry: string, mode: CallMode) => `${entry} ${mode}`;
-const reports = new Map<string, WorkerReport>();
-const endedProcess = new Set<string>();
-
-function readReports(path: string): void {
-  if (!existsSync(path)) return;
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (line === "") continue;
-    const report: WorkerReport = JSON.parse(line);
-    reports.set(keyOf(report.entry, report.mode), report);
-  }
-}
-
-// A call that ends its process or outlasts the time is left out of the next attempt, which goes on behind it.
-async function runWorker(folder: string, index: number, calls: WorkerRequest["calls"]): Promise<void> {
-  const requestPath = join(folder, `request.${index}.json`);
-  const reportsPath = join(folder, `reports.${index}.jsonl`);
-  let remaining = calls;
-  for (let attempt = 0; attempt < maxAttemptsPerWorker && remaining.length > 0; attempt++) {
-    writeFileSync(requestPath, JSON.stringify({ tablePath, calls: remaining } satisfies WorkerRequest));
-    await using worker = Bun.spawn({
-      // Without --no-install `require("a")` fetches the package of that name from the registry and runs it.
-      cmd: [
-        bunExe(),
-        "--no-install",
-        "--expose-internals",
-        join(import.meta.dir, "differential/worker.ts"),
-        requestPath,
-        reportsPath,
-      ],
-      cwd: folder,
-      env: executableEnv,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-      timeout: secondsPerAttempt * 1000,
-    });
-    await worker.exited;
-    const current: [string, CallMode] | null = JSON.parse(readFileSync(`${reportsPath}.current`, "utf8"));
-    if (current === null) break;
-    endedProcess.add(keyOf(...current));
-    const position = remaining.findIndex(([entry, mode]) => entry === current[0] && mode === current[1]);
-    remaining = remaining.slice(position + 1);
-  }
-  readReports(reportsPath);
-}
-
-async function runWorkers(): Promise<void> {
-  using folder = tempDir("aot-builtins-differential", {});
-  const workerCount = Math.min(availableParallelism(), 32, checkedCalls.length);
-  const slices = Array.from({ length: workerCount }, (): WorkerRequest["calls"] => []);
-  checkedCalls.forEach(({ entry, mode }, index) => slices[index % workerCount].push([entry.token, mode]));
-  await Promise.all(slices.map((calls, index) => runWorker(String(folder), index, calls)));
-}
-
-function findProblems({ entry, mode }: CheckedCall, overload: DumpedOverload): string[] {
-  const key = keyOf(entry.token, mode);
-  const report = reports.get(key);
-  if (report?.failure !== undefined) return [`${overload.token}: the test itself threw: ${report.failure}`];
-  if (endedProcess.has(key)) return [`${overload.token}: the process ended or did not come back`];
-  if (!report) return [`${overload.token}: no report`];
-  if (report.unreachable !== undefined) return [`${overload.token}: it is not called: ${report.unreachable}`];
-  const checked = report.overloads.find(({ token }) => token === overload.token);
-  if (!checked || checked.returned + checked.threw === 0) return [`${overload.token}: no set of operands selects it`];
-  return checked.differences.map(difference => formatDifference(overload, difference));
-}
 
 const handWrittenOverloads = dump.entries.flatMap(entry =>
   entry.overloads.filter(needsDifferentialTest).map(overload => ({ entry, overload })),
 );
-
-function findReason({ entry, mode }: CheckedCall, overload: DumpedOverload): string | null {
-  const checked = reports.get(keyOf(entry.token, mode))?.overloads.find(({ token }) => token === overload.token);
-  const [problem] = findProblems({ entry, mode, overloads: [overload] }, overload);
-  if (problem === undefined) return null;
-  if (!checked || checked.differences.length === 0) {
-    const [firstLine] = problem.slice(`${overload.token}: `.length).split("\n", 1);
-    const thrown = /^error: (.*)$/m.exec(problem)?.[1];
-    return thrown === undefined ? firstLine : `${firstLine.slice(0, firstLine.indexOf(": "))}: ${thrown}`;
-  }
-  return `it differs in ${[...new Set(checked.differences.map(({ column }) => column))].sort().join(", ")}`;
-}
-
-function writeList(): void {
-  const lines = handWrittenOverloads.flatMap(({ entry, overload }) => {
-    // A filter leaves entries out of the run: nothing was learned about them, so their lines stay.
-    const call = checkedCalls.find(other => other.entry === entry && other.mode === overload.mode);
-    const reason = call ? findReason(call, overload) : (notChecked.get(overload.token) ?? null);
-    return reason === null ? [] : [`${overload.token}: ${reason}\n`];
-  });
-  writeFileSync(notCheckedPath, notCheckedHeader + lines.sort().join(""));
-}
 
 type WrongEntry = {
   title: string;
@@ -412,21 +313,115 @@ function defineDescriptionTests(): void {
   });
 }
 
-if (dump.entries.length === 0) {
-  test.skip("this build of Bun has no ahead-of-time compiler", () => {});
-} else {
+/** `part`: 1 to `parts`. Each takes its share of the entries; the first has the tests that call none as well. */
+export function differential(part: number, parts: number): void {
+  const checkedCalls = dump.entries
+    .filter(entry => filter.test(entry.path))
+    .filter((_, index) => (isUpdate ? part === 1 : index % parts === part - 1))
+    .flatMap((entry): CheckedCall[] => {
+      const overloads = entry.overloads.filter(isChecked);
+      return [...new Set(overloads.map(({ mode }) => mode))].map(mode => ({
+        entry,
+        mode,
+        overloads: overloads.filter(overload => overload.mode === mode),
+      }));
+    });
+
+  const reports = new Map<string, WorkerReport>();
+  const endedProcess = new Set<string>();
+
+  function readReports(path: string): void {
+    if (!existsSync(path)) return;
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      if (line === "") continue;
+      const report: WorkerReport = JSON.parse(line);
+      reports.set(keyOf(report.entry, report.mode), report);
+    }
+  }
+
+  // A call that ends its process or outlasts the time is left out of the next attempt, which goes on behind it.
+  async function runWorker(folder: string, index: number, calls: WorkerRequest["calls"]): Promise<void> {
+    const requestPath = join(folder, `request.${index}.json`);
+    const reportsPath = join(folder, `reports.${index}.jsonl`);
+    let remaining = calls;
+    for (let attempt = 0; attempt < maxAttemptsPerWorker && remaining.length > 0; attempt++) {
+      writeFileSync(requestPath, JSON.stringify({ tablePath, calls: remaining } satisfies WorkerRequest));
+      await using worker = Bun.spawn({
+        // Without --no-install `require("a")` fetches the package of that name from the registry and runs it.
+        cmd: [
+          bunExe(),
+          "--no-install",
+          "--expose-internals",
+          join(import.meta.dir, "differential/worker.ts"),
+          requestPath,
+          reportsPath,
+        ],
+        cwd: folder,
+        env: executableEnv,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        timeout: secondsPerAttempt * 1000,
+      });
+      await worker.exited;
+      const current: [string, CallMode] | null = JSON.parse(readFileSync(`${reportsPath}.current`, "utf8"));
+      if (current === null) break;
+      endedProcess.add(keyOf(...current));
+      const position = remaining.findIndex(([entry, mode]) => entry === current[0] && mode === current[1]);
+      remaining = remaining.slice(position + 1);
+    }
+    readReports(reportsPath);
+  }
+
+  async function runWorkers(): Promise<void> {
+    using folder = tempDir("aot-builtins-differential", {});
+    const workerCount = Math.min(availableParallelism(), 32, checkedCalls.length);
+    const slices = Array.from({ length: workerCount }, (): WorkerRequest["calls"] => []);
+    checkedCalls.forEach(({ entry, mode }, index) => slices[index % workerCount].push([entry.token, mode]));
+    await Promise.all(slices.map((calls, index) => runWorker(String(folder), index, calls)));
+  }
+
+  function findProblems({ entry, mode }: CheckedCall, overload: DumpedOverload): string[] {
+    const key = keyOf(entry.token, mode);
+    const report = reports.get(key);
+    if (report?.failure !== undefined) return [`${overload.token}: the test itself threw: ${report.failure}`];
+    if (endedProcess.has(key)) return [`${overload.token}: the process ended or did not come back`];
+    if (!report) return [`${overload.token}: no report`];
+    if (report.unreachable !== undefined) return [`${overload.token}: it is not called: ${report.unreachable}`];
+    const checked = report.overloads.find(({ token }) => token === overload.token);
+    if (!checked || checked.returned + checked.threw === 0) return [`${overload.token}: no set of operands selects it`];
+    return checked.differences.map(difference => formatDifference(overload, difference));
+  }
+
+  function findReason({ entry, mode }: CheckedCall, overload: DumpedOverload): string | null {
+    const checked = reports.get(keyOf(entry.token, mode))?.overloads.find(({ token }) => token === overload.token);
+    const [problem] = findProblems({ entry, mode, overloads: [overload] }, overload);
+    if (problem === undefined) return null;
+    if (!checked || checked.differences.length === 0) {
+      const [firstLine] = problem.slice(`${overload.token}: `.length).split("\n", 1);
+      const thrown = /^error: (.*)$/m.exec(problem)?.[1];
+      return thrown === undefined ? firstLine : `${firstLine.slice(0, firstLine.indexOf(": "))}: ${thrown}`;
+    }
+    return `it differs in ${[...new Set(checked.differences.map(({ column }) => column))].sort().join(", ")}`;
+  }
+
+  function writeList(): void {
+    const lines = handWrittenOverloads.flatMap(({ entry, overload }) => {
+      // A filter leaves entries out of the run: nothing was learned about them, so their lines stay.
+      const call = checkedCalls.find(other => other.entry === entry && other.mode === overload.mode);
+      const reason = call ? findReason(call, overload) : (notChecked.get(overload.token) ?? null);
+      return reason === null ? [] : [`${overload.token}: ${reason}\n`];
+    });
+    writeFileSync(notCheckedPath, notCheckedHeader + lines.sort().join(""));
+  }
+
+  if (dump.entries.length === 0) {
+    test.skip("this build of Bun has no ahead-of-time compiler", () => {});
+    return;
+  }
+
   beforeAll(runWorkers, maxAttemptsPerWorker * secondsPerAttempt * 1000);
-  if (isUpdate) afterAll(writeList);
-
-  test("the tokens of the overloads are unique", () => {
-    const overloads = dump.entries.flatMap(entry => entry.overloads);
-    expect(new Set(overloads.map(({ token }) => token)).size).toBe(overloads.length);
-  });
-
-  test("the list of what is not checked names only hand-written overloads of this table", () => {
-    const tokens = new Set(handWrittenOverloads.map(({ overload }) => overload.token));
-    expect([...notChecked.keys()].filter(token => !tokens.has(token))).toEqual([]);
-  });
+  if (isUpdate && part === 1) afterAll(writeList);
 
   for (const origin of origins) {
     describe(origin, () => {
@@ -439,6 +434,21 @@ if (dump.entries.length === 0) {
       }
     });
   }
+
+  if (part !== 1) {
+    if (checkedCalls.length === 0) test.skip("no overload is called here", () => {});
+    return;
+  }
+
+  test("the tokens of the overloads are unique", () => {
+    const overloads = dump.entries.flatMap(entry => entry.overloads);
+    expect(new Set(overloads.map(({ token }) => token)).size).toBe(overloads.length);
+  });
+
+  test("the list of what is not checked names only hand-written overloads of this table", () => {
+    const tokens = new Set(handWrittenOverloads.map(({ overload }) => overload.token));
+    expect([...notChecked.keys()].filter(token => !tokens.has(token))).toEqual([]);
+  });
 
   defineWrongEntryTests();
   defineDescriptionTests();

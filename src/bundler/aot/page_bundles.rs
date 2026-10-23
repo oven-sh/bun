@@ -349,3 +349,165 @@ fn collect_client_files(outputs: Vec<OutputFile>) -> Vec<OutputFile> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use bun_sema::session::Session;
+
+    use super::super::services::with_test_context;
+    use super::*;
+
+    fn output(
+        name: &[u8],
+        kind: OutputKind,
+        side: Option<Side>,
+        source_map_index: u32,
+    ) -> OutputFile {
+        let mut file = OutputFile::zero_value();
+        file.dest_path = Box::from(name);
+        file.output_kind = kind;
+        file.side = side;
+        file.source_map_index = source_map_index;
+        file
+    }
+
+    fn names(files: &[OutputFile]) -> Vec<&[u8]> {
+        files.iter().map(|file| &*file.dest_path).collect()
+    }
+
+    #[test]
+    fn collect_client_files_drops_server_outputs() {
+        let kept = collect_client_files(vec![
+            output(b"server.js", OutputKind::EntryPoint, Some(Side::Server), 1),
+            output(
+                b"server.map",
+                OutputKind::Sourcemap,
+                Some(Side::Server),
+                NO_OUTPUT_FILE,
+            ),
+            output(b"client.js", OutputKind::Chunk, Some(Side::Client), 3),
+            output(
+                b"client.map",
+                OutputKind::Sourcemap,
+                Some(Side::Client),
+                NO_OUTPUT_FILE,
+            ),
+            output(b"logo.svg", OutputKind::Asset, None, NO_OUTPUT_FILE),
+            output(
+                b"graph",
+                OutputKind::PrelinkedModuleGraph,
+                None,
+                NO_OUTPUT_FILE,
+            ),
+        ]);
+
+        assert_eq!(
+            names(&kept),
+            [&b"client.js"[..], &b"client.map"[..], &b"logo.svg"[..]]
+        );
+        assert_eq!(kept[0].source_map_index, 1);
+        assert_eq!(kept[2].source_map_index, NO_OUTPUT_FILE);
+    }
+
+    #[test]
+    fn collect_client_files_clears_bytecode_indexes() {
+        let side = Some(Side::Client);
+        let mut chunk = output(b"client.js", OutputKind::Chunk, side, NO_OUTPUT_FILE);
+        chunk.bytecode_index = 4;
+        chunk.module_info_index = 5;
+
+        let kept = collect_client_files(vec![chunk]);
+
+        assert_eq!(kept[0].bytecode_index, NO_OUTPUT_FILE);
+        assert_eq!(kept[0].module_info_index, NO_OUTPUT_FILE);
+    }
+
+    #[test]
+    fn collect_client_files_drops_unreferenced_source_map() {
+        let kept = collect_client_files(vec![
+            output(
+                b"orphan.map",
+                OutputKind::Sourcemap,
+                Some(Side::Client),
+                NO_OUTPUT_FILE,
+            ),
+            output(
+                b"client.js",
+                OutputKind::Chunk,
+                Some(Side::Client),
+                NO_OUTPUT_FILE,
+            ),
+        ]);
+
+        assert_eq!(names(&kept), [&b"client.js"[..]]);
+    }
+
+    fn assert_entry_imports_page(pages: &[&[u8]]) {
+        with_ast_scope(|heap| {
+            let source = create_entry_source(pages, heap);
+            assert_eq!(source.path.namespace, ENTRY_NAMESPACE);
+
+            let options = bun_js_parser::ParserOptions::init(Default::default(), Loader::Js);
+            let define = bun_js_parser::Define::default();
+            let mut log = Log::init();
+            let parser = bun_js_parser::Parser::init(options, &mut log, &source, &define, heap)
+                .expect("the parser starts");
+            let bun_js_parser::Result::Ast(ast) = parser.parse().expect("the entry parses") else {
+                panic!("the entry is an ordinary module");
+            };
+
+            assert_eq!(ast.import_records.len(), pages.len());
+            for (index, page) in pages.iter().enumerate() {
+                assert_eq!(ast.import_records[index].path.text, *page);
+            }
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn create_entry_source_escapes_quotes() {
+        assert_entry_imports_page(&[b"/p/a \"b\".html"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn create_entry_source_escapes_backslashes() {
+        assert_entry_imports_page(&[b"C:\\p\\a.html"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn entry_imports_every_page_in_order() {
+        assert_entry_imports_page(&[&b"/p/b.html"[..], b"/p/a.html", b"/q/index.html"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn entry_is_beside_first_page() {
+        with_ast_scope(|heap| {
+            let source = create_entry_source(&[&b"/q/b.html"[..], b"/p/a.html"], heap);
+            assert_eq!(source.path.text, b"/q/page-entry.js");
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn no_pages_start_no_bundle() {
+        with_test_context(
+            |_| {},
+            |context| {
+                let session = Session::new();
+                let atoms = Interner::new_in(&session);
+                let arena = Arena::new();
+                let embedded = EmbeddedFiles::default();
+                let mut log = Log::init();
+
+                let manifests = bundle_pages(context, &embedded, &[], &arena, &atoms, &mut log);
+
+                assert!(manifests.unwrap().is_empty());
+                assert!(log.msgs.is_empty());
+                assert!(embedded.into_output_files().is_empty());
+            },
+        );
+    }
+}

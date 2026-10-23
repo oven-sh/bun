@@ -18,6 +18,8 @@ const ALWAYS_ENTERED: [Feature; 4] = [
 const ENGINE_FEATURES_OUTSIDE_LANGUAGE: [Feature; 3] =
     [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
 
+const HOLDS_GET_BUILTIN_MODULE: Feature = Feature::ProcessInformation;
+
 // `Bun.build` checks types, compiles ahead of time, and copies this executable's runtime into the executables it writes.
 const ENTERED_BY_BUNDLER: [Feature; 4] = [
     Feature::Check,
@@ -136,17 +138,23 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
         }
         UnseenCodeCause::ReportMissing => program_features,
         UnseenCodeCause::FlowResultDisabled => program_features,
-        UnseenCodeCause::FlowGaveUp => language_features(),
-        UnseenCodeCause::EvaluatesText => language_features(),
+        UnseenCodeCause::FlowGaveUp => features_reachable_by_text(),
+        UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
         UnseenCodeCause::LoadsModuleByName => FeatureSet::EMPTY,
         UnseenCodeCause::RunsUnseenCode => {
-            let mut features = language_features();
+            let mut features = features_reachable_by_text();
             features.insert(Feature::NativeAddons);
             features
         }
         UnseenCodeCause::OptionAdmitsCode => program_features,
     }
+}
+
+fn features_reachable_by_text() -> FeatureSet {
+    let mut features = language_features();
+    features.insert(HOLDS_GET_BUILTIN_MODULE);
+    features
 }
 
 fn language_features() -> FeatureSet {
@@ -387,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluated_text_retains_language_and_nothing_of_host() {
+    fn evaluated_text_retains_language_and_get_builtin_module() {
         let used = UsedFeatures::with_cause(UnseenCodeCause::EvaluatesText);
         let decision = decide_request(&used, &removing_unused());
         for feature in [
@@ -397,6 +405,7 @@ mod tests {
             Feature::Temporal,
             Feature::IntlCollation,
             Feature::DataView,
+            HOLDS_GET_BUILTIN_MODULE,
         ] {
             assert_eq!(
                 decision.reason_of(feature),
@@ -404,9 +413,10 @@ mod tests {
                 "{feature:?}"
             );
         }
-        let always_entered = FeatureSet::from_features(&ALWAYS_ENTERED);
+        let mut kept_of_host = FeatureSet::from_features(&ALWAYS_ENTERED);
+        kept_of_host.insert(HOLDS_GET_BUILTIN_MODULE);
         for &feature in Feature::ALL {
-            if !feature.is_engine() && !always_entered.contains(feature) {
+            if !feature.is_engine() && !kept_of_host.contains(feature) {
                 assert!(decision.unused.contains(feature), "{feature:?}");
             }
         }

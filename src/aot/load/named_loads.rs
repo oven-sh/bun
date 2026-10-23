@@ -233,3 +233,232 @@ impl Scan<'_, '_> {
         }));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bun_builtin_sources::Archive;
+
+    use crate::builtins::RuntimeModule;
+    use crate::compile::testing::{default_settings, with_bind_input};
+    use crate::load::runtime_modules::RuntimeModules;
+    use crate::load::runtime_roots::collect_runtime_roots;
+
+    fn root_modules(files: &[(&str, &str)]) -> Vec<RuntimeModule> {
+        let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
+        with_bind_input(files, &default_settings(), |input| {
+            let roots = collect_runtime_roots(input.files, &runtime_modules, input.platform);
+            let is_root = |module: &RuntimeModule| {
+                let path = runtime_modules.module_path(*module);
+                path.is_some_and(|path| roots.paths.iter().any(|root| root == path))
+            };
+            RuntimeModule::ALL.into_iter().filter(is_root).collect()
+        })
+    }
+
+    #[track_caller]
+    fn assert_files_keep(
+        files: &[(&str, &str)],
+        kept: &[RuntimeModule],
+        dropped: &[RuntimeModule],
+    ) {
+        let modules = root_modules(files);
+        for module in kept {
+            assert!(modules.contains(module), "{module:?} is missing: {files:?}");
+        }
+        for module in dropped {
+            assert!(!modules.contains(module), "{module:?} is kept: {files:?}");
+        }
+    }
+
+    #[track_caller]
+    fn assert_keeps(source: &str, kept: &[RuntimeModule], dropped: &[RuntimeModule]) {
+        assert_files_keep(&[("main.ts", source)], kept, dropped);
+    }
+
+    const ESBUILD_REQUIRE: &str = r#"((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+})"#;
+
+    #[test]
+    fn esbuild_require_shim_keeps_named_modules() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeZlib};
+        let source = format!(
+            "var __require = {ESBUILD_REQUIRE};\n__require('zlib'); __require('node:dgram');"
+        );
+        assert_files_keep(
+            &[("main.mjs", &source)],
+            &[NodeZlib, NodeDgram],
+            &[NodeRepl],
+        );
+        let minified = "var t=(a=>typeof require<\"u\"?require:typeof Proxy<\"u\"?new Proxy(a,{get:(b,c)=>(typeof require<\"u\"?require:b)[c]}):a)(function(a){if(typeof require<\"u\")return require.apply(this,arguments);throw Error('no '+a)});t('zlib');";
+        assert_files_keep(&[("main.mjs", minified)], &[NodeZlib], &[NodeDgram]);
+    }
+
+    #[test]
+    fn iife_that_returns_a_loader_keeps_named_modules() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
+        let source = "import { createRequire } from 'node:module';
+const a = (() => require)();
+const b = (function () { return import.meta.require; })();
+const c = (() => createRequire('/elsewhere/'))();
+const d = a;
+a('zlib'); b('dgram'); c('vm'); d('v8');";
+        assert_files_keep(
+            &[("main.mjs", source)],
+            &[NodeZlib, NodeDgram, NodeVm, NodeV8],
+            &[NodeRepl],
+        );
+    }
+
+    #[test]
+    fn callee_that_may_not_be_a_loader_keeps_nothing() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
+        let source = format!(
+            "{FLAG}let reassigned = (() => require)(); reassigned = String;
+const chosen = flag ? require : String;
+const parameter = ((load: unknown) => load)(require) as (name: string) => unknown;
+const asynchronous = (async () => require)() as unknown as (name: string) => unknown;
+const longer = (() => {{ if (flag) return String; return require; }})();
+reassigned('zlib'); chosen('dgram'); parameter('vm'); asynchronous('v8'); longer('repl');"
+        );
+        assert_keeps(
+            &source,
+            &[],
+            &[NodeZlib, NodeDgram, NodeVm, NodeV8, NodeRepl],
+        );
+    }
+
+    #[test]
+    fn loader_imported_from_another_file_keeps_named_modules() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
+        let chunk = format!(
+            "import {{ createRequire }} from 'node:module';
+var __require = {ESBUILD_REQUIRE};
+export var made = createRequire(import.meta.url);
+export {{ __require as a }};"
+        );
+        let files = [
+            (
+                "main.mjs",
+                "import { a as load, made } from './chunk.mjs';
+import { again } from './barrel.mjs';
+load('zlib'); made('node:dgram'); again(globalThis.flag ? 'vm' : 'v8');",
+            ),
+            ("chunk.mjs", &chunk),
+            (
+                "barrel.mjs",
+                "import { a } from './chunk.mjs';\nexport { a as again };",
+            ),
+        ];
+        assert_files_keep(&files, &[NodeZlib, NodeDgram, NodeVm, NodeV8], &[NodeRepl]);
+    }
+
+    #[test]
+    fn imported_function_that_is_no_loader_keeps_nothing() {
+        use RuntimeModule::{NodeDgram, NodeRepl, NodeZlib};
+        let files = [
+            (
+                "main.mjs",
+                "import { log, swapped } from './log.mjs';
+import other from './log.mjs';
+log('zlib'); swapped('dgram'); other('repl');",
+            ),
+            (
+                "log.mjs",
+                "export function log(text) { console.log(text); }
+export let swapped = require;
+export function swap() { swapped = log; }
+export default log;",
+            ),
+        ];
+        assert_files_keep(&files, &[], &[NodeZlib, NodeDgram, NodeRepl]);
+    }
+
+    const FLAG: &str = "declare const flag: boolean; declare const name: string;\n";
+
+    #[test]
+    fn each_arm_of_a_choice_is_kept() {
+        use RuntimeModule::{NodeDgram, NodeHttp2, NodeRepl, NodeV8, NodeVm, NodeZlib};
+        for load in [
+            "require",
+            "import",
+            "import.meta.require",
+            "process.getBuiltinModule",
+        ] {
+            let source =
+                format!("{FLAG}export const loaded = {load}(flag ? 'node:vm' : 'node:v8');");
+            assert_keeps(&source, &[NodeVm, NodeV8], &[NodeDgram]);
+        }
+        let nested = format!(
+            "{FLAG}require(flag ? 'node:dgram' : name ? 'zlib' : ('node:http2' as string));"
+        );
+        assert_keeps(&nested, &[NodeDgram, NodeZlib, NodeHttp2], &[NodeRepl]);
+    }
+
+    #[test]
+    fn choice_given_to_made_require_is_kept() {
+        let source = format!(
+            "{FLAG}import {{ createRequire }} from 'node:module';
+const load = createRequire(import.meta.url);
+load(flag ? 'node:vm' : 'node:v8');"
+        );
+        assert_keeps(
+            &source,
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+            &[RuntimeModule::NodeDgram],
+        );
+    }
+
+    #[test]
+    fn library_module_named_to_require_made_for_another_file_is_kept() {
+        let source = "import { createRequire } from 'module';
+var require = createRequire('/');
+export const tty = require('tty');
+export const os = createRequire('/elsewhere/')('node:os');";
+        assert_keeps(
+            source,
+            &[RuntimeModule::NodeTty, RuntimeModule::NodeOs],
+            &[RuntimeModule::NodeDgram],
+        );
+    }
+
+    #[test]
+    fn constant_arm_beside_unknown_arm_is_kept() {
+        let source = format!("{FLAG}require(flag ? 'node:vm' : name);");
+        assert_keeps(&source, &[RuntimeModule::NodeVm], &[RuntimeModule::NodeV8]);
+    }
+
+    #[test]
+    fn name_with_constant_start_keeps_nothing() {
+        let source =
+            format!("{FLAG}require('node:v' + name); require(`node:${{name}}`); require(name);");
+        assert_keeps(
+            &source,
+            &[],
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+        );
+    }
+
+    #[test]
+    fn choice_that_only_names_a_module_keeps_nothing() {
+        let source = format!("{FLAG}require.resolve(flag ? 'node:vm' : 'node:v8');");
+        assert_keeps(
+            &source,
+            &[],
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+        );
+    }
+
+    #[test]
+    fn choice_in_dead_code_keeps_nothing() {
+        let source = format!("{FLAG}if (false) require(flag ? 'node:vm' : 'node:v8');");
+        assert_keeps(
+            &source,
+            &[],
+            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
+        );
+    }
+}

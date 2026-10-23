@@ -288,6 +288,15 @@ pub(crate) fn with_loaded_build_and_react_compiler<R>(
 }
 
 #[cfg(test)]
+pub(crate) fn with_loaded_test_run<R>(
+    files: &[(&str, &str)],
+    settings: &TranspileSettings,
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
+) -> R {
+    with_loaded_project(&TestProject::new(files, settings).with_test_run(), then)
+}
+
+#[cfg(test)]
 pub(crate) fn with_loaded_build_and_options<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -308,6 +317,21 @@ fn with_loaded_project<R>(
     run_build(project, BUNDLED_LIBS, &WithoutServices, |build| {
         build.with_loaded_projects(|build, loaded| Ok(then(build, &loaded)))
     })
+}
+
+#[cfg(test)]
+pub(crate) fn describe_load(files: &[(&str, &str)]) -> String {
+    let project = TestProject::new(files, &default_settings());
+    let options = project.options(BUNDLED_LIBS);
+    let caches = ThreadCaches::default();
+    let mut build = Build::new(&options, &WithoutServices, &caches, project.limits.clone());
+    let result = build.with_loaded_projects(|_, _| Ok(()));
+    let mut log = Log::init();
+    let outcome = match build.finish(result, &mut log) {
+        Ok(_) => "loaded",
+        Err(failed) => failed.stage.name(),
+    };
+    format!("{outcome}: {}", describe_messages(&log))
 }
 
 #[cfg(test)]
@@ -637,6 +661,14 @@ impl TestProject {
     fn with_react_compiler(self, react_compiler: ReactCompilerMode) -> TestProject {
         TestProject {
             react_compiler,
+            ..self
+        }
+    }
+
+    #[cfg(test)]
+    fn with_test_run(self) -> TestProject {
+        TestProject {
+            runs_tests: true,
             ..self
         }
     }

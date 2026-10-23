@@ -1,0 +1,24 @@
+# Primitive, literal and function types have their own shapes; `void` says nothing at run time.
+primitives-and-literals.ts:0 role `` = Checked
+primitives-and-literals.ts:2 shape `any` = Anything(Any)
+primitives-and-literals.ts:3 shape `unknown` = Anything(Unknown)
+primitives-and-literals.ts:4 shape `never` = Never
+primitives-and-literals.ts:5 shape `undefined` = Undefined
+primitives-and-literals.ts:6 shape `null` = Null
+primitives-and-literals.ts:7 shape `boolean` = Boolean
+primitives-and-literals.ts:8 shape `true` = BooleanLiteral(true)
+primitives-and-literals.ts:9 shape `number` = Number
+primitives-and-literals.ts:9 written `number` = number
+primitives-and-literals.ts:10 shape `1.5` = NumberLiteral(1.5)
+primitives-and-literals.ts:11 shape `bigint` = BigInt
+primitives-and-literals.ts:12 shape `-12n` = BigIntLiteral(-12)
+primitives-and-literals.ts:13 shape `string` = String
+primitives-and-literals.ts:14 shape `"a"` = StringLiteral("a")
+primitives-and-literals.ts:15 shape ``a${string}b`` = TemplateLiteral("a", string, "b")
+primitives-and-literals.ts:16 shape `symbol` = Symbol
+primitives-and-literals.ts:17 shape `object` = AnyObject
+primitives-and-literals.ts:18 shape `Uppercase<string>` = String
+primitives-and-literals.ts:19 shape `() => void` = Function(1)
+primitives-and-literals.ts:20 shape `void` = Anything(Void)
+primitives-and-literals.ts:21 shape `unique symbol` = Symbol
+primitives-and-literals.ts:22 shape `Function` = Function(0)

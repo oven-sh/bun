@@ -44,7 +44,6 @@ const needNoCompiler = [
   "aot/abort-is-reported.test.ts",
   "aot/a-prototype-object-is-no-instance.test.ts",
   "aot/backend/memory.test.ts",
-  "aot/builtins/differential.test.ts",
   "aot/builtins/native-contract.test.ts",
   "aot/builtins/native-contract/noticed-changes.test.ts",
   "aot/names-read-from-a-loaded-barrel.test.ts",

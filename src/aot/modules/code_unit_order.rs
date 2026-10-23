@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use bun_core::strings;
 use core::cmp::Ordering;
 

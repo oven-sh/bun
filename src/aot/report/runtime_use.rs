@@ -289,3 +289,6 @@ fn write_feature(line: &mut Vec<u8>, feature: Feature) {
         line.push(b')');
     }
 }
+
+#[cfg(test)]
+mod tests;

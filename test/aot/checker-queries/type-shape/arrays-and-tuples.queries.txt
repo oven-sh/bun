@@ -1,0 +1,9 @@
+# Arrays and tuples keep their element types, element kinds and `readonly`.
+arrays-and-tuples.ts:2 shape `number[]` = Array(number)
+arrays-and-tuples.ts:3 shape `readonly string[]` = Array(readonly string)
+arrays-and-tuples.ts:4 shape `Array<number>` = Array(number)
+arrays-and-tuples.ts:5 shape `ReadonlyArray<string>` = Array(readonly string)
+arrays-and-tuples.ts:6 shape `[number, string]` = Tuple(Required number, Required string)
+arrays-and-tuples.ts:7 shape `[number, ...string[]]` = Tuple(Required number, Rest string)
+arrays-and-tuples.ts:8 shape `readonly [number]` = Tuple(readonly Required number)
+arrays-and-tuples.ts:10 shape `[...T, number]` = Tuple(Variadic T, Required number)

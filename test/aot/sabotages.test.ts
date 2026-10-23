@@ -10,7 +10,7 @@
 //   AOT_SABOTAGE=<text> bun test test/aot/sabotages      the names that contain the text
 import { afterAll, expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibc, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { registry } from "./harness/registry";
 import { built, slot, spawned, told, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
@@ -32,6 +32,10 @@ const underCollections: Environment[] = [
 type Row = { folder: string; flags: string[]; programs: string[] };
 const innerObjects = (...programs: string[]): Row => ({ folder: "inner-objects", flags: [], programs });
 
+// A program notices an inner cell that kept its header only through a word that an earlier frame left on the stack. Which words are left hangs on the
+// frames of the system's libraries and on the registers the architecture saves: the programs below have shown it in every run with glibc on x64 and nowhere else.
+const leavesStaleWordsOnTheStack = isGlibc && !isArm64;
+
 /** The programs under ./programs that must notice each sabotage. */
 const noticedBy: Record<string, Row> = {
   StackNamesNoInnerCell: innerObjects("the-inner-object-is-held-by-a-local-variable-alone.ts"),
@@ -49,15 +53,20 @@ const noticedBy: Record<string, Row> = {
     "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
   ),
   // Not at a collection at every allocation that leaves the fast path: at every fifth.
-  InnerCellLetGoKeepsItsHeader: innerObjects(
-    "three-levels-are-held-let-go-and-filled-again.ts",
-    "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
-  ),
+  ...(leavesStaleWordsOnTheStack && {
+    InnerCellLetGoKeepsItsHeader: innerObjects(
+      "three-levels-are-held-let-go-and-filled-again.ts",
+      "an-object-with-a-room-lies-in-the-cell-of-a-third.ts",
+    ),
+  }),
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {
   // It needs a 32-bit reference in half a word of the stack as the only holder.
   NarrowReferenceOnStackNamesNoInnerCell: "inner-objects/sabotaged/narrow-reference-on-stack-names-no-inner-cell",
+  ...(!leavesStaleWordsOnTheStack && {
+    InnerCellLetGoKeepsItsHeader: "inner-objects/sabotaged/inner-cell-let-go-keeps-its-header",
+  }),
 };
 
 const listed = unsupported ? undefined : registry().sabotages;

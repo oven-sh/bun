@@ -5,7 +5,7 @@ import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from 
 import { join } from "node:path";
 import { run as runCommand } from "../harness/run";
 
-const shipsNoBuildForThisPlatform = process.platform === "win32" && process.arch === "arm64" ? ["argon2"] : [];
+const shipsNoBuildForThisPlatform = ["win32-arm64", "darwin-x64"].includes(`${process.platform}-${process.arch}`) ? ["argon2"] : [];
 
 function testEachProgram(
   folder: string,

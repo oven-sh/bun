@@ -1,0 +1,2 @@
+# A tag that is implicitly `any` because there is no `JSX.IntrinsicElements` says nothing about run-time behavior.
+main.tsx:2 diagnostic TS7026 = Style StopsBuild

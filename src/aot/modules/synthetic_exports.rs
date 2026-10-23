@@ -194,3 +194,149 @@ fn is_known_member(
         _ => true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::module_set::collect_modules;
+    use crate::modules::requests::scan_files;
+    use crate::modules::testing::{file_named, with_graph, with_runtime_graph};
+    use crate::modules::{ExportBinding, ImportBinding, ModuleGraph};
+    use bun_sema::bind::Decl;
+    use bun_sema::hir::ImportId;
+
+    fn name_of<'a>(input: &BindInput<'a, '_>, export: &SyntheticExport) -> &'a str {
+        let name = core::str::from_utf8(input.files.atoms.bytes(export.name));
+        name.expect("the programs of these tests export ASCII names")
+    }
+
+    fn first_named_import(
+        graph: &ModuleGraph,
+        input: &BindInput<'_, '_>,
+        importer: &str,
+    ) -> ImportBinding {
+        let file = file_named(input, importer);
+        let mut specifiers = input.files.hir(file)[ImportId(0)].named.iter();
+        let specifier = specifiers
+            .next()
+            .expect("the first import has no named specifier");
+        let bound = input.files.bound(file);
+        graph.import_binding(file, bound.declared_symbol(Decl::ImportSpec(specifier)))
+    }
+
+    fn only_export(
+        graph: &ModuleGraph,
+        input: &BindInput<'_, '_>,
+        exporter: &str,
+    ) -> ExportBinding {
+        let [export] = graph.exports(file_named(input, exporter)) else {
+            panic!("{exporter} does not have exactly one export");
+        };
+        export.binding
+    }
+
+    #[test]
+    fn ids_follow_module_and_name_order() {
+        let files = [
+            (
+                "main.js",
+                "import { b, a, Z } from './c.cjs'; import './reexport.js';",
+            ),
+            ("reexport.js", "export { Buffer } from 'node:buffer';"),
+            ("c.cjs", "module.exports = { a: 1, b: 2, Z: 3 };"),
+        ];
+        with_graph(&files, |graph, input| {
+            let exports = graph.synthetic_exports();
+            let names: Vec<&str> = exports
+                .iter()
+                .map(|export| name_of(input, export))
+                .collect();
+            assert_eq!(names, ["Z", "a", "b", "Buffer"]);
+            let commonjs_module = ModuleRef::File(file_named(input, "c.cjs"));
+            assert!(
+                exports[..3]
+                    .iter()
+                    .all(|export| export.module == commonjs_module)
+            );
+            assert!(matches!(exports[3].module, ModuleRef::Runtime(_)));
+            let last_id = ExportBinding::Synthetic(SyntheticExportId(3));
+            assert_eq!(only_export(graph, input, "reexport.js"), last_id);
+        });
+    }
+
+    #[test]
+    fn one_id_per_module_and_name() {
+        let main = "
+            import { x } from './c.cjs';
+            import { x as other } from './other.cjs';
+            import './second.js';
+            import './barrel.js';
+        ";
+        let files = [
+            ("main.js", main),
+            ("second.js", "import { x } from './c.cjs';"),
+            ("barrel.js", "export { x } from './c.cjs';"),
+            ("c.cjs", "exports.x = 1;"),
+            ("other.cjs", "exports.x = 2;"),
+        ];
+        with_graph(&files, |graph, input| {
+            let ImportBinding::Synthetic(id) = first_named_import(graph, input, "main.js") else {
+                panic!("a name of a CommonJS module is a synthetic export");
+            };
+            let second = first_named_import(graph, input, "second.js");
+            assert_eq!(second, ImportBinding::Synthetic(id));
+            assert_eq!(
+                only_export(graph, input, "barrel.js"),
+                ExportBinding::Synthetic(id)
+            );
+            let commonjs_module = ModuleRef::File(file_named(input, "c.cjs"));
+            assert_eq!(graph.synthetic_export(id).module, commonjs_module);
+            assert_eq!(graph.synthetic_exports().len(), 2);
+        });
+    }
+
+    #[test]
+    fn member_paths_ask_for_ids() {
+        let files = [
+            (
+                "main.js",
+                "import * as ns from './c.cjs'; export const x = ns.x;",
+            ),
+            ("c.cjs", "exports.x = 1;"),
+        ];
+        with_graph(&files, |graph, input| {
+            let [export] = graph.synthetic_exports() else {
+                panic!("ns.x asks for exactly one synthetic export");
+            };
+            assert_eq!(export.module, ModuleRef::File(file_named(input, "c.cjs")));
+            assert_eq!(name_of(input, export), "x");
+        });
+    }
+
+    #[test]
+    fn known_member_of_bun_module() {
+        let main = "
+            import { x } from './c.cjs';
+            export { Buffer, nope } from 'node:buffer';
+            import 'node:path';
+        ";
+        let files = [("main.js", main), ("c.cjs", "exports.x = 1;")];
+        with_graph(&files, |graph, input| {
+            let exports = graph.synthetic_exports().iter();
+            let known_members: Vec<(&str, bool)> = exports
+                .map(|export| (name_of(input, export), export.is_known_member))
+                .collect();
+            assert_eq!(
+                known_members,
+                [("x", false), ("Buffer", true), ("nope", false)]
+            );
+        });
+        with_runtime_graph(&files, |_, input| {
+            let modules = collect_modules(input, &scan_files(input));
+            let source = ModuleRef::File(file_named(input, "/$bun/js/node/path.ts"));
+            let atom = |text: &str| input.files.atoms.intern(text.as_bytes());
+            assert!(is_known_member(input, &modules, source, atom("join")));
+            assert!(!is_known_member(input, &modules, source, atom("nope")));
+        });
+    }
+}

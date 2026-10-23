@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
@@ -45,6 +45,14 @@ const loadsNativeCode = {
     ...featuresOf("cli", "native-code", "sqlite", "secrets", "terminal", "webview", "image", "dns", "bundler"),
     featureNamed("NodeFs"),
     featureOf("process.versions"),
+    // macOS reads the system's certificates through Security.framework, which it opens by name.
+    ...(isMacOS
+      ? [
+          ...featuresOf("sql", "redis", "s3", "fetch", "sockets", "http3", "websocket"),
+          featureNamed("Tls"),
+          featureNamed("TlsSockets"),
+        ]
+      : []),
   ],
 };
 

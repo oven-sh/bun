@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "source_provider/tests.rs"]
+mod tests;
+
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::log_diagnostic;
 use crate::load::data_modules::parse_json;

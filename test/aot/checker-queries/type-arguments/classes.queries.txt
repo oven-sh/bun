@@ -1,0 +1,26 @@
+# A class type lists each type parameter of the class together with its type argument. The type parameters of what encloses the class come first among the checker's arguments and are not listed.
+classes.ts:15 class type argument `Box<Item>` = V = Item
+classes.ts:16 class type argument `Box<Box<Other>>` = V = Box<Other>
+classes.ts:16 class type argument `Box<Other>` = V = Other
+ordered: classes.ts:17 class type argument `Pair<Item, number>` = A = Item
+ordered: classes.ts:17 class type argument `Pair<Item, number>` = B = number
+
+# Defaults are arguments.
+ordered: classes.ts:18 class type argument `Cache` = K = string
+ordered: classes.ts:18 class type argument `Cache` = E = Item
+ordered: classes.ts:19 class type argument `Cache<number>` = K = number
+ordered: classes.ts:19 class type argument `Cache<number>` = E = Item
+
+# Only the type parameters of the class itself, not those of its base class.
+classes.ts:20 class type argument `Derived<Other>` = X = Other
+absent: classes.ts:20 class type argument `Derived<Other>` = V = Other
+
+# The declared type of the class and `unknown` say nothing.
+absent: classes.ts:6 class type argument `Box<V>` = V = V
+absent: classes.ts:21 class type argument `Box<unknown>` = V = unknown
+
+# `Inner<Item>` has the arguments `O, Item`.
+classes.ts:26 class type argument `Inner<Item>` = I = Item
+absent: classes.ts:26 class type argument `Inner<Item>` = I = O
+absent: classes.ts:26 class type argument `Inner<Item>` = O = O
+classes.ts:27 class type argument `Inner<O>` = I = O

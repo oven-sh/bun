@@ -140,6 +140,8 @@ export const define: Record<string, string> = {
   "CAN_LOAD_CODE_AT_RUN_TIME": "true",
   // `bun compile` replaces the value: false for a program that never names node:cluster.
   "CAN_BE_CLUSTER_WORKER": "true",
+  // `bun compile` replaces the value: true where these files are compiled ahead of time.
+  "IS_COMPILED_AHEAD_OF_TIME": "false",
 
   "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),

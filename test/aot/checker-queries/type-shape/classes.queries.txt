@@ -1,0 +1,7 @@
+# A compiled class has a class shape; a class only a type edge reaches is an object.
+classes.ts:3 shape `this` = Class(classes.ts:3)
+classes.ts:3 primitives `this` = none
+classes.ts:4 shape `C` = Class(classes.ts:3)
+classes.ts:4 primitives `C` = none
+classes.ts:5 shape `typeof C` = ClassConstructor(classes.ts:3)
+classes.ts:6 shape `Other` = Object

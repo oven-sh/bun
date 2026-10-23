@@ -25,6 +25,8 @@ pub(in crate::lower) use self::containers::container_layout;
 pub(crate) use self::containers::{
     begins_with_exports_object, module_exports_layout, module_type_layout,
 };
+#[cfg(test)]
+pub(crate) use self::defined_object_types::late_answers;
 pub use self::defined_object_types::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 use self::defined_object_types::{
     HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE, NamesOfObjectType,

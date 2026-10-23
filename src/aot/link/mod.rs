@@ -20,6 +20,8 @@ mod step_times;
 mod strings;
 #[cfg(test)]
 pub(crate) mod testing;
+#[cfg(test)]
+mod tests;
 mod type_hashes;
 mod types;
 mod unit;

@@ -164,3 +164,289 @@ fn find_module_origin(
         _ => ModuleOrigin::Program,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins::RuntimeModule;
+    use crate::ir::ModuleId;
+    use crate::link::state::ProgramCounts;
+    use crate::link::testing::with_projects;
+    use crate::lower::{FragmentBuilder, ModuleFragment};
+    use crate::modules::ModuleRef;
+    use bun_sema::hir::FnId;
+    use bun_sema::program::FileId;
+
+    const PROJECT_ROOT: &[u8] = b"/project/";
+
+    type Projects<'a, 's> = PerProject<LinkProject<'a, 's>>;
+
+    fn collect(projects: &Projects<'_, '_>, units: &[LinkUnit]) -> ModuleTable {
+        collect_modules(projects, units, &projects.application.loaded.files().atoms)
+    }
+
+    fn find_file(projects: &Projects<'_, '_>, name: &str) -> FileId {
+        let path = [PROJECT_ROOT, name.as_bytes()].concat();
+        let file = projects.application.loaded.files().by_path.get(&path);
+        file.expect("the program has no file with this name")
+    }
+
+    fn application_module(projects: &Projects<'_, '_>, module: ModuleRef) -> ProgramModule {
+        key_context(projects, ProjectId::Application).module(module)
+    }
+
+    fn application_file(projects: &Projects<'_, '_>, name: &str) -> ProgramModule {
+        application_module(projects, ModuleRef::File(find_file(projects, name)))
+    }
+
+    fn runtime_source(projects: &Projects<'_, '_>, module: RuntimeModule) -> ProgramModule {
+        let file = projects.runtime.sources.runtime_module_file(module);
+        ProgramModule::File(ProgramFile {
+            project: ProjectId::Runtime,
+            file: file.expect("the runtime project has no source of this module"),
+        })
+    }
+
+    fn create_external(projects: &Projects<'_, '_>, importer: &str, specifier: &[u8]) -> ModuleRef {
+        ModuleRef::External {
+            importer: find_file(projects, importer),
+            specifier: projects.application.loaded.files().atoms.intern(specifier),
+        }
+    }
+
+    fn create_unit(projects: &Projects<'_, '_>, name: &str, declared: &[ModuleRef]) -> LinkUnit {
+        let mut fragment = FragmentBuilder::new(find_file(projects, name));
+        for &module in declared {
+            fragment.declare_module(module);
+        }
+        let keys = key_context(projects, ProjectId::Application);
+        LinkUnit::new(&keys, fragment.finish(ModuleFragment::default()))
+    }
+
+    fn count_of(table: &ModuleTable, module: ProgramModule) -> usize {
+        let listed_modules = table.modules.iter();
+        listed_modules.filter(|&&listed| listed == module).count()
+    }
+
+    fn number_modules(table: &ModuleTable, is_kept: impl Fn(ProgramModule) -> bool) -> Numbering {
+        let mut counts = ProgramCounts::default();
+        let modules = table
+            .modules
+            .iter()
+            .map(|&module| {
+                let id = is_kept(module).then(|| ModuleId::new(counts.modules));
+                counts.modules += usize::from(id.is_some());
+                id
+            })
+            .collect();
+        Numbering {
+            functions: Vec::new(),
+            layouts: Vec::new(),
+            variables: Vec::new(),
+            modules,
+            module_failures: PerProject::default(),
+            counts,
+            units: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bun_module_is_listed_once() {
+        with_projects(&[("index.ts", "import 'node:path';")], |projects| {
+            let imported = ModuleRef::Runtime(RuntimeModule::NodePath);
+            let named_modules = projects.application.graph.other_modules();
+            assert!(named_modules.contains(&imported));
+            let source = runtime_source(projects, RuntimeModule::NodePath);
+            assert_eq!(application_module(projects, imported), source);
+
+            let unit = create_unit(projects, "index.ts", &[imported]);
+            let table = collect(projects, &[unit]);
+            assert_eq!(count_of(&table, source), 1);
+            let without_source = ProgramModule::Runtime(RuntimeModule::NodePath);
+            assert_eq!(count_of(&table, without_source), 0);
+        });
+    }
+
+    #[test]
+    fn modules_are_ordered_by_project_and_file() {
+        let index = "import './b.ts'; import './a.ts'; import 'node:buffer'; import 'node:path';";
+        let files = [
+            ("index.ts", index),
+            ("a.ts", "export {};"),
+            ("b.ts", "export {};"),
+        ];
+        with_projects(&files, |projects| {
+            let externals = [&b"z"[..], b"a"];
+            let externals = externals.map(|name| create_external(projects, "index.ts", name));
+            let table = collect(projects, &[create_unit(projects, "index.ts", &externals)]);
+
+            let leading_files = table.modules.iter().map_while(|&module| match module {
+                ProgramModule::File(file) => Some(file),
+                _ => None,
+            });
+            let leading_files: Vec<ProgramFile> = leading_files.collect();
+            let record_files = projects.iter();
+            let record_files = record_files.map(|(_, project)| project.graph.record_files().len());
+            assert_eq!(leading_files.len(), record_files.sum::<usize>());
+            assert!(leading_files.is_sorted_by(|first, second| first < second));
+
+            let [external_z, external_a] =
+                externals.map(|module| application_module(projects, module));
+            let entry_point = application_file(projects, "index.ts");
+            let modules_in_order = [
+                entry_point,
+                runtime_source(projects, RuntimeModule::NodePath),
+                ProgramModule::Runtime(RuntimeModule::NodeBuffer),
+                external_a,
+                external_z,
+            ];
+            let indexes = modules_in_order.map(|module| table.index_of(module));
+            assert!(indexes.is_sorted_by(|first, second| first < second));
+
+            let units = table.unit_by_module.iter();
+            for (index, (&module, &unit)) in (0..).zip(table.modules.iter().zip(units)) {
+                assert_eq!(table.index_of(module), index);
+                assert_eq!(unit, (module == entry_point).then_some(0));
+            }
+        });
+    }
+
+    #[test]
+    fn declared_external_is_listed() {
+        let files = [
+            ("index.ts", "import './other.ts';"),
+            ("other.ts", "export {};"),
+        ];
+        with_projects(&files, |projects| {
+            let declared = [
+                create_external(projects, "index.ts", b"package"),
+                ModuleRef::Runtime(RuntimeModule::NodeBuffer),
+            ];
+            let [external, runtime] = declared.map(|module| application_module(projects, module));
+            assert_eq!(count_of(&collect(projects, &[]), external), 0);
+
+            let names = ["index.ts", "other.ts"];
+            let mut units = names.map(|name| create_unit(projects, name, &declared));
+            units.sort_unstable_by_key(|unit| unit.file);
+            let table = collect(projects, &units);
+            assert_eq!(count_of(&table, external), 1);
+            assert_eq!(count_of(&table, runtime), 1);
+            assert_eq!(
+                table.unit_by_module[table.index_of(external) as usize],
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn further_records_of_a_file_follow_its_own() {
+        let files = [
+            ("index.ts", "import './legacy.cjs';"),
+            ("legacy.cjs", "exports.a = 1;"),
+        ];
+        with_projects(&files, |projects| {
+            let [index, legacy] = ["index.ts", "legacy.cjs"].map(|name| find_file(projects, name));
+            let inner = |callback| ModuleRef::Inner {
+                file: legacy,
+                callback: FnId(callback),
+            };
+            let declared = [
+                ModuleRef::Check(index),
+                ModuleRef::Face(legacy),
+                inner(4),
+                inner(2),
+            ];
+            let names = ["index.ts", "legacy.cjs"];
+            let mut units = names.map(|name| create_unit(projects, name, &declared));
+            units.sort_unstable_by_key(|unit| unit.file);
+            let table = collect(projects, &units);
+
+            let records_of_index = [ModuleRef::File(index), ModuleRef::Check(index)];
+            let records_of_legacy = [
+                ModuleRef::File(legacy),
+                inner(2),
+                inner(4),
+                ModuleRef::Face(legacy),
+            ];
+            for records in [&records_of_index[..], &records_of_legacy[..]] {
+                let records = records
+                    .iter()
+                    .map(|&module| application_module(projects, module));
+                let records: Vec<ProgramModule> = records.collect();
+                let first = table.index_of(records[0]) as usize;
+                assert_eq!(table.modules[first..first + records.len()], records);
+                let units_of_records = &table.unit_by_module[first..first + records.len()];
+                assert!(
+                    units_of_records
+                        .iter()
+                        .all(|&unit| unit == units_of_records[0])
+                );
+                assert!(units_of_records[0].is_some());
+            }
+
+            let origins =
+                collect_module_origins(projects, &table, &number_modules(&table, |_| true));
+            let face = application_module(projects, ModuleRef::Face(legacy));
+            assert_eq!(
+                origins[table.index_of(face) as usize],
+                ModuleOrigin::Program
+            );
+        });
+    }
+
+    #[test]
+    fn origins_follow_file_origin() {
+        let main = "import './types.d.ts'; import 'dep'; import 'node:path'; import 'node:buffer';";
+        let files = [
+            ("main.js", main),
+            ("types.d.ts", "export declare const x: number;"),
+            ("node_modules/dep/package.json", r#"{ "name": "dep" }"#),
+            ("node_modules/dep/index.js", "exports.x = 1;"),
+        ];
+        with_projects(&files, |projects| {
+            let external = create_external(projects, "main.js", b"package");
+            let table = collect(projects, &[create_unit(projects, "main.js", &[external])]);
+            let origins =
+                collect_module_origins(projects, &table, &number_modules(&table, |_| true));
+            assert_eq!(origins.len(), table.modules.len());
+
+            let entry_point = application_file(projects, "main.js");
+            let dependency = application_file(projects, "node_modules/dep/index.js");
+            let expected_origins = [
+                (entry_point, ModuleOrigin::Program),
+                (
+                    application_file(projects, "types.d.ts"),
+                    ModuleOrigin::Program,
+                ),
+                (dependency, ModuleOrigin::Dependency),
+                (
+                    runtime_source(projects, RuntimeModule::NodePath),
+                    ModuleOrigin::Runtime,
+                ),
+                (
+                    ProgramModule::Runtime(RuntimeModule::NodeBuffer),
+                    ModuleOrigin::Runtime,
+                ),
+                (
+                    application_module(projects, external),
+                    ModuleOrigin::Dependency,
+                ),
+            ];
+            for (module, origin) in expected_origins {
+                assert_eq!(
+                    origins[table.index_of(module) as usize],
+                    origin,
+                    "{module:?}"
+                );
+            }
+
+            let numbering = number_modules(&table, |module| module != dependency);
+            let mut kept_origins = origins;
+            kept_origins.remove(table.index_of(dependency) as usize);
+            assert_eq!(
+                collect_module_origins(projects, &table, &numbering),
+                kept_origins
+            );
+        });
+    }
+}

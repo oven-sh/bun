@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use super::keys::MergedKeys;
 use super::layout_order::order_program_layouts;
 use super::program_keys::{ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey};

@@ -61,6 +61,47 @@ pub(crate) fn with_ast_scope<R>(work: impl FnOnce(&Arena) -> R) -> R {
     work(&arena)
 }
 
+#[cfg(test)]
+pub(crate) fn with_test_context<R>(
+    configure: impl FnOnce(&mut BundleOptions<'_>),
+    then: impl FnOnce(&BuildContext) -> R,
+) -> R {
+    static OUTPUT: std::sync::Once = std::sync::Once::new();
+    OUTPUT.call_once(bun_core::output::stdio::init);
+    let mut log = Log::init();
+    let mut event_loop = bun_event_loop::AnyEventLoop::default();
+    let arena = Arena::new();
+    let transform_options = crate::options::TransformOptions {
+        absolute_working_dir: Some(Box::from(&b"/project"[..])),
+        target: Some(bun_options_types::schema::api::Target::Bun),
+        ..Default::default()
+    };
+    let transpiler = arena.alloc(
+        Transpiler::init(&arena, &raw mut log, transform_options, None)
+            .expect("default options are valid"),
+    );
+    configure(&mut transpiler.options);
+    let mut bundle = BundleV2::init(
+        transpiler,
+        None,
+        &arena,
+        Some(NonNull::from(&mut event_loop)),
+        false,
+        None,
+        &arena,
+    )
+    .expect("the carrier starts");
+    let context = BuildContext {
+        bundle: NonNull::from(&mut *bundle).cast(),
+        module_prefix: Box::from(&b"/$bunfs/root/"[..]),
+    };
+    let result = then(&context);
+    drop(context);
+    bundle.deinit_without_freeing_arena();
+    drop(bundle);
+    result
+}
+
 pub(crate) struct BundlerServices {
     context: BuildContext,
     plugins: Option<PluginRequests>,
@@ -197,5 +238,53 @@ impl SourceProvider for BundlerServices {
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
         self.embedded.check_names(log)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BundlerServices, with_ast_scope, with_test_context};
+    use bun_aot::SourceProvider;
+    use bun_aot::load::source_provider::ModuleName;
+    use bun_ast::{E, Expr, ExprData, Loc};
+
+    fn allocate_array() -> Expr {
+        Expr::init(E::Array::default(), Loc::EMPTY)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn build_without_plugins_has_no_load_plugin() {
+        with_test_context(
+            |_| {},
+            |context| {
+                let services =
+                    BundlerServices::new(context.bundle_pointer(), &context.module_prefix);
+                for namespace in [&b"file"[..], b"virtual"] {
+                    assert!(!services.has_load_plugin(ModuleName {
+                        namespace,
+                        path: b"/project/a.ts",
+                    }));
+                }
+                assert!(services.shut_down().is_empty());
+            },
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn nested_ast_scopes_restore_outer_store() {
+        with_ast_scope(|_| {
+            let before = allocate_array();
+            with_ast_scope(|_| {
+                with_ast_scope(|_| {
+                    assert!(matches!(allocate_array().data, ExprData::EArray(_)));
+                });
+                assert!(matches!(allocate_array().data, ExprData::EArray(_)));
+            });
+            let after = allocate_array();
+            assert!(matches!(before.data, ExprData::EArray(_)));
+            assert!(matches!(after.data, ExprData::EArray(_)));
+        });
     }
 }

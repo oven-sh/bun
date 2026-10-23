@@ -91,3 +91,38 @@ fn order_layouts(
     }
     order
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn order_by_edges(roots: &[u32], edges: &[(u32, u32)]) -> Vec<u32> {
+        order_layouts(roots.len(), roots, &|layout| {
+            let own_edges = edges.iter().filter(|edge| edge.0 == layout);
+            own_edges.map(|edge| edge.1).collect()
+        })
+    }
+
+    #[test]
+    fn predecessors_precede_roots() {
+        assert_eq!(order_by_edges(&[2, 0, 1], &[]), [2, 0, 1]);
+        assert_eq!(order_by_edges(&[0, 1], &[(0, 1)]), [1, 0]);
+        assert_eq!(order_by_edges(&[0, 1, 2], &[(0, 1), (0, 2)]), [1, 2, 0]);
+        assert_eq!(order_by_edges(&[0, 1, 2], &[(0, 2), (1, 2)]), [2, 0, 1]);
+    }
+
+    #[test]
+    fn long_base_chain_is_ordered() {
+        let roots: Vec<u32> = (0..10_000).collect();
+        let order = order_layouts(roots.len(), &roots, &|layout| {
+            (layout + 1..10_000).take(1).collect()
+        });
+        assert!(order.iter().rev().eq(&roots));
+    }
+
+    #[test]
+    fn cycle_lists_each_layout_once() {
+        assert_eq!(order_by_edges(&[0, 1], &[(0, 1), (1, 0)]), [1, 0]);
+        assert_eq!(order_by_edges(&[1, 0], &[(0, 1), (1, 0)]), [0, 1]);
+    }
+}

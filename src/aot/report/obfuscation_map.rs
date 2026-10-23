@@ -157,3 +157,6 @@ fn push_delta(out: &mut Vec<u8>, previous: &mut i32, value: u32) {
 fn push_vlq(out: &mut Vec<u8>, value: i32) {
     out.extend_from_slice(VLQ::encode(value).slice());
 }
+
+#[cfg(test)]
+mod tests;

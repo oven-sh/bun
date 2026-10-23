@@ -1,0 +1,7 @@
+# A condition that is always true, an operand that is never reached and `override` where nothing is overridden say nothing about a type: Style, which costs a dependency nothing.
+main.ts:2 diagnostic TS2869 = Style StopsBuild
+main.ts:3 diagnostic TS2774 = Style StopsBuild
+main.ts:4 diagnostic TS2872 = Style StopsBuild
+main.ts:5 diagnostic TS1313 = Style StopsBuild
+main.ts:7 diagnostic TS4113 = Style StopsBuild
+main.ts:8 diagnostic TS4112 = Style StopsBuild

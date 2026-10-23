@@ -70,3 +70,6 @@ fn write_passes(json: &mut JsonWriter) {
 fn write_names<'a>(json: &mut JsonWriter, key: &str, names: impl Iterator<Item = &'a str>) {
     json.strings(key, names.map(str::as_bytes));
 }
+
+#[cfg(test)]
+mod tests;

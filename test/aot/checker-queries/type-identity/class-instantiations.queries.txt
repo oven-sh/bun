@@ -1,0 +1,6 @@
+# Instantiations of a generic class share an identity, unless they accept different primitives.
+same: class-instantiations.ts:4 identity `Box<number>` <=> class-instantiations.ts:5 identity `Box<string>`
+
+class-instantiations.ts:6 primitives `Wrapper<number>` = number
+class-instantiations.ts:7 primitives `Wrapper<string>` = string
+different: class-instantiations.ts:6 identity `Wrapper<number>` <=> class-instantiations.ts:7 identity `Wrapper<string>`

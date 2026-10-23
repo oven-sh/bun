@@ -1,0 +1,2 @@
+# The check of first.ts reports the error in second.ts. A statement that is removed from first.ts covers the same offsets there, which says nothing about second.ts.
+second.ts:2 diagnostic TS2432 = Semantic StopsBuild

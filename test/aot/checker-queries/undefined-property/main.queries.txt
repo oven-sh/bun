@@ -1,0 +1,4 @@
+# The `error?: undefined` that `{ data: 1 }` gets beside `{ error: e }` is declared by that union, not by the first file of the same checker that used the name. heavy.ts makes a task hold more than one of the small files.
+untyped.js:1 returns `make` = { data: number; error?: undefined; } | { data?: undefined; error: any; }
+different: main.ts:4 identity `first(true)` <=> main.ts:5 identity `make(true, "e")`
+same: untyped.js:2 identity `make(true, 1)` <=> main.ts:5 identity `make(true, "e")`

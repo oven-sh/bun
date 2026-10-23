@@ -1,5 +1,8 @@
 //! What the build knows of the module graph, as the rest of the front end asks for it.
 
+#[cfg(test)]
+mod tests;
+
 use super::bindings::{
     Holder, ImportBinding, ModuleExport, ModuleRequest, SyntheticExport, SyntheticExportId,
 };

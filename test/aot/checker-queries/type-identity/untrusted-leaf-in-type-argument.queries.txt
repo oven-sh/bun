@@ -1,0 +1,3 @@
+# The trust of a leaf is part of an identity: a type argument that a checked file declares and an equal one that only a `.d.ts` declares give two identities.
+different: untrusted-leaf-in-type-argument.ts:5 identity `Box<E>` <=> untrusted-leaf-in-type-argument.ts:6 identity `Box<F>`
+same: untrusted-leaf-in-type-argument.ts:5 identity `Box<E>` <=> untrusted-leaf-in-type-argument.ts:7 identity `Box<E>`

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use super::ModuleRef;
 use super::bindings::{
     AccessedModule, Candidates, ExportBinding, ExportLookup, ExportUse, Holder, ImportBinding,

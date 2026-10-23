@@ -1,0 +1,21 @@
+# An enum member access is a constant, unless the enum is imported or only declared, or its name is unbound at run time. A member of an imported `const` enum is a constant too.
+enum-access.ts:5 enum member `A = 1` = 1
+enum-access.ts:8 enum `E.A` = 1
+enum-access.ts:9 enum `E["B"]` = "b"
+enum-access-other.ts:2 enum member `X = 7` = 7
+enum-access-other.ts:3 enum member `X = 9` = 9
+enum-access.ts:23 enum `K.X` = 9
+enum-access.ts:24 enum `L["X"]` = 9
+enum-access.ts:25 enum `all.K.X` = 9
+enum-access-script.ts:2 enum member `T = 8` = 8
+
+absent: enum-access.ts:10 enum `F.X` = 7
+absent: enum-access.ts:11 enum `G.Y` = 3
+absent: enum-access.ts:15 enum `H.Z` = 4
+absent: enum-access.ts:16 enum `I.W` = 5
+absent: enum-access.ts:17 enum `N.J.V` = 6
+absent: enum-access.ts:19 enum `S.T` = 8
+absent: enum-access.ts:26 enum `all.F.X` = 7
+
+# Every file of a build is a module, so the enum of the script is not a global and `S` is unbound here.
+enum-access.ts:19 diagnostic TS2304 = MissingDeclaration StopsBuild

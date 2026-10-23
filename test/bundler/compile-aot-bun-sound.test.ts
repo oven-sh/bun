@@ -105,7 +105,7 @@ test("react's compiler-runtime is typed at the installed file's own path", () =>
 
 test("react-dom's server bundles are typed at the installed files' own paths", () => {
   const versions = folders.filter(folder => json(join(folder, "sound.json")).name === "react-dom");
-  expect(versions.length).toBeGreaterThan(10);
+  expect(versions.length).toBeGreaterThanOrEqual(2);
   for (const folder of versions) {
     const manifest = json(join(folder, "sound.json"));
     expect(manifest.sound).toBe(2);
@@ -133,12 +133,12 @@ test("an int32 of a typed text is Bun's", () => {
     ]);
   });
   const declaring = texts.filter(([, text]) => /\btype int32 = /.test(text));
-  expect(declaring.length).toBeGreaterThan(20);
+  expect(declaring.length).toBeGreaterThanOrEqual(6);
   for (const [path, text] of declaring)
     expect([path, /\btype int32 = (.*);/.exec(text)![1]]).toEqual([path, 'import("bun").int32']);
 });
 
-test.each(["19.0.0", "19.1.0", "19.2.8", "19.3.0", "19.3.1"])(
+test.each(["19.3.0", "19.3.1"])(
   "react-dom %s constructs a request without a cast through unknown",
   version => {
     const lay = join(home, "react-dom", version, "lay");

@@ -100,12 +100,14 @@ function get(): Frame | undefined {
 }
 
 // Until a frame is put in place for the first time, every context that a job could capture is undefined, and the engine captures and restores nothing.
+// Compiled code waits for that frame, which keeps an await short in a program that only creates an AsyncLocalStorage. Under the JIT an await costs
+// the same either way, and a call in set() that is never made again costs every run(): there the constructors turn tracking on.
 let isTrackingEnabled = false;
 
 function set(frame: Frame | undefined) {
   $assert(assertValidFrame(frame));
   $debug("set", debugFormatContextValue(frame));
-  if (!isTrackingEnabled && frame !== undefined) {
+  if (IS_COMPILED_AHEAD_OF_TIME && !isTrackingEnabled && frame !== undefined) {
     isTrackingEnabled = true;
     setAsyncHooksEnabled(true);
   }
@@ -228,6 +230,7 @@ class AsyncLocalStorage<T = any> {
         this.#name = `${name}`;
       }
     }
+    if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
 
     // In debug mode assign every AsyncLocalStorage a unique ID
     if (IS_BUN_DEVELOPMENT) {
@@ -385,6 +388,7 @@ class AsyncResource {
       throw $ERR_ASYNC_TYPE(type);
     }
 
+    if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;

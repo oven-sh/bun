@@ -84,6 +84,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             facts.can_load_code_at_run_time,
         ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
+        define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
     ];
     let defines: Vec<Define<'s>> = manifest_defines
         .iter()
@@ -180,4 +181,368 @@ fn define_value<'s>(value: &'s DataValue<'s>) -> Option<DefineValue<'s>> {
         DataValue::Undefined | DataValue::BigInt(_) => return None,
     };
     Some(DefineValue::Constant(constant))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use bun_builtin_sources::Archive;
+    use bun_sema::bind::{BindOptions, RuntimeBindOptions};
+    use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
+    use bun_sema::fold::{Decision, FoldErrorKind};
+    use bun_sema::hir::{ExprId, ExprKind};
+    use bun_sema::import_sites::JsxMode;
+    use bun_sema::module_format::DeclaredModuleType;
+    use bun_sema::program::{FileId, Files};
+    use bun_sema::session::Session;
+    use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+
+    use super::*;
+    use crate::builtins::RuntimeModule;
+    use crate::compile::testing::{default_settings, with_bind_input, with_loaded_build};
+    use crate::diagnostics::Diagnostics;
+    use crate::load::project::{PerProject, ProjectId};
+
+    fn global_path<'s>(names: &[&[u8]], arena: &'s Arena, atoms: &Interner<'s>) -> DefinePath<'s> {
+        let names: Vec<Atom> = names.iter().map(|name| atoms.intern(name)).collect();
+        DefinePath {
+            root: DefineRoot::Global(names[0]),
+            members: arena.alloc_slice_copy(&names[1..]),
+        }
+    }
+
+    fn has_internal_errors(messages: &LoadMessages) -> bool {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.add_load_messages(messages);
+        diagnostics.has_internal_errors()
+    }
+
+    fn create_sessions() -> PerProject<Session> {
+        PerProject {
+            application: Session::new(),
+            runtime: Session::new(),
+        }
+    }
+
+    const NO_FACTS: ProgramFacts = ProgramFacts {
+        can_load_code_at_run_time: false,
+        can_be_cluster_worker: false,
+    };
+
+    fn fold_inputs_with_facts<'s>(
+        sessions: &'s PerProject<Session>,
+        atoms: &Interner<'s>,
+        limits: &LimitValues,
+        facts: ProgramFacts,
+    ) -> PerProject<FoldInputs<'s>> {
+        let messages = LoadMessages::default();
+        let fold = PerProject {
+            application: create_application_fold_inputs(&ApplicationFoldRequest {
+                provided: FoldOptions::default(),
+                arena: sessions.application.arena(),
+                atoms,
+                limits,
+                platform: Platforms::LINUX,
+            }),
+            runtime: create_runtime_fold_inputs(&RuntimeFoldRequest {
+                manifest: Archive::embedded().manifest(),
+                arena: sessions.runtime.arena(),
+                atoms,
+                messages: &messages,
+                limits,
+                platform: Platforms::LINUX,
+                facts,
+            }),
+        };
+        assert!(!has_internal_errors(&messages));
+        fold
+    }
+
+    fn fold_inputs_with_limits<'s>(
+        sessions: &'s PerProject<Session>,
+        atoms: &Interner<'s>,
+        limits: &LimitValues,
+    ) -> PerProject<FoldInputs<'s>> {
+        fold_inputs_with_facts(sessions, atoms, limits, NO_FACTS)
+    }
+
+    fn analyze<'s>(
+        source: &'static str,
+        fold: &FoldInputs<'s>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+    ) -> FileAnalysis<'s> {
+        let parse_options = CompileParseOptions {
+            path: b"/project/a.ts",
+            script_kind: None,
+            experimental_decorators: false,
+            every_file_is_a_module: false,
+            reads_jsdoc: false,
+            keeps_function_directives: false,
+        };
+        let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), atoms);
+        hir.text = Cow::Borrowed(source.as_bytes());
+        let bind_options = BindOptions {
+            runtime: Some(RuntimeBindOptions::default()),
+            ..BindOptions::default()
+        };
+        let file = FileInputs {
+            declared_module_type: DeclaredModuleType::Unknown,
+            import_meta_main: None,
+            is_library: false,
+            host_values: &[],
+            jsx: JsxMode::Classic,
+        };
+        analyze_file(&mut hir, bind_options, fold, file, atoms, arena).1
+    }
+
+    #[test]
+    fn runtime_defines_are_parsed_as_json() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let manifest = Manifest::parse(
+            b"bun-builtins-manifest\t4\n\
+              define\tprocess.platform\t\"linux\"\n\
+              define\tIS_BUN_DEVELOPMENT\ttrue\n\
+              define\tNOTHING\tnull\n\
+              define\tCOUNT\t-2\n\
+              define\t$Labels\t[\"a\"]\n",
+        )
+        .unwrap();
+        let messages = LoadMessages::default();
+        let defines = runtime_defines(&manifest, arena, &atoms, &messages);
+        assert!(!has_internal_errors(&messages));
+
+        let constant = |names: &[&[u8]], constant| Define {
+            path: global_path(names, arena, &atoms),
+            value: DefineValue::Constant(constant),
+        };
+        let linux = Constant::String(atoms.intern(b"linux"));
+        assert_eq!(defines.len(), 5);
+        assert_eq!(defines[0], constant(&[b"process", b"platform"], linux));
+        assert_eq!(defines[0].path.members, [atoms.intern(b"platform")]);
+        assert_eq!(
+            defines[1],
+            constant(&[b"IS_BUN_DEVELOPMENT"], Constant::Boolean(true))
+        );
+        assert_eq!(defines[2], constant(&[b"NOTHING"], Constant::Null));
+        assert_eq!(defines[3], constant(&[b"COUNT"], Constant::Number(-2.0)));
+        let labels = [DataValue::String(atoms.intern(b"a"))];
+        assert_eq!(defines[4].path, global_path(&[b"$Labels"], arena, &atoms));
+        assert_eq!(
+            defines[4].value,
+            DefineValue::Data(&DataValue::Array(&labels))
+        );
+    }
+
+    #[test]
+    fn runtime_define_without_json_value_is_internal_error() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let manifest = Manifest::parse(
+            b"bun-builtins-manifest\t4\n\
+              define\tBROKEN\t__intrinsic__x\n\
+              define\tVALID\tfalse\n",
+        )
+        .unwrap();
+        let messages = LoadMessages::default();
+        let defines = runtime_defines(&manifest, arena, &atoms, &messages);
+        assert!(has_internal_errors(&messages));
+        assert_eq!(defines.len(), 1);
+        assert_eq!(defines[0].path, global_path(&[b"VALID"], arena, &atoms));
+    }
+
+    fn decisions_at_name<'s>(files: &Files<'s>, file: FileId, name: &[u8]) -> Vec<Decision<'s>> {
+        let decisions = &files.analysis(file).decisions;
+        let exprs = files.hir(file).exprs.iter().enumerate();
+        exprs
+            .filter(|(_, expr)| {
+                matches!(expr.kind, ExprKind::Ident(atom) if files.atoms.bytes(atom) == name)
+            })
+            .map(|(index, _)| decisions.decision(ExprId(index as u32)))
+            .collect()
+    }
+
+    #[test]
+    fn runtime_defines_fold_in_runtime_sources_only() {
+        const NAME: &[u8] = b"IS_BUN_DEVELOPMENT";
+        let files = [
+            (
+                "a.ts",
+                "import 'node:path'; export const isDevelopment = IS_BUN_DEVELOPMENT;",
+            ),
+            (
+                "/$bun/js/node/path.ts",
+                "export default IS_BUN_DEVELOPMENT;",
+            ),
+        ];
+        with_loaded_build(&files, &default_settings(), |_, loaded| {
+            let application = loaded.project(ProjectId::Application).loaded.files();
+            let entry_point = application.entry_points()[0];
+            let in_application = decisions_at_name(application, entry_point, NAME);
+            assert_eq!(in_application, [Decision::Unknown]);
+
+            let runtime = loaded.project(ProjectId::Runtime);
+            let runtime_file = runtime.sources.runtime_module_file(RuntimeModule::NodePath);
+            let in_runtime = decisions_at_name(runtime.loaded.files(), runtime_file.unwrap(), NAME);
+            assert_eq!(in_runtime, [Decision::Constant(Constant::Boolean(false))]);
+        });
+    }
+
+    fn assert_fact_decides_import(source: &'static str, facts_where: fn(bool) -> ProgramFacts) {
+        for holds in [false, true] {
+            let sessions = create_sessions();
+            let atoms = Interner::new_in(&sessions.application);
+            let limits = LimitValues::for_host();
+            let fold = fold_inputs_with_facts(&sessions, &atoms, &limits, facts_where(holds));
+            let count_import_sites = |project: ProjectId| {
+                let arena = sessions.get(project).arena();
+                analyze(source, fold.get(project), arena, &atoms)
+                    .import_sites
+                    .len()
+            };
+            assert_eq!(count_import_sites(ProjectId::Runtime), usize::from(holds));
+            assert_eq!(count_import_sites(ProjectId::Application), 1);
+        }
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_load_code() {
+        assert_fact_decides_import(
+            "if (CAN_LOAD_CODE_AT_RUN_TIME) import('./addon');",
+            |can_load_code_at_run_time| ProgramFacts {
+                can_load_code_at_run_time,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_hold_the_half_of_a_cluster_worker() {
+        assert_fact_decides_import(
+            "if (CAN_BE_CLUSTER_WORKER) import('./child');",
+            |can_be_cluster_worker| ProgramFacts {
+                can_be_cluster_worker,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    fn count_import_sites(source: &'static str) -> usize {
+        let sessions = create_sessions();
+        let atoms = Interner::new_in(&sessions.application);
+        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let arena = sessions.application.arena();
+        analyze(source, &fold.application, arena, &atoms)
+            .import_sites
+            .len()
+    }
+
+    #[test]
+    fn import_behind_failed_test_for_locked_builtin_is_not_followed() {
+        for source in [
+            "if (!Object.assign) import('./polyfill');",
+            "if (typeof Symbol !== 'function') import('./polyfill');",
+            "if (typeof Array.prototype.includes === 'undefined') import('./polyfill');",
+            "if (typeof Symbol.iterator !== 'symbol') import('./polyfill');",
+            "if (typeof Reflect !== 'object') import('./polyfill');",
+            "if (!globalThis.Map) import('./polyfill');",
+            "if (Object.setPrototypeOf == null) import('./polyfill');",
+            "export const keys = Object.keys || import('./polyfill');",
+            "export const from = typeof Array.from === 'function' ? Array.from : import('./polyfill');",
+        ] {
+            assert_eq!(count_import_sites(source), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn import_behind_test_for_other_global_is_followed() {
+        for source in [
+            "if (!Math.random) import('./polyfill');",
+            "if (typeof Promise === 'undefined') import('./polyfill');",
+            "if (!Object.mine) import('./polyfill');",
+            "if (!Map.prototype.size) import('./polyfill');",
+            "if (!console.log) import('./polyfill');",
+            "function f(Object: any) { if (!Object.assign) import('./polyfill'); }",
+            "if (Object.assign) import('./uses-assign');",
+        ] {
+            assert_eq!(count_import_sites(source), 1, "{source}");
+        }
+    }
+
+    #[test]
+    fn define_of_global_hides_locked_paths_below_it() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let renamed = [Define {
+            path: global_path(&[b"Object"], arena, &atoms),
+            value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"Mine")])),
+        }];
+        let defines = after_constant_globals(&renamed, Platforms::LINUX, arena, &atoms);
+        let below = |root: &[u8]| {
+            let root = DefineRoot::Global(atoms.intern(root));
+            defines
+                .iter()
+                .filter(|define| define.path.root == root)
+                .count()
+        };
+        assert_eq!(below(b"Object"), 1);
+        assert!(below(b"Array") > 1);
+    }
+
+    #[test]
+    fn compiler_functions_are_bundle_exports() {
+        let source = "import { validate } from 'bun:bundle'; export const n = validate<number>(1);";
+        with_bind_input(&[("a.ts", source)], &default_settings(), |input| {
+            let errors = input.files.analysis(input.files.entry_points()[0]).errors;
+            assert!(errors.is_empty(), "{errors:?}");
+        });
+    }
+
+    #[test]
+    fn other_bundle_export_is_unknown() {
+        let sessions = create_sessions();
+        let atoms = Interner::new_in(&sessions.application);
+        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let source = "import { nope } from 'bun:bundle'; nope();";
+        let analysis = analyze(
+            source,
+            &fold.application,
+            sessions.application.arena(),
+            &atoms,
+        );
+        let errors: Vec<FoldErrorKind> = analysis.errors.iter().map(|error| error.kind).collect();
+        assert_eq!(
+            errors,
+            [FoldErrorKind::UnknownBundleExport(atoms.intern(b"nope"))]
+        );
+    }
+
+    #[test]
+    fn string_limit_reaches_both_projects() {
+        let sessions = create_sessions();
+        let atoms = Interner::new_in(&sessions.application);
+        let mut limits = LimitValues::for_host();
+        limits.lower(LimitId::MaxFoldedStringBytes, 4);
+        let fold = fold_inputs_with_limits(&sessions, &atoms, &limits);
+        for (project, inputs) in fold.iter() {
+            let arena = sessions.get(project).arena();
+            let count_over_limit = |source| {
+                analyze(source, inputs, arena, &atoms)
+                    .strings_over_limit
+                    .len()
+            };
+            assert_eq!(
+                count_over_limit("export const text = 'abc' + 'def';"),
+                1,
+                "{project:?}"
+            );
+            assert_eq!(
+                count_over_limit("export const text = 'ab' + 'cd';"),
+                0,
+                "{project:?}"
+            );
+        }
+    }
 }

@@ -305,3 +305,6 @@ pub(super) fn restore_directory_separator(mut joined: Vec<u8>, specifier: &[u8])
     }
     joined
 }
+
+#[cfg(test)]
+mod tests;

@@ -19,6 +19,8 @@ mod runtime_use;
 mod source_texts;
 mod statistics;
 mod summary;
+#[cfg(test)]
+pub(super) mod testing;
 mod wording;
 
 #[cfg(not(test))]

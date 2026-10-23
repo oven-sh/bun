@@ -1,0 +1,3 @@
+# A reassigned binding may not be the class.
+binding-reassigned.ts:2 class binding `K` = yes
+binding-reassigned.ts:3 class binding `C` = no

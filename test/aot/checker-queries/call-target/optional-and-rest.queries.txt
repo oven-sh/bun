@@ -1,0 +1,2 @@
+# A signature marks optional parameters, defaults and a rest parameter.
+optional-and-rest.ts:2 signature `f` = (number checked number, string checked string | undefined?, unwritten checked number?, ...boolean[] checked boolean[]) this unwritten checked any returns unwritten checked void

@@ -110,3 +110,173 @@ pub(super) fn lower_camel_case(member_name: &str) -> Vec<u8> {
     }
     name
 }
+
+#[cfg(test)]
+mod tests {
+    use bstr::BString;
+    use bun_sema_standalone as _;
+
+    use super::*;
+
+    fn written(write: impl FnOnce(&mut Vec<u8>)) -> BString {
+        let mut out = Vec::new();
+        write(&mut out);
+        BString::from(out)
+    }
+
+    fn native(path: &str) -> Vec<u8> {
+        let to_native = |byte| if byte == b'/' { bun_paths::SEP } else { byte };
+        path.bytes().map(to_native).collect()
+    }
+
+    fn path_from(directory: &str, path: &str) -> BString {
+        let printer = PathPrinter::in_directory(native(directory));
+        written(|out| printer.write_path(out, &native(path)))
+    }
+
+    #[test]
+    fn count_groups_digits() {
+        let count = |count| written(|out| write_count(out, count));
+        assert_eq!(count(0), "0");
+        assert_eq!(count(999), "999");
+        assert_eq!(count(1000), "1,000");
+        assert_eq!(count(123_456), "123,456");
+        assert_eq!(count(1_234_567), "1,234,567");
+        assert_eq!(count(u64::MAX), "18,446,744,073,709,551,615");
+    }
+
+    #[test]
+    fn count_of_one_is_singular() {
+        let counted = |count| written(|out| write_counted(out, count, "cause", "causes"));
+        assert_eq!(counted(0), "0 causes");
+        assert_eq!(counted(1), "1 cause");
+        assert_eq!(counted(2), "2 causes");
+        assert_eq!(counted(1204), "1,204 causes");
+    }
+
+    #[test]
+    fn percent_tenths_round_down() {
+        assert_eq!(percent_tenths(6, 8), 750);
+        assert_eq!(percent_tenths(1204, 1303), 924);
+        assert_eq!(percent_tenths(0, 8), 0);
+        assert_eq!(percent_tenths(8, 8), 1000);
+        assert_eq!(percent_tenths(u64::MAX, u64::MAX), 1000);
+        assert_eq!(percent_tenths(u64::MAX - 1, u64::MAX), 999);
+    }
+
+    #[test]
+    fn zero_of_zero_is_100_percent() {
+        assert_eq!(percent_tenths(0, 0), 1000);
+    }
+
+    #[test]
+    fn rounding_never_reaches_extremes() {
+        assert_eq!(percent_tenths(999_999, 1_000_000), 999);
+        assert_eq!(percent_tenths(1, 1_000_000), 1);
+        assert_eq!(percent_tenths(1, u64::MAX), 1);
+    }
+
+    #[test]
+    fn percent_tenths_stay_in_range() {
+        assert_eq!(percent_tenths(9, 8), 1000);
+    }
+
+    #[test]
+    fn percent_omits_zero_decimal() {
+        let percent = |tenths| written(|out| write_percent(out, tenths));
+        assert_eq!(percent(750), "75%");
+        assert_eq!(percent(924), "92.4%");
+        assert_eq!(percent(1000), "100%");
+        assert_eq!(percent(0), "0%");
+        assert_eq!(percent(1), "0.1%");
+    }
+
+    #[test]
+    fn codes_are_kebab_case() {
+        let code = |member_name| written(|out| write_code(out, member_name));
+        assert_eq!(code("UnknownObject"), "unknown-object");
+        assert_eq!(code("Unknown"), "unknown");
+        assert_eq!(code("RegExpWithoutCode"), "reg-exp-without-code");
+        assert_eq!(code(""), "");
+    }
+
+    #[test]
+    fn acronym_is_one_word_of_code() {
+        let code = |member_name| written(|out| write_code(out, member_name));
+        assert_eq!(code("WasmUnsupportedCPU"), "wasm-unsupported-cpu");
+        assert_eq!(code("WasmHasGCTypes"), "wasm-has-gc-types");
+        assert_eq!(code("CPU"), "cpu");
+        assert_eq!(code("Int32Overflow"), "int32-overflow");
+    }
+
+    #[test]
+    fn path_under_directory_is_relative() {
+        assert_eq!(path_from("/p/app", "/p/app/a.ts"), native("a.ts"));
+        assert_eq!(path_from("/p/app", "/p/app/src/a.ts"), native("src/a.ts"));
+    }
+
+    #[test]
+    fn sibling_path_uses_parent_segments() {
+        assert_eq!(path_from("/p/app", "/p/lib/b.ts"), native("../lib/b.ts"));
+        assert_eq!(path_from("/p/app", "/p/apps/b.ts"), native("../apps/b.ts"));
+        assert_eq!(path_from("/p/app/src", "/p/b.ts"), native("../../b.ts"));
+    }
+
+    #[test]
+    fn working_directory_path_is_unchanged() {
+        assert_eq!(path_from("/p/app", "/p/app"), native("/p/app"));
+    }
+
+    #[test]
+    fn path_without_root_is_unchanged() {
+        assert_eq!(path_from("/p/app", "node:fs"), "node:fs");
+        assert_eq!(path_from("/p/app", "src/a.ts"), native("src/a.ts"));
+    }
+
+    #[test]
+    fn path_is_unchanged_without_directory() {
+        assert_eq!(path_from("", "/p/app/a.ts"), native("/p/app/a.ts"));
+    }
+
+    #[test]
+    fn oversized_path_is_unchanged() {
+        let printer = PathPrinter::in_directory(native("/p"));
+        let mut path = native("/p/");
+        path.resize(MAX_PATH_BYTES, b'a');
+        assert_eq!(written(|out| printer.write_path(out, &path)), path);
+    }
+
+    #[test]
+    fn new_printer_is_in_working_directory() {
+        let path = std::env::current_dir().unwrap().join("a.ts");
+        let path = path.as_os_str().as_encoded_bytes();
+        assert_eq!(
+            written(|out| PathPrinter::new().write_path(out, path)),
+            "a.ts"
+        );
+    }
+
+    #[test]
+    fn member_names_in_both_spellings() {
+        assert_eq!(
+            BString::from(code_of("UnknownKeyStore")),
+            "unknown-key-store"
+        );
+        assert_eq!(
+            BString::from(lower_camel_case("CompileTime")),
+            "compileTime"
+        );
+        assert_eq!(BString::from(lower_camel_case("Heap")), "heap");
+        assert_eq!(BString::from(lower_camel_case("")), "");
+    }
+
+    #[test]
+    fn posix_path_has_forward_slashes() {
+        let printer = PathPrinter::in_directory(native("/p/app"));
+        assert_eq!(
+            BString::from(printer.posix_path(&native("/p/app/src/a.ts"))),
+            "src/a.ts"
+        );
+        assert_eq!(BString::from(printer.posix_path(b"node:fs")), "node:fs");
+    }
+}

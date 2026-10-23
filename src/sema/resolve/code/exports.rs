@@ -422,3 +422,542 @@ fn to_subpath(rest: &[u8]) -> Vec<u8> {
     }
     [b".".as_slice(), rest].concat()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Field::{Exports, Imports};
+    use super::KeyKind::{Directory, Exact, Pattern};
+    use super::manifest::build_exports_entry;
+    use super::memory_host::parse_json;
+    use super::*;
+
+    const CONDITIONS: [&str; 2] = ["import", "default"];
+    const NO_CONDITION: &str = "UndefinedNoConditionsMatch";
+    const NOT_EXPORTED: &str = "PackagePathNotExported";
+    const DISABLED: &str = "PackagePathDisabled";
+    const NOT_DEFINED: &str = "PackageImportNotDefined";
+    const BAD_SPECIFIER: &str = "InvalidModuleSpecifier";
+    const BAD_TARGET: &str = "InvalidPackageTarget";
+    const BAD_CONFIGURATION: &str = "InvalidPackageConfiguration";
+    const IS_DIRECTORY: &str = "UnsupportedDirectoryImport";
+
+    fn tree<'a>(arena: &'a Arena, json: &str) -> ExportsEntry<'a> {
+        build_exports_entry(arena, &parse_json(json.as_bytes()).unwrap())
+    }
+
+    fn describe(resolution: &TargetResolution) -> String {
+        let status = resolution.status;
+        match resolution.path.is_empty() {
+            true => format!("{status:?}"),
+            false => format!("{status:?} {}", bstr::BStr::new(&resolution.path)),
+        }
+    }
+
+    fn matches_condition(condition: &[u8]) -> bool {
+        CONDITIONS.iter().any(|it| it.as_bytes() == condition)
+    }
+
+    fn query(subpath: &str, key: KeyKind, field: Field) -> TargetQuery<'_> {
+        TargetQuery {
+            subpath: subpath.as_bytes(),
+            key,
+            field,
+            matches: &matches_condition,
+        }
+    }
+
+    fn exports_with_conditions(conditions: &[&str], json: &str, subpath: &str) -> String {
+        let arena = Arena::new();
+        let root = tree(&arena, json);
+        let matches = |condition: &[u8]| conditions.iter().any(|it| it.as_bytes() == condition);
+        describe(&resolve_exports(&root, subpath.as_bytes(), &matches))
+    }
+
+    fn exports(json: &str, subpath: &str) -> String {
+        exports_with_conditions(&CONDITIONS, json, subpath)
+    }
+
+    fn imports(json: &str, specifier: &str) -> String {
+        let arena = Arena::new();
+        let root = tree(&arena, json);
+        let resolution = resolve_imports(&root, specifier.as_bytes(), &matches_condition);
+        describe(&resolution)
+    }
+
+    fn table(json: &str, match_key: &str) -> String {
+        let arena = Arena::new();
+        let ExportsEntry::Map(map) = tree(&arena, json) else {
+            panic!("{json} is not an object");
+        };
+        let resolution = resolve_table(match_key.as_bytes(), map, Exports, &matches_condition);
+        describe(&resolution)
+    }
+
+    fn target(json: &str) -> String {
+        let arena = Arena::new();
+        let resolution = resolve_target(&tree(&arena, json), &query("", Exact, Exports));
+        describe(&resolution)
+    }
+
+    fn target_text(target: &str, subpath: &str, key: KeyKind, field: Field) -> String {
+        let resolution = resolve_target_text(target.as_bytes(), &query(subpath, key, field));
+        describe(&resolution)
+    }
+
+    fn exported_text(target: &str) -> String {
+        target_text(target, "", Exact, Exports)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn main_export() {
+        let cases = [
+            (r#""./a.js""#, "Exact /a.js"),
+            (r#"["./a.js"]"#, "Exact /a.js"),
+            (r#"{"import": "./a.js"}"#, "Exact /a.js"),
+            (r#"{".": "./a.js"}"#, "Exact /a.js"),
+            (r#"{".": "./a.js", ".": "./b.js"}"#, "Exact /a.js"),
+            (r#"{".": null}"#, NOT_EXPORTED),
+            (r#"{"./b": "./b.js"}"#, NOT_EXPORTED),
+            (r#"[{"deno": "./a.js"}]"#, NOT_EXPORTED),
+            ("null", NOT_EXPORTED),
+            (r#"{"deno": "./a.js"}"#, NO_CONDITION),
+            (r#"{".": "./a.js", "import": "./b.js"}"#, BAD_CONFIGURATION),
+            ("true", BAD_CONFIGURATION),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(exports(json, "."), expected, "{json}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn subpath_keys() {
+        let cases = [
+            (r#"{"./a": "./a.js"}"#, "Exact /a.js"),
+            (r#"{"./a": "./a.js", "./a": "./b.js"}"#, "Exact /a.js"),
+            (r#"{"./a": null}"#, DISABLED),
+            (r#"{"./b": "./b.js"}"#, DISABLED),
+            (r#"{"./a": [{"deno": "./x.js"}]}"#, NOT_EXPORTED),
+            (r#"{"./a": {"deno": "./x.js"}}"#, NO_CONDITION),
+            (r#"{"import": "./a.js"}"#, NOT_EXPORTED),
+            (r#""./a.js""#, NOT_EXPORTED),
+            (r#"{"./a": "./a.js", "import": "./b"}"#, BAD_CONFIGURATION),
+            ("true", BAD_CONFIGURATION),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(exports(json, "./a"), expected, "{json}");
+        }
+        assert_eq!(exports(r#"{"./*": "./src/*"}"#, ""), DISABLED);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn imports_table() {
+        let cases = [
+            (r##"{"#a": "./a.js"}"##, "Exact /a.js"),
+            (r##"{"#*": "./src/*.js"}"##, "ExactEndsWithStar /src/a.js"),
+            (r##"{"#a": "pkg"}"##, "PackageResolve pkg"),
+            (r##"{"#a": "./dir/"}"##, IS_DIRECTORY),
+            (r##"{"#b": "./b.js"}"##, NOT_DEFINED),
+            (r##"{"#a": null}"##, NOT_DEFINED),
+            (r##"{"#a": [{"deno": "./x.js"}]}"##, NOT_DEFINED),
+            (r##"{"#a": {"deno": "./x.js"}}"##, NO_CONDITION),
+            (r#""./a.js""#, BAD_CONFIGURATION),
+            ("true", BAD_CONFIGURATION),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(imports(json, "#a"), expected, "{json}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn pattern_keys() {
+        let by_base = r#"{"./*": "./any/*.js", "./a/*": "./deep/*.js"}"#;
+        assert_eq!(exports(by_base, "./a/x"), "ExactEndsWithStar /deep/x.js");
+        assert_eq!(exports(by_base, "./b"), "ExactEndsWithStar /any/b.js");
+        assert_eq!(exports(by_base, "./a/"), "ExactEndsWithStar /deep/.js");
+
+        let first_match = r#"{"./*": "./any/*.js", "./a/*": null}"#;
+        assert_eq!(exports(first_match, "./a/x"), DISABLED);
+        assert_eq!(exports(first_match, "./b"), "ExactEndsWithStar /any/b.js");
+
+        let trailer = r#"{"./*.js": "./src/*.ts"}"#;
+        assert_eq!(exports(trailer, "./x.js"), "ExactEndsWithStar /src/x.ts");
+        assert_eq!(exports(trailer, "./x.css"), DISABLED);
+        assert_eq!(exports(trailer, "./.js"), DISABLED);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn directory_key_is_inexact() {
+        let json = r#"{"./a/": "./src/"}"#;
+        assert_eq!(exports(json, "./a/x.js"), "Inexact /src/x.js");
+        assert_eq!(exports(json, "./a/b/x"), "Inexact /src/b/x");
+        assert_eq!(exports(json, "./b/x.js"), DISABLED);
+
+        let conditional = r#"{"./a/": {"import": ["./src/"]}}"#;
+        assert_eq!(exports(conditional, "./a/x.js"), "Inexact /src/x.js");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exact_lookup_skips_expansion_syntax() {
+        let cases = [
+            (r#"{"./a": "./a.js"}"#, "./a", "Exact /a.js"),
+            (r#"{"./a*": "./a.js"}"#, "./a*", "ExactEndsWithStar /a.js"),
+            (r#"{"./a/": "./src/"}"#, "./a/", "Inexact /src/"),
+            (r#"{"./a": "./a.js"}"#, "./b", "Null"),
+        ];
+        for (json, match_key, expected) in cases {
+            assert_eq!(table(json, match_key), expected, "{json}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn conditions_match_in_key_order() {
+        let json = r#"{"require": "./r.js", "import": "./i.js"}"#;
+        let resolve = |conditions: &[&str]| exports_with_conditions(conditions, json, ".");
+        assert_eq!(resolve(&["import", "require"]), "Exact /r.js");
+        assert_eq!(resolve(&["import"]), "Exact /i.js");
+        assert_eq!(resolve(&[]), NO_CONDITION);
+
+        let pattern = r#"{"./*": {"import": "./esm/*.js", "default": "./cjs/*.js"}}"#;
+        assert_eq!(exports(pattern, "./x"), "ExactEndsWithStar /esm/x.js");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn only_undefined_conditions_fall_through() {
+        let nested = r#"{"import": {"deno": "./x.js"}, "default": "./d.js"}"#;
+        assert_eq!(target(nested), "Exact /d.js");
+        let nested_array = r#"{"import": [{"deno": "./x.js"}], "default": "./d.js"}"#;
+        assert_eq!(target(nested_array), "Exact /d.js");
+        assert_eq!(target(r#"{"import": {"deno": "./x.js"}}"#), NO_CONDITION);
+
+        let null = r#"{"import": null, "default": "./d.js"}"#;
+        assert_eq!(target(null), "Null");
+        let invalid = r#"{"import": "bad", "default": "./d.js"}"#;
+        assert_eq!(target(invalid), BAD_TARGET);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn arrays_and_leaves() {
+        let cases = [
+            (r#""./a.js""#, "Exact /a.js"),
+            ("null", "Null"),
+            ("true", BAD_TARGET),
+            ("[]", "Null"),
+            (r#"["./a.js", "./b.js"]"#, "Exact /a.js"),
+            (r#"[[["./a.js"]]]"#, "Exact /a.js"),
+            (r#"[{"deno": "./x.js"}, "./b.js"]"#, "Exact /b.js"),
+            (r#"[{"deno": "./x.js"}]"#, "Undefined"),
+            (r#"["bad", "./b.js"]"#, BAD_TARGET),
+            (r#"[null, "./b.js"]"#, "Null"),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(target(json), expected, "{json}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn deep_nesting_is_invalid_configuration() {
+        const STACK_SIZE: usize = 4 << 20;
+        let resolve_nested = || {
+            bun_sema_standalone::native::set_stack_size(STACK_SIZE / 2);
+            let arena = Arena::new();
+            let mut entry = ExportsEntry::Target(b"./a.js");
+            let mut nest_and_resolve = |levels: usize| {
+                for _ in 0..levels {
+                    entry = ExportsEntry::Array(arena.alloc_slice_copy(&[entry]));
+                }
+                describe(&resolve_target(&entry, &query("", Exact, Exports)))
+            };
+            (nest_and_resolve(64), nest_and_resolve(100_000))
+        };
+        let thread = std::thread::Builder::new().stack_size(STACK_SIZE);
+        let (shallow, deep) = thread.spawn(resolve_nested).unwrap().join().unwrap();
+        assert_eq!(shallow, "Exact /a.js");
+        assert_eq!(deep, BAD_CONFIGURATION);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn target_length_limit() {
+        let longest = MAX_PATH_BYTES - PACKAGE_URL.len() - JOIN_HEADROOM;
+        let fitting = format!("./{}", "a".repeat(longest - 2));
+        assert!(exported_text(&fitting).starts_with("Exact /aaa"));
+        assert_eq!(exported_text(&format!("{fitting}a")), BAD_TARGET);
+
+        let substitute = |subpath: &str| target_text("./*", subpath, Pattern, Exports);
+        let fitting = "a".repeat(longest - 3);
+        assert!(substitute(&fitting).starts_with("ExactEndsWithStar /aaa"));
+        assert_eq!(substitute(&format!("{fitting}a")), BAD_TARGET);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn leftover_subpath_needs_directory_target() {
+        let cases = [
+            ("./x/", "y", Directory, Exports, "Inexact /x/y"),
+            ("./x", "y", Directory, Exports, BAD_SPECIFIER),
+            ("pkg", "y", Directory, Imports, BAD_SPECIFIER),
+            ("./x", "", Directory, Exports, "Inexact /x"),
+            ("./x", "y", Pattern, Exports, "ExactEndsWithStar /x"),
+        ];
+        for (target, subpath, key, field, expected) in cases {
+            assert_eq!(target_text(target, subpath, key, field), expected);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn invalid_subpaths() {
+        for subpath in ["../x", "x/./y", "x\\..\\y", "NODE_MODULES/x", "%2e%2e/x"] {
+            let pattern = target_text("./src/*", subpath, Pattern, Exports);
+            assert_eq!(pattern, BAD_SPECIFIER, "{subpath}");
+            let directory = target_text("./src/", subpath, Directory, Exports);
+            assert_eq!(directory, BAD_SPECIFIER, "{subpath}");
+            let package = target_text("pkg/*", subpath, Pattern, Imports);
+            assert_eq!(package, BAD_SPECIFIER, "{subpath}");
+        }
+        let valid = target_text("./src/*", "..x/.y/node_modules.js", Pattern, Exports);
+        assert_eq!(valid, "ExactEndsWithStar /src/..x/.y/node_modules.js");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn target_outside_package() {
+        for target in ["../x", "/x", "pkg", ""] {
+            assert_eq!(exported_text(target), BAD_TARGET, "{target}");
+        }
+        let cases = [
+            ("../x", "", Exact, BAD_TARGET),
+            ("/x", "", Exact, BAD_TARGET),
+            ("pkg", "", Exact, "PackageResolve pkg"),
+            ("@s/pkg/lib.js", "", Exact, "PackageResolve @s/pkg/lib.js"),
+            ("node:fs", "", Exact, "PackageResolve node:fs"),
+            ("pkg/", "x", Directory, "PackageResolve pkg/x"),
+            ("pkg/*", "a/b", Pattern, "PackageResolve pkg/a/b"),
+        ];
+        for (target, subpath, key, expected) in cases {
+            assert_eq!(target_text(target, subpath, key, Imports), expected);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn invalid_target_segments() {
+        for target in ["./a/../b", "./a\\..\\b", "./node_modules/x", "./%2e%2e/x"] {
+            assert_eq!(exported_text(target), BAD_TARGET, "{target}");
+        }
+        assert_eq!(exported_text("./a/..b/.c"), "Exact /a/..b/.c");
+        assert_eq!(exported_text("./a//b.js"), "Exact /a/b.js");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn pattern_substitution() {
+        let cases = [
+            ("./src/*.js", "x", "ExactEndsWithStar /src/x.js"),
+            ("./*/*.js", "x", "ExactEndsWithStar /x/x.js"),
+            ("./src/*", "a/b.js", "ExactEndsWithStar /src/a/b.js"),
+            ("./node_*/x.js", "modules", BAD_SPECIFIER),
+            ("./%2*/x.js", "e", BAD_SPECIFIER),
+        ];
+        for (target, subpath, expected) in cases {
+            let resolution = target_text(target, subpath, Pattern, Exports);
+            assert_eq!(resolution, expected, "{target}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn substitution_length_limit() {
+        let subpath = "a".repeat(MAX_PATH_BYTES / 4);
+        let exported = |target: &str| target_text(target, &subpath, Pattern, Exports);
+        assert!(exported("./*/*").starts_with("ExactEndsWithStar /aaa"));
+        assert_eq!(exported("./********"), BAD_SPECIFIER);
+
+        let imported = |target: &str| target_text(target, &subpath, Pattern, Imports);
+        assert!(imported("*/*").starts_with("PackageResolve aaa"));
+        assert_eq!(imported("********"), BAD_SPECIFIER);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn path_segments() {
+        for path in ["./a", "../a", "node_modules/a", "./a//b/", "/"] {
+            assert!(!has_invalid_segment(path.as_bytes()), "{path}");
+        }
+        for path in ["", "a", "./..", "./a\\..\\b", "/node_modules"] {
+            assert!(has_invalid_segment(path.as_bytes()), "{path}");
+        }
+        for path in ["", "a", "a//b/", "..a"] {
+            assert!(!has_invalid_subpath_segment(path.as_bytes()), "{path}");
+        }
+        for path in ["..", "../a", "node_modules", "a\\.."] {
+            assert!(has_invalid_subpath_segment(path.as_bytes()), "{path}");
+        }
+
+        let plain = [".", "..", "node_modules", "Node_MODULES"];
+        let escaped = ["%2e", "%2E%2e", ".%2E", "%4Eode_modules"];
+        for segment in plain.into_iter().chain(escaped) {
+            assert!(is_invalid_segment(segment.as_bytes()), "{segment}");
+        }
+        let plain = ["", "a", "...", ".a", "node_module", "node_modules2"];
+        let escaped = ["%2", "%2e%2", "%zz", "%2e%2e%2e", "node_modules%2e"];
+        for segment in plain.into_iter().chain(escaped) {
+            assert!(!is_invalid_segment(segment.as_bytes()), "{segment}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn resolved_path_is_decoded() {
+        let cases = [
+            (r#""./a%20b.js""#, "Exact /a b.js"),
+            (r#""./%41.js""#, "Exact /A.js"),
+            (r#""./a%2fb.js""#, BAD_SPECIFIER),
+            (r#""./a%2Fb.js""#, BAD_SPECIFIER),
+            (r#""./a%5cb.js""#, BAD_SPECIFIER),
+            (r#""./a%5Cb.js""#, BAD_SPECIFIER),
+            (r#""./a%zz.js""#, BAD_SPECIFIER),
+            (r#""./a%2""#, BAD_SPECIFIER),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(exports(json, "."), expected, "{json}");
+        }
+
+        let pattern = r#"{"./*": "./src/*.js"}"#;
+        assert_eq!(exports(pattern, "./a%20b"), "ExactEndsWithStar /src/a b.js");
+        assert_eq!(exports(pattern, "./a%2fb"), BAD_SPECIFIER);
+        let directory = r#"{"./a/": "./src/"}"#;
+        assert_eq!(exports(directory, "./a/b%20c"), "Inexact /src/b c");
+        let package = r##"{"#a": "pkg%2fx/"}"##;
+        assert_eq!(imports(package, "#a"), "PackageResolve pkg%2fx/");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn resolved_directory_is_unsupported() {
+        for json in [r#""./dir/""#, r#""./""#, r#""./dir\\""#, r#""./a%20/""#] {
+            assert_eq!(exports(json, "."), IS_DIRECTORY, "{json}");
+        }
+        assert_eq!(exports(r#"{"./a/": "./src/"}"#, "./a/"), IS_DIRECTORY);
+        assert_eq!(exports(r#""./dir""#, "."), "Exact /dir");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn strict_percent_decoding() {
+        let decode = |text: &str| decode_percent(text.as_bytes());
+        assert_eq!(decode("a%20b%41%7a"), Some(b"a bAz".to_vec()));
+        assert_eq!(decode(""), Some(Vec::new()));
+        for text in ["%", "a%4", "%4g", "%g4", "%%41", "%41%"] {
+            assert_eq!(decode(text), None, "{text}");
+        }
+    }
+
+    fn parse(specifier: &str) -> Option<[String; 2]> {
+        let parsed = PackageSpecifier::parse(specifier.as_bytes())?;
+        let fields = [parsed.name, &parsed.subpath];
+        Some(fields.map(|field| bstr::BStr::new(field).to_string()))
+    }
+
+    fn parts(name: &str, subpath: &str) -> Option<[String; 2]> {
+        Some([name, subpath].map(str::to_owned))
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn package_specifiers() {
+        let cases = [
+            ("react", parts("react", ".")),
+            ("react/jsx-runtime", parts("react", "./jsx-runtime")),
+            ("@s/p", parts("@s/p", ".")),
+            ("@s/p/x/y", parts("@s/p", "./x/y")),
+            ("a@1.2.3/b", parts("a", "./b")),
+            ("@s/p@2", parts("@s/p", ".")),
+            ("@s/p@2/x", parts("@s/p", "./x")),
+            ("pkg/@scope/x", parts("pkg", "./@scope/x")),
+            ("a/b%20c", parts("a", "./b%20c")),
+            ("a@", parts("a", ".")),
+            ("a@/b", parts("a", ".")),
+            ("", None),
+            ("@scope", None),
+            (".hidden", None),
+            ("a%b", None),
+            ("a\\b", None),
+        ];
+        for (specifier, expected) in cases {
+            assert_eq!(parse(specifier), expected, "{specifier}");
+        }
+
+        let cases = [
+            ("a/b/c", Some("a")),
+            ("a@1/b", Some("a@1")),
+            ("@s/p", Some("@s/p")),
+            ("@s/p/x", Some("@s/p")),
+            ("", Some("")),
+            ("@s", None),
+        ];
+        for (specifier, expected) in cases {
+            let name = PackageSpecifier::parse_name(specifier.as_bytes());
+            assert_eq!(name, expected.map(str::as_bytes), "{specifier}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn subpath_capacity() {
+        let fitting = format!("a/{}", "b".repeat(SUBPATH_CAPACITY - 2));
+        let parsed = PackageSpecifier::parse(fitting.as_bytes()).unwrap();
+        assert_eq!(parsed.subpath.len(), SUBPATH_CAPACITY);
+        assert!(parsed.subpath.starts_with(b"./b"));
+
+        let too_long = format!("{fitting}b");
+        let parsed = PackageSpecifier::parse(too_long.as_bytes()).unwrap();
+        assert_eq!(parsed.name, b"a");
+        assert!(parsed.subpath.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn status_failures() {
+        let same_name = [
+            ExportsStatus::InvalidModuleSpecifier,
+            ExportsStatus::InvalidPackageConfiguration,
+            ExportsStatus::InvalidPackageTarget,
+            ExportsStatus::PackagePathNotExported,
+            ExportsStatus::UnsupportedDirectoryImport,
+            ExportsStatus::PackageImportNotDefined,
+        ];
+        for status in same_name {
+            assert_eq!(format!("{:?}", status.failure()), format!("{status:?}"));
+        }
+        let not_exported = [
+            ExportsStatus::PackagePathDisabled,
+            ExportsStatus::Undefined,
+            ExportsStatus::UndefinedNoConditionsMatch,
+            ExportsStatus::Null,
+        ];
+        for status in not_exported {
+            let failure = status.failure();
+            assert_eq!(failure, CodeFailure::PackagePathNotExported, "{status:?}");
+        }
+        let not_found = [
+            ExportsStatus::Exact,
+            ExportsStatus::ExactEndsWithStar,
+            ExportsStatus::Inexact,
+            ExportsStatus::PackageResolve,
+        ];
+        for status in not_found {
+            assert_eq!(status.failure(), CodeFailure::ModuleNotFound, "{status:?}");
+        }
+    }
+}

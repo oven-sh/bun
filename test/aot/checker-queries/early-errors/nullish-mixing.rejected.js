@@ -1,0 +1,10 @@
+// ?? next to || or && without parentheses.
+a ?? b || c;
+a || b ?? c;
+a ?? b && c;
+a && b ?? c;
+x = a || b ?? c;
+x = a && b ?? c;
+x = a ?? b && c;
+x = a ?? b || c;
+a || b ?? c, d;

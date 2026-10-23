@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use bun_sema::import_sites::{ImportSite, ImportSiteKind};
 use bun_sema::program::HostModuleId;
 use bun_sema::resolve::{CodeResolution, FinishedFile, HostResolution, SiteResolution};

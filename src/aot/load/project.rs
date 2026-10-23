@@ -65,3 +65,46 @@ impl<T> PerProject<T> {
             .map(|project| (project, self.get(project)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn index_follows_declaration_order() {
+        for (index, project) in ProjectId::ALL.into_iter().enumerate() {
+            assert_eq!(project.index(), index);
+        }
+    }
+
+    #[test]
+    fn application_files_sort_before_runtime_files() {
+        let application = ProgramFile {
+            project: ProjectId::Application,
+            file: FileId(9),
+        };
+        let runtime = ProgramFile {
+            project: ProjectId::Runtime,
+            file: FileId(0),
+        };
+        assert!(application < runtime);
+    }
+
+    #[test]
+    fn map_and_iter_visit_both_projects_in_order() {
+        let pair = PerProject {
+            application: 1,
+            runtime: 2,
+        };
+        let doubled = pair.map(|_, value| value * 2);
+        let visited: Vec<_> = doubled
+            .iter()
+            .map(|(project, &value)| (project, value))
+            .collect();
+        assert_eq!(
+            visited,
+            [(ProjectId::Application, 2), (ProjectId::Runtime, 4)]
+        );
+        assert_eq!(*doubled.get(ProjectId::Runtime), 4);
+    }
+}

@@ -267,3 +267,30 @@ pub struct FinishedFile<'a, 's> {
     pub atoms: &'a Interner<'s>,
     pub resolutions: &'a [SiteResolution<'a>],
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn relative_path_starts_below_package_directory() {
+        let package = EnclosingPackage {
+            directory: b"/app/node_modules/dep",
+            name: b"dep",
+            version: b"1.0.0",
+        };
+        let path = b"/app/node_modules/dep/lib/index.js";
+        assert_eq!(package.relative_path(path), b"lib/index.js");
+    }
+
+    #[test]
+    fn relative_path_below_root_directory() {
+        let package = EnclosingPackage {
+            directory: b"/",
+            name: b"root",
+            version: b"1.0.0",
+        };
+        assert_eq!(package.relative_path(b"/index.js"), b"index.js");
+    }
+}

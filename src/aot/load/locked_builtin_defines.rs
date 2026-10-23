@@ -87,3 +87,78 @@ pub(crate) fn locked_builtin_defines<'s>(
     walk.add_location(BuiltinId::GlobalThis);
     walk.defines
 }
+
+#[cfg(test)]
+mod tests {
+    use bun_sema::session::Session;
+
+    use super::*;
+
+    fn kind_at(path: &[&str]) -> Option<RuntimeValueKind> {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let names: Vec<Atom> = path
+            .iter()
+            .map(|name| atoms.intern(name.as_bytes()))
+            .collect();
+        let defines = locked_builtin_defines(Platforms::LINUX, session.arena(), &atoms);
+        let mut found = defines.iter().filter(|define| {
+            define.path.root == DefineRoot::Global(names[0]) && define.path.members == &names[1..]
+        });
+        let kind = found.next().map(|define| match define.value {
+            DefineValue::RuntimeValue(kind) => kind,
+            value => panic!("{path:?}: {value:?}"),
+        });
+        assert!(found.next().is_none(), "{path:?} is listed twice");
+        kind
+    }
+
+    #[test]
+    fn locked_paths_end_at_functions_objects_and_symbols() {
+        use RuntimeValueKind::{Function, Object, Symbol};
+        let rows: &[(&[&str], RuntimeValueKind)] = &[
+            (&["Object"], Function),
+            (&["Object", "assign"], Function),
+            (&["Object", "prototype"], Object),
+            (&["Object", "prototype", "hasOwnProperty"], Function),
+            (&["Object", "prototype", "constructor"], Function),
+            (&["Array", "prototype", "includes"], Function),
+            (&["Math"], Object),
+            (&["Math", "imul"], Function),
+            (&["Symbol", "iterator"], Symbol),
+            (&["globalThis"], Object),
+            (&["globalThis", "Map"], Function),
+            (&["globalThis", "Reflect", "ownKeys"], Function),
+        ];
+        for &(path, kind) in rows {
+            assert_eq!(kind_at(path), Some(kind), "{path:?}");
+        }
+        assert_eq!(
+            runtime_value_kind(BuiltinId::FunctionPrototype),
+            Some(Function)
+        );
+    }
+
+    #[test]
+    fn other_paths_are_not_listed() {
+        let rows: &[&[&str]] = &[
+            &["Math", "random"],
+            &["Math", "PI"],
+            &["JSON", "parse"],
+            &["Promise"],
+            &["Promise", "resolve"],
+            &["Function", "prototype"],
+            &["undefined"],
+            &["Date", "now"],
+            &["console"],
+            &["process"],
+            &["Map", "prototype", "size"],
+            &["Object", "mine"],
+            &["Object", "prototype", "constructor", "assign"],
+            &["globalThis", "globalThis"],
+        ];
+        for &path in rows {
+            assert_eq!(kind_at(path), None, "{path:?}");
+        }
+    }
+}

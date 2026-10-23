@@ -5,6 +5,9 @@ mod output;
 mod positions;
 mod tables;
 
+#[cfg(test)]
+mod tests;
+
 pub use external_bodies::{ExternalBodies, ExternalFunctionBodies};
 pub use positions::{installed_source_positions, source_positions};
 

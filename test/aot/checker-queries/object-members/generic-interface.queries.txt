@@ -1,0 +1,2 @@
+# A member of a generic interface is instantiated.
+generic-interface.ts:3 has `Pair<number>` = first Field number checked number

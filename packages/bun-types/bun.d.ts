@@ -7840,6 +7840,11 @@ declare module "bun" {
        * - `"pipe"`: The process has a new {@link FileSink} for standard input
        * - `"inherit"`: The process inherits the standard input of the current process
        * - `ArrayBufferView`, `Blob`: The process reads from the buffer
+       * - `ReadableStream`, `Response`, `Request`: The process reads from the stream, or from the
+       *   body. If the stream fails before it ends, the process reads the part that Bun wrote before
+       *   the failure, then the end of its input, and {@link Subprocess.exited} still resolves with
+       *   the exit code. The stream errors with the failure: `finished(stream)` from
+       *   `node:stream/promises` rejects with it.
        * - `number`: The process reads from the file descriptor
        *
        * @default "ignore"

@@ -99,8 +99,9 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", () => {
 
 // RFC 2782 says SRV targets must not be compressed, but a lot of deployed
 // resolvers (dnsmasq, mDNSResponder, older BIND, various corporate forwarders)
-// still compress them. c-ares 1.34.8 started rejecting these responses with
-// EBADRESP; make sure we keep accepting them.
+// still compress them. c-ares 1.34.8 rejected these responses with EBADRESP.
+// c-ares 1.34.9 accepts them again (RFC 3597 section 4); make sure it stays
+// that way.
 test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
   const socket = dgram.createSocket("udp4");
   try {

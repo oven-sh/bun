@@ -101,6 +101,7 @@ public:
         unsigned int spillLength : 4;
         signed int opStack : 2; // -1, 0, 1
         unsigned int lastFin : 1;
+        unsigned int currentFrameFin : 1;
 
         // 15 bytes
         unsigned char spill[LONG_MESSAGE_HEADER - 1];
@@ -111,6 +112,7 @@ public:
             spillLength = 0;
             opStack = -1;
             lastFin = true;
+            currentFrameFin = true;
         }
 
     } state;
@@ -324,7 +326,7 @@ protected:
     template <unsigned int MESSAGE_HEADER, typename T>
     static inline bool consumeMessage(T payLength, char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (getOpCode(src)) {
-            if (wState->state.opStack == 1 || (getOpCode(src) < 3 && wState->state.opStack != -1)) {
+            if (wState->state.opStack == 1 || (!wState->state.lastFin && getOpCode(src) < 3 && wState->state.opStack != -1)) {
                 Impl::failConnection(wState, user, FAIL_INTERLEAVED_MESSAGE, getOpCode(src));
                 return true;
             }
@@ -333,7 +335,10 @@ protected:
             Impl::failConnection(wState, user, FAIL_INVALID_CONTINUATION, 0);
             return true;
         }
-        wState->state.lastFin = isFin(src);
+        wState->state.currentFrameFin = isFin(src);
+        if (getOpCode(src) < 8) {
+            wState->state.lastFin = wState->state.currentFrameFin;
+        }
 
         /* maxPayloadLength doesn't apply to control frames. Their 125 byte limit is checked in consume(). */
         if (Impl::refusePayloadLength(payLength, wState, user) && getOpCode(src) < 8) {
@@ -395,11 +400,11 @@ protected:
                 }
             }
 
-            if (Impl::handleFragment(src, wState->remainingBytes, 0, wState->state.opCode[wState->state.opStack], wState->state.lastFin, wState, user)) {
+            if (Impl::handleFragment(src, wState->remainingBytes, 0, wState->state.opCode[wState->state.opStack], wState->state.currentFrameFin, wState, user)) {
                 return false;
             }
 
-            if (wState->state.lastFin) {
+            if (wState->state.currentFrameFin) {
                 wState->state.opStack--;
             }
 
@@ -422,7 +427,7 @@ protected:
             }
 
             wState->remainingBytes -= length;
-            if (Impl::handleFragment(src, length, wState->remainingBytes, wState->state.opCode[wState->state.opStack], wState->state.lastFin, wState, user)) {
+            if (Impl::handleFragment(src, length, wState->remainingBytes, wState->state.opCode[wState->state.opStack], wState->state.currentFrameFin, wState, user)) {
                 return false;
             }
 

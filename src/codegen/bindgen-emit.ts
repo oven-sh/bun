@@ -393,7 +393,9 @@ export function cppHeader(file: SchemaFile): string {
   ];
   const exported = file.functions.filter(fn => fn.exportName);
   const declarations = [
-    ...file.functions.filter(fn => !fn.exportName).map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`),
+    ...file.functions
+      .filter(fn => !fn.exportName && !fn.isValue)
+      .map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`),
     ...propertyCallbacks.map(signature => `// A PropertyCallback of a static property table.\n${signature};`),
   ];
   return `${banner(file.origin)}#pragma once
@@ -1157,13 +1159,13 @@ const offsetOfPayload = (type: ClassType) => offsetOfInternalField(type.internal
 /** A larger cell would not be in a `MarkedBlock`. C++ checks it against `MarkedSpace::largeCutoff`. */
 const maxCellSize = 8000;
 
-/** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
 /** `passThis` and `passCallee`, which come before the arguments. */
 const cppLeadingOfFunction = (fn: FunctionDefinition) => [
   ...(fn.passThis ? ["JSC::JSValue::encode(callFrame->thisValue())"] : []),
   ...(fn.passCallee ? ["JSC::JSValue::encode(callFrame->jsCallee())"] : []),
 ];
 
+/** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
 function cppHostFunction(
   name: string,
   fn: FunctionDefinition,
@@ -1211,16 +1213,26 @@ ${takeThis}${indent(cppDispatch(fn.dispatch), 4)}
 }
 
 function cppSourceForFunction(fn: FunctionDefinition): string {
+  if (fn.isValue) {
+    const [signature] = fn.signatures;
+    return `
+${cppExtern(thunkSymbol(fn, signature), signature)}
+extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${fn.origin!.stem}_${fn.name}(Zig::GlobalObject* globalObject)
+{
+${cppPrologue}
+${cppCallBody(signature, thunkSymbol(fn, signature))}
+}
+`;
+  }
   const name = hostFunctionName(fn);
   const leading = cppLeadingOfFunction(fn).map(() => "JSC::EncodedJSValue");
-  assert(fn.signatures.length === 1 || (leading.length === 0 && !fn.exportName), `${fn.name}: not with overloads`);
   const hostFunction = cppHostFunction(name, fn, signature => thunkSymbol(fn, signature));
   return `
 ${fn.signatures.map(signature => cppExtern(thunkSymbol(fn, signature), signature, leading)).join("\n")}
 ${fn.exportName ? hostFunction : `namespace Bun::Bindgen::Generated::${fn.origin!.namespace} {\n${hostFunction}\n}`}
 extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${fn.origin!.stem}_${fn.name}(Zig::GlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(JSC::JSFunction::create(JSC::getVM(globalObject), globalObject, ${fn.length}, ${asciiLiteral(fn.name)}, ${fn.exportName ?? `Bun::Bindgen::Generated::${fn.origin!.namespace}::${name}`}, JSC::ImplementationVisibility::Public));
+    return Bun::Bindgen::createFunction(globalObject, ${fn.length}, ${asciiLiteral(fn.name)}, ${fn.exportName ?? `Bun::Bindgen::Generated::${fn.origin!.namespace}::${name}`});
 }
 `;
 }
@@ -1865,7 +1877,7 @@ bun_jsc::jsc_abi_extern! {
             file.moduleDefinition,
             `${scope.stem}.bind.ts: export default b.module({ rustPath }) or give ${fn.name} a rustPath`,
           );
-          path = `${file.moduleDefinition.rustPath}::${rustIdent(snakeCase(fn.name))}`;
+          path = `${file.moduleDefinition.rustPath}::${rustIdent(snakeCase(fn.name.replace(/^_+/, "")))}`;
         }
         const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature)].join(", ")})`;
         return rustThunk(
@@ -1989,7 +2001,10 @@ ${[
     }),
   );
   const exported = (file: SchemaFile) => [
-    ...file.functions.map(fn => `      ${JSON.stringify(fn.name)}: ${overloadsType(fn)};`),
+    ...file.functions.map(
+      fn =>
+        `      ${JSON.stringify(fn.name)}: ${fn.isValue ? resultType(fn.signatures[0].returns) : overloadsType(fn)};`,
+    ),
     ...file.types
       .filter(type => type instanceof ClassType && type.construct)
       .map(type => `      ${JSON.stringify(type.name)}: ${type.name}Constructor;`),

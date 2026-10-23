@@ -44,7 +44,7 @@ pub(crate) use crate::webcore::s3::simple_request::S3UploadResult;
 
 use crate::webcore::s3::simple_request as s3_simple_request;
 
-use crate::generated_bindgen::client::{
+use crate::generated_bindgen::s3_upload_stream::{
     Bun__S3UploadStream__onRejectStream, Bun__S3UploadStream__onResolveStream,
 };
 use crate::webcore::ByteStream;

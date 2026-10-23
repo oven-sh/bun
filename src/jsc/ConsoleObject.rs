@@ -5911,8 +5911,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 ///
 /// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
 /// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
-/// export symbol is passed verbatim — same pattern as `export_callbacks!` in
-/// `runtime/api/BunObject.rs`.
+/// export symbol is passed verbatim.
 macro_rules! console_noop_hooks {
     (str: $($name:ident),+ $(,)?) => {$(
         #[unsafe(no_mangle)]

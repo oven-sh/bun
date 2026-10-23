@@ -1778,7 +1778,7 @@ export interface SignatureOptions {
   expected?: Record<string, readonly string[] | string>;
 }
 
-/** What `b.fn` takes, and each function of a `b.namespace`. */
+/** What `b.fn` takes. */
 export interface FunctionOptions extends SignatureOptions {
   /** Also pass `this`, `this_value: JsLocal<'a>`. */
   passThis?: boolean;
@@ -1787,6 +1787,9 @@ export interface FunctionOptions extends SignatureOptions {
   /** The host function has C linkage under this name. C++ declares it with `BUN_DECLARE_HOST_FUNCTION`, and in Rust it is a `JSHostFn` of the generated module. */
   export?: string;
 }
+
+/** What `b.value` takes. */
+export type ValueOptions = Pick<SignatureOptions, "capability" | "throws" | "rustPath"> & { returns: Type };
 
 export class Signature {
   readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
@@ -1880,7 +1883,12 @@ export class FunctionDefinition {
   readonly exportName: string | undefined;
   name = "";
   origin: Origin | null = null;
-  constructor(signatures: readonly (SignatureOptions | Signature)[], options: FunctionOptions = {}) {
+  /** `isValue`: `b.value`. There is no JS function. */
+  constructor(
+    signatures: readonly (SignatureOptions | Signature)[],
+    options: FunctionOptions = {},
+    readonly isValue = false,
+  ) {
     assert(signatures.length > 0, "b.overloads needs at least one signature");
     this.passThis = options.passThis ?? false;
     this.passCallee = options.passCallee ?? false;
@@ -2395,11 +2403,11 @@ export class NamespaceDefinition {
   readonly functions: readonly FunctionDefinition[];
   readonly call: FunctionDefinition | undefined;
   name = "";
-  constructor(functions: Record<string, FunctionOptions>, options: NamespaceOptions = {}) {
+  constructor(functions: Record<string, SignatureOptions>, options: NamespaceOptions = {}) {
     this.functions = Object.entries(functions).map(([name, options]) => {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
       assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);
-      const fn = new FunctionDefinition([options], options);
+      const fn = new FunctionDefinition([options]);
       fn.name = name;
       return fn;
     });

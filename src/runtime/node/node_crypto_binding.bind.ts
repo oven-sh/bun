@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::node::crypto" });
 
 /** Each body validates its own arguments, in Node's order and with Node's errors. */
-const validatesItsArguments = { capability: "js", throws: true } as const;
+const js = { capability: "js", throws: true } as const;
 
 const argon2Parameters = {
   message: b.any,
@@ -20,36 +20,36 @@ const argon2Parameters = {
 export const crypto = b.namespace({
   pbkdf2: {
     args: { password: b.any, salt: b.any, iterations: b.any, keylen: b.any, digest: b.any, callback: b.any },
-    ...validatesItsArguments,
+    ...js,
   },
   pbkdf2Sync: {
     args: { password: b.any, salt: b.any, iterations: b.any, keylen: b.any, digest: b.any },
     returns: b.any,
-    ...validatesItsArguments,
+    ...js,
   },
   randomInt: {
     args: { min: b.any, max: b.any, callback: b.any },
     returns: b.f64.optional,
     length: 2,
-    ...validatesItsArguments,
+    ...js,
   },
   randomFill: {
     args: { buf: b.any, offset: b.any, size: b.any, callback: b.any },
-    ...validatesItsArguments,
+    ...js,
   },
   randomFillSync: {
     args: { buf: b.any, offset: b.any, size: b.any },
     returns: b.any,
-    ...validatesItsArguments,
+    ...js,
   },
-  randomUUID: { args: { options: b.any }, returns: b.string, ...validatesItsArguments },
+  randomUUID: { args: { options: b.any }, returns: b.string, ...js },
   randomUUIDv7: {
     args: { options: b.any },
     returns: b.string,
     rustPath: "crate::node::crypto::random_uuid_v7",
-    ...validatesItsArguments,
+    ...js,
   },
-  randomBytes: { args: { size: b.any, callback: b.any }, returns: b.any, ...validatesItsArguments },
+  randomBytes: { args: { size: b.any, callback: b.any }, returns: b.any, ...js },
   secureHeapUsed: {},
   getFips: { returns: b.i32 },
   setFips: { length: 1 },
@@ -57,13 +57,13 @@ export const crypto = b.namespace({
   getHashes: { returns: b.any, capability: "heap", throws: true },
   scrypt: {
     args: { password: b.any, salt: b.any, keylen: b.any, options: b.any, callback: b.any },
-    ...validatesItsArguments,
+    ...js,
   },
   scryptSync: {
     args: { password: b.any, salt: b.any, keylen: b.any, options: b.any },
     returns: b.any,
-    ...validatesItsArguments,
+    ...js,
   },
-  argon2: { args: { ...argon2Parameters, callback: b.any }, ...validatesItsArguments },
-  argon2Sync: { args: argon2Parameters, returns: b.any, ...validatesItsArguments },
+  argon2: { args: { ...argon2Parameters, callback: b.any }, ...js },
+  argon2Sync: { args: argon2Parameters, returns: b.any, ...js },
 });

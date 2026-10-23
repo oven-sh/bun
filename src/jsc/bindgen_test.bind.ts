@@ -392,6 +392,7 @@ export const thisAndCallee = b.fn({
 export const doubled = b.fn({ export: "Bun__BindgenTest__doubled", args: { value: b.i32 }, returns: b.i32 });
 /** A new function, made in Rust, that runs `doubled`. */
 export const makeDoubled = b.fn({ returns: b.any, capability: "js" });
+export const primes = b.value({ returns: b.array(b.u32) });
 export const testNamespace = b.namespace({
   increment: { args: { value: b.i32 }, returns: b.i32 },
   decrement: { args: { value: b.i32 }, returns: b.i32 },

@@ -65,15 +65,15 @@ export const setSQLiteColumnNameTransform = (
 ) => statement.native.$setColumnNameTransform(transform);
 
 export const patchInternals = {
-  parse: $bindgen("testing.bind.ts", "parse"),
-  apply: $bindgen("testing.bind.ts", "apply"),
-  makeDiff: $bindgen("testing.bind.ts", "makeDiff"),
+  parse: $bindgen("patch_testing.bind.ts", "parse"),
+  apply: $bindgen("patch_testing.bind.ts", "apply"),
+  makeDiff: $bindgen("patch_testing.bind.ts", "makeDiff"),
 };
 
 export const internalSourceMap = {
-  fromVLQ: $bindgen("internal_jsc.bind.ts", "fromVLQ") as (vlq: string) => Uint8Array,
-  toVLQ: $bindgen("internal_jsc.bind.ts", "toVLQ"),
-  find: $bindgen("internal_jsc.bind.ts", "find"),
+  fromVLQ: $bindgen("InternalSourceMap.bind.ts", "fromVLQ") as (vlq: string) => Uint8Array,
+  toVLQ: $bindgen("InternalSourceMap.bind.ts", "toVLQ"),
+  find: $bindgen("InternalSourceMap.bind.ts", "find"),
 };
 
 const shellLex = $bindgen("shell_body.bind.ts", "shellLex");
@@ -85,7 +85,7 @@ export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "th
 
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
-export const semverIntersects = $bindgen("SemverObject.bind.ts", "intersects") as (
+export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,
 ) => boolean;
@@ -204,7 +204,7 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
 );
 
 export const frameworkRouterInternals = {
-  parseRoutePattern: $bindgen("js.bind.ts", "parseRoutePattern"),
+  parseRoutePattern: $bindgen("FrameworkRouter.bind.ts", "parseRoutePattern"),
   FrameworkRouter: $bindgen("filesystem_router.bind.ts", "FrameworkFileSystemRouter"),
 };
 
@@ -280,6 +280,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   thisAndCallee: $bindgen("bindgen_test.bind.ts", "thisAndCallee"),
   doubled: $bindgen("bindgen_test.bind.ts", "doubled"),
   makeDoubled: $bindgen("bindgen_test.bind.ts", "makeDoubled"),
+  primes: $bindgen("bindgen_test.bind.ts", "primes"),
   testNamespace: $bindgen("bindgen_test.bind.ts", "testNamespace"),
   integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
   looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),
@@ -714,7 +715,7 @@ export const socketFaultInjection = {
   /** Arm a process-wide fault rule for one usockets bsd_* syscall. */
   set: $bindgen("socket_body.bind.ts", "setSocketFault") as (rule: SocketFaultRule) => boolean,
   /** Disarm all fault rules. */
-  clear: $bindgen("socket_body.bind.ts", "clearSocketFaults") as () => void,
+  clear: $bindgen("socket_body.bind.ts", "clearSocketFaults"),
 };
 
 export const namedPipeInternals = {

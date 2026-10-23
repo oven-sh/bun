@@ -120,4 +120,4 @@ type FsCallbackArm<T> = {
   ) => void;
 };
 
-export default $bindgen("node_fs_binding.bind.ts", "createBinding")() as FsBinding & FsCallbackArm<FsBinding>;
+export default $bindgen("node_fs_binding.bind.ts", "binding") as FsBinding & FsCallbackArm<FsBinding>;

@@ -96,7 +96,7 @@ export const inflateSync = zlib("inflate_sync", ZlibDecompressionOptions);
 /** `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is `"undefined"`. */
 export const inspect = b.fn({
   export: "Bun__BunObject__inspect",
-  args: { arguments: b.any.variadic },
+  args: { args: b.any.variadic },
   returns: b.string.utf8,
   capability: "js",
   throws: true,

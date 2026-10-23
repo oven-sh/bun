@@ -70,7 +70,7 @@ impl MarkedArgumentBuffer {
         })
     }
 
-    pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
+    fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
         // `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to `func`,
         // and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).

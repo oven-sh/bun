@@ -7,4 +7,4 @@ const dialog = { args: { args: b.any.variadic }, capability: "js", throws: true,
 
 export const alert = b.fn(dialog);
 export const confirm = b.fn({ ...dialog, returns: b.bool });
-export const prompt = b.fn({ ...dialog, returns: b.any, rustPath: "crate::webcore::prompt::prompt::prompt" });
+export const prompt = b.fn({ ...dialog, returns: b.any });

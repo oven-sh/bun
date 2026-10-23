@@ -1,5 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+// Not `bun_test.bind.ts`: a release build leaves out a `*_test.bind.ts`.
 export default b.module({ rustPath: "crate::test_runner::bun_test::js_fns::generic_hook" });
 
 const js = { capability: "js", throws: true } as const;

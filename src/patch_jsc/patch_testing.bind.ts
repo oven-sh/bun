@@ -1,6 +1,6 @@
 import * as b from "../codegen/bindgen-lib.ts";
 
-export default b.module({ rustPath: "crate::testing::TestingAPIs" });
+export default b.module({ rustPath: "crate::testing" });
 
 export const parse = b.fn({
   args: { patchfile: b.string.loose.utf8 },

@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-export default b.module({ rustPath: "crate::api::crash_handler_jsc::js_bindings" });
+export default b.module({ rustPath: "crate::api::crash_handler_jsc" });
 
 export const crashHandler = b.namespace({
   getMachOImageZeroOffset: { returns: b.f64.optional, length: 1 },

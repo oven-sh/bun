@@ -821,6 +821,10 @@ pub(crate) fn make_doubled(cx: &mut JsScope<'_>) -> JSValue {
     )
 }
 
+pub(crate) fn primes() -> [u32; 3] {
+    [2, 3, 5]
+}
+
 pub(crate) fn increment(value: i32) -> i32 {
     value.wrapping_add(1)
 }

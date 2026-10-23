@@ -1,6 +1,6 @@
 import * as b from "../codegen/bindgen-lib.ts";
 
-export default b.module({ rustPath: "crate::error_jsc::TestingAPIs" });
+export default b.module({ rustPath: "crate::error_jsc::testing_apis" });
 
 export const translateNtStatusToE = b.fn({ args: { status: b.f64 }, returns: b.string.utf8.optional });
 export const translateUVErrorToE = b.fn({ args: { code: b.f64 }, returns: b.string.utf8.optional });

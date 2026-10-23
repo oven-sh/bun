@@ -360,19 +360,11 @@ const externTotal = Object.values(externBlocks).reduce((a, b) => a + b, 0);
 /// elsewhere) — same expansion as `#[bun_jsc::host_call]` /
 /// `bun_jsc::jsc_host_abi!`. Rust forbids macros in ABI position, so we emit
 /// both arms verbatim; the inactive one is compiled out.
-function emitNoMangle(
-  abi: Export["abi"],
-  symbol: string,
-  sig: string,
-  ret: string,
-  body: string,
-  unsafeFn = false,
-): string {
-  const qual = unsafeFn ? "unsafe " : "";
+function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string): string {
   const item = (abiStr: string, cfg: string) =>
     `${cfg}#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub ${qual}extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
+pub extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
 ${body}
 }`;
   if (abi === "jsc") {

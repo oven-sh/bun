@@ -15,9 +15,3 @@ export const semver = b.namespace({
     throws: true,
   },
 });
-
-export const intersects = b.fn({
-  args: { left: b.string.loose.utf8, right: b.string.loose.utf8 },
-  returns: b.bool,
-  throws: true,
-});

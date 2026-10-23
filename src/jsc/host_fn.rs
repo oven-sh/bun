@@ -31,11 +31,11 @@ use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 // `jsc.conv` is `"sysv64"` on Windows-x64 (JSC always uses System V there) and
 // `"C"` everywhere else. Rust forbids macros in ABI position, so cfg-split the
 // alias — the `#[bun_jsc::host_call]` proc-macro emits the matching ABI on
-// each target so `JsHostFn`-typed slots accept its output without a cast.
+// each target so `JSHostFn`-typed slots accept its output without a cast.
 #[cfg(all(windows, target_arch = "x86_64"))]
-pub type JsHostFn = unsafe extern "sysv64" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
+pub type JSHostFn = unsafe extern "sysv64" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
 #[cfg(not(all(windows, target_arch = "x86_64")))]
-pub type JsHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
+pub type JSHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
 /// Expand to the JSC host-function ABI string for the current target. Rust
 /// forbids macros in `extern "<abi>"` position, but *does* accept them as the
@@ -60,10 +60,7 @@ macro_rules! jsc_host_abi {
     };
 }
 
-// Enough call sites use the acronym-caps spelling that both must resolve.
-pub use JsHostFn as JSHostFn;
-
-// ─────────────────────── host-fn wrapping (proc-macro) ───────────────────────
+// ───────────────────────────── result mapping ─────────────────────────────
 
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
 /// (`.zero` when an exception is pending).
@@ -104,7 +101,6 @@ fn terminated_beneath_script(global_this: &JSGlobalObject) -> JSValue {
 }
 
 fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func: &'static str) {
-    // `func` is the fn name string (the proc-macro supplies `stringify!(fn_name)`).
     if Environment::IS_DEBUG {
         if !value.is_empty() && global_this.has_exception() {
             let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
@@ -299,9 +295,9 @@ mod private {
             global: &JSGlobalObject,
             symbol_name: Option<&EncodedSlice>,
             arg_count: u32,
-            // `JsHostFn` is already `unsafe extern "C" fn(...)`, i.e. the
+            // `JSHostFn` is already `unsafe extern "C" fn(...)`, i.e. the
             // fn-pointer type.
-            function: JsHostFn,
+            function: JSHostFn,
             data: *mut c_void,
         ) -> JSValue;
 
@@ -331,7 +327,7 @@ pub fn new_function_with_data(
     global_object: &JSGlobalObject,
     symbol_name: Option<&EncodedSlice>,
     arg_count: u32,
-    function: JsHostFn,
+    function: JSHostFn,
     data: *mut c_void,
 ) -> JSValue {
     jsc::mark_binding();

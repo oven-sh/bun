@@ -712,6 +712,10 @@ describe("functions", () => {
     expect(() => b.fn({ export: "not a name" })).toThrow("export: not a name is not a C identifier");
   });
 
+  it("$bindgen gives what a b.value returns", () => {
+    expect(bindgen.primes).toEqual([2, 3, 5]);
+  });
+
   it("$bindgen gives a namespace as an object", () => {
     expect(Object.keys(bindgen.testNamespace)).toEqual(["increment", "decrement"]);
     expect(bindgen.testNamespace.increment(1)).toBe(2);

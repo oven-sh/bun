@@ -1,6 +1,6 @@
 import * as b from "../codegen/bindgen-lib.ts";
 
-export default b.module({ rustPath: "crate::install_binding::bun_install_js_bindings" });
+export default b.module({ rustPath: "crate::install_binding" });
 
 export const installTestHelpers = b.namespace({
   parseLockfile: {

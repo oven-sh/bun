@@ -95,9 +95,8 @@ impl JSGlobalObject {
 
     pub fn throw_stack_overflow(&self) -> JsError {
         // Wrap the raw FFI throw in a validation scope (mirrors `VM::throw_error`).
-        // A generated thunk inserts an `ExceptionValidationScope`
-        // one frame above us; with that scope
-        // present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
+        // The generated C++ host function has a `ThrowScope` above us; with that
+        // scope present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
         // longer sees its previous scope as above `topEntryFrame`, so it
         // `simulateThrow()`s and leaves `m_needExceptionCheck` set. Observe the
         // exception here so the caller's scope dtor doesn't assert "unchecked

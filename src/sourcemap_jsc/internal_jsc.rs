@@ -5,7 +5,7 @@ use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal};
 use bun_sourcemap::Ordinal;
 use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
 
-use crate::generated_bindgen::internal_jsc::InternalSourceMapMapping;
+use crate::generated_bindgen::internal_source_map::InternalSourceMapMapping;
 
 pub(crate) fn from_vlq<'a>(
     heap: &JsHeap<'a>,

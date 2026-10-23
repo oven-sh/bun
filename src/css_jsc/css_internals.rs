@@ -28,13 +28,12 @@ pub(crate) enum TestCategory {
 pub(crate) fn minify_error_test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     testing_impl(
         cx.global(),
         source,
-        expected,
         options.to_js(),
         TestKind::Minify,
         TestCategory::ParserOptions,
@@ -44,13 +43,12 @@ pub(crate) fn minify_error_test_with_options<'a>(
 pub(crate) fn minify_test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     testing_impl(
         cx.global(),
         source,
-        expected,
         options.to_js(),
         TestKind::Minify,
         TestCategory::ParserOptions,
@@ -60,13 +58,12 @@ pub(crate) fn minify_test_with_options<'a>(
 pub(crate) fn prefix_test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     testing_impl(
         cx.global(),
         source,
-        expected,
         options.to_js(),
         TestKind::Prefix,
         TestCategory::ParserOptions,
@@ -76,13 +73,12 @@ pub(crate) fn prefix_test_with_options<'a>(
 pub(crate) fn test_with_options<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     testing_impl(
         cx.global(),
         source,
-        expected,
         options.to_js(),
         TestKind::Normal,
         TestCategory::ParserOptions,
@@ -92,13 +88,12 @@ pub(crate) fn test_with_options<'a>(
 pub(crate) fn minify_test<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     testing_impl(
         cx.global(),
         source,
-        expected,
         options.to_js(),
         TestKind::Minify,
         TestCategory::Normal,
@@ -108,13 +103,12 @@ pub(crate) fn minify_test<'a>(
 pub(crate) fn prefix_test<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     testing_impl(
         cx.global(),
         source,
-        expected,
         options.to_js(),
         TestKind::Prefix,
         TestCategory::Normal,
@@ -124,13 +118,12 @@ pub(crate) fn prefix_test<'a>(
 pub(crate) fn test<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     testing_impl(
         cx.global(),
         source,
-        expected,
         options.to_js(),
         TestKind::Normal,
         TestCategory::Normal,
@@ -140,7 +133,6 @@ pub(crate) fn test<'a>(
 fn testing_impl(
     global: &JSGlobalObject,
     source: &BunString,
-    expected: &BunString,
     options: JSValue,
     test_kind: TestKind,
     test_category: TestCategory,
@@ -162,7 +154,6 @@ fn testing_impl(
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
     let source = source.to_utf8();
-    let _expected = expected.to_utf8();
 
     let mut log = Log::init();
 
@@ -308,7 +299,7 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
 pub(crate) fn attr_test<'a>(
     cx: &mut JsScope<'a>,
     source: &BunString,
-    expected: &BunString,
+    _: &BunString,
     minify: JsLocal<'a>,
     targets: JsLocal<'a>,
 ) -> JsResult<JSValue> {
@@ -330,7 +321,6 @@ pub(crate) fn attr_test<'a>(
 
     let global = cx.global();
     let source = source.to_utf8();
-    let _expected = expected.to_utf8();
 
     let minify_arg = minify.to_js();
     let minify = minify_arg.is_boolean() && minify_arg.to_boolean();

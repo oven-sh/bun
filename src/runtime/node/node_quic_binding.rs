@@ -102,7 +102,7 @@ macro_rules! put_state_offsets_with_size {
     };
 }
 
-pub(crate) fn create_binding(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+pub(crate) fn binding(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     let obj = JSValue::create_empty_object(global, 16);
 

@@ -409,9 +409,9 @@ pub(crate) fn table(
     Ok(array)
 }
 
-pub(crate) fn inspect(cx: &mut JsScope<'_>, arguments: &[JsLocal<'_>]) -> JsResult<Vec<u8>> {
+pub(crate) fn inspect(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
-    let arguments = JsLocal::to_js_slice(arguments);
+    let arguments = JsLocal::to_js_slice(args);
     if arguments.is_empty() {
         return Ok(Vec::new());
     }

@@ -16,13 +16,11 @@ interface NativeCall {
 }
 
 interface WrapperCall {
-  type: NativeCallType;
   wrap_kind: "new-function";
   symbol_target: string;
   symbol_generated: string;
   display_name: string;
   call_length: number;
-  filename: string;
 }
 
 type NativeCallType = "cpp" | "bind";
@@ -89,13 +87,11 @@ export function registerNativeCall(
   });
   if (create_fn_len != null) {
     wrapperCalls.push({
-      type: call_type,
       wrap_kind: "new-function",
       symbol_target: symbol,
       symbol_generated: "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_"),
       display_name: callBaseName(symbol),
       call_length: create_fn_len,
-      filename: resolved_filename,
     });
   }
   return id;

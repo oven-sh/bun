@@ -124,8 +124,6 @@ pub(crate) mod js_fns {
 
     /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
     /// (adds `OnTestFinished`).
-    // was a const-generic param (`adt_const_params` is unstable);
-    // reshaped to runtime dispatch with per-tag thin wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum GenericHookTag {
         #[strum(serialize = "beforeAll")]
@@ -161,9 +159,6 @@ pub(crate) mod js_fns {
         }
     }
 
-    // `adt_const_params` is unstable, so the body takes `tag` at runtime and
-    // 5 thin wrappers below supply the per-tag entry points
-    // (one fn per JS function so JSFunction::create gets a distinct address).
     pub(crate) fn generic_hook_impl(
         tag: GenericHookTag,
         global_this: &JSGlobalObject,
@@ -328,8 +323,7 @@ pub(crate) mod js_fns {
         result
     }
 
-    /// Per-tag entry points (one fn per JS function so
-    /// `JSFunction::create` gets a distinct address).
+    /// One for each hook of `BunTest.bind.ts`.
     pub(crate) mod generic_hook {
         use super::*;
         macro_rules! hook {

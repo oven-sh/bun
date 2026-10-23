@@ -126,7 +126,7 @@ fn lazy_js_handler(
     js_wrapper: JSValue,
     set_slot: fn(JSValue, &JSGlobalObject, JSValue),
     global: &JSGlobalObject,
-    func: host_fn::JsHostFn,
+    func: host_fn::JSHostFn,
     this_ptr: *mut c_void,
 ) -> JSValue {
     if !shadow.get().is_empty() {

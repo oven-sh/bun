@@ -53,7 +53,7 @@ const operations: Record<string, readonly [number, number]> = {
 
 const getter = { getter: b.any, capability: "js" } as const;
 
-/** `src/js/internal/fs/binding.ts`. */
+/** The default export of `src/js/internal/fs/binding.ts`. */
 export const NodeJSFS = b.class({
   rustPath: "crate::node::node_fs_binding::Binding",
   proto: Object.fromEntries(
@@ -73,7 +73,7 @@ export const NodeJSFS = b.class({
   ),
 });
 
-export const createBinding = b.fn({ returns: NodeJSFS, capability: "js" });
+export const binding = b.value({ returns: NodeJSFS, capability: "js" });
 
 /** `(path, options)`, parsed as `fs.rm` parses them. */
 export const rmOptionsForTesting = b.fn({

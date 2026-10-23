@@ -10,7 +10,7 @@ export const setMaxHTTPHeaderSize = b.fn({
   args: { maxHeaderSize: b.usize.validateInteger(1, Number.MAX_SAFE_INTEGER) },
   rustPath: "bun_http::set_max_http_header_size",
 });
-export const getInsecureHTTPParser = b.fn({ returns: b.bool, rustPath: "bun_http::insecure_http_parser" });
+export const insecureHTTPParser = b.value({ returns: b.bool, rustPath: "bun_http::insecure_http_parser" });
 
 export const BunServer = b.union({
   http: HTTPServer,

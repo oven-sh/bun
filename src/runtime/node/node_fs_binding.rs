@@ -370,7 +370,7 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
-pub(crate) fn create_binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
+pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
     Binding {
         node_fs: JsCell::new(NodeFS {
             vm: NonNull::new(cx.global().bun_vm_ptr()),

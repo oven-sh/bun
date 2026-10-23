@@ -81,8 +81,11 @@ To reach the function:
   linkage under that name. The generated header declares it, and in Rust it is a `JSHostFn`,
   `crate::generated_bindgen::cron::Bun__CronJob__onPromiseResolve`, for `JSFunction::create` and `JSValue::then`.
 
-`passThis: true` adds `this_value: JsLocal<'a>` before the arguments, and `passCallee: true` adds `callee: JsLocal<'a>`, the
-function that was called, after it. Neither goes with overloads.
+`passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds `callee: JsLocal<'a>`, the
+function that was called, after it. Neither they nor `export` go with overloads.
+
+`b.value({ returns: b.i32 })` is for what `src/js` reads once: `$bindgen` calls the Rust function and gives what it returns,
+and no JS function is made.
 
 The caller's source location is `global.get_caller_src_loc()`: inside a host function `vm.topCallFrame` is its own frame.
 

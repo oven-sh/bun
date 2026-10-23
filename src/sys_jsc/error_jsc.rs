@@ -34,7 +34,7 @@ impl ErrorJsc for Error {
     }
 }
 
-pub(crate) mod TestingAPIs {
+pub(crate) mod testing_apis {
     use crate::generated_bindgen::error_jsc::SigactionLayout;
 
     /// Exposes NTSTATUS -> `bun.sys.E` translation so tests can feed NTSTATUS

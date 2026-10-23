@@ -2721,7 +2721,8 @@ crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
     const HAS_FLUSH_FROM_JS: bool = true;
-    const HAS_END_WITH_ERROR_FROM_JS: bool = true;
+    const END_WITH_ERROR_FROM_JS: Option<crate::webcore::sink::EndWithErrorFromJs<Self>> =
+        Some(Self::end_with_error_from_js);
     const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
 
     crate::impl_js_sink_forwarders!();
@@ -2744,13 +2745,6 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
-    }
-    unsafe fn end_with_error_from_js(
-        this: *mut Self,
-        cx: &bun_jsc::JsThread<'_>,
-        err: JSValue,
-    ) -> JsResult<JSValue> {
-        Self::end_with_error_from_js(this, cx, err)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)

@@ -590,6 +590,11 @@ pub(crate) fn install_hoisted_packages(
 
             this.sleep();
         }
+        // Still listed: a package that waited for scripts inside its folder, or never ran its own.
+        crate::package_installer::discard_unfinished_packages(
+            &lockfile_ref,
+            &installer.unfinished_scripts,
+        );
         installer.link_bins_after_scripts();
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
         installer.summary.successfully_installed =

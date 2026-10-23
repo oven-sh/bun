@@ -404,6 +404,7 @@ pub enum InstallCtx<'a> {
 
 /// The packages that the hoisted linker placed and whose scripts haven't all run yet. Main thread
 /// only.
+/// A failed optional package whose folder has to stay is listed until the scripts end.
 pub(crate) type UnfinishedScripts =
     std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
 
@@ -1149,13 +1150,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     fn discard_packages_with_unfinished_scripts(&self) {
         Output::flush();
         if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
-            for (tree_id, folder_name) in unfinished.borrow().iter() {
-                crate::package_installer::remove_placed_package(
-                    &self.manager().lockfile,
-                    *tree_id,
-                    folder_name,
-                );
-            }
+            crate::package_installer::discard_unfinished_packages(
+                &self.manager().lockfile,
+                unfinished,
+            );
         } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
         {
             installer.discard_entries_with_unfinished_scripts(entry_id);
@@ -1164,12 +1162,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     /// Frees `self`.
     fn discard_failed_optional_package(&mut self) {
-        self.forget_unfinished_scripts();
         self.decrement_pending_script_tasks();
         let deleted = match self.ctx.take() {
-            Some(InstallCtx::Hoisted { tree_id, .. }) => {
-                crate::package_installer::remove_placed_package(
+            Some(InstallCtx::Hoisted {
+                tree_id,
+                unfinished,
+            }) => {
+                crate::package_installer::leave_out_placed_package(
                     &self.manager().lockfile,
+                    &unfinished,
                     tree_id,
                     &self.package_name,
                 );

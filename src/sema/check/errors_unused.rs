@@ -298,9 +298,10 @@ impl Checker<'_, '_> {
 
     /// `isTypeParameterPossiblyReferenced`: `getSymbolFromTypeReference` of a type reference without type arguments.
     /// `getObjectTypeInstantiation` calls it the first time `instantiateType` gets to an anonymous type, for each
-    /// type parameter in scope, and `checkSourceFile` has resolved every name it finds, except below the type
-    /// arguments of an import type. `instantiate` doesn't get to every type that `instantiateType` gets to, so
-    /// such a name counts as a reference wherever a type parameter is in scope.
+    /// type parameter in scope there, and `checkSourceFile` has resolved every name it finds, except below the type
+    /// arguments of an import type. `instantiate` doesn't get to every type that `instantiateType` gets to. So below
+    /// those type arguments, a name in a type literal, a function type or a mapped type that has a type parameter in
+    /// scope counts as a reference.
     fn note_type_references_that_an_instantiation_resolves(
         &mut self,
         file: FileId,
@@ -311,6 +312,12 @@ impl Checker<'_, '_> {
         if below.is_empty() {
             return;
         }
+        let is_anonymous_type = |node: Node| {
+            matches!(hir.data(node), NodeData::Type(t) if matches!(
+                hir[t].kind,
+                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_)
+            ))
+        };
         for (i, node) in hir.types.iter().enumerate() {
             let TypeNodeKind::Ref { name, args } = node.kind else {
                 continue;
@@ -318,9 +325,16 @@ impl Checker<'_, '_> {
             if !args.is_empty() || !below.contain(node.pos) || bound.is_unchecked_type(i) {
                 continue;
             }
-            let scope = bound.type_scope[i];
+            let reference = hir.node(TypeNodeId(i as u32));
+            let around = hir.find_ancestor(hir.parent(reference), is_anonymous_type);
+            let NodeData::Type(around) = hir.data(around) else {
+                continue;
+            };
+            if !below.contain(hir[around].pos) {
+                continue;
+            }
             // `tp.isThisType`: a `this` type is no reason to resolve a type reference.
-            let type_parameters = self.type_params_in_scope(file, scope);
+            let type_parameters = self.type_params_in_scope(file, bound.type_scope[around.idx()]);
             if !(type_parameters.iter()).any(|&tp| matches!(self.data(tp), TypeData::TypeParam(..)))
             {
                 continue;
@@ -330,8 +344,8 @@ impl Checker<'_, '_> {
             };
             // `resolveEntityName`: the first name of `a.b` is a namespace.
             match name.len() {
-                1 => u.note_name(scope, first, SymFlags::TYPE),
-                _ => u.note_namespace(scope, first),
+                1 => u.note_name(bound.type_scope[i], first, SymFlags::TYPE),
+                _ => u.note_namespace(bound.type_scope[i], first),
             }
         }
     }

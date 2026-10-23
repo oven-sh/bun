@@ -1885,6 +1885,118 @@ differential("matches tsc on lib interfaces that extend a type built from their 
   expect(await casesThatDiffer({}, declarations, cases, 1, files)).toEqual([]);
 });
 
+// `checkImportType` checks the argument of an import type and none of its type arguments. `getTypeFromImportTypeNode`
+// resolves each type argument. What is below one, such as the type of a member of a type literal, is resolved when
+// something reads it. Only then is an error in it reported, and a name in it used.
+differential("matches tsc below the type arguments of an import type, for every shape, error and read", async () => {
+  // X: what is wrong.
+  const shapes = [
+    ...["X", "X[]", "[X]", "X | string", "Array<X>", "(X)", "{ a: X }", "{ m(x: X): void }", "{ m(): X }"],
+    ...["{ (x: X): void }", "{ new (x: X): object }", "{ [k: string]: X }", "{ get a(): X }", "{ set a(v: X) }"],
+    ...["(x: X) => void", "() => X", "(...x: X[]) => void", "<U extends X>() => void", "<U = X>() => void"],
+    ...["(x: unknown) => x is X", "new (x: X) => object", "{ [K in X]: string }", `{ [K in "a"]: X }`],
+    ...[`{ [K in "a" as X]: string }`, "{ a: X }[]", "[{ a: X }]", "Array<{ a: X }>", "{ a: X } | string"],
+    ...["{ a: X } & { b: string }", "X extends string ? 1 : 2", "string extends X ? 1 : 2"],
+    ...["string extends string ? X : 2", "string extends number ? 1 : X", `{ a: X }["a"]`, "keyof { a: X }"],
+    ...[`import("./box").Box<X>`, `import("./box").Box<{ a: X }>`, "`a${X}`", "readonly { a: X }[]"],
+    ...["[a?: { a: X }]", "{ a: { b: X } }", "() => () => X"],
+  ];
+  const wrongs = [
+    ...["Missing", "NotG<string>", `import("./box").NotGeneric<string>`, "One<string, number>", "Limited<number>"],
+    ...["NS.Nope", "someValue", "typeof missingValue", "typeof someValue.nope", "this", `import("./nope").T`],
+    ...[`import("./box").Nope`, "Used"],
+  ];
+  const declarations = [
+    "type NotG = string; interface One<T> { v: T } type Limited<T extends string> = T;",
+    "declare namespace NS { type Yes = 1 } declare const someValue: number;",
+  ];
+  // With the assignment, the relation reads the members.
+  const cases = [...product(shapes, wrongs, ["", " v = w;"])].map(([shape, wrong, read]) => {
+    const argument = `import("./box").Box<${shape.replace(/\bX\b/g, () => wrong)}>`;
+    return `{ type Used = string; type A = ${argument}; type B = ${argument}; let v!: A, w!: B; void v, w;${read} }`;
+  });
+  const files = { "box.ts": "export interface Box<T> { value: T }\nexport type NotGeneric = string;\n" };
+  for (const options of [{}, { noUnusedLocals: true, noUnusedParameters: true }]) {
+    expect(await casesThatDiffer(options, declarations, cases, every, files)).toEqual([]);
+  }
+});
+
+// Where a type parameter is in scope, `getObjectTypeInstantiation` resolves names below the type arguments too: the
+// first time an anonymous type is instantiated, `isTypeParameterPossiblyReferenced` walks its syntax for each type
+// parameter, up to the first reference to that one, and resolves the type references and the first identifiers of the
+// type queries on the way. `bun check` resolves those names when it checks the import type. So it prints every line
+// that tsc prints, and no other line, except for a name that doesn't resolve where tsc instantiates nothing or stops
+// earlier.
+differential("prints what tsc prints below the type arguments of an import type in a generic declaration", async () => {
+  // W: what is wrong. I: the import type.
+  const wrongs = ["Missing", "typeof missingValue", "NotG<string>", "NS.Nope", "Used", "typeof usedValue", "Gen"];
+  const typeArguments = [
+    ...["{ a: W }", "{ m(x: W): void }", "(x: W) => void", "{ a: T; b: W }", "{ b: W; a: T }", "W"],
+    ...[`{ [K in "k"]: W }`, "{ a: W }[]", "{ a: { b: W } }", "[W, T]", "{ b: W; m(x: T): void }"],
+    ...["{ m(x: T, y: W): void }", "{ a: typeof local; b: W }", "new (x: W) => T", "{ m<V>(x: V, y: W): T }"],
+    ...["{ get a(): W }", "{ a: (x: T) => void; c: W }"],
+  ];
+  // A declaration, and what instantiates it or reads a member of it.
+  const contexts: [string, string[]][] = [
+    ["type A<T> = I;", ["export declare const a: A<string>;", "declare const a: A<string>; export const r = a.value;"]],
+    ["type A<T, U> = I;", ["export declare const a: A<string, number>;"]],
+    ["export declare function f<T>(x: T, y: I): void;", ["f(1, null as never);"]],
+    ["export declare function f<T>(x: T): I;", ["export const r = f(1);"]],
+    ["export function f<T>(x: T) { let y!: I; return y; }", ["export const r = f(1);"]],
+    ["export const f = <T,>(x: T, y: I): void => {};", ["f(1, null as never);"]],
+    ["interface A<T> { p: I; q: T }", ["declare const a: A<string>; export const r = a.p;"]],
+    ["interface A<T> { p: I; q: T }", ["declare const a: A<string>; export const r = a.q;"]],
+    ["class A<T> { p!: I; q!: T }", ["export const r = new A<string>().p;", "export const r = new A<string>().q;"]],
+    ["class A { p!: I; q!: string }", ["export const r = new A().p;", "export const r = new A().q;"]],
+    ["interface A { p: I; self: this }", ["declare const a: A; export const r = a.p;"]],
+    ["interface A { p: I }", ["declare const a: A; export const r = a.p;"]],
+    ["interface A<T> { m(x: I): void; q: T }", ["declare const a: A<string>; export const r = a.m;"]],
+    ["class A<T> { m(x: I): void {} q!: T }", ["export const r = new A<string>().m;"]],
+    ["interface A<T> { x: T; [k: string]: I | T }", ["declare const a: A<string>; export const r = a.x;"]],
+    [
+      "interface B<T> { x: T } interface A<T> extends B<I> { y: T }",
+      ["declare const a: A<string>; export const r = a.y;"],
+    ],
+    ["class B<T> { x!: T } class A extends B<I> { y!: string }", ["export const r = new A().y;"]],
+    [`type A = { [T in "a" | "b"]: I };`, ["declare const a: A; export const r = a.a;"]],
+    ["type A<T> = T extends string ? I : never;", [`export declare const a: A<"a">;`]],
+    ["export declare function f<T, U>(x: T): T extends string ? I : never;", ["export const r = f('');"]],
+    ["export declare function f<T>(x: T, y: { z: I }): void;", ["f(1, null as never);"]],
+    [
+      "type A<T> = { z: I };",
+      ["export declare const a: A<string>;", "declare const a: A<string>; export const r = a.z;"],
+    ],
+    ["type Other = string; type A<T> = string | [Other, I];", ["export declare const a: A<string>;"]],
+    [
+      "declare function g<X>(x: X): X; type A<T> = { a: typeof g<I> };",
+      ["declare const a: A<string>; export const r = a.a;"],
+    ],
+    ["type A<T> = T extends (infer U)[] ? [U, I] : never;", ["export declare const a: A<string[]>;"]],
+  ];
+  const declared = [
+    "type NotG = string; declare namespace NS { type Yes = 1 } type Used = string; const usedValue = 1;",
+    "const local = 2; interface Gen<X> { x: X }",
+  ].join(" ");
+  // A namespace is no block: `isTypeParameterPossiblyReferenced` holds for a type parameter that is declared outside
+  // of a block around the type, and resolves nothing.
+  const cases = [...product(contexts, typeArguments, wrongs)]
+    .flatMap(([[context, uses], typeArgument, wrong]) => {
+      const importType = `import("./box").Box<${typeArgument.replace(/\bW\b/g, () => wrong)}>`;
+      const declaration = context.replace(/\bI\b/g, () => importType);
+      return ["", ...uses].map(use => `{ ${declared} ${declaration} ${use} }`);
+    })
+    .map((body, index) => `export namespace N${index} ${body}`);
+  const files = { "box.ts": "export interface Box<T> { value: T }\n" };
+  // 2304: cannot find name. 2694: a namespace has no such member.
+  const isUnresolvedName = (line: string) => /: error TS(2304|2694): /.test(line);
+  const different = await casesThatDiffer({}, [], cases, every, files);
+  const unexpected = different.filter(({ tsc, bun }) => {
+    const others = bun.filter(line => !tsc.includes(line));
+    return !tsc.every(line => bun.includes(line)) || !others.every(isUnresolvedName);
+  });
+  expect(unexpected).toEqual([]);
+});
+
 // typescript-go records the specifier of `import()` and `require()` once for each `import` and `require` in the call's
 // text, and prints why a file is in the program if there's more than one reason.
 differential("lists the same reasons as tsc for why a dynamically imported file is in the program", async () => {

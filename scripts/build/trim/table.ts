@@ -3,10 +3,7 @@ import type { IcuPackageRuns } from "./icu-data.ts";
 import { fieldBytes, recordBytes, sectionNames, type SectionName } from "./table-format.ts";
 import {
   edgeStrengths,
-  type IcuItemRun,
   type IcuLanguage,
-  type IcuPackage,
-  type ModuleText,
   type ModuleTextRange,
   type Partition,
   type RemovableRange,
@@ -14,6 +11,7 @@ import {
 } from "./types.ts";
 
 export type { IcuItemRun, IcuPackage, ModuleText, TrimTable } from "./types.ts";
+export { recordBytes };
 
 export const trimTableMagic = "BUNTRIM\0";
 export const trimTableVersion = 4;
@@ -81,7 +79,6 @@ type Sections = Record<SectionName, Buffer>;
 
 const malformed = (rule: string) => new BuildError(`the trim table is malformed: ${rule}`);
 const hex = (address: number) => "0x" + address.toString(16);
-export { recordBytes };
 const alignSection = (offset: number) => Math.ceil(offset / sectionAlignment) * sectionAlignment;
 const isUnsignedBelow = (value: number, limit: number) => Number.isInteger(value) && value >= 0 && value < limit;
 

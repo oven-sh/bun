@@ -20,9 +20,9 @@ pub use bun_removable_features::{
 pub use decide::decide;
 pub use error::{TrimError, TrimInternalError, TrimRequestError, UnsupportedReason};
 pub use model::{
-    Decision, EdgeStrength, ExecutableSettings, FeatureEdge, FeatureEdges,
-    LocaleTag, OptionRequirement, RetainReason, Retained, TrimInput, TrimPlan, TrimSummary,
-    UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales, WitnessIndex,
+    Decision, EdgeStrength, ExecutableSettings, FeatureEdge, FeatureEdges, LocaleTag,
+    OptionRequirement, RetainReason, Retained, TrimInput, TrimPlan, TrimSummary, UnseenCode,
+    UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales, WitnessIndex,
 };
 pub use plan::{plan, read_feature_edges};
 pub use settings::collect_requirements;

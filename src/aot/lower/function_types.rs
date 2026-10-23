@@ -5,9 +5,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use super::{FileLowering, class};
-use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, FunctionRole, SourceRange,
-};
+use crate::ir::generated::{Function, FunctionFlags, FunctionKind, FunctionRole, SourceRange};
 use crate::ir::{Body, DeclaredType, FunctionId, FunctionKey};
 
 #[derive(Default)]

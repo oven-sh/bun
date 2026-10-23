@@ -389,12 +389,16 @@ mod process {
     use super::{IdentityError, find_uuid};
     use crate::macho_types::MH_MAGIC_64;
 
+    unsafe extern "C" {
+        /// The linker's name for the header of the executable it links. dyld's image 0 is not
+        /// always that one: it puts the libraries of `DYLD_INSERT_LIBRARIES` in front.
+        #[link_name = "_mh_execute_header"]
+        static MAIN_EXECUTABLE_HEADER: bun_sys::macho::mach_header_64;
+    }
+
     pub(super) fn find_identity() -> Result<[u8; 16], IdentityError> {
-        let header_address = bun_sys::c::_dyld_get_image_header(0);
-        if header_address.is_null() {
-            return Err(IdentityError::Malformed);
-        }
-        // SAFETY: dyld keeps the header of the main executable mapped for the life of the process.
+        let header_address = &raw const MAIN_EXECUTABLE_HEADER;
+        // SAFETY: the header of the main executable is mapped for the life of the process.
         let header = unsafe { header_address.read() };
         if header.magic != MH_MAGIC_64 {
             return Err(IdentityError::UnrecognizedExecutable);

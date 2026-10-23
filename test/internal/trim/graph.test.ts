@@ -1303,24 +1303,27 @@ describe("findStaticTableEntryPoints", () => {
     expect(find(entries, names, "elf")).toEqual([]);
   });
 
-  test.skipIf(cxxfilt === undefined)("a function is found by the name that the Microsoft ABI gives it, in a namespace and outside", () => {
-    const names = [
-      ["main"],
-      ["?table@Bun@@3QBUHashTableValue@JSC@@B"],
-      ["?other@Bun@@3QBUHashTableValue@JSC@@B"],
-      ["?jsSqliteOpen@Bun@@YA_JPEAVJSGlobalObject@JSC@@PEAVCallFrame@3@@Z"],
-      ["?jsSqliteClose@@YA_JPEAVJSGlobalObject@JSC@@PEAVCallFrame@2@@Z"],
-      ["??_C@_04PLJBKNIO@text@"],
-    ];
-    const entries = (open: string, close: string) => [
-      builtin(7, "Function", [open], [always("Sqlite")]),
-      builtin(8, "Function", [close], [always("Sqlite")]),
-    ];
-    const found = [record(table, open, 7), record(otherTable, open, 7), record(table, close, 8)];
-    expect(find(entries("jsSqliteOpen", "jsSqliteClose"), names, "coff")).toStrictEqual(found);
-    expect(find(entries("Bun::jsSqliteOpen", "jsSqliteClose"), names, "coff")).toStrictEqual(found);
-    expect(find(entries("Node::jsSqliteOpen", "Bun::jsSqliteClose"), names, "coff")).toEqual([]);
-  });
+  test.skipIf(cxxfilt === undefined)(
+    "a function is found by the name that the Microsoft ABI gives it, in a namespace and outside",
+    () => {
+      const names = [
+        ["main"],
+        ["?table@Bun@@3QBUHashTableValue@JSC@@B"],
+        ["?other@Bun@@3QBUHashTableValue@JSC@@B"],
+        ["?jsSqliteOpen@Bun@@YA_JPEAVJSGlobalObject@JSC@@PEAVCallFrame@3@@Z"],
+        ["?jsSqliteClose@@YA_JPEAVJSGlobalObject@JSC@@PEAVCallFrame@2@@Z"],
+        ["??_C@_04PLJBKNIO@text@"],
+      ];
+      const entries = (open: string, close: string) => [
+        builtin(7, "Function", [open], [always("Sqlite")]),
+        builtin(8, "Function", [close], [always("Sqlite")]),
+      ];
+      const found = [record(table, open, 7), record(otherTable, open, 7), record(table, close, 8)];
+      expect(find(entries("jsSqliteOpen", "jsSqliteClose"), names, "coff")).toStrictEqual(found);
+      expect(find(entries("Bun::jsSqliteOpen", "jsSqliteClose"), names, "coff")).toStrictEqual(found);
+      expect(find(entries("Node::jsSqliteOpen", "Bun::jsSqliteClose"), names, "coff")).toEqual([]);
+    },
+  );
 
   test("a function that no entry names, and data that a table refers to, are no entry points", () => {
     expect(find([builtin(7, "Function", ["jsSqliteMissing", "text"], [always("Sqlite")])])).toEqual([]);

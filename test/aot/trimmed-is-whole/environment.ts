@@ -209,7 +209,8 @@ export class Bench {
       { closed: "2>&-", file: `2> "$0.err"`, null: "2> /dev/null", pipe: "", terminal: "" }[streams.stderr],
     ].join(" ");
     writeFileSync(join(this.folder, "run", "stream-" + this.#runs + ".in"), "from a file\n");
-    const cmd = ["/bin/sh", "-c", `exec "$@" ${redirections}`, join(this.folder, "run", "stream-" + this.#runs), executable, ...args];
+    // Some cases end the program with a signal that dumps core. Where a core is a file, writing it holds up the cases that run beside it, and CI's runner fails a test file beside which one appears.
+    const cmd = ["/bin/sh", "-c", `ulimit -c 0 && exec "$@" ${redirections}`, join(this.folder, "run", "stream-" + this.#runs), executable, ...args];
     const usesTerminal = Object.values(streams).includes("terminal");
     let shown = "";
     const answers: string[] = [];
@@ -279,7 +280,8 @@ export class Bench {
   async both(program: Program, it: Case) {
     const [whole, trimmed] = await Promise.all([this.run(program, "whole", it), this.run(program, "trimmed", it)]);
     if (it.numbersMayDiffer) {
-      for (const ran of [whole, trimmed]) for (const key of ["stdout", "stderr"] as const) ran[key] = ran[key].replace(/\d+/g, "N");
+      // The kernel hands a signal sent to the process to any of its threads.
+      for (const ran of [whole, trimmed]) for (const key of ["stdout", "stderr"] as const) ran[key] = ran[key].replace(/\d+/g, "N").replace(/^panic\([^)\n]*\): /gm, "panic: ");
     }
     return { whole, trimmed };
   }

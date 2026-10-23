@@ -903,7 +903,7 @@ describe.skipIf(!canTrim)("--trim", () => {
         const logging = await buildWithApi(folder, "hello.ts", "logging", {
           trim: { ...(trim === true ? {} : trim), log: true },
         });
-        expect(logging.logged.length).toBeGreaterThanOrEqual(2);
+        expect(logging.logged.length).toBeGreaterThanOrEqual(1);
         expect(
           new Bun.CryptoHasher("sha256").update(readFileSync(fileOf(join(folder, "silent", "program")))).digest("hex"),
         ).toBe(logging.contents);

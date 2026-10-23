@@ -4,9 +4,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, Flags, FnId, FnKind};
 
 use crate::builtins::id::BuiltinClass;
-use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, LimitId, SourceRange,
-};
+use crate::ir::generated::{Function, FunctionFlags, FunctionKind, LimitId, SourceRange};
 use crate::ir::{
     Body, DeclaredType, FunctionId, FunctionKey, Mapped, PositionFlags, Primitives, StringId, Type,
     TypeTable,

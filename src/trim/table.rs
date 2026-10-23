@@ -12,8 +12,8 @@ use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
 use crate::model::{EdgeStrength, FeatureEdge, FeatureEdges};
 
 pub use crate::model::{
-    IcuItemRun, IcuLanguage, IcuPackage, LocaleGroup, ModuleText, RemovableRange,
-    SetIndex, TrimTable,
+    IcuItemRun, IcuLanguage, IcuPackage, LocaleGroup, ModuleText, RemovableRange, SetIndex,
+    TrimTable,
 };
 
 pub const TABLE_MAGIC: [u8; 8] = *b"BUNTRIM\0";
@@ -221,7 +221,10 @@ impl<'a> Directory<'a> {
     fn new(table: &'a [u8]) -> Directory<'a> {
         Directory {
             table,
-            entries: table[DIRECTORY_OFFSET..TABLE_HEADER_BYTES].as_chunks().0.iter(),
+            entries: table[DIRECTORY_OFFSET..TABLE_HEADER_BYTES]
+                .as_chunks()
+                .0
+                .iter(),
             previous_end: TABLE_HEADER_BYTES as u64,
         }
     }
@@ -259,9 +262,15 @@ impl IcuLanguage {
 
 impl IcuItemRun {
     fn may_follow(&self, previous: Option<&IcuItemRun>, context: &Context<'_>) -> bool {
-        let previous_end =
-            previous.map_or(0, |run| u64::from(run.first_item) + u64::from(run.item_count));
-        let is_known = |group| context.languages.iter().any(|language| language.group == group);
+        let previous_end = previous.map_or(0, |run| {
+            u64::from(run.first_item) + u64::from(run.item_count)
+        });
+        let is_known = |group| {
+            context
+                .languages
+                .iter()
+                .any(|language| language.group == group)
+        };
         u64::from(self.first_item) >= previous_end
             && self.item_count != 0
             && self.locale_group.is_none_or(is_known)

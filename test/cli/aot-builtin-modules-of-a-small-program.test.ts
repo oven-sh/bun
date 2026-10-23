@@ -81,12 +81,14 @@ test("nor do they make bun run --aot compile built-in modules", async () => {
     expect({ entry, stdout, exitCode }).toEqual({ entry, stdout: "run\n", exitCode: 0 });
     seconds[entry] = Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
   }
+  // Where Bun itself is slow to start, that is most of every time here.
+  const start = Math.min(...Object.values(seconds));
   for (const entry of Object.keys(programs)) {
     expect({
       entry,
       seconds: seconds[entry],
       withSixModules: seconds[withSixModules],
-      costsAsMuchAsADoor: seconds[entry] > seconds[withSixModules] / 4,
+      costsAsMuchAsADoor: seconds[entry] - start > (seconds[withSixModules] - start) / 4,
     }).toEqual({
       entry,
       seconds: expect.any(Number),

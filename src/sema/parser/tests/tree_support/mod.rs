@@ -204,13 +204,7 @@ impl<'s> Workspace<'s> {
     }
 
     #[track_caller]
-    fn expect_node<Id>(
-        &self,
-        found: Option<Id>,
-        kind: &str,
-        name: &str,
-        nth: usize,
-    ) -> Id {
+    fn expect_node<Id>(&self, found: Option<Id>, kind: &str, name: &str, nth: usize) -> Id {
         match found {
             Some(id) => id,
             None => panic!("no {kind} `{name}` number {nth}"),

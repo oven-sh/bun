@@ -18,14 +18,7 @@ export type FieldKind =
   | { tiles: SectionName };
 
 export type SectionName =
-  | "edges"
-  | "featureSets"
-  | "setMembers"
-  | "ranges"
-  | "icuPackages"
-  | "icuRuns"
-  | "icuLanguages"
-  | "moduleTexts";
+  "edges" | "featureSets" | "setMembers" | "ranges" | "icuPackages" | "icuRuns" | "icuLanguages" | "moduleTexts";
 
 export interface Section {
   /** The record in Rust. Without one, src/trim/table.rs reads the section by hand. */

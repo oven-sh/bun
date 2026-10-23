@@ -1486,7 +1486,11 @@ function emitDirect(
         });
       }
       for (const file of src.bundled ?? []) {
-        n.addCompileCommand({ directory: cfg.buildDir, file, arguments: [cfg.cxx, ...flags.cxx, ...extra, "-c", file] });
+        n.addCompileCommand({
+          directory: cfg.buildDir,
+          file,
+          arguments: [cfg.cxx, ...flags.cxx, ...extra, "-c", file],
+        });
       }
       const sourcePch = src.noPch ? undefined : src.pch === undefined ? groupPch : pchByHeader.get(src.pch);
       assert(

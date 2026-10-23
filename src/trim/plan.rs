@@ -7,9 +7,9 @@ use crate::decide::decide;
 use crate::error::TrimError;
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
-    Decision, FeatureEdges, IcuPackage, ModuleText, OptionRequirement,
-    PlannedIcuPackage, PlannedRange, SetIndex, TrimInput, TrimPlan, TrimTable, UsedFeatures,
-    UsedLocales, WantedLocaleGroups,
+    Decision, FeatureEdges, IcuPackage, ModuleText, OptionRequirement, PlannedIcuPackage,
+    PlannedRange, SetIndex, TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales,
+    WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
 

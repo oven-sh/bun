@@ -1,1 +1,1 @@
-{ "build": ["--compile-exec-argv=--smol"] }
+{ "build": ["--compile-exec-argv=--smol"], "runsToday": ["CliOptions"] }

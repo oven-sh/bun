@@ -23,8 +23,8 @@ use support::toy_executable::{
     ALL_TARGETS, NEVER_REMOVED_BYTES, Target, ToyLayout, build_executable, layout_of, pattern_byte,
 };
 use support::toy_table::{
-    ABORTING_GUARD, RECOVERABLE_GUARD, REFERENCE, ToyIcuPackage, ToyRange, ToyTable,
-    encode_table, find_icu_item, icu_package,
+    ABORTING_GUARD, RECOVERABLE_GUARD, REFERENCE, ToyIcuPackage, ToyRange, ToyTable, encode_table,
+    find_icu_item, icu_package,
 };
 
 const STATE_IS_TRIMMED_OFFSET: usize = 8;

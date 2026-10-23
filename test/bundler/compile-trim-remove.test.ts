@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
@@ -100,7 +100,8 @@ const modulesWithNativeBindings: [specifier: string, remove: string, call: strin
 const smallest: Record<string, number> = {
   "ffi": 256,
   "native-addons": 128,
-  "sqlite": 1024,
+  // On macOS Bun loads the system's SQLite, so only what calls it leaves.
+  "sqlite": isMacOS ? 256 : 1024,
   "image": 512,
   "brotli": 256,
 };

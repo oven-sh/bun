@@ -1,4 +1,3 @@
-
 pub use crate::ir::generated::{ImportPhase, ModuleKind, RequireResult, SyntheticExportRule};
 
 use crate::builtins::table;

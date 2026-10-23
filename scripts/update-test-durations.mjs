@@ -234,7 +234,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   };
   const previous = JSON.parse(readFileSync(outputPath, "utf8"));
   for (const p of Object.keys(previous)) {
-    if (p.startsWith("aot/") && (existsSync(join(dirname(outputPath), p)) || partsOfOneTestFile.includes(p))) paths.add(p);
+    if (p.startsWith("aot/") && (existsSync(join(dirname(outputPath), p)) || partsOfOneTestFile.includes(p)))
+      paths.add(p);
   }
   for (const p of [...paths].sort()) {
     const entry = {};

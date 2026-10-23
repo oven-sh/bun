@@ -209,9 +209,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
                 ModuleItems::name_shadowing_local(self.atoms, symbol)
             }
             SymbolOrigin::Source | SymbolOrigin::Local => self.atoms.intern(&symbol.name),
-            _ => {
-                self.items.name_of(self.atoms, self.settings.jsx, symbol)
-            }
+            _ => self.items.name_of(self.atoms, self.settings.jsx, symbol),
         }
     }
 

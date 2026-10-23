@@ -1,4 +1,3 @@
-
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{FileDiagnostic, LoadMessages, range_of_node};
 use crate::load::is_in_node_modules;

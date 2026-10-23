@@ -6,7 +6,9 @@ import { findBuiltinTable, generators } from "./generate";
 import { rows, units, unitsOf } from "./parts.mts";
 import { unsupported } from "./run-programs";
 
-const wanted = process.env.TEST_PART?.replaceAll("\\", "/").replace(/^test\//, "").replace(/\.test\.ts$/, "");
+const wanted = process.env.TEST_PART?.replaceAll("\\", "/")
+  .replace(/^test\//, "")
+  .replace(/\.test\.ts$/, "");
 
 for (const row of wanted === undefined ? [] : rows) {
   const [name, parts, module, callee, before = [], behind = []] = row;
@@ -22,7 +24,8 @@ if (wanted === undefined) {
 
   test("every folder that a script writes is run", () => {
     const run = Object.keys(generators).filter(
-      folder => rows.some(([name]) => name === `aot/${folder}`) || existsSync(join(import.meta.dir, `${folder}.test.ts`)),
+      folder =>
+        rows.some(([name]) => name === `aot/${folder}`) || existsSync(join(import.meta.dir, `${folder}.test.ts`)),
     );
     expect(run).toEqual(Object.keys(generators));
   });

@@ -29,9 +29,9 @@ import type { LinkerFormat, LinkName, LinkRequest } from "../../../scripts/build
 import type { RemovableRange } from "../../../scripts/build/trim/ranges.ts";
 import { removedRangeListBytes, roomFor } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry, BuiltinUses } from "../../../scripts/build/trim/types.ts";
+import { run } from "../../aot/harness/run";
 import { packageOf } from "../icu-data-package.ts";
 import { feature, modelOf } from "./toy-graph.ts";
-import { run } from "../../aot/harness/run";
 
 setDefaultTimeout(60_000);
 
@@ -116,9 +116,7 @@ describe("parseArguments", () => {
   ];
   test.each(rejected)("rejects %s with the usage line", (_, words) => {
     expect(() => parse(...words)).toThrow(BuildError);
-    expect(() => parse(...words)).toThrow(
-      "usage: link.ts <work directory> <features.json> <builtin-uses.json> [",
-    );
+    expect(() => parse(...words)).toThrow("usage: link.ts <work directory> <features.json> <builtin-uses.json> [");
   });
 });
 
@@ -321,13 +319,7 @@ describe("a failed link", () => {
       "undeclared.json": serializeBuiltinUses({ entries: [builtinUsing("Missing")] }),
     });
     const at = (name: string) => join(String(dir), name);
-    const undeclared = await runLink(
-      at("work"),
-      at("features.json"),
-      at("undeclared.json"),
-      "--",
-      "cc",
-    );
+    const undeclared = await runLink(at("work"), at("features.json"), at("undeclared.json"), "--", "cc");
     expect(undeclared.stderr.split("\n").slice(0, 2)).toEqual([
       "trim: Bun.extra uses Missing, which src/trim/features does not declare",
       `  at: ${at("undeclared.json")}`,

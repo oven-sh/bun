@@ -15,6 +15,7 @@ import {
   addressInMap,
   archiver,
   canLink,
+  isX64,
   canLinkRustBitcode,
   canUseGuardHeader,
   compileFeatureCodeOnce,
@@ -93,6 +94,7 @@ else {
     const reason = guardHeaderSkipReason ?? "the engine's header does not compile here";
     skipNotice(testFile, `${reason}: the cases with the engine's header do not run`);
   }
+  if (!isX64) skipNotice(testFile, "only on x86-64 does the switch of the toy get a jump table in a section of its own: the case with a section without a symbol does not run");
   if (rustc === null) skipNotice(testFile, "rustc is not on PATH: the cases in Rust do not run");
   else if (!canLinkRustBitcode) {
     skipNotice(testFile, "ld.lld may be older than rustc's LLVM: the case with Rust bitcode does not run");
@@ -301,7 +303,7 @@ describeLink("a trimmable link", () => {
     expect(trimmedResult).toEqual(cleanExit);
   });
 
-  test("orders a section without a symbol with its feature", async () => {
+  test.skipIf(!isX64)("orders a section without a symbol with its feature", async () => {
     using dir = tempDir("trim-elf", {
       ...sources,
       "entry.c": entryCalling("more"),

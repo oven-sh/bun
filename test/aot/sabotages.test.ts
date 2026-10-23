@@ -145,9 +145,7 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
     900_000,
   );
 
-  test.concurrent.each(
-    (listed ?? []).filter(name => noticedBy[name] && name.includes(wanted)),
-  )(
+  test.concurrent.each((listed ?? []).filter(name => noticedBy[name] && name.includes(wanted)))(
     "%s",
     async name => {
       const { folder: topic, flags, programs } = noticedBy[name];

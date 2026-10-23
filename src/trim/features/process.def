@@ -31,7 +31,6 @@ feature ProcessKill "process.kill"
 
 feature CliOptions "support for --compile-exec-argv and BUN_OPTIONS"
   entered-from startup
-  cxx-function create_context_data ^bun_runtime::cli::command::create_context_data\b
 
 feature HotReload "--watch and --hot"
   entered-from startup

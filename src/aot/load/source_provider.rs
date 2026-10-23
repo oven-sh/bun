@@ -1,4 +1,3 @@
-
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::log_diagnostic;
 use crate::load::data_modules::parse_json;

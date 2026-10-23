@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { bunExe, isASAN, isCI, isDebug } from "harness";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import recorded from "./expected.json";
 import { run as runCommand } from "../../../../aot/harness/run";
+import recorded from "./expected.json";
 
 // Each fixture drives a node:http server through many small cases and prints what every case did: return values,
 // thrown errors, events, the state of req and res, and the bytes on the wire. Cases with the same log share one entry.
@@ -21,7 +21,11 @@ const reference = process.env.NODE_HTTP_PROBES_REFERENCE;
 const seedCount = Number(process.env.NODE_HTTP_PROBES_SEEDS ?? 20);
 
 async function run(executable: string, fixture: string, args: string[]) {
-  const { stdout, stderr, exitCode } = await runCommand([executable, path.join(import.meta.dir, fixture + "-fixture.ts"), ...args]);
+  const { stdout, stderr, exitCode } = await runCommand([
+    executable,
+    path.join(import.meta.dir, fixture + "-fixture.ts"),
+    ...args,
+  ]);
   return { stdout, stderr, exitCode };
 }
 

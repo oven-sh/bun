@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-50788cdb";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-3e3da349";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1656,7 +1656,16 @@ function unifiedSources(wk: WebKitBuild, listFiles: string[], options: string[])
   mkdirSync(DS, { recursive: true });
   const bundled = spawnSync(
     python,
-    [bundler, "--derived-sources-path", DS, "--source-tree-path", JSC, "--ignore-header-groups", ...options, ...listFiles],
+    [
+      bundler,
+      "--derived-sources-path",
+      DS,
+      "--source-tree-path",
+      JSC,
+      "--ignore-header-groups",
+      ...options,
+      ...listFiles,
+    ],
     { encoding: "utf8", maxBuffer: 1 << 26 },
   );
   if (bundled.error) {

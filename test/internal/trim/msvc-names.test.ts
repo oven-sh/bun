@@ -108,7 +108,9 @@ const demangle = (...names: string[]) => new Demangler(cxxfilt!).demangle(names)
 
 describe.skipIf(!canDemangle)("Demangler", () => {
   test("reads the names of the Microsoft ABI as their qualified names and parameters", () => {
-    expect(demangle(...namesAndParameters.map(([mangled]) => mangled))).toEqual(namesAndParameters.map(([, text]) => text));
+    expect(demangle(...namesAndParameters.map(([mangled]) => mangled))).toEqual(
+      namesAndParameters.map(([, text]) => text),
+    );
   });
 
   test("what ThinLTO writes behind the name of a function or variable that it made visible to other modules is no part of it", () => {
@@ -137,7 +139,10 @@ describe.skipIf(!canDemangle)("Demangler", () => {
 });
 
 test("without a tool every name stays as it is", () => {
-  expect(new Demangler(undefined).demangle(["?plain@Toy@@YAHH@Z", "entered"])).toEqual(["?plain@Toy@@YAHH@Z", "entered"]);
+  expect(new Demangler(undefined).demangle(["?plain@Toy@@YAHH@Z", "entered"])).toEqual([
+    "?plain@Toy@@YAHH@Z",
+    "entered",
+  ]);
 });
 
 describe.skipIf(!canDemangle)("the pattern for what serves TLS", () => {

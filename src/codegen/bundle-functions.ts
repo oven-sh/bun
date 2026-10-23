@@ -82,7 +82,6 @@ interface BundledBuiltin {
   constructAbility: string;
   overriddenName: string;
   source: string;
-  params: string[];
   visibility: string;
   sourceOffset: number;
 }
@@ -127,9 +126,6 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
           lineStartPos = i + 1;
         } else {
           columnNumber++;
-        }
-        if (i === pos) {
-          break;
         }
       }
       const lineEndPos = lineStartPos + originalContents.slice(lineStartPos).indexOf("\n");
@@ -341,7 +337,6 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       name: fn.name,
       directives: fn.directives,
       source: finalReplacement,
-      params: fn.params,
       // Async functions automatically get Private visibility because the parser
       // upgrades them when they use await (see Parser.cpp parseFunctionBody)
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),
@@ -619,11 +614,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
     `;
     }
-    bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_DATA(macro) \\\n`;
-    for (const fn of functions) {
-      bundledHeader += `    macro(${fn.name}, ${lowerBasename}${cap(fn.name)}, ${fn.params.length}) \\\n`;
-    }
-    bundledHeader += "\n";
     bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(macro) \\\n`;
     for (const fn of functions) {
       const name = `${lowerBasename}${cap(fn.name)}Code`;

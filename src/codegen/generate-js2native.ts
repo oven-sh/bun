@@ -132,7 +132,6 @@ export function getJS2NativeCPP() {
         x =>
           `extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${basename(x.filename.replace(/\.bind\.ts$/, ""))}_${x.symbol}(Zig::GlobalObject*);`,
       ),
-    `typedef JSC::JSValue (*JS2NativeFunction)(Zig::GlobalObject*);`,
     `static ALWAYS_INLINE JSC::JSValue callJS2Native(int32_t index, Zig::GlobalObject* global) {`,
     ` switch(index) {`,
     ...nativeCalls.map(

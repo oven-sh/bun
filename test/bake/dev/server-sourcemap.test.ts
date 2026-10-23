@@ -43,7 +43,8 @@ export async function getStaticPaths() {
     // Strip ANSI codes for cleaner checking
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
-    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:16");
+    // The column is where the map of the server chunk puts the frame, which is the start of the line.
+    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("[...slug].tsx:6:");
     // const hasCorrectCallLine = cleanLines.includes("MyPage") && cleanLines.includes("2") && cleanLines.includes("3");
     const hasCorrectFileName = cleanLines.includes("pages/[...slug].tsx");
 

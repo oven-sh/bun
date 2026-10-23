@@ -227,8 +227,8 @@ describe("bundler", () => {
     allowUnresolved: ["./locales/*.json"],
   });
 
-  // 17. A require.resolve() literal that does not resolve is kept with a warning by default.
-  // An allowUnresolved list keeps it a build error.
+  // 17. By default a require.resolve() of a package name that does not resolve is kept with
+  // a warning. An allowUnresolved list keeps it a build error.
   itBundled("allow-unresolved/RejectsUnresolvedLiteralRequireResolve", {
     files: {
       "/entry.js": /* js */ `
@@ -236,6 +236,7 @@ describe("bundler", () => {
       `,
     },
     outdir: "/out",
+    target: "bun",
     allowUnresolved: [],
     bundleErrors: {
       "/entry.js": [`Could not resolve: "does-not-exist"`],

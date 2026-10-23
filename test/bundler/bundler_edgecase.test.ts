@@ -4064,8 +4064,8 @@ describe("bundler", () => {
       "/entry.js": [`Could not resolve: "does-not-exist-c". Maybe you need to "bun install"?`],
     },
   });
-  // `require.resolve()` needs no code from its target. When its specifier does not resolve,
-  // the build warns and keeps the call. The lookup happens when the call runs.
+  // `require.resolve()` needs no code from its target. When a package name does not resolve,
+  // the build warns and keeps the call. The lookup happens again when the call runs.
   itBundled("edgecase/RequireResolveUnresolvedInUncalledFunction", {
     files: {
       "/entry.js": /* js */ `
@@ -4087,9 +4087,9 @@ describe("bundler", () => {
   itBundled("edgecase/RequireResolveUnresolvedSpellings", {
     files: {
       "/entry.js": /* js */ `
-        exports.relative = () => require.resolve("./does-not-exist-a");
-        exports.first = () => require.resolve("does-not-exist-b");
-        exports.second = () => require.resolve("does-not-exist-b");
+        exports.first = () => require.resolve("does-not-exist-a");
+        exports.second = () => require.resolve("does-not-exist-a");
+        exports.subpath = () => require.resolve("@does-not-exist/b/sub");
         exports.ternary = x => require.resolve(x ? "does-not-exist-c" : "does-not-exist-d");
         exports.template = () => require.resolve(\`does-not-exist-e\`);
         exports.folded = () => require.resolve("does-not-" + "exist-f");
@@ -4103,9 +4103,9 @@ describe("bundler", () => {
     // The call in the try body handles its failure: no warning.
     bundleWarnings: {
       "/entry.js": [
-        `Could not resolve: "./does-not-exist-a"`,
-        `Could not resolve: "does-not-exist-b"`,
-        `Could not resolve: "does-not-exist-b"`,
+        `Could not resolve: "does-not-exist-a"`,
+        `Could not resolve: "does-not-exist-a"`,
+        `Could not resolve: "@does-not-exist/b/sub"`,
         `Could not resolve: "does-not-exist-c"`,
         `Could not resolve: "does-not-exist-d"`,
         `Could not resolve: "does-not-exist-e"`,
@@ -4115,9 +4115,9 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       expect(api.readFile("/out.js").match(/require\.resolve\("[^"]*"\)/g)).toEqual([
-        'require.resolve("./does-not-exist-a")',
-        'require.resolve("does-not-exist-b")',
-        'require.resolve("does-not-exist-b")',
+        'require.resolve("does-not-exist-a")',
+        'require.resolve("does-not-exist-a")',
+        'require.resolve("@does-not-exist/b/sub")',
         'require.resolve("does-not-exist-c")',
         'require.resolve("does-not-exist-d")',
         'require.resolve("does-not-exist-e")',
@@ -4128,7 +4128,6 @@ describe("bundler", () => {
     },
     run: { stdout: "runs" },
   });
-  // What a kept call does when it runs depends on the output.
   const callsKeptRequireResolve = {
     "/entry.js": /* js */ `
       function find() { return require.resolve("does-not-exist"); }
@@ -4136,7 +4135,7 @@ describe("bundler", () => {
         find();
         console.log("resolved");
       } catch (e) {
-        console.log(e.code ?? e.name);
+        console.log(e.code);
       }
     `,
   };
@@ -4159,13 +4158,6 @@ describe("bundler", () => {
     target: "bun",
     run: { bunArgs: ["--no-install"], stdout: "MODULE_NOT_FOUND" },
   });
-  // A browser build has no `require` to look anything up with.
-  itBundled("edgecase/RequireResolveUnresolvedWhenCalled/browser", {
-    files: callsKeptRequireResolve,
-    target: "browser",
-    outfile: "/out.mjs",
-    run: { runtime: "node", stdout: "TypeError" },
-  });
   itBundled("edgecase/RequireResolveUnresolvedAtTopLevelThrowsAtStart", {
     files: {
       "/entry.js": /* js */ `
@@ -4187,48 +4179,29 @@ describe("bundler", () => {
       },
     },
   });
-  // A standalone executable looks a kept relative specifier up from the directory it runs in.
+  // A standalone executable looks a kept package name up from the directory it runs in.
   itBundled("edgecase/RequireResolveUnresolvedInCompiledExecutable", {
     compile: true,
     files: {
       "/entry.js": /* js */ `
-        console.log(require.resolve("./on-disk.js").replaceAll("\\\\", "/").endsWith("/on-disk.js"));
+        console.log(require.resolve("on-disk-later").replaceAll("\\\\", "/").endsWith("/node_modules/on-disk-later/index.js"));
       `,
     },
     runtimeFiles: {
-      "/on-disk.js": `module.exports = 1;`,
+      "/node_modules/on-disk-later/index.js": `module.exports = 1;`,
     },
     bundleWarnings: {
-      "/entry.js": [`Could not resolve: "./on-disk.js"`],
+      "/entry.js": [`Could not resolve: "on-disk-later"`],
     },
     outfile: "dist/out",
     run: { stdout: "true", file: "dist/out", setCwd: true },
-  });
-  itBundled("edgecase/RequireResolveUnresolvedBuiltinInBrowserBuild", {
-    files: {
-      "/entry.js": /* js */ `
-        exports.node = () => require.resolve("child_process");
-        exports.bun = () => require.resolve("bun:sqlite");
-        console.log("runs");
-      `,
-    },
-    target: "browser",
-    bundleWarnings: {
-      "/entry.js": [`Could not resolve: "child_process"`, `Could not resolve: "bun:sqlite"`],
-    },
-    onAfterBundle(api) {
-      expect(api.readFile("/out.js").match(/\.resolve\("[^"]*"\)/g)).toEqual([
-        '.resolve("child_process")',
-        '.resolve("bun:sqlite")',
-      ]);
-    },
-    run: { stdout: "runs" },
   });
   itBundled("edgecase/UnresolvedInUncalledFunctionStillErrors", {
     files: {
       "/entry.js": /* js */ `
         exports.load = () => require("does-not-exist-a");
         exports.loadAsync = () => import("does-not-exist-b");
+        exports.relative = () => require.resolve("./does-not-exist-c");
         exports.malformed = () => require.resolve("data:text/javascript;base64");
       `,
     },
@@ -4238,7 +4211,26 @@ describe("bundler", () => {
       "/entry.js": [
         `Could not resolve: "does-not-exist-a". Maybe you need to "bun install"?`,
         `Could not resolve: "does-not-exist-b". Maybe you need to "bun install"?`,
+        `Could not resolve: "./does-not-exist-c"`,
         `Could not resolve data URL: "data:text/javascript;base64"`,
+      ],
+    },
+  });
+  // A browser build has no `require` that can look the name up when the call runs.
+  itBundled("edgecase/RequireResolveUnresolvedInBrowserBuildStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.find = () => require.resolve("does-not-exist");
+        exports.node = () => require.resolve("child_process");
+        exports.bun = () => require.resolve("bun:sqlite");
+      `,
+    },
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": [
+        `Could not resolve: "does-not-exist". Maybe you need to "bun install"?`,
+        `Browser build cannot require.resolve() Node.js builtin: "child_process"`,
+        `Browser build cannot require.resolve() Bun builtin: "bun:sqlite"`,
       ],
     },
   });
@@ -4249,6 +4241,7 @@ describe("bundler", () => {
         exports.find = () => require.resolve("does-not-exist");
       `,
     },
+    target: "bun",
     format: "internal_bake_dev",
     bundleErrors: {
       "/entry.js": [`Could not resolve: "does-not-exist". Maybe you need to "bun install"?`],

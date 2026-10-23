@@ -1941,7 +1941,7 @@ pub mod bv2_impl {
         range: bun_ast::Range,
         specifier: &[u8],
     ) {
-        log.add_range_warning_fmt_with_notes(
+        log.add_resolve_warning_with_notes(
             source,
             range,
             Box::new([bun_ast::range_data(
@@ -1950,6 +1950,8 @@ pub mod bv2_impl {
                 "This require.resolve() call stays in the output as written. Mark the path as external or wrap the call in try/catch to remove this warning.",
             )]),
             format_args!("Could not resolve: \"{}\"", bstr::BStr::new(specifier)),
+            specifier,
+            ImportKind::RequireResolve,
         );
     }
 
@@ -2112,16 +2114,21 @@ pub mod bv2_impl {
             &self,
             flags: bun_ast::ImportRecordFlags,
             kind: ImportKind,
+            specifier: &[u8],
+            target: options::Target,
         ) -> ResolveFailure {
             if flags.contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                 || self.transpiler.options.ignore_module_resolution_errors
             {
                 return ResolveFailure::Tolerated;
             }
-            // The output needs only the specifier of a `require.resolve()`, not its target.
-            // Not in the dev format: `hmr.requireResolve(id)` returns `id`, so no lookup follows.
-            // Not with an `allowUnresolved` list: it asks for the failure at build time.
+            // The output needs only the specifier of a `require.resolve()`, and the kept call must
+            // do at run time the lookup that failed here. A relative path would be looked up beside
+            // the output file, a browser build has no `require`, and `hmr.requireResolve(id)` of the
+            // dev format returns `id`. An `allowUnresolved` list asks for the failure at build time.
             if kind == ImportKind::RequireResolve
+                && is_package_path(specifier)
+                && target.is_server_side()
                 && self.transpiler.options.output_format != options::Format::InternalBakeDev
                 && matches!(
                     self.transpiler.options.allow_unresolved,
@@ -2900,7 +2907,12 @@ pub mod bv2_impl {
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
                         }
-                        let failure = self.resolve_failure(flags, import_record.kind);
+                        let failure = self.resolve_failure(
+                            flags,
+                            import_record.kind,
+                            &import_record.specifier,
+                            target,
+                        );
                         let source: Option<&bun_ast::Source> = Some(
                             &self.graph.input_files.items_source()
                                 [import_record.importer_source_index as usize],
@@ -7084,8 +7096,12 @@ pub mod bv2_impl {
                             import_record
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
-                            let failure =
-                                self.resolve_failure(import_record.flags, import_record.kind);
+                            let failure = self.resolve_failure(
+                                import_record.flags,
+                                import_record.kind,
+                                import_record.path.text,
+                                ctx.target,
+                            );
 
                             if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;

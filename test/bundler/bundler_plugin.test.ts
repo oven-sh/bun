@@ -317,9 +317,23 @@ describe("bundler", () => {
       builder.onResolve({ filter: /^does-not-exist$/ }, () => undefined);
     },
     onAfterApiBundle(build) {
-      expect({ success: build.success, logs: build.logs.map(log => `${log.level}: ${log.message}`) }).toEqual({
+      const [log] = build.logs as ResolveMessage[];
+      expect({
+        success: build.success,
+        logs: build.logs.length,
+        name: log.name,
+        level: `${log.level}`,
+        message: log.message,
+        specifier: log.specifier,
+        importKind: `${log.importKind}`,
+      }).toEqual({
         success: true,
-        logs: ['warn: Could not resolve: "does-not-exist"'],
+        logs: 1,
+        name: "ResolveMessage",
+        level: "warn",
+        message: 'Could not resolve: "does-not-exist"',
+        specifier: "does-not-exist",
+        importKind: "require-resolve",
       });
     },
     onAfterBundle(api) {

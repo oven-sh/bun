@@ -1737,6 +1737,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
         err: crate::Error,
+        notes: Box<[Data]>,
     ) {
         let text = alloc_print(args);
         // TODO: fix this. this is stupid, the specifier should be returned by
@@ -1766,6 +1767,7 @@ impl Log {
         let msg = Msg {
             kind: if IS_ERR { Kind::Err } else { Kind::Warn },
             data,
+            notes,
             metadata: Metadata::Resolve(MetadataResolve {
                 specifier,
                 import_kind,
@@ -1796,6 +1798,7 @@ impl Log {
             specifier_arg,
             import_kind,
             err,
+            Box::default(),
         )
     }
 
@@ -1815,6 +1818,32 @@ impl Log {
             specifier_arg,
             import_kind,
             crate::Error::ModuleNotFound,
+            Box::default(),
+        )
+    }
+
+    /// A lookup that failed without failing the build. `notes` say what happens instead.
+    #[cold]
+    pub fn add_resolve_warning_with_notes(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        notes: Box<[Data]>,
+        args: fmt::Arguments<'_>,
+        specifier_arg: &[u8],
+        import_kind: ImportKind,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        self.add_resolve_error_with_level::<true, false>(
+            source,
+            r,
+            args,
+            specifier_arg,
+            import_kind,
+            crate::Error::ModuleNotFound,
+            notes,
         )
     }
 

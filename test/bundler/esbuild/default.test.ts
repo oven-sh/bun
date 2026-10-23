@@ -4058,27 +4058,11 @@ describe.concurrent("bundler", () => {
     },
     target: "node",
     format: "cjs",
+    // esbuild warns for all three and keeps them. Bun warns and keeps the two package names.
+    bundleErrors: {
+      "/entry.js": ['Could not resolve: "./missing-file"'],
+    },
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
-    // esbuild also warns for "./present-file": it never bundles the target of a require.resolve().
-    bundleWarnings: {
-      "/entry.js": [
-        'Could not resolve: "./missing-file"',
-        'Could not resolve: "missing-pkg"',
-        'Could not resolve: "@scope/missing-pkg"',
-      ],
-    },
-    onAfterBundle(api) {
-      // "./present-file" resolves. Its call prints a path of the build machine.
-      expect(api.readFile("/out.js").match(/require\.resolve\("(?![^"]*present-file)[^"]*"\)/g)).toEqual([
-        'require.resolve("./missing-file")',
-        'require.resolve("./external-file")',
-        'require.resolve("missing-pkg")',
-        'require.resolve("external-pkg")',
-        'require.resolve("@scope/missing-pkg")',
-        'require.resolve("@scope/external-pkg")',
-        'require.resolve("inside-try")',
-      ]);
-    },
   });
   itBundled("default/InjectMissing", {
     files: {

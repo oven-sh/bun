@@ -14,6 +14,9 @@ on:
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - ".github/workflows/bun-types.yml"
+      # the inventory snapshots record the typescript and @types/node versions
+      - "package.json"
+      - "bun.lock"
   pull_request:
     paths:
       - "packages/bun-types/**"
@@ -22,6 +25,9 @@ on:
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - ".github/workflows/bun-types.yml"
+      # the inventory snapshots record the typescript and @types/node versions
+      - "package.json"
+      - "bun.lock"
 
 env:
   BUN_VERSION: "canary"
@@ -45,3 +51,5 @@ jobs:
           bun install --cwd test
       - name: Check types
         run: bun test test/integration/bun-types/bun-types.test.ts
+      - name: Check the type inventory
+        run: bun test test/integration/bun-types/inventory.test.ts

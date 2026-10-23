@@ -1,11 +1,22 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, readlinkSync, realpathSync, statSync } from "fs";
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isLinux,
+  isMusl,
   isWindows,
   normalizeBunSnapshot,
   readdirSorted,
@@ -13,7 +24,7 @@ import {
   tempDir,
   toBeValidBin,
 } from "harness";
-import { delimiter, dirname, join } from "path";
+import { basename, delimiter, dirname, join } from "path";
 import { TestRegistry } from "registry";
 
 expect.extend({
@@ -5869,3 +5880,708 @@ describe.each(["hoisted", "isolated"] as const)(
     });
   },
 );
+
+const packageTarball = (name: string, version: string, extra: object = {}) =>
+  new Bun.Archive(
+    {
+      "package/package.json": JSON.stringify({ name, version, ...extra }),
+      "package/index.js": `module.exports = "${name}@${version}";\n`,
+    },
+    { compress: "gzip" },
+  ).bytes();
+
+const errorLines = (stderr: string) => stderr.split(/\r?\n/).filter(line => /^(error|E[A-Z]+):/.test(line));
+const isLockfileTemp = (name: string) => /^\.lockb?-[0-9a-f]+\.tmp$/.test(name);
+
+// A lockfile that a compose file mounts by itself (`./bun.lock:/app/bun.lock`) is a mount point.
+// The kernel answers EBUSY to a rename onto it and to an unlink of it, so bun saves it in place.
+// This shim answers like the kernel for the file names in FAKE_MOUNT_POINTS.
+const mountPointShim = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static int is_mount_point(const char *path) {
+  const char *names = getenv("FAKE_MOUNT_POINTS");
+  const char *base = strrchr(path, '/');
+  base = base ? base + 1 : path;
+  size_t len = strlen(base);
+  while (names && *names) {
+    const char *end = strchrnul(names, ':');
+    if ((size_t)(end - names) == len && memcmp(names, base, len) == 0) return 1;
+    names = *end ? end + 1 : end;
+  }
+  return 0;
+}
+
+#define REFUSE(path) if (is_mount_point(path)) { errno = EBUSY; return -1; }
+
+int renameat(int from_dir, const char *from, int to_dir, const char *to) {
+  REFUSE(from) REFUSE(to)
+  int (*next)(int, const char *, int, const char *) = dlsym(RTLD_NEXT, "renameat");
+  return next(from_dir, from, to_dir, to);
+}
+
+int rename(const char *from, const char *to) {
+  REFUSE(from) REFUSE(to)
+  int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+  return next(from, to);
+}
+
+int unlinkat(int dir, const char *path, int flags) {
+  REFUSE(path)
+  int (*next)(int, const char *, int) = dlsym(RTLD_NEXT, "unlinkat");
+  return next(dir, path, flags);
+}
+
+int unlink(const char *path) {
+  REFUSE(path)
+  int (*next)(const char *) = dlsym(RTLD_NEXT, "unlink");
+  return next(path);
+}
+
+// The first FAKE_MOUNT_WRITE_FAILS calls of ftruncate on a mount point fail: writes into it that
+// stop part-way.
+int ftruncate(int fd, off_t length) {
+  static int failed;
+  const char *failures = getenv("FAKE_MOUNT_WRITE_FAILS");
+  char link[64], path[4096];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+  ssize_t len = readlink(link, path, sizeof path - 1);
+  if (failures && failed < atoi(failures) && len > 0) {
+    path[len] = 0;
+    if (is_mount_point(path)) {
+      failed++;
+      errno = EIO;
+      return -1;
+    }
+  }
+  int (*next)(int, off_t) = dlsym(RTLD_NEXT, "ftruncate");
+  return next(fd, length);
+}
+`;
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// bun-musl is statically linked, so LD_PRELOAD cannot intercept the calls.
+// Not concurrent: every case starts bun several times, and side by side on a debug build they
+// run into the default timeout.
+describe.skipIf(!isLinux || isMusl || !cc)("a lockfile that is a mount point", () => {
+  const A1 = "a-1.0.0";
+  const A2 = "a-2.0.0";
+  const B1 = "b-1.0.0";
+  const S1 = "s-1.0.0";
+  const packages: Record<string, object> = {
+    [A1]: {},
+    [A2]: {},
+    [B1]: {},
+    [S1]: { scripts: { postinstall: "echo ran > ran.txt" } },
+  };
+  const binaryLockfile = "[install]\nsaveTextLockfile = false\n";
+
+  let fixtures: ReturnType<typeof tempDir> | undefined;
+  const tgz = (id: string) => join(String(fixtures), `${id}.tgz`);
+  const packageJson = (deps: string[]) =>
+    JSON.stringify({ name: "proj", dependencies: Object.fromEntries(deps.map(id => [id.split("-")[0], tgz(id)])) });
+
+  beforeAll(async () => {
+    fixtures = tempDir("lockfile-mount-point", { "shim.c": mountPointShim });
+    await using compile = spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c"],
+      cwd: String(fixtures),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [compileOut, compileErr, compileExit] = await Promise.all([
+      compile.stdout.text(),
+      compile.stderr.text(),
+      compile.exited,
+    ]);
+    if (compileExit !== 0) throw new Error(`shim compile failed: ${compileOut}${compileErr}`);
+
+    for (const [id, extra] of Object.entries(packages)) {
+      const [name, version] = id.split("-");
+      await write(tgz(id), await packageTarball(name, version, extra));
+    }
+  });
+
+  afterAll(() => fixtures?.[Symbol.dispose]());
+
+  type Result = { stdout: string; stderr: string; exitCode: number };
+  type Which = "plain" | "mounted";
+  type Project = { cwd: string; bun: (...args: string[]) => Promise<Result> };
+  type Steps = (project: Project) => Promise<Result>;
+
+  // Runs bun in `cwd`. The files named in `mountPoints` are mount points for it.
+  async function bunIn(cwd: string, args: string[], mountPoints: string[] = [], extraEnv = {}): Promise<Result> {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(cwd, "..", "cache"),
+        ...(mountPoints.length > 0 && {
+          LD_PRELOAD: [join(String(fixtures), "shim.so"), env.LD_PRELOAD].filter(Boolean).join(":"),
+          FAKE_MOUNT_POINTS: mountPoints.join(":"),
+        }),
+        ...extraEnv,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // An installed project and its cache are made once, as `project` and `cache` in the directory this
+  // returns. Every test that starts from it takes copies.
+  const installed = new Map<string, Promise<string>>();
+  function installedProject(
+    deps: string[],
+    bunfig = "",
+    prepare?: { name: string; run: (project: Project) => Promise<void> },
+  ) {
+    const key = JSON.stringify([deps, bunfig, prepare?.name]);
+    let dir = installed.get(key);
+    if (!dir) {
+      const root = join(String(fixtures), `installed-${installed.size}`);
+      const cwd = join(root, "project");
+      dir = (async () => {
+        await write(join(cwd, "package.json"), packageJson(deps));
+        if (bunfig) await write(join(cwd, "bunfig.toml"), bunfig);
+        const { stderr, exitCode } = await bunIn(cwd, ["install"]);
+        if (exitCode !== 0) throw new Error(`bun install failed in the project to copy: ${stderr}`);
+        await prepare?.run({ cwd, bun: (...args) => bunIn(cwd, args) });
+        return root;
+      })();
+      installed.set(key, dir);
+    }
+    return dir;
+  }
+
+  function state(cwd: string, { stderr, exitCode }: Result) {
+    const read = (name: string) => (existsSync(join(cwd, name)) ? readFileSync(join(cwd, name), "latin1") : null);
+    const nodeModules = join(cwd, "node_modules");
+    const lockfile = read("bun.lock");
+    return {
+      exitCode,
+      errors: errorLines(stderr),
+      // The package rows of bun.lock, as the names of the tarballs they resolve to.
+      locked: [...(lockfile ?? "").matchAll(/^    "[^"]+": \["[^"@]+@([^"]+)"/gm)].map(row => basename(row[1], ".tgz")),
+      installed: readdirSync(nodeModules)
+        .filter(name => !name.startsWith("."))
+        .map(name => `${name}-${JSON.parse(readFileSync(join(nodeModules, name, "package.json"), "utf8")).version}`)
+        .sort(),
+      files: readdirSync(cwd).sort(),
+      "package.json": read("package.json"),
+      "bun.lock": lockfile,
+      "bun.lockb": read("bun.lockb"),
+      "yarn.lock": read("yarn.lock"),
+    };
+  }
+
+  // Two copies of one installed project and its cache. `plain` is the control. In `mounted`, the
+  // files in `mountPoints` are mount points.
+  async function twoProjects(from: Promise<string>, mountPoints: string[]) {
+    const root = tempDir("lockfile-mount-point-project", {});
+    const dir = (which: Which) => join(String(root), which, "project");
+    const installedDir = await from;
+    for (const which of ["plain", "mounted"] as const) {
+      cpSync(installedDir, join(String(root), which), { recursive: true });
+      // A mount point exists before the command runs: the host file is mounted over it.
+      for (const name of mountPoints) {
+        if (!existsSync(join(dir(which), name))) writeFileSync(join(dir(which), name), "");
+      }
+    }
+
+    const inodes = (which: Which) =>
+      mountPoints.map(name => statSync(join(dir(which), name), { throwIfNoEntry: false })?.ino);
+    const run = async (which: Which, steps: Steps, extraEnv = {}) => {
+      const cwd = dir(which);
+      const before = inodes(which);
+      const result = await steps({
+        cwd,
+        bun: (...args) => bunIn(cwd, args, which === "mounted" ? mountPoints : [], extraEnv),
+      });
+      return { state: state(cwd, result), ...result, sameInode: Bun.deepEquals(inodes(which), before) };
+    };
+
+    return {
+      dir,
+      run,
+      // The two copies share nothing, so the same steps run in both at once.
+      both: (steps: Steps) => Promise.all([run("plain", steps), run("mounted", steps)]),
+      [Symbol.asyncDispose]: () => root[Symbol.asyncDispose](),
+    };
+  }
+
+  const faces: {
+    name: string;
+    mountPoints: string[];
+    deps: string[];
+    bunfig?: string;
+    // Runs once in the installed project, before the test copies it.
+    prepare?: (project: Project) => Promise<void>;
+    steps: Steps;
+    locked: string[];
+    installed: string[];
+    errors?: string[];
+  }[] = [
+    {
+      name: "bun add",
+      mountPoints: ["bun.lock"],
+      deps: [A1],
+      steps: ({ bun }) => bun("add", tgz(B1)),
+      locked: [A1, B1],
+      installed: [A1, B1],
+    },
+    {
+      name: "bun install after package.json changed",
+      mountPoints: ["bun.lock"],
+      deps: [A1],
+      steps: ({ cwd, bun }) => {
+        writeFileSync(join(cwd, "package.json"), packageJson([A2]));
+        return bun("install");
+      },
+      locked: [A2],
+      installed: [A2],
+    },
+    {
+      name: "bun install --lockfile-only after package.json changed",
+      mountPoints: ["bun.lock"],
+      deps: [A1],
+      steps: ({ cwd, bun }) => {
+        writeFileSync(join(cwd, "package.json"), packageJson([A2]));
+        return bun("install", "--lockfile-only");
+      },
+      locked: [A2],
+      installed: [A1],
+    },
+    {
+      name: "bun install over a bun.lock that does not parse",
+      mountPoints: ["bun.lock"],
+      deps: [A1],
+      steps: ({ cwd, bun }) => {
+        writeFileSync(join(cwd, "bun.lock"), "");
+        return bun("install");
+      },
+      locked: [A1],
+      installed: [A1],
+      errors: ["error: Missing lockfile version"],
+    },
+    {
+      name: "bun remove of one dependency",
+      mountPoints: ["bun.lock"],
+      deps: [A1, B1],
+      steps: ({ bun }) => bun("remove", "b"),
+      locked: [A1],
+      installed: [A1],
+    },
+    {
+      name: "bun pm trust",
+      mountPoints: ["bun.lock"],
+      deps: [S1],
+      steps: ({ bun }) => bun("pm", "trust", "s"),
+      locked: [S1],
+      installed: [S1],
+    },
+    {
+      name: "bun patch --commit",
+      mountPoints: ["bun.lock"],
+      deps: [A1],
+      prepare: async ({ cwd, bun }) => {
+        await bun("patch", "a");
+        appendFileSync(join(cwd, "node_modules", "a", "index.js"), "// patched\n");
+      },
+      steps: ({ bun }) => bun("patch", "--commit", "node_modules/a"),
+      locked: [A1],
+      installed: [A1],
+    },
+    {
+      name: "bun install --yarn",
+      mountPoints: ["yarn.lock"],
+      deps: [A1],
+      steps: ({ bun }) => bun("install", "--yarn"),
+      locked: [A1],
+      installed: [A1],
+    },
+    {
+      name: "bun add with a bun.lockb",
+      mountPoints: ["bun.lockb"],
+      deps: [A1],
+      bunfig: binaryLockfile,
+      steps: ({ bun }) => bun("add", tgz(B1)),
+      // The project has no bun.lock.
+      locked: [],
+      installed: [A1, B1],
+    },
+  ];
+
+  it.each(faces)(
+    "$name",
+    async ({ name, mountPoints, deps, bunfig, prepare, steps, locked, installed, errors = [] }) => {
+      await using project = await twoProjects(
+        installedProject(deps, bunfig, prepare && { name, run: prepare }),
+        mountPoints,
+      );
+      const [plain, mounted] = await project.both(steps);
+
+      expect(plain.state).toMatchObject({ exitCode: 0, errors, locked, installed });
+      expect(plain.state.files.filter(isLockfileTemp)).toEqual([]);
+      // The command leaves what it leaves in a plain directory.
+      expect(mounted.state).toEqual(plain.state);
+      // A plain directory gets a new file renamed over the lockfile. A mount point keeps its inode.
+      expect({ plain: plain.sameInode, mounted: mounted.sameInode }).toEqual({ plain: false, mounted: true });
+    },
+  );
+
+  // What `bun remove` of the last dependency leaves in a bun.lock that it cannot delete.
+  const emptiedLockfile = `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "proj",
+    },
+  },
+  "packages": {}
+}
+`;
+
+  it.each([
+    ["bun.lock", undefined],
+    ["bun.lockb", binaryLockfile],
+  ])("bun remove of the last dependency saves a %s without packages", async (lockfile, bunfig) => {
+    await using project = await twoProjects(installedProject([A1], bunfig), [lockfile]);
+    const [plain, mounted] = await project.both(({ bun }) => bun("remove", "a"));
+
+    // A plain directory deletes the lockfile. A mount point cannot be deleted.
+    expect(plain.state).toMatchObject({ exitCode: 0, errors: [], installed: [], [lockfile]: null });
+    expect(mounted.state).toEqual({
+      ...plain.state,
+      files: [lockfile, ...plain.state.files],
+      [lockfile]: lockfile === "bun.lock" ? emptiedLockfile : expect.stringContaining("bun-lockfile-format"),
+    });
+    expect(mounted.sameInode).toBe(true);
+
+    // The lockfile already says what package.json says: the next install does not write it again, and
+    // a frozen install accepts it.
+    const path = join(project.dir("mounted"), lockfile);
+    const before = statSync(path, { bigint: true });
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      const again = await project.run("mounted", ({ bun }) => bun(...args));
+      expect({ args, ...again.state }).toMatchObject({
+        args,
+        exitCode: 0,
+        errors: [],
+        [lockfile]: mounted.state[lockfile as "bun.lock"],
+      });
+    }
+    const after = statSync(path, { bigint: true });
+    expect({ ino: after.ino, mtimeNs: after.mtimeNs }).toEqual({ ino: before.ino, mtimeNs: before.mtimeNs });
+  });
+
+  // stdout of `--lockfile-only` ends with a line that says what it saved. That line names bun.lock
+  // when a text lockfile was asked for, so it says nothing of a bun.lockb saved without packages.
+  it.each([
+    { lockfile: "bun.lock", bunfig: undefined, flags: [], summary: "Saved bun.lock (1 package)" },
+    {
+      lockfile: "bun.lockb",
+      bunfig: binaryLockfile,
+      flags: ["--save-text-lockfile"],
+      summary: "Checked 1 package (no changes)",
+    },
+  ])("bun install --lockfile-only that empties a $lockfile ends with: $summary", async row => {
+    const { lockfile, bunfig, flags, summary } = row;
+    await using project = await twoProjects(installedProject([A1], bunfig), [lockfile]);
+    const [plain, mounted] = await project.both(({ cwd, bun }) => {
+      writeFileSync(join(cwd, "package.json"), packageJson([]));
+      return bun("install", "--lockfile-only", ...flags);
+    });
+
+    expect(plain.state).toMatchObject({ exitCode: 0, errors: [], [lockfile]: null });
+    expect(plain.stdout).toContain("Checked 1 package (no changes)");
+    expect(mounted.state).toEqual({
+      ...plain.state,
+      files: [lockfile, ...plain.state.files],
+      [lockfile]: lockfile === "bun.lock" ? emptiedLockfile : expect.stringContaining("bun-lockfile-format"),
+    });
+    expect(mounted.stdout).toContain(summary);
+  });
+
+  it("--save-text-lockfile warns when it cannot delete bun.lockb", async () => {
+    await using project = await twoProjects(installedProject([A1], binaryLockfile), ["bun.lockb"]);
+    const lockb = readFileSync(join(project.dir("mounted"), "bun.lockb"), "latin1");
+    const [plain, mounted] = await project.both(({ bun }) => bun("install", "--save-text-lockfile"));
+
+    expect(plain.state).toMatchObject({ exitCode: 0, errors: [], locked: [A1], "bun.lockb": null });
+    expect(plain.stderr).not.toContain("warn:");
+    // bun.lock is saved like in the plain directory. The bun.lockb that cannot be deleted stays as it was.
+    expect(mounted.state).toEqual({
+      ...plain.state,
+      files: ["bun.lock", "bun.lockb", ...plain.state.files.filter(name => name !== "bun.lock")],
+      "bun.lockb": lockb,
+    });
+    expect(mounted.stderr).toContain("warn: failed to delete bun.lockb after saving bun.lock: EBUSY");
+
+    // bun.lock is the lockfile bun reads from now on, so the warning does not repeat.
+    const again = await project.run("mounted", ({ bun }) => bun("install"));
+    expect(again.stderr).not.toContain("warn:");
+    expect(again.state).toEqual(mounted.state);
+  });
+
+  const replaceFailed = "EIO: Input/output error: Failed to replace old lockfile with new lockfile on disk (ftruncate)";
+
+  it("a write into the mount point that fails puts the old lockfile back", async () => {
+    await using project = await twoProjects(installedProject([A1]), ["bun.lock"]);
+    const lockfile = readFileSync(join(project.dir("mounted"), "bun.lock"), "latin1");
+    const { state } = await project.run("mounted", ({ bun }) => bun("add", tgz(B1)), { FAKE_MOUNT_WRITE_FAILS: "1" });
+
+    expect(state).toMatchObject({
+      exitCode: 1,
+      errors: [replaceFailed],
+      locked: [A1],
+      files: ["bun.lock", "node_modules", "package.json"],
+      "bun.lock": lockfile,
+    });
+  });
+
+  it("bun says that bun.lock may be incomplete when it cannot put the old lockfile back", async () => {
+    await using project = await twoProjects(installedProject([A1]), ["bun.lock"]);
+    const lockfile = readFileSync(join(project.dir("mounted"), "bun.lock"), "latin1");
+    const { state } = await project.run("mounted", ({ bun }) => bun("add", tgz(B1)), { FAKE_MOUNT_WRITE_FAILS: "2" });
+
+    expect(state).toMatchObject({
+      exitCode: 1,
+      errors: [
+        "EIO: Input/output error: failed to restore bun.lock, the file may be incomplete (ftruncate)",
+        replaceFailed,
+      ],
+      files: ["bun.lock", "node_modules", "package.json"],
+    });
+    // The old bytes are back, but the file keeps the length of the longer new lockfile.
+    expect(state["bun.lock"]).toStartWith(lockfile);
+    expect(state["bun.lock"]).not.toBe(lockfile);
+  });
+});
+
+// Runs a command in a user and mount namespace of its own, where an unprivileged user may mount.
+const unshare = ["unshare", "-U", "-r", "-m"];
+
+// Unprivileged user namespaces can be turned off, and a container can forbid mount(2).
+function canBindMountAFile() {
+  if (!isLinux || !Bun.which("unshare")) return false;
+  using dir = tempDir("bind-mount-probe", { from: "", to: "" });
+  const mount = 'mount --bind "$1" "$2" && mount -o remount,bind,ro "$2"';
+  const probe = Bun.spawnSync({
+    cmd: [...unshare, "sh", "-c", mount, "sh", join(String(dir), "from"), join(String(dir), "to")],
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  return probe.exitCode === 0;
+}
+
+describe.skipIf(!canBindMountAFile())("a lockfile under a real bind mount", () => {
+  let fixtures: ReturnType<typeof tempDir> | undefined;
+  const tgz = (name: string) => join(String(fixtures), `${name}-1.0.0.tgz`);
+
+  async function run(cwd: string, cmd: string[]) {
+    await using proc = spawn({
+      cmd,
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, "..", "cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  // `installed/app` is the project. `installed/host` has its bun.lock and an empty yarn.lock, the files
+  // a compose file mounts over the ones in the project.
+  beforeAll(async () => {
+    fixtures = tempDir("lockfile-bind-mount", { installed: { app: { "yarn.lock": "" }, host: { "yarn.lock": "" } } });
+    const app = join(String(fixtures), "installed", "app");
+    await Promise.all([
+      write(tgz("a"), await packageTarball("a", "1.0.0")),
+      write(tgz("b"), await packageTarball("b", "1.0.0")),
+      write(join(app, "package.json"), JSON.stringify({ name: "proj", dependencies: { a: tgz("a") } })),
+    ]);
+    const { stderr, exitCode } = await run(app, [bunExe(), "install"]);
+    if (exitCode !== 0) throw new Error(`bun install failed in the project to copy: ${stderr}`);
+    cpSync(join(app, "bun.lock"), join(String(fixtures), "installed", "host", "bun.lock"));
+  });
+
+  afterAll(() => fixtures?.[Symbol.dispose]());
+
+  function project() {
+    const root = tempDir("lockfile-bind-mount-project", {});
+    cpSync(join(String(fixtures), "installed"), String(root), { recursive: true });
+    const app = join(String(root), "app");
+    const host = join(String(root), "host");
+    const mount = `
+      host=$1 mode=$2; shift 2
+      for name in bun.lock yarn.lock; do
+        mount --bind "$host/$name" "$name" || exit 111
+        [ "$mode" = rw ] || mount -o remount,bind,ro "$name" || exit 111
+      done
+      exec "$@"
+    `;
+    return {
+      hostFile: (name: string) => readFileSync(join(host, name), "utf8"),
+      appFile: (name: string) => readFileSync(join(app, name), "utf8"),
+      // Each command gets a mount namespace of its own.
+      async mounted(mode: "rw" | "ro", ...args: string[]) {
+        const { stderr, exitCode } = await run(app, [
+          ...unshare,
+          "sh",
+          "-c",
+          mount,
+          "sh",
+          host,
+          mode,
+          bunExe(),
+          ...args,
+        ]);
+        return {
+          exitCode,
+          errors: errorLines(stderr),
+          // The lockfiles bun says it saved.
+          saved: stderr.split(/\r?\n/).filter(line => line.startsWith("Saved ")),
+          leftovers: readdirSync(app).filter(isLockfileTemp),
+          dependencies: Object.keys(JSON.parse(readFileSync(join(app, "package.json"), "utf8")).dependencies ?? {}),
+        };
+      },
+      [Symbol.dispose]: () => root[Symbol.dispose](),
+    };
+  }
+
+  it("bun.lock and yarn.lock are saved through the mount", async () => {
+    using p = project();
+    const underneath = p.appFile("bun.lock");
+
+    expect(await p.mounted("rw", "add", tgz("b"))).toEqual({
+      exitCode: 0,
+      errors: [],
+      saved: ["Saved lockfile"],
+      leftovers: [],
+      dependencies: ["a", "b"],
+    });
+    expect(p.hostFile("bun.lock")).toContain(`"b@${tgz("b")}"`);
+
+    expect(await p.mounted("rw", "install", "--yarn")).toEqual({
+      exitCode: 0,
+      errors: [],
+      saved: ["Saved yarn.lock"],
+      leftovers: [],
+      dependencies: ["a", "b"],
+    });
+    expect(p.hostFile("yarn.lock")).toContain(`"b@${tgz("b")}":`);
+
+    expect(await p.mounted("rw", "remove", "a", "b")).toEqual({
+      exitCode: 0,
+      errors: [],
+      saved: ["Saved lockfile"],
+      leftovers: [],
+      dependencies: [],
+    });
+    expect(p.hostFile("bun.lock")).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "proj",
+          },
+        },
+        "packages": {}
+      }
+      "
+    `);
+
+    // Every save went through the mount: the files it covers are as they were.
+    expect({ "bun.lock": p.appFile("bun.lock"), "yarn.lock": p.appFile("yarn.lock") }).toEqual({
+      "bun.lock": underneath,
+      "yarn.lock": "",
+    });
+  });
+
+  it("a read-only mount fails with EROFS and keeps the lockfile", async () => {
+    using p = project();
+    const lockfile = p.hostFile("bun.lock");
+
+    expect(await p.mounted("ro", "install", "--yarn")).toEqual({
+      exitCode: 1,
+      errors: ["EROFS: Read-only file system: Failed to replace old lockfile with new lockfile on disk (open)"],
+      saved: [],
+      leftovers: [],
+      dependencies: ["a"],
+    });
+    expect(await p.mounted("ro", "add", tgz("b"))).toEqual({
+      exitCode: 1,
+      errors: ["EROFS: Read-only file system: Failed to replace old lockfile with new lockfile on disk (open)"],
+      saved: [],
+      leftovers: [],
+      dependencies: ["a"],
+    });
+    expect({ "bun.lock": p.hostFile("bun.lock"), "yarn.lock": p.hostFile("yarn.lock") }).toEqual({
+      "bun.lock": lockfile,
+      "yarn.lock": "",
+    });
+  });
+});
+
+// `bun remove` of the last dependency saves this lockfile when it cannot delete bun.lock.
+describe.concurrent("a frozen install with a bun.lock whose root has no dependencies", () => {
+  const lockfile = `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "no-dependencies",
+    },
+  },
+  "packages": {}
+}
+`;
+
+  async function frozen(cwd: string, args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "ignore", stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr: stderr.trim(), exitCode, lockfile: await file(join(cwd, "bun.lock")).text() };
+  }
+
+  it.each(["install --frozen-lockfile", "ci", "install --production"])(
+    "bun %s passes when package.json has none either",
+    async args => {
+      using dir = tempDir("frozen-root-only", {
+        "package.json": JSON.stringify({ name: "no-dependencies" }),
+        "bun.lock": lockfile,
+      });
+      expect(await frozen(String(dir), args.split(" "))).toEqual({ stderr: "", exitCode: 0, lockfile });
+    },
+  );
+
+  // It fails before it resolves anything: nothing else is printed.
+  it("bun install --frozen-lockfile fails at once when package.json has one", async () => {
+    using dir = tempDir("frozen-root-only-changed", { "bun.lock": lockfile });
+    const tarball = join(String(dir), "dep-1.0.0.tgz");
+    await Promise.all([
+      write(tarball, await packageTarball("dep", "1.0.0")),
+      write(
+        join(String(dir), "package.json"),
+        JSON.stringify({ name: "no-dependencies", dependencies: { dep: tarball } }),
+      ),
+    ]);
+    expect(await frozen(String(dir), ["install", "--frozen-lockfile"])).toEqual({
+      stderr: "error: lockfile had changes, but lockfile is frozen",
+      exitCode: 1,
+      lockfile,
+    });
+  });
+});

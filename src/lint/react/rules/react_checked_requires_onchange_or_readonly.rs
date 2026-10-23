@@ -25,7 +25,7 @@ const OXLINT_EXCLUSIVE_CHECKED_ATTRIBUTE: Message =
 impl Rule for CheckedRequiresOnchangeOrReadonly {
     const META: Meta = Meta::plugin(Plugin::React, "checked-requires-onchange-or-readonly", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
-    /// The pragma. oxlint knows none.
+    /// The pragma. Unused for oxlint, which has no pragma setting.
     type State<'a> = &'a [u8];
 
     fn new(options: &Options) -> Self {
@@ -63,7 +63,7 @@ impl CheckedRequiresOnchangeOrReadonly {
         let Some(jsx) = as_jsx_element(e).filter(|jsx| !jsx.attrs().is_empty()) else {
             return;
         };
-        // oxlint asks the settings of jsx-a11y what kind of element it is.
+        // oxlint gets the element type from the jsx-a11y settings.
         let is_input = match cx.language().is_oxlint {
             true => *get_element_type(cx.file(), jsx) == *b"input",
             false => jsx.tag().is_some_and(|it| it.is_ident("input")),
@@ -80,19 +80,19 @@ impl CheckedRequiresOnchangeOrReadonly {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint has a node for parentheses.
-        let is_seen = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
+        // oxlint's AST has a node for parentheses.
+        let is_plain = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
         let arguments = call.args();
-        if !arguments.first().filter(is_seen).and_then(Expr::as_string).is_some_and(|it| it.is("input")) {
+        if !arguments.first().filter(is_plain).and_then(Expr::as_string).is_some_and(|it| it.is("input")) {
             return;
         }
-        // oxlint takes the `createElement` of everything but `document`.
+        // oxlint accepts any `createElement` except `document.createElement`.
         let is_creation = match is_oxlint {
             true => is_create_element_call(call),
             false => is_create_element(e, cx.state),
         };
-        if is_creation && let Some(ExprKind::Object(properties)) = arguments.get(1).filter(is_seen).map(Expr::kind) {
-            // oxlint: also `"checked"`, and not `[checked]`.
+        if is_creation && let Some(ExprKind::Object(properties)) = arguments.get(1).filter(is_plain).map(Expr::kind) {
+            // oxlint also accepts `"checked"`, but not `[checked]`.
             let name_of = |key: Key<'a>| match is_oxlint {
                 true => static_name(key).map(Name::bytes),
                 false => name_of_key(key),
@@ -102,7 +102,7 @@ impl CheckedRequiresOnchangeOrReadonly {
         }
     }
 
-    /// upstream's `checkAttributesAndReport`. `props`: the attributes or the properties, with their names.
+    /// upstream's `checkAttributesAndReport`. `props`: the attributes or properties with their names.
     fn check_attributes_and_report<'a>(
         &self,
         node: Span,
@@ -123,7 +123,7 @@ impl CheckedRequiresOnchangeOrReadonly {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint points at `checked`.
+        // oxlint reports `checked`.
         let at = if is_oxlint { checked.span() } else { node };
         if !self.ignore_exclusive_checked_attribute
             && let Some(default_checked) = default_checked

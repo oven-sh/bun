@@ -27,7 +27,7 @@ fn is_typeof_expression(e: Expr) -> bool {
     e.unary_op() == Some(UnOp::Typeof)
 }
 
-/// oxlint's `help` names the type that `value` is nearly.
+/// oxlint's `help` suggests the valid type closest to `value`.
 fn report_invalid_value<'a>(at: Expr<'a>, value: &[u8], cx: &Cx<'a, ValidTypeof>) {
     let report = cx.report(at, INVALID_VALUE).hint_with(|| {
         Some(match best_match(value, &VALID_TYPES, 2) {
@@ -90,7 +90,7 @@ impl Rule for ValidTypeof {
             | ExprKind::False
             | ExprKind::Null
             | ExprKind::Regex(_)
-                // For oxlint they are like any other expression.
+                // oxlint treats them like any other expression.
                 if !cx.language().is_oxlint =>
             {
                 cx.report(sibling, INVALID_VALUE).hint("typeof always returns a string.");
@@ -98,7 +98,7 @@ impl Rule for ValidTypeof {
             ExprKind::Ident(name) if name.is("undefined") && ast_utils::is_global_reference(sibling) => {
                 let message = if self.require_string_literals { NOT_STRING } else { INVALID_VALUE };
                 let report = cx.report(sibling, message).hint("typeof returns the string \"undefined\".");
-                // What ESLint suggests is a fix in oxlint.
+                // ESLint's suggestion is a fix in oxlint.
                 if cx.language().is_oxlint {
                     report
                         .help("Use `\"undefined\"` instead of `undefined`.")

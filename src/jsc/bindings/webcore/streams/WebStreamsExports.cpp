@@ -9,7 +9,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedReadableStream.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -44,6 +44,9 @@ static JSReadableStream* toReadableStream(Zig::GlobalObject* globalObject, Throw
 using namespace JSC;
 using namespace WebCore;
 using namespace Bun::WebStreams;
+using Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSFileInternalReadableStreamSource;
 
 // A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
 static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
@@ -214,7 +217,7 @@ extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possible
     scope.assertNoExceptionExceptTermination();
 }
 
-// The `lockedStream` slot (streams.classes.ts): the only way from a natively locked stream's source back to the stream.
+// The `lockedStream` slot (ReadableStream.bind.ts): the only way from a natively locked stream's source back to the stream.
 static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
 {
     if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
@@ -222,6 +225,17 @@ static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
     if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
         return &fileSource->m_lockedStream;
     return nullptr;
+}
+
+static void lockNative(JSC::VM& vm, JSReadableStream* stream)
+{
+    stream->m_disturbed = true;
+    stream->m_lockedWithoutReader = true;
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return;
+    if (auto* slot = lockedStreamSlot(handle.asCell()))
+        slot->set(vm, handle.asCell(), stream);
 }
 
 // A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
@@ -232,13 +246,19 @@ extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableS
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
-    stream->m_disturbed = true;
-    stream->m_lockedWithoutReader = true;
-    JSValue handle = stream->m_nativePtr.get();
-    if (handle.isEmpty() || !handle.isCell())
-        return;
-    if (auto* slot = lockedStreamSlot(handle.asCell()))
-        slot->set(JSC::getVM(globalObject), handle.asCell(), stream);
+    lockNative(JSC::getVM(globalObject), stream);
+}
+
+// Like ReadableStream__lockNative, for a sink that's about to connect itself to the native source. It only
+// locks a stream that hasn't started and isn't locked, because a started source already feeds a controller.
+// Otherwise it returns false without changing anything, and the caller falls back to readStreamIntoSink.
+extern "C" bool ReadableStream__tryLockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream || stream->m_bunMode != BunStreamMode::NativePending || isReadableStreamLocked(stream))
+        return false;
+    lockNative(JSC::getVM(globalObject), stream);
+    return true;
 }
 
 // The source of a stream that ReadableStream__lockNative locked dropped its sink: error the stream with `reason`, or close it if `reason` is empty.

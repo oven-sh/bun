@@ -20,7 +20,8 @@ impl NoUnsafeUnaryMinus {
         let Some(part) = tsutils::union_constituents(arg_type).iter().find(|ty| !ty.has_flags(allowed)) else {
             return;
         };
-        // tsgolint names the first union part that is not a number or bigint, typescript-eslint the whole type.
+        // tsgolint's message has the first union part that isn't a number or bigint, typescript-eslint's has the whole
+        // type.
         let reported = match cx.language().is_oxlint {
             true => part,
             false => arg_type,

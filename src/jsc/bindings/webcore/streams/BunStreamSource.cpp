@@ -21,7 +21,7 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedReadableStream.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
@@ -106,16 +106,20 @@ JSReadStreamIntoSinkOperation::JSReadStreamIntoSinkOperation(VM& vm, Structure* 
 {
 }
 
-void JSReadStreamIntoSinkOperation::finishCreation(VM& vm)
+void JSReadStreamIntoSinkOperation::finishCreation(VM& vm, JSReadableStream* stream, JSReadableStreamDefaultReader* reader, JSObject* sink, JSPromise* result)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    internalField(Field::Stream).set(vm, this, stream);
+    internalField(Field::Reader).set(vm, this, reader);
+    internalField(Field::Sink).set(vm, this, sink);
+    internalField(Field::Result).set(vm, this, result);
 }
 
-JSReadStreamIntoSinkOperation* JSReadStreamIntoSinkOperation::create(VM& vm, Structure* structure)
+JSReadStreamIntoSinkOperation* JSReadStreamIntoSinkOperation::create(VM& vm, Structure* structure, JSReadableStream* stream, JSReadableStreamDefaultReader* reader, JSObject* sink, JSPromise* result)
 {
     auto* cell = new (NotNull, allocateCell<JSReadStreamIntoSinkOperation>(vm)) JSReadStreamIntoSinkOperation(vm, structure);
-    cell->finishCreation(vm);
+    cell->finishCreation(vm, stream, reader, sink, result);
     return cell;
 }
 
@@ -158,6 +162,9 @@ namespace Bun {
 namespace WebStreams {
 
 using namespace JSC;
+using Bindgen::Generated::JSBlobInternalReadableStreamSource;
+using Bindgen::Generated::JSBytesInternalReadableStreamSource;
+using Bindgen::Generated::JSFileInternalReadableStreamSource;
 using WebCore::JSBunStandaloneTextSink;
 
 static constexpr size_t nativeSourceMinChunkSize = 64 * 1024;
@@ -167,11 +174,11 @@ static constexpr size_t nativeSourceMaxChunkSize = 2 * 1024 * 1024;
 // The native source wrapper's `closeAdapter` slot: what `NewSource::on_close` (ReadableStream.rs) notifies, and the GC edge that keeps the adapter alive for it.
 static void setNativeSourceCloseAdapter(JSC::VM& vm, JSObject* handle, JSValue adapter)
 {
-    if (auto* source = dynamicDowncast<WebCore::JSBytesInternalReadableStreamSource>(handle))
+    if (auto* source = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
         source->m_closeAdapter.set(vm, source, adapter);
-    else if (auto* source = dynamicDowncast<WebCore::JSFileInternalReadableStreamSource>(handle))
+    else if (auto* source = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
         source->m_closeAdapter.set(vm, source, adapter);
-    else if (auto* source = dynamicDowncast<WebCore::JSBlobInternalReadableStreamSource>(handle))
+    else if (auto* source = dynamicDowncast<JSBlobInternalReadableStreamSource>(handle))
         source->m_closeAdapter.set(vm, source, adapter);
     else
         ASSERT_NOT_REACHED();
@@ -324,7 +331,7 @@ extern "C" size_t Bun__ByteBlobLoader__remaining(void* source);
 // A slab the size of what a blob has left is filled whole and handed over uncopied; one byte finds out that nothing is left.
 static size_t nativeSlabSize(JSNativeStreamSourceAdapter* adapter)
 {
-    if (auto* blob = dynamicDowncast<WebCore::JSBlobInternalReadableStreamSource>(adapter->handle()))
+    if (auto* blob = dynamicDowncast<JSBlobInternalReadableStreamSource>(adapter->handle()))
         return std::min(adapter->m_chunkSize, std::max<size_t>(Bun__ByteBlobLoader__remaining(blob->wrapped()), 1));
     return adapter->m_chunkSize;
 }
@@ -771,11 +778,8 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), jsUndefined(), sinkController);
     // pull() already called close(error).
     if (JSValue failed = sinkController->m_failReason.get()) {
-        auto* rejected = promiseRejectedWith(globalObject, failed);
-        RETURN_IF_EXCEPTION(scope, {});
         // Every caller is a native sink owner that reads the promise's state instead of attaching a reaction.
-        markPromiseAsHandled(vm, rejected);
-        return rejected;
+        return promiseRejectedWithAsHandled(globalObject, failed);
     }
     if (stream->m_state == ReadableStreamState::Readable) {
         auto* closePromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -909,7 +913,6 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     auto scope = DECLARE_THROW_SCOPE(vm);
     op->m_didThrow = true;
     auto* reader = op->reader();
-    const bool pumpHoldsLock = !!reader;
     if (reader)
         reader->m_pipeOperation.clear();
     op->clearReader();
@@ -921,7 +924,7 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     RETURN_IF_EXCEPTION(scope, );
     // The orphaned reader keeps the stream locked. Cancel before rsisFinally clears the
     // controller slots, so the source's cancel(reason) runs.
-    if (stream && (pumpHoldsLock || !isReadableStreamLocked(stream))) {
+    if (reader && stream) {
         auto* cancelPromise = readableStreamCancel(globalObject, stream, error);
         RETURN_IF_EXCEPTION(scope, );
         markPromiseAsHandled(vm, cancelPromise);
@@ -930,6 +933,26 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     RETURN_IF_EXCEPTION(scope, );
     if (sink)
         RELEASE_AND_RETURN(scope, rsisSinkClose(vm, globalObject, sink, error));
+}
+
+// Fails a pump that never acquired the stream. Its lazy start or its acquire threw, so there's no
+// operation yet. This must not write to a stream that another consumer has locked.
+static void rsisFailBeforeAcquire(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink, JSPromise* result, JSValue error)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    rejectPromise(globalObject, result, error);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isReadableStreamLocked(stream)) {
+        // The stream is unlocked, so its lazy start threw before creating a controller. The pump was its only consumer, so cancel it.
+        auto* cancelPromise = readableStreamCancel(globalObject, stream, error);
+        RETURN_IF_EXCEPTION(scope, );
+        markPromiseAsHandled(vm, cancelPromise);
+    } else if (auto* controller = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(sink)) {
+        // Clear the pipe slot first. Otherwise the sink's owner would end the stream when the sink closes (FileSink's on_close and handle_reject_stream).
+        controller->m_pipeHoldsStream = false;
+        controller->clearReadableStream();
+    }
+    RELEASE_AND_RETURN(scope, rsisSinkClose(vm, globalObject, sink, error));
 }
 
 // One sink.write(chunk). wrote<0 = backpressure: stash tail on m_pendingBatch, suspend; onReady resumes.
@@ -1113,17 +1136,18 @@ static JSTransformStream* nativeByteTransformBehind(JSReadableStream* stream)
     }
 }
 
-static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+// Sets `op` once the pump has acquired the reader. `op` is still null if this throws before that.
+static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink, JSPromise* result, JSReadStreamIntoSinkOperation*& op)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = op->stream();
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, );
     // The sink consumes the stream as a body: it stays locked after rsisFinally releases the pump's reader.
     stream->markConsumedAsBody();
-    op->setReader(vm, reader);
+    auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
+    op = JSReadStreamIntoSinkOperation::create(vm, runtime->readStreamIntoSinkOperationStructure(defaultGlobalObject(globalObject)), stream, reader, sink, result);
     reader->m_pipeOperation.set(vm, reader, op);
     // Byte-producing native transform + native JSSink: attach the sink to the transform so its
     // transform arms write coder output straight to the sink (no JSUint8Array per chunk). The
@@ -1131,7 +1155,7 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamInt
     // Attached only after the reader is acquired so a failed second attempt (stream already
     // locked) cannot overwrite the first pump's attachment.
     if (auto* ts = nativeByteTransformBehind(stream); ts && !ts->m_nativeSinkPtr) {
-        if (auto* sinkCtrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->sink())) {
+        if (auto* sinkCtrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(sink)) {
             if (void* sinkPtr = sinkCtrl->wrapped()) {
                 ts->m_nativeSinkPtr = sinkPtr;
                 ts->m_nativeSinkId = static_cast<uint8_t>(sinkCtrl->sinkId());
@@ -1146,7 +1170,6 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamInt
         // The sink may abort before readMany settles (#6758): start it now.
         rsisRegisterAndStart(vm, globalObject, op);
         RETURN_IF_EXCEPTION(scope, );
-        auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
         manyPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadStreamIntoSinkReadManyFulfilled(), runtime->onReadStreamIntoSinkRejected(), jsUndefined(), op);
         return;
     }
@@ -1157,15 +1180,14 @@ JSPromise* readStreamIntoSink(JSGlobalObject* globalObject, JSReadableStream* st
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* domGlobalObject = defaultGlobalObject(globalObject);
-    auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
-    auto* op = JSReadStreamIntoSinkOperation::create(vm, runtime->readStreamIntoSinkOperationStructure(domGlobalObject));
-    op->setStream(vm, stream);
-    op->setSink(vm, sink);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-    op->setResult(vm, result);
+    JSReadStreamIntoSinkOperation* op = nullptr;
     // This returns the pump's promise, so a throw while starting the pump is its rejection.
-    atStreamsBoundary(globalObject, [&] { rsisBegin(vm, globalObject, op); }, [&](JSValue error) { rsisAbrupt(vm, globalObject, op, error); });
+    atStreamsBoundary(globalObject, [&] { rsisBegin(vm, globalObject, stream, sink, result, op); }, [&](JSValue error) {
+        if (op)
+            rsisAbrupt(vm, globalObject, op, error);
+        else
+            rsisFailBeforeAcquire(vm, globalObject, stream, sink, result, error); });
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
 }

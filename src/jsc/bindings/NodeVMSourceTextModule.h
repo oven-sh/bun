@@ -3,6 +3,10 @@
 #include "NodeVM.h"
 #include "NodeVMModule.h"
 
+namespace JSC {
+class ModuleProgramNode;
+}
+
 namespace Bun {
 
 class NodeVMSourceTextModule final : public NodeVMModule {
@@ -50,6 +54,9 @@ private:
     SourceCode m_sourceCode;
     bool m_hasTopLevelAwait { false };
     bool m_linkCalled { false };
+
+    JSModuleRecord* analyzeSourceText(JSGlobalObject* globalObject, std::unique_ptr<JSC::ModuleProgramNode>& node);
+    void replaceUnlinkedRecords(JSGlobalObject* globalObject);
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)
         : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)

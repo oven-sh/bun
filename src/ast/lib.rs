@@ -356,11 +356,6 @@ impl Ref {
         // User-bit lane is not part of identity — see type-level doc.
         self.as_u64() == other.as_u64()
     }
-    /// deprecated alias
-    #[inline]
-    pub const fn is_null(self) -> bool {
-        self.is_empty()
-    }
     /// `Ref::NONE` → `None`, otherwise `Some(self)`. For sites that previously
     /// stored `Option<Ref>` and want option combinators on the sentinel form.
     #[inline]
@@ -1177,7 +1172,10 @@ impl BabyString {
         if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        // `container` is formatted lossily, so a `substring` with invalid UTF-8 may not be in it.
+        let Some(off) = bun_core::strings::index_of(container, substring) else {
+            return BabyString::new(0, 0);
+        };
         BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 

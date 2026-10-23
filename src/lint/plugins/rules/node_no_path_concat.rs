@@ -55,11 +55,11 @@ fn is_path_sep(expr: Expr) -> bool {
     static_property_name(member).is_some_and(|it| it.is("sep")) && member.object().is_some_and(|it| is_specific_id(it, "path"))
 }
 
-/// What a text can start with.
+/// The first piece of a concatenated string.
 #[derive(Copy, Clone)]
 enum Start<'a> {
     Expr(Expr<'a>),
-    /// A template from its piece of text with this number on.
+    /// A template, starting at the quasi with this index.
     TemplateElement(Template<'a>, usize),
 }
 

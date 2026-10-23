@@ -4,7 +4,7 @@ use rustc_hash::FxHashSet;
 
 /// Enforce camelcase naming convention.
 pub struct Camelcase {
-    /// Each entry as it is, and as a regular expression.
+    /// Each entry verbatim, and compiled as a regular expression.
     allow: Vec<(Box<[u8]>, Option<Regex>)>,
     ignores_destructuring: bool,
     ignores_globals: bool,
@@ -19,15 +19,13 @@ const NOT_CAMEL_CASE_PRIVATE: Message =
 
 #[derive(Default)]
 pub struct State {
-    /// Where the reported identifiers start. The key and the value of a shorthand property are
-    /// reported once.
+    /// The start offsets of reported identifiers. A shorthand property's key and value are reported once.
     reported: FxHashSet<u32>,
-    /// Some name that is declared in a scope or refers to something is not good, so that it is
-    /// worth looking at the variables.
+    /// Some declared or referenced name isn't good, so it's worth looking at the variables.
     has_bad_variable_name: bool,
 }
 
-/// It contains an underscore, other than at its ends, and is not all upper case.
+/// True if `name` has an underscore that isn't at either end, and isn't all upper case.
 fn is_underscored(name: &[u8]) -> bool {
     if !strings::contains_char(name, b'_') {
         return false;
@@ -43,18 +41,18 @@ fn is_underscored(name: &[u8]) -> bool {
         && (body.iter().any(u8::is_ascii_lowercase) || !text::is_upper_case(body))
 }
 
-/// `key` is the identifier `name`, not in brackets.
+/// True if `key` is the identifier `name` and isn't computed.
 fn is_identifier_key<'a>(key: Option<Key<'a>>, name: Name<'a>) -> bool {
     matches!(key.map(Key::kind), Some(KeyKind::Ident(it)) if it == name)
 }
 
-/// ESLint has an `AssignmentPattern` for it: `a = 1` in the target of a destructuring assignment.
+/// True for `a = 1` in the target of a destructuring assignment, which is an `AssignmentPattern` in ESLint.
 fn is_assignment_pattern(e: Expr<'_>) -> bool {
     matches!(e.kind(), ExprKind::Assign { op: None, .. }) && utils::is_assignment_target(e)
 }
 
-/// `equalsToOriginalName` for an identifier that is an expression: it is the value of a property
-/// of the same name, in an object literal or in the target of a destructuring assignment.
+/// `equalsToOriginalName` for an identifier expression: it's the value of a property with the same name, in an object
+/// literal or in the target of a destructuring assignment.
 fn reference_equals_to_original_name(e: Expr<'_>) -> bool {
     let Some(local) = e.as_ident() else {
         return false;
@@ -92,26 +90,26 @@ impl Camelcase {
                 .any(|(entry, regex)| **entry == *name || regex.as_ref().is_some_and(|it| it.test(name)))
     }
 
-    /// Reports a name that is neither declared in a scope nor a reference.
+    /// Reports a name that's neither declared in a scope nor a reference.
     fn check_name<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
         if !self.is_good_name(name.bytes()) {
             report(cx, name.span(), name.bytes(), NOT_CAMEL_CASE);
         }
     }
 
-    /// Takes note of a name that is declared in a scope or is a reference.
+    /// Records a name that's declared in a scope or is a reference.
     fn note_variable_name<'a>(&self, name: Name<'a>, cx: &mut Cx<'a, Self>) {
         if !cx.state.has_bad_variable_name && !self.is_good_name(name.bytes()) {
             cx.state.has_bad_variable_name = true;
         }
     }
 
-    /// The `b` of an `a.b` that is assigned to.
+    /// Checks the `b` of an `a.b` that's assigned to.
     fn check_member_access<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Dot { name, .. } = e.kind() else {
             return;
         };
-        // The head of a `for`-`in` or a `for`-`of` does not count.
+        // The head of a `for`-`in` or `for`-`of` doesn't count.
         if self.is_good_name(name.bytes())
             || name.bytes().starts_with(b"#")
             || matches!(e.parent(), Node::Stmt(_))
@@ -157,14 +155,14 @@ impl Camelcase {
         report(cx, reference.span(), reference.name().bytes(), NOT_CAMEL_CASE);
     }
 
-    /// What is declared by a variable declaration, a function, a class, a `catch` clause or an
-    /// import, with the references to it.
+    /// Checks a symbol declared by a variable declaration, function, class, `catch` clause or import, and the
+    /// references to it.
     fn check_symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         let (mut is_declared, mut is_imported) = (false, false);
         for declaration in symbol.declarations() {
             match declaration {
                 Declaration::Var(_) | Declaration::Class(_) => is_declared = true,
-                // A function without a body is a node of another type.
+                // A function without a body is a different node type.
                 Declaration::Fn(func) => is_declared |= func.has_body(),
                 Declaration::Param(pat) => {
                     is_declared |= Node::Pat(pat).enclosing_function().is_some_and(Func::has_body);
@@ -193,7 +191,7 @@ impl Camelcase {
         {
             report(cx, id, symbol.name().bytes(), NOT_CAMEL_CASE);
         }
-        // For ESLint a class also declares its name in a scope of its own, where it comes first.
+        // In ESLint a class also declares its name in its own inner scope, and that declaration comes first.
         for declaration in symbol.declarations() {
             if let Declaration::Class(class) = declaration
                 && let Some(name) = class.name()
@@ -326,8 +324,8 @@ impl Rule for Camelcase {
         }
     }
 
-    /// The names in a type that are references, and the keys in `import("m", { with: { key: "" } })`,
-    /// which ESLint has as an object literal.
+    /// Checks the names in a type that are references, and the keys in `import("m", { with: { key: "" } })`, which is
+    /// an object literal in ESLint.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.kind() {
             TypeKind::Ref { name, .. } => {
@@ -369,7 +367,7 @@ impl Rule for Camelcase {
         }
     }
 
-    /// The key of a method or a field of a class.
+    /// Checks the key of a class method or field.
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let Some(key) = member.key() else {
             return;
@@ -382,7 +380,7 @@ impl Rule for Camelcase {
             }
             _ => return,
         };
-        // An abstract member and an `accessor` field are nodes of other types.
+        // An abstract member and an `accessor` field are different node types.
         if self.is_good_name(name)
             || member.is_signature()
             || member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
@@ -393,7 +391,7 @@ impl Rule for Camelcase {
         report(cx, at, name, message);
     }
 
-    /// The key of a property of an object literal.
+    /// Checks the key of an object literal's property.
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         let Some(key) = prop.key() else {
             return;

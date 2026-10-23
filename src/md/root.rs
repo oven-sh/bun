@@ -19,7 +19,7 @@ pub struct RenderOptions {
 #[derive(Clone, Copy)]
 pub struct Options {
     pub tables: bool,
-    pub(crate) strikethrough: bool,
+    pub strikethrough: bool,
     pub tasklists: bool,
     pub permissive_autolinks: bool,
     pub permissive_url_autolinks: bool,

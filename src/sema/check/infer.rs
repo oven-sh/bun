@@ -3358,9 +3358,8 @@ impl<'p, 's> Checker<'p, 's> {
             .intersects(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_REVERSE_MAPPED)
     }
 
-    /// For each of `params`, true if `ty` mentions it, in a single exact traversal of `ty`. A type
-    /// parameter that `ty` doesn't mention must not count: `fixing_mapper` fixes each one that
-    /// does, and `InferenceTypeMapper.Map` fixes only those that `instantiateType` reaches.
+    /// `mentions` for each of `params`, in a single exact traversal of `ty`. `fixing_mapper` fixes
+    /// each one that's mentioned, so no other may count.
     pub(super) fn params_mentioned_in(&self, ty: TypeId, params: &[TypeId]) -> SmallVec<[bool; 4]> {
         let mut mentioned: SmallVec<[bool; 4]> = smallvec![false; params.len()];
         self.any_type_in(ty, true, |t| {

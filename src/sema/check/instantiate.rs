@@ -1087,8 +1087,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `getObjectTypeInstantiation`: `newMapper` maps `links.outerTypeParameters`, and
                 // `instantiateAnonymousType` instantiates the members of `target` with it, whatever
                 // else they mention. If it maps them to what they're already mapped to, the type is
-                // its own instantiation, and one with no outer type parameters is never
-                // instantiated (`len(typeParameters) == 0`). See `Shape::mapper`.
+                // its own instantiation. See `Shape::mapper`.
                 let (mut shape, mut mapper, mut target) = (shape, mapper, None);
                 if shape.instantiation_expression.is_some() || shape.mapper != MapperId::IDENTITY {
                     let new_mapper = self.map_mapper(shape.mapper, mapper);
@@ -1103,6 +1102,7 @@ impl<'p, 's> Checker<'p, 's> {
                         (shape, mapper, target) = (as_created, new_mapper, Some(created));
                     }
                 } else if shape.symbol_declared_at.is_some() {
+                    // `len(typeParameters) == 0`
                     return ty;
                 }
                 let scope = self.begin_scope();

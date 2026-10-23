@@ -78,6 +78,7 @@ impl ArrayBufferSink {
     }
 
     pub fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
+        bun_core::vec::reserve_for_append(&mut self.bytes, data.slice().len());
         let len = match self.bytes.write(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),

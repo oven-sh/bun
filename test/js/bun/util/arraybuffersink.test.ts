@@ -1,4 +1,5 @@
 import { ArrayBufferSink } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, withoutAggressiveGC } from "harness";
 import { join } from "node:path";
@@ -208,5 +209,51 @@ describe("ArrayBufferSink", () => {
     expect(stdout).toBe("true\ntrue\n");
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  // estimateShallowMemoryUsageOf(sink) is the sink plus the capacity of its
+  // buffer. A buffer that fits a large write exactly has to double for the
+  // next byte, and it copies the write to do it.
+  describe("a write behind a large write", () => {
+    const LARGE = 8 * 1024 * 1024;
+    const heldOnce = (bytes: number) => bytes >= LARGE && bytes < LARGE * 1.5;
+
+    it.each([
+      ["bytes, then one byte", () => [new Uint8Array(LARGE), "x"], LARGE + 1],
+      ["bytes, then a page", () => [new Uint8Array(LARGE), new Uint8Array(4096)], LARGE + 4096],
+      ["an ASCII string, then one byte", () => [Buffer.alloc(LARGE, "a").toString("latin1"), "x"], LARGE + 1],
+      ["a UTF-16 string, then one byte", () => [Buffer.alloc(LARGE * 2, "a\0").toString("utf16le"), "x"], LARGE + 1],
+      // The last character takes two bytes in UTF-8.
+      [
+        "a Latin-1 string, then one byte",
+        () => [Buffer.alloc(LARGE - 1, "a").toString("latin1") + "\xe9", "x"],
+        LARGE + 2,
+      ],
+    ] as const)("%s: the buffer does not grow", (_, chunks, length) => {
+      const sink = new ArrayBufferSink();
+      const [first, second] = chunks();
+      sink.write(first);
+      const before = estimateShallowMemoryUsageOf(sink);
+      sink.write(second);
+      const grewBy = estimateShallowMemoryUsageOf(sink) - before;
+      const output = new Uint8Array(sink.end() as ArrayBuffer);
+      expect({ heldOnce: heldOnce(before), grewBy, length: output.length, last: output.at(-1) }).toEqual({
+        heldOnce: true,
+        grewBy: 0,
+        length,
+        last: typeof second === "string" ? second.charCodeAt(0) : 0,
+      });
+    });
+
+    it("a Latin-1 string that ends in a non-ASCII character is converted in place", () => {
+      const sink = new ArrayBufferSink();
+      sink.write(Buffer.alloc(LARGE - 1, "a").toString("latin1") + "\xe9");
+      expect(estimateShallowMemoryUsageOf(sink)).toBeWithin(LARGE, LARGE * 1.5);
+      const output = new Uint8Array(sink.end() as ArrayBuffer);
+      expect({ length: output.length, tail: [...output.subarray(-3)] }).toEqual({
+        length: LARGE + 1,
+        tail: [0x61, 0xc3, 0xa9],
+      });
+    });
   });
 });

@@ -37,7 +37,7 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
             self.list.drain(..self.cursor);
             self.cursor = 0;
         }
-        self.list.extend_from_slice(buffer);
+        bun_core::vec::append_bytes(&mut self.list, buffer);
     }
 }
 

@@ -5,7 +5,7 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { describeWithContainer, expectRssDeltaBelow, isLinux } from "harness";
 
 describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
   const connect = (options: { prepare?: boolean } = {}) =>
@@ -177,5 +177,30 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     });
     expect(rejected).toBe("ERR_INVALID_ARG_TYPE");
     expect(await sql`select encode(body, 'hex') as hex from files order by id`).toEqual([{ hex: "01" }, { hex: "02" }]);
+  });
+
+  // The Bind message is the parameter and a few bytes behind it. A write
+  // buffer that fits the parameter exactly has to double for those bytes, and
+  // it copies the parameter to do it. VmHWM is Linux only, and the test reads
+  // the peak of a child of its own.
+  test.skipIf(!isLinux)("a large bytea parameter is held once while it is sent", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const PAYLOAD = 32 * 1024 * 1024;
+      const peakMiB = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) / 1024;
+      const sql = new Bun.SQL({ url: ${JSON.stringify(url)}, max: 1 });
+      await sql.unsafe("select 1");
+      // Zero pages are not resident, so the peak counts the copies only.
+      const parameter = new Uint8Array(PAYLOAD);
+      const before = peakMiB();
+      const [{ length }] = await sql.unsafe("select length($1::bytea) as length", [parameter]);
+      if (length !== PAYLOAD) throw new Error("the server received " + length + " bytes");
+      console.log(JSON.stringify({ deltaMiB: peakMiB() - before }));
+      await sql.close();
+    `;
+    // One copy of 32 MiB. The second copy makes it 64.
+    await expectRssDeltaBelow(["-e", fixture], { release: 45, debug: 51 });
   });
 });

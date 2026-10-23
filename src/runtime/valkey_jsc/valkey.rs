@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 // Entry point for Valkey client
 //
 // This file contains the core Valkey client implementation with protocol handling
@@ -413,9 +412,7 @@ impl ValkeyClient {
             total
         };
 
-        self.write_buffer
-            .byte_list
-            .ensure_unused_capacity(total_bytelength);
+        self.write_buffer.ensure_unused_capacity(total_bytelength);
         for _ in 0..pipelineable_count {
             let cmd = self.queue.pop_front().expect("count was precomputed");
             self.in_flight.push_back(command::PromisePair {

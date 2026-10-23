@@ -1,0 +1,31 @@
+- [ ]
+  the text is on the next line
+
+- [ ] 
+  blanks behind the marker
+
+- [x]
+
+- [ ]
+
+  a paragraph of its own: no task
+
+- [ ] [a]: /not-a-definition
+  b
+
+- [a]: /u
+  [x] behind a definition
+
+- [x] a heading, so no task
+  ---
+
+1. [ ]
+a lazy line
+
+-
+  [x] on the line after the marker
+
+- [X] a capital
+- [ ]	a tab
+- [ ]  two blanks
+- [ ] **strong** first

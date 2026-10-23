@@ -44,8 +44,13 @@ ActiveDOMCallback::~ActiveDOMCallback() = default;
 
 bool ActiveDOMCallback::canInvokeCallback() const
 {
+    // WebCore only asks whether the context's active DOM objects are stopped, because a
+    // terminating worker's WorkerRunLoop runs no more tasks. Bun's event loop keeps draining
+    // its task queue for the rest of the tick after the VM's stop was requested, so the same
+    // gate the event-listener boundary uses (isJSExecutionForbidden) applies here too.
     ScriptExecutionContext* context = scriptExecutionContext();
-    return context && !context->activeDOMObjectsAreStopped();
+    // (isStopped: a disposed Bun.ModuleGraph's context, from the moment it is disposed.)
+    return context && !context->isStopped() && !context->isJSExecutionForbidden();
 }
 
 } // namespace WebCore

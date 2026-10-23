@@ -273,12 +273,17 @@ This is [link](http://github.com/)X
 
 ## [Issue 74](https://github.com/mity/md4c/issues/74)
 
+(md4c reads `[f]:` and `-` as a reference definition. cmark and commonmark.js
+decide on the `-` when they get to it: `[f]:` is no definition by then, so it
+is the text of a heading.)
+
 ```````````````````````````````` example
 [f]:
 -
     xx
 -
 .
+<h2>[f]:</h2>
 <pre><code>xx
 </code></pre>
 <ul>

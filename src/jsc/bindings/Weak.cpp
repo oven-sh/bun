@@ -12,8 +12,6 @@ enum class WeakRefType : uint32_t {
     PostgreSQLQueryClient = 2,
 };
 
-typedef void (*WeakRefFinalizeFn)(void* context);
-
 // clang-format off
 #define FOR_EACH_WEAK_REF_TYPE(macro) \
     macro(FetchResponse) \

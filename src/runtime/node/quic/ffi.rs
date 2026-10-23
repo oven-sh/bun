@@ -4,8 +4,8 @@ use core::ffi::c_void;
 ///
 /// * Every context pointer the shim hands back — the engine's `owner`
 ///   (`ea_stream_if_ctx` / `peer_ctx`), a conn-ctx, or a stream-ctx — is a
-///   pointer we ourselves installed: a `bun_core::heap::into_raw` allocation of
-///   `QuicEndpoint`, `QuicSession`, or `QuicStream`, whose first field is the
+///   pointer we ourselves installed: a `QuicEndpoint`, `QuicSession`, or
+///   `QuicStream` stored inline in its JS wrapper, whose first field is the
 ///   `*const NqVtable` that `packages/bun-usockets/src/node_quic_shim.c` reads
 ///   back via `*(us_nq_vtable**)ctx`. Those structs are `#[repr(C)]` precisely
 ///   so that first-field read stays valid, and the shim never invents or
@@ -13,8 +13,8 @@ use core::ffi::c_void;
 /// * The only other value the shim can pass is NULL — teardown clears the
 ///   conn/stream ctx (and lsquic passes NULL for crypto/mini-conn streams that
 ///   never got one), so a null check is the whole liveness test. A non-null
-///   ctx is a live `T`: the owning JS wrapper keeps the allocation alive until
-///   after the engine that could call us is destroyed.
+///   ctx is a live `T`: its JS wrapper stays alive until after the engine that
+///   could call us is destroyed.
 /// * lsquic only calls into us from `process_conns`/`packet_in` on the JS
 ///   thread, so the returned `&T` cannot race another thread, and every
 ///   mutable field of these types is `Cell`-based (shared-ref interior

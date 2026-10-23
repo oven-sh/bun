@@ -1,8 +1,38 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
+  it("carries what the resolver logged while failing as notes", async () => {
+    // The resolver records the reason it gave up (here: the dependency's
+    // package.json does not parse) in the log of the failing resolve. That
+    // used to be discarded, leaving a bare "Cannot find package".
+    using dir = tempDir("resolve-error-notes", {
+      "index.js": `import "badjson";\n`,
+      "node_modules/badjson/package.json": `{ "name": "badjson", "main":\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "error: Cannot find package 'badjson' from '<dir>/index.js'
+
+      1 | { "name": "badjson", "main":
+                                      ^
+      note: Unexpected end of file
+         at <dir>/node_modules/badjson/package.json:1:29
+
+      Bun v<bun-version>"
+    `);
+    expect(exitCode).toBe(1);
+  });
+
   it("position object does not segfault", async () => {
     try {
       await import("./file-importing-nonexistent-file.js");
@@ -242,6 +272,134 @@ describe.concurrent("long import path overflow", () => {
   });
 });
 
+// The resolver builds every candidate path in a MAX_PATH_BYTES buffer and treats one that's too long as missing.
+describe.concurrent("candidate paths longer than a path buffer", () => {
+  const longName = Buffer.alloc(MAX_PATH_BYTES, "a").toString();
+
+  // package.json and node_modules/ keep the resolver from auto-installing the bare specifiers.
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("resolve-too-long", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  const helpers = `
+    const outcome = fn => { try { return "resolved: " + fn(); } catch (e) { return e.code; } };
+  `;
+
+  it("throws MODULE_NOT_FOUND for a missing file whose path length is near the limit", async () => {
+    const lengths = [-5, -4, -1, 0, 1, 300].map(delta => MAX_PATH_BYTES + delta);
+    expect(
+      await run({
+        "main.cjs": `${helpers}
+          const cwd = process.cwd();
+          const out = {};
+          for (const length of ${JSON.stringify(lengths)}) {
+            const file = cwd + "/" + Buffer.alloc(length - Buffer.byteLength(cwd) - 1, "f").toString();
+            out[length] = [outcome(() => require(file)), outcome(() => require.resolve(file))];
+          }
+          console.log(JSON.stringify(out));`,
+      }),
+    ).toEqual({
+      result: Object.fromEntries(lengths.map(length => [length, ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]])),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("throws when package.json main or module is too long", async () => {
+    expect(
+      await run({
+        "node_modules/relative/package.json": JSON.stringify({ name: "relative", main: `./${longName}` }),
+        "node_modules/absolute/package.json": JSON.stringify({ name: "absolute", module: `/${longName}` }),
+        "main.cjs": `${helpers}
+          import("absolute").then(() => "resolved", e => e.code).then(absolute => {
+            console.log(JSON.stringify({ relative: outcome(() => require("relative")), absolute }));
+          });`,
+      }),
+    ).toEqual({
+      result: { relative: "MODULE_NOT_FOUND", absolute: "ERR_MODULE_NOT_FOUND" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("throws MODULE_NOT_FOUND when a require.extensions key is too long", async () => {
+    expect(
+      await run({
+        "dir/.keep": "",
+        "main.cjs": `${helpers}
+          require.extensions[${JSON.stringify("." + longName)}] = () => {};
+          console.log(JSON.stringify({
+            file: outcome(() => require("./missing")),
+            directory: outcome(() => require("./dir")),
+          }));`,
+      }),
+    ).toEqual({
+      result: { file: "MODULE_NOT_FOUND", directory: "MODULE_NOT_FOUND" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("fails the build when the package.json browser field remaps main to a path that's too long", async () => {
+    expect(
+      await run({
+        "node_modules/m/package.json": JSON.stringify({
+          name: "m",
+          main: "./x.js",
+          browser: { "./x.js": `./${longName}` },
+        }),
+        "node_modules/m/x.js": "module.exports = 1;",
+        "entry.js": `import "m";`,
+        "main.cjs": `
+          Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false }).then(build => {
+            console.log(JSON.stringify({ success: build.success, messages: build.logs.map(log => log.message) }));
+          });`,
+      }),
+    ).toEqual({
+      result: { success: false, messages: ['Could not resolve: "m". Maybe you need to "bun install"?'] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("skips tsconfig.json extends, baseUrl and paths values that are too long", async () => {
+    // Each use.cjs uses the tsconfig.json next to it.
+    expect(
+      await run({
+        "extends/tsconfig.json": JSON.stringify({ extends: `./${longName}` }),
+        "extends/use.cjs": `module.exports = "loaded";`,
+        "baseUrl/tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: longName } }),
+        "baseUrl/use.cjs": `module.exports = require("x");`,
+        "paths/tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { x: [longName] } } }),
+        "paths/use.cjs": `module.exports = require("x");`,
+        "main.cjs": `${helpers}
+          console.log(JSON.stringify({
+            extends: outcome(() => require("./extends/use.cjs")),
+            baseUrl: outcome(() => require("./baseUrl/use.cjs")),
+            paths: outcome(() => require("./paths/use.cjs")),
+          }));`,
+      }),
+    ).toEqual({
+      result: { extends: "resolved: loaded", baseUrl: "MODULE_NOT_FOUND", paths: "MODULE_NOT_FOUND" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // matchTSConfigPaths sliced `path[prefix.len()..path.len() - suffix.len()]`
 // after only checking starts_with/ends_with. When the prefix and suffix bytes
 // overlap inside the import path (e.g. key "ab*ba" vs import "aba"), the slice
@@ -283,3 +441,98 @@ describe.concurrent("tsconfig paths wildcard with overlapping prefix/suffix", ()
     await run("xy*xy", "xy");
   });
 });
+
+// Bun.resolve() resolves synchronously and returns an already-settled promise.
+// A rejected one has to be reported like any other unhandled rejection.
+describe.concurrent("Bun.resolve() rejections are tracked", () => {
+  async function run(body: string) {
+    using dir = tempDir("bun-resolve-unhandled", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const dir = ${JSON.stringify(String(dir))};\n${body}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("an unhandled rejection is reported", async () => {
+    const { stdout, stderr, exitCode } = await run(`Bun.resolve("./does-not-exist", dir);`);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot find module './does-not-exist'");
+    expect(exitCode).toBe(1);
+  });
+
+  it("the returned promise is the one passed to 'unhandledRejection'", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(reason.code, promise === p);
+      });
+      const p = Bun.resolve("./does-not-exist", dir);
+    `);
+    expect(stdout).toBe("ERR_MODULE_NOT_FOUND true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a handled rejection is not reported", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      Bun.resolve("./does-not-exist", dir).catch(e => console.log("caught", e.code));
+    `);
+    expect(stdout).toBe("caught ERR_MODULE_NOT_FOUND\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Bun.resolve() allocates its rejected promise while the exception the resolve
+// threw is still pending on the VM. That allocation is a GC safepoint, and the
+// concurrent collector's end phase materializes the stack of every live Error
+// whose frames died, through the onComputeErrorInfo hook. The hook used to
+// clear whatever exception was pending, so the rejection then found nothing:
+// `panic: A JavaScript exception was thrown, but it was cleared before it could be read.`
+//
+// Each call comes from a fresh closure and the reasons are kept in a ring, so
+// every collection has live Errors with a dead top frame to materialize. The
+// calls have to be awaited one at a time (64 per tick never fires), and
+// collectContinuously keeps an end phase always imminent. The unfixed debug
+// build panics after 2500 to 8500 iterations. Not concurrent with the tests
+// above: a busy machine starves the collector and hides the race.
+//
+// Skipped on Windows: collectContinuously is several times slower under
+// Windows + ASAN in CI, and the fixed C++ path is not platform-specific.
+it.skipIf(isWindows)(
+  "Bun.resolve() rejection survives a GC stack-trace finalizer",
+  async () => {
+    using dir = tempDir("bun-resolve-rejection-gc", {
+      "fixture.mjs": `
+        const keep = [];
+        let rejections = 0;
+        for (let i = 0; i < 20000; i++) {
+          const call = () => Bun.resolve();
+          await call().catch(e => {
+            rejections++;
+            keep.push(e);
+            if (keep.length > 1024) keep.shift();
+          });
+        }
+        console.log("ok rejections=" + rejections);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok rejections=20000", exitCode: 0 });
+    void stderr;
+  },
+  // 20000 awaited rejections under collectContinuously on a debug+ASAN build
+  // take well over the default 5s.
+  120_000,
+);

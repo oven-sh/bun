@@ -126,56 +126,6 @@ function eventLoopUtilization(_utilization1, _utilization2) {
 
 const { PerformanceResourceTiming } = globalThis;
 
-// Resolved on first inspection so requiring perf_hooks does not pull in the
-// inspect module, and so repeated inspection does not re-resolve it.
-var _lazyInspect;
-function lazyInspect() {
-  return (_lazyInspect ??= require("internal/util/inspect").inspect);
-}
-
-// Node prints entries as `<ClassName> { ...toJSON() }`; WebCore's fields are
-// prototype accessors so default inspection prints `{}`. Ported from node's
-// lib/internal/perf/performance_entry.js.
-if (PerformanceEntry) {
-  const kInspect = Symbol.for("nodejs.util.inspect.custom");
-  Object.defineProperty(PerformanceEntry.prototype, kInspect, {
-    __proto__: null,
-    configurable: true,
-    writable: true,
-    value: function inspect(depth, options) {
-      if (depth < 0) return this;
-      // A prototype object is not an entry, and toJSON below is brand-checked.
-      // Same circular check util.inspect uses to skip custom inspectors there.
-      if (Object.getOwnPropertyDescriptor(this, "constructor")?.value?.prototype === this) return this;
-      const opts = {
-        ...options,
-        depth: options?.depth == null ? null : options.depth - 1,
-      };
-      return this.constructor.name + " " + lazyInspect()(this.toJSON(), opts);
-    },
-  });
-
-  // PerformanceEntry.prototype.toJSON has no notion of `detail`; node's mark
-  // and measure entries include it.
-  for (const Ctor of [PerformanceMark, PerformanceMeasure]) {
-    if (!Ctor) continue;
-    Object.defineProperty(Ctor.prototype, "toJSON", {
-      __proto__: null,
-      configurable: true,
-      writable: true,
-      value: function toJSON() {
-        return {
-          name: this.name,
-          entryType: this.entryType,
-          startTime: this.startTime,
-          duration: this.duration,
-          detail: this.detail,
-        };
-      },
-    });
-  }
-}
-
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
 

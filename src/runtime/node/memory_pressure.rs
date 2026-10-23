@@ -26,9 +26,11 @@
 //! are wired. The watcher does not keep the event loop alive.
 
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
-use bun_jsc::JSGlobalObject;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_jsc::ArrayBuffer;
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[cfg(not(windows))]
 use core::ptr::NonNull;
 
@@ -63,6 +65,10 @@ impl bun_event_loop::Taskable for MemoryPressureTask {
     const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
     /// Nothing is owned (`this` is the packed level).
     unsafe fn release_unrun(_: *mut Self) {}
+    /// The process's memory pressure: listeners of the realm.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 fn pressure_task(lvl: i32) -> Task {
@@ -97,6 +103,9 @@ mod posix {
     /// reflects listener presence.
     struct MemoryPressureWatcher {
         poll: Option<NonNull<FilePoll>>,
+        /// PSI `some total=` at arm time, then at the last emitted event.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        psi_some_total: u64,
     }
 
     fn take_watcher(vm: &mut VirtualMachine) -> Option<Box<MemoryPressureWatcher>> {
@@ -142,15 +151,56 @@ mod posix {
         None
     }
 
+    /// 150 ms of "some"-stall in any 2 s window. 2 s is the minimum
+    /// window for unprivileged PSI triggers (kernel 6.6+).
+    ///
+    /// The trailing NUL is part of the write: `psi_write()` in
+    /// `kernel/sched/psi.c` replaces the last byte it receives with NUL
+    /// before it parses the buffer. Without it the kernel sees
+    /// `some 150000 200000` and rejects the 200 ms window with `EINVAL`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) const PSI_TRIGGER: &[u8] = b"some 150000 2000000\0";
+
+    /// The threshold in `PSI_TRIGGER`, in microseconds.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const PSI_THRESHOLD_US: u64 = 150_000;
+
+    /// The `some total=` field of a PSI file, in microseconds.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) fn parse_psi_some_total(contents: &[u8]) -> Option<u64> {
+        use bun_core::strings;
+        let line = strings::split(contents, b"\n").find_map(|line| line.strip_prefix(b"some "))?;
+        let digits = &line[strings::index_of(line, b"total=")? + "total=".len()..];
+        let end = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+        core::str::from_utf8(&digits[..end]).ok()?.parse().ok()
+    }
+
+    /// `pread` at offset 0 rewinds the seq_file, so the trigger fd is reusable.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn read_psi_file(fd: Fd, buf: &mut [u8; 256]) -> Option<&[u8]> {
+        let n = bun_sys::pread(fd, buf, 0).ok()?;
+        Some(&buf[..n])
+    }
+
+    /// Whether a `POLLPRI` reports real pressure, not the false event of #42783.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) fn psi_growth_reached_threshold(last_total: &mut u64, contents: &[u8]) -> bool {
+        let Some(total) = parse_psi_some_total(contents) else {
+            return true;
+        };
+        if total.saturating_sub(*last_total) < PSI_THRESHOLD_US {
+            return false;
+        }
+        *last_total = total;
+        true
+    }
+
     /// Open a PSI memory file and write a trigger. Tries the system-wide
     /// `/proc/pressure/memory` first, then the current cgroup's file.
+    /// Returns `some total=` as read before the write.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn open_psi_fd() -> Option<Fd> {
+    fn open_psi_fd() -> Option<(Fd, u64)> {
         use bun_sys::O;
-
-        /// 150 ms of "some"-stall in any 2 s window. 2 s is the minimum
-        /// window for unprivileged PSI triggers (kernel 6.6+).
-        const TRIGGER: &[u8] = b"some 150000 2000000";
 
         let mut cgroup_buf = [0u8; 320];
         let paths = [
@@ -161,19 +211,24 @@ mod posix {
             let Ok(fd) = bun_sys::open(path, O::RDWR | O::NONBLOCK | O::CLOEXEC, 0) else {
                 continue;
             };
-            if bun_sys::write(fd, TRIGGER).is_ok() {
-                return Some(fd);
+            let mut buf = [0u8; 256];
+            let some_total = read_psi_file(fd, &mut buf)
+                .and_then(parse_psi_some_total)
+                .unwrap_or(0);
+            if bun_sys::write(fd, PSI_TRIGGER).is_ok() {
+                return Some((fd, some_total));
             }
             let _ = bun_sys::close(fd);
         }
         None
     }
 
-    fn register_os_watch(global: &JSGlobalObject) -> Option<NonNull<FilePoll>> {
+    /// The `u64` is the PSI `some total=` at arm time, 0 off Linux.
+    fn register_os_watch(global: &JSGlobalObject) -> Option<(NonNull<FilePoll>, u64)> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = open_psi_fd()?;
+        let (fd, psi_some_total) = open_psi_fd()?;
         #[cfg(target_os = "macos")]
-        let fd = Fd::from_native(0);
+        let (fd, psi_some_total) = (Fd::from_native(0), 0);
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             let _ = global;
@@ -200,7 +255,7 @@ mod posix {
                 deinit_poll(unsafe { &mut *poll });
                 return None;
             }
-            NonNull::new(poll)
+            Some((NonNull::new(poll)?, psi_some_total))
         }
     }
 
@@ -209,10 +264,28 @@ mod posix {
         if slot(vm).is_some() {
             return;
         }
+        let (poll, psi_some_total) = register_os_watch(global).unzip();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let _ = psi_some_total;
         let watcher = Box::new(MemoryPressureWatcher {
-            poll: register_os_watch(global),
+            poll,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            psi_some_total: psi_some_total.unwrap_or(0),
         });
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+    }
+
+    /// Whether the installed watcher holds a live OS source. `install` still
+    /// fills the slot when no backend could be registered, so `isInstalled`
+    /// alone cannot tell the two apart.
+    pub(super) fn has_os_backend(global: &JSGlobalObject) -> bool {
+        let Some(raw) = *slot(global.bun_vm().as_mut()) else {
+            return false;
+        };
+        // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`,
+        // and nothing else borrows it while this JS host call runs.
+        let watcher = unsafe { raw.cast::<MemoryPressureWatcher>().as_ref() };
+        watcher.poll.is_some()
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {
@@ -240,6 +313,23 @@ mod posix {
             drop(take_watcher(vm));
             deinit_poll(poll);
             return;
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let Some(raw) = *slot(vm) else {
+                return;
+            };
+            // SAFETY: slot is populated only by `install` with a
+            // `Box<MemoryPressureWatcher>`, and nothing else borrows it
+            // while the poll dispatch runs.
+            let watcher = unsafe { raw.cast::<MemoryPressureWatcher>().as_mut() };
+            let mut buf = [0u8; 256];
+            if let Some(contents) = read_psi_file(poll.fd, &mut buf)
+                && !psi_growth_reached_threshold(&mut watcher.psi_some_total, contents)
+            {
+                return;
+            }
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -425,6 +515,67 @@ pub(crate) extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObjec
         .rare_data()
         .memory_pressure_watcher_slot()
         .is_some()
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// bun:internal-for-testing hooks
+// ────────────────────────────────────────────────────────────────────────────
+
+/// `memoryPressurePsiTrigger()`: the bytes `open_psi_fd` writes, as a
+/// `Buffer`. `null` where there is no PSI backend.
+#[bun_jsc::host_fn]
+pub(crate) fn js_psi_trigger(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        ArrayBuffer::create_buffer(global, posix::PSI_TRIGGER)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let _ = global;
+        Ok(JSValue::NULL)
+    }
+}
+
+/// `memoryPressurePsiFilter(armed, ...polls)`: one `bool` per poll, `null` off Linux.
+#[bun_jsc::host_fn]
+pub(crate) fn js_psi_filter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let args = frame.arguments();
+        let Some((armed, polls)) = args.split_first() else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "memoryPressurePsiFilter() expects the file contents at arm time"
+            )));
+        };
+        let mut last_total = posix::parse_psi_some_total(&armed.to_utf8(global)?).unwrap_or(0);
+        JSValue::create_array_from_iter(global, polls.iter(), |contents| {
+            let contents = contents.to_utf8(global)?;
+            Ok(JSValue::js_boolean(posix::psi_growth_reached_threshold(
+                &mut last_total,
+                &contents,
+            )))
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let _ = (global, frame);
+        Ok(JSValue::NULL)
+    }
+}
+
+/// `memoryPressureWatcherHasOsBackend()`: whether the watcher installed by
+/// the current listeners registered an OS source. On Windows `install` either
+/// starts the thread or leaves the slot empty, so this equals `isInstalled`.
+#[bun_jsc::host_fn]
+pub(crate) fn js_watcher_has_os_backend(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    #[cfg(not(windows))]
+    let armed = posix::has_os_backend(global);
+    #[cfg(windows)]
+    let armed = Bun__MemoryPressure__isInstalled(global);
+    Ok(JSValue::js_boolean(armed))
 }
 
 #[cfg(not(windows))]

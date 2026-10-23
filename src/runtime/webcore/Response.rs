@@ -579,7 +579,9 @@ impl Response {
             }
         }
 
-        Ok(init.headers.as_mut().unwrap())
+        let headers = init.headers.as_mut().unwrap();
+        headers.set_implied_by_body(false);
+        Ok(headers)
     }
 
     pub(crate) fn get_headers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1106,8 +1108,13 @@ impl Response {
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
         if let BodyValue::Blob(blob) = body.value.get() {
+            let content_type = blob.content_type_slice();
+            if init.headers.is_none() && !content_type.is_empty() {
+                init.headers
+                    .insert(HeadersRef::create_empty())
+                    .set_implied_by_body(true);
+            }
             if let Some(headers) = init.headers.as_deref_mut() {
-                let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(
                         HTTPHeaderName::ContentType,

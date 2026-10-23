@@ -51,6 +51,15 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return generator;
     };
 
+    // A finally() reaction's context is a JSSlimPromiseReaction record; its promise() is the promise finally() returned.
+    auto finallyResultPromise = [&](JSC::JSValue context) -> JSC::JSPromise* {
+        JSC::JSSlimPromiseReaction* record = nullptr;
+        JSC::JSPromise* result = nullptr;
+        if (dynamicCastValue(context, &record))
+            dynamicCastValue(record->promise(), &result);
+        return result;
+    };
+
     // Walk reaction->context → generator. If context is not a generator (e.g.
     // thenable-chain from `return promise` without await inside an async
     // function), follow reaction->promise() to the next promise in the chain.
@@ -67,10 +76,16 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
+            // The context of the inline reaction, or of the head of the list.
+            JSC::JSValue context = p->asyncStackTraceContext();
+            if (auto* generator = unwrapGeneratorFromContext(context))
+                return generator;
+            if (auto* next = finallyResultPromise(context)) {
+                p = next;
+                continue;
+            }
             switch (p->inlineReactionKind()) {
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
-                if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
-                    return generator;
                 // No generator in the context. For the resolve-with-promise fast
                 // path (`return promise` without await inside an async function),
                 // the reaction's cell payload is the outer promise being resolved —
@@ -94,8 +109,6 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
             if (!reaction)
                 return nullptr;
-            if (auto* generator = unwrapGeneratorFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
-                return generator;
             // No generator in context — follow the thenable chain to the
             // promise this reaction resolves/rejects.
             if (!dynamicCastValue(reaction->promise(), &p))

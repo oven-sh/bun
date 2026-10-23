@@ -1,4 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { ServerWebSocket } from "../server/server.bind.ts";
+import { SocketHandler } from "./SocketConfig.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::socket_body" });
 
@@ -107,3 +109,85 @@ export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandl
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
+/** `tls` is `true` or what `SSLConfig` takes, and can hold the `secureContext`. */
+export const DuplexTLSOptions = b.dictionary({
+  socket: SocketHandler,
+  isServer: b.bool.loose.default(false),
+  secureContext: b.any.emptyStringAsNull,
+  tls: b.any.emptyStringAsNull,
+  data: b.any,
+});
+/** Returns the `TLSSocket` and the listeners for the duplex's `data`, `end`, `drain` and `close`. */
+export const upgradeDuplexToTLS = b.fn({ ...method, args: { duplex: b.any, options: DuplexTLSOptions } });
+
+// `bun:internal-for-testing`
+export const createSocketPair = b.fn({ ...js, returns: b.array(b.i32) });
+/** `other` is a `WebSocket` or the native handle of a node:http server socket. */
+export const AnySocket = b.union({ tcp: TCPSocket, tls: TLSSocket, serverWebSocket: ServerWebSocket, other: b.any });
+export const setSocketOptions = b.fn({ ...js, args: { socket: AnySocket, option: b.i32, size: b.i32 } });
+const testing = (name: string) => `crate::socket::socket_body::testing_apis::${name}`;
+export const socketFaultInjectionAvailable = b.fn({
+  returns: b.bool,
+  rustPath: testing("socket_fault_injection_available"),
+});
+export const namedPipeContextLiveCount = b.fn({
+  returns: b.usize,
+  rustPath: testing("named_pipe_context_live_count"),
+});
+export const duplexUpgradeContextLiveCount = b.fn({
+  returns: b.usize,
+  rustPath: testing("duplex_upgrade_context_live_count"),
+});
+export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });
+/** `socket`, `close` and `shutdown` have no hook in bsd.c: a rule for one would never fire. */
+export const SocketFaultSyscall = b.enumeration([
+  "recv",
+  "send",
+  "writev",
+  "sendmsg",
+  "recvmsg",
+  "connect",
+  "accept",
+  "ssl_loop_buffer",
+  "poll_start",
+  "session_buffer",
+  "ssl_write",
+]);
+export const SocketFaultAction = b.enumeration(["errno", "short", "zero", "excess", "none"]);
+export const SocketFaultErrnoName = b.enumeration([
+  "ECONNRESET",
+  "EPIPE",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "EAGAIN",
+  "EWOULDBLOCK",
+  "EINTR",
+  "ENOBUFS",
+  "ENOMEM",
+  "EBADF",
+  "EINVAL",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EPROTOTYPE",
+]);
+export const SocketFaultErrno = b.union({ name: SocketFaultErrnoName, code: b.i32 });
+const count = b.i32.wrap.emptyStringAsNull;
+export const SocketFaultRule = b.dictionary(
+  {
+    syscall: SocketFaultSyscall,
+    action: SocketFaultAction,
+    /** `errno` is a macro in C++. */
+    errno: { type: SocketFaultErrno.emptyStringAsNull, rustName: "error" },
+    bytes: count,
+    fd: count,
+    after: count,
+    repeat: count,
+  },
+  { reportedAs: "rule" },
+);
+export const setSocketFault = b.fn({
+  ...js,
+  args: { rule: SocketFaultRule },
+  returns: b.bool,
+  rustPath: testing("set_socket_fault"),
+});

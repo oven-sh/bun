@@ -438,7 +438,7 @@ impl fmt::Display for Error {
     }
 }
 
-// `toJS` / `toJSWithAsyncStack` / `TestingAPIs` live as extension-trait
+// `toJS` / `toJSWithAsyncStack` live as extension-trait
 // methods in the `bun_sys_jsc` crate per PORTING.md.
 
 // ──────────────────────────────────────────────────────────────────────────

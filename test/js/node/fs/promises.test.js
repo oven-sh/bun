@@ -551,4 +551,121 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal }, resolve));
     expectNodeAbortError(writeErr, signal.reason);
   });
+
+  // FileHandle#appendFile and FileHandle#writeFile rebuild the options they hand
+  // to writeFile(fd, ...); node's are both `writeFile(this, data, options)`, so
+  // the signal has to survive that.
+  test.each([
+    ["appendFile", "a"],
+    ["writeFile", "r+"],
+  ])("FileHandle#%s with a pre-aborted signal leaves the file alone", async (method, flags) => {
+    await using dir = tempDir(`fs-abort-filehandle-${method}`, { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), flags);
+    const signal = AbortSignal.abort();
+    expect.assertions(5);
+    try {
+      await fh[method]("data", { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
+  });
+
+  test("FileHandle#appendFile of an async iterable aborted between chunks", async () => {
+    await using dir = tempDir("fs-abort-filehandle-appendfile-iter", { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    const ac = new AbortController();
+    expect.assertions(5);
+    try {
+      await fh.appendFile(
+        (async function* () {
+          yield "a";
+          ac.abort();
+          yield "b";
+        })(),
+        { signal: ac.signal },
+      );
+    } catch (err) {
+      expectNodeAbortError(err, ac.signal.reason);
+    }
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seeda");
+  });
+
+  test("FileHandle#appendFile with a signal that never aborts appends", async () => {
+    await using dir = tempDir("fs-abort-filehandle-appendfile-live", { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    await fh.appendFile("data", { signal: new AbortController().signal });
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seeddata");
+  });
+});
+
+// node validates options.signal in getOptions() before touching the file, for
+// any kind of data. String and Buffer data get that from the native binding;
+// iterable data is written by writeFileAsyncIterator, which every entry point
+// below funnels into.
+describe.concurrent("options.signal is validated before anything is written", () => {
+  const settle = promise =>
+    promise.then(
+      () => "resolved",
+      e => e,
+    );
+
+  // String data: the wrapper used to drop the signal, so the binding never saw
+  // it. Only the code is pinned here; the wording belongs to the binding.
+  test("FileHandle#appendFile forwards the signal to the binding", async () => {
+    await using dir = tempDir("fs-filehandle-appendfile-bad-signal", { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    const err = await settle(fh.appendFile("data", { signal: 1 }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
+  });
+
+  // The middle of the message ("of type" / "an instance of") comes from the
+  // shared ERR_INVALID_ARG_TYPE renderer, not from fs; don't pin it here.
+  function expectInvalidOptionsSignal(err, received) {
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(err.message).toStartWith('The "options.signal" property must be ');
+    expect(err.message).toEndWith(` AbortSignal. Received ${received}`);
+  }
+
+  const invalidSignals = [
+    [null, "null"],
+    [1, "type number (1)"],
+    ["", "type string ('')"],
+    [{}, "an instance of Object"],
+  ];
+
+  describe.each([
+    [
+      "fsPromises.writeFile(path, iterable)",
+      (fh, path, iterable, options) => fsPromises.writeFile(path, iterable, options),
+    ],
+    [
+      "fsPromises.writeFile(fileHandle, iterable)",
+      (fh, path, iterable, options) => fsPromises.writeFile(fh, iterable, options),
+    ],
+    ["FileHandle#writeFile(iterable)", (fh, path, iterable, options) => fh.writeFile(iterable, options)],
+    ["FileHandle#appendFile(iterable)", (fh, path, iterable, options) => fh.appendFile(iterable, options)],
+  ])("%s", (_, write) => {
+    test.each(invalidSignals)(
+      "{ signal: %p } rejects without opening or pulling anything",
+      async (signal, received) => {
+        await using dir = tempDir("fs-iterable-bad-signal", { "f.txt": "seed" });
+        const path = join(dir, "f.txt");
+        await using fh = await fsPromises.open(path, "r+");
+        let pulled = false;
+        const iterable = (async function* () {
+          pulled = true;
+          yield "data";
+        })();
+        const err = await settle(write(fh, path, iterable, { signal }));
+        expectInvalidOptionsSignal(err, received);
+        expect(pulled).toBe(false);
+        // In particular the path form must not have opened (and truncated) the file.
+        expect(await fsPromises.readFile(path, "utf8")).toBe("seed");
+      },
+    );
+  });
 });

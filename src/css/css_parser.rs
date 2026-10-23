@@ -721,7 +721,7 @@ pub struct BundlerAtRuleParser<'a> {
     /// `layer_names` as it was when the first `@import` was parsed.
     pub(crate) layers_pre_import: Option<Vec<LayerName>>,
     pub(crate) conditional_depth: u32,
-    /// Whether `layer_names` has a name from inside a conditional group rule.
+    /// Whether a name in `layer_names` has its first mention inside a conditional group rule.
     pub(crate) has_conditional_layer_names: bool,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
@@ -815,11 +815,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         if !this.track_layers_and_imports || this.anon_layer_count > 0 {
             return;
         }
-        this.has_conditional_layer_names |= this.conditional_depth > 0;
         this.layer_names
             .ensure_unused_capacity(layers.len() as usize);
         for layer in layers.slice() {
-            if this.enclosing_layer.v.len() > 0 {
+            let name = if this.enclosing_layer.v.len() > 0 {
                 let mut cloned = LayerName {
                     v: SmallList::default(),
                 };
@@ -827,11 +826,19 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
                 // calls each grow once.
                 cloned.v.append_slice(this.enclosing_layer.v.slice());
                 cloned.v.append_slice(layer.v.slice());
-                this.layer_names.append_assume_capacity(cloned);
+                cloned
             } else {
-                this.layer_names
-                    .append_assume_capacity(layer.deep_clone(this.arena));
+                layer.deep_clone(this.arena)
+            };
+            // A name that the file also declares earlier, outside a condition, is in the order either way.
+            if this.conditional_depth > 0 && !this.has_conditional_layer_names {
+                this.has_conditional_layer_names = !this
+                    .layer_names
+                    .slice()
+                    .iter()
+                    .any(|known| known.eql(&name));
             }
+            this.layer_names.append_assume_capacity(name);
         }
     }
 
@@ -2360,7 +2367,7 @@ pub struct StyleSheet<AtRule> {
     pub layer_names: Vec<LayerName>,
     /// The `@layer` names declared before the first `@import`. Empty when there is no `@import`.
     pub layers_pre_import: Vec<LayerName>,
-    /// Whether `layer_names` has a name that the file declares inside `@media`, `@supports`, `@container` or `@-moz-document`.
+    /// Whether the file first declares one of its layers inside `@media`, `@supports`, `@container` or `@-moz-document`.
     pub has_conditional_layer_names: bool,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.

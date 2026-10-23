@@ -2639,6 +2639,27 @@ c {
       },
       out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer base,theme;@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
     },
+    // tokens.css declares "theme" outside "@media" first, so a list of its layers stands for its first copy.
+    NameDeclaredOutsideMediaFirstInAFileImportedTwice: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./tokens.css";
+          @import "./components.css";
+        `,
+        "/tokens.css": /* css */ `
+          @layer theme;
+          @media (prefers-color-scheme: dark) { @layer theme { :root { --bg: black } } }
+          :root { --bg: white }
+        `,
+        "/components.css": /* css */ `
+          @layer base, theme;
+          @import "./tokens.css";
+          @layer theme { .t { color: red } }
+          @layer base { .t { color: blue } }
+        `,
+      },
+      out: "@layer theme,theme;@layer base,theme;@layer theme;@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
+    },
     // A copy under "layer(w)" or "layer" is kept when a later copy has no layer: its rules are in another layer.
     LayeredCopyBehindABareCopy: {
       files: {

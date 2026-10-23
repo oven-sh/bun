@@ -3362,11 +3362,19 @@ pub(crate) mod args {
         Ok(default)
     }
 
+    /// Node's `getOptions()`: a function means no options. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L324-L327
+    #[inline]
+    fn is_function_options(val: JSValue) -> bool {
+        // A plain object is never callable: the type test keeps it out of the call into JSC.
+        val.is_object() && val.js_type() != bun_jsc::JSType::FinalObject && val.is_callable()
+    }
+
     /// Consume the next positional argument as a Node.js fs `encoding` option.
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
     /// object with an `.encoding` property. Any other value (including `undefined`
     /// / `null` / numbers / functions) is silently ignored and `default` is returned.
     /// Shared by `Readlink`/`Realpath`/`MkdirTemp::from_js`.
+    #[inline]
     fn parse_encoding_arg(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -3381,6 +3389,7 @@ pub(crate) mod args {
                 | bun_jsc::JSType::DerivedStringObject => {
                     encoding = Encoding::assert(val, ctx, encoding)?;
                 }
+                _ if is_function_options(val) => {}
                 _ => {
                     if val.is_object() {
                         encoding = get_encoding(val, ctx, encoding)?;
@@ -3643,6 +3652,7 @@ pub(crate) mod args {
                     | bun_jsc::JSType::DerivedStringObject => {
                         encoding = Encoding::assert(val, ctx, encoding)?;
                     }
+                    _ if is_function_options(val) => {}
                     _ => {
                         if val.is_object() {
                             encoding = get_encoding(val, ctx, encoding)?;
@@ -4241,6 +4251,8 @@ pub(crate) mod args {
                 arguments.eat();
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
+                } else if is_function_options(arg) {
+                    // Keep the defaults.
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
@@ -4336,6 +4348,8 @@ pub(crate) mod args {
                 arguments.eat();
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
+                } else if is_function_options(arg) {
+                    // Keep the defaults.
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {

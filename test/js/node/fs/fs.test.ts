@@ -65,6 +65,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
+import { debounce, throttle } from "lodash";
 import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
@@ -3190,6 +3191,353 @@ describe("writeFile/appendFile data argument", () => {
     );
 
     expect(readdirSync(String(dir))).toEqual([]);
+  });
+});
+
+// Node's getOptions() returns the defaults for a function in the `options` slot:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L324-L327
+describe("a function in the options slot means the default options", () => {
+  // Each property changes the outcome if a parser reads it.
+  const optionProps = {
+    encoding: "hex",
+    mode: 0o600,
+    signal: AbortSignal.abort(),
+    flush() {},
+    withFileTypes: true,
+    recursive: true,
+  };
+  const withOptionProps = <F extends Function>(fn: F, flag: string) => Object.assign(fn, optionProps, { flag });
+  // A function for the options slot. Each row picks the `flag` that does the most damage.
+  const fn = (flag: string): any => withOptionProps(() => {}, flag);
+  // The result of a callback-form call. With a `flag`, the callback carries the option properties.
+  const viaCallback = <T>(call: (cb: (err: unknown, value?: T) => void) => void, flag?: string) => {
+    const { promise, resolve, reject } = Promise.withResolvers<T | undefined>();
+    const cb = (err: unknown, value?: T) => (err ? reject(err) : resolve(value));
+    call(flag === undefined ? cb : withOptionProps(cb, flag));
+    return promise;
+  };
+  // The same with a function in the slot and then the callback. The one in the slot is not the callback.
+  const viaLastCallback = <T>(flag: string, call: (slot: any, cb: (err: unknown, value?: T) => void) => void) => {
+    const { promise, resolve, reject } = Promise.withResolvers<T | undefined>();
+    const slot = withOptionProps(() => reject(new Error("the function in the options slot was called")), flag);
+    call(slot, (err, value) => (err ? reject(err) : resolve(value)));
+    return promise;
+  };
+
+  type Ctx = { dir: string; sub: string; link: string; file: () => string; fresh: () => string };
+  const makeCtx = (dir: string): Ctx => {
+    let n = 0;
+    const fresh = () => join(dir, `f${n++}`);
+    const file = () => {
+      const p = fresh();
+      writeFileSync(p, "old");
+      return p;
+    };
+    const sub = join(dir, "sub");
+    mkdirSync(sub);
+    writeFileSync(join(sub, "a"), "");
+    const link = join(dir, "link");
+    symlinkSync(sub, link, "dir");
+    return { dir, sub, link, file, fresh };
+  };
+  const content = (p: string) => readFileSync(p, "latin1");
+  const withFd = <T>(p: string, flags: string, f: (fd: number) => T): T => {
+    const fd = openSync(p, flags);
+    try {
+      return f(fd);
+    } finally {
+      closeSync(fd);
+    }
+  };
+  // [the value read, the file afterwards]: `flag: "w"` truncates the file before the read fails.
+  const read = async (c: Ctx, f: (p: string) => unknown) => {
+    const p = c.file();
+    return [await f(p), content(p)];
+  };
+  // The file afterwards: `flag: "a"` keeps "old", `encoding: "hex"` decodes "6869" to "hi".
+  const write = async (c: Ctx, f: (p: string) => unknown) => {
+    const p = c.file();
+    await f(p);
+    return content(p);
+  };
+  // The mode of a file that the call creates: `mode: 0o600` changes it.
+  const create = async (c: Ctx, f: (p: string) => unknown) => {
+    const p = c.fresh();
+    await f(p);
+    return statSync(p).mode & 0o777;
+  };
+  const mkdtempIn = async (c: Ctx, f: (prefix: string) => unknown) => {
+    const prefix = join(c.dir, "tmp-");
+    const made = await f(prefix);
+    return typeof made === "string" && made.startsWith(prefix) && statSync(made).isDirectory();
+  };
+
+  const wasRead = [Buffer.from("old"), "old"];
+  const rows: [string, (c: Ctx) => unknown, (c: Ctx) => unknown][] = [
+    // readFile: `flag: "w"` truncates, `encoding` returns a string, `signal` aborts.
+    ["readFileSync(path, fn)", c => read(c, p => readFileSync(p, fn("w"))), () => wasRead],
+    ["readFileSync(fd, fn)", c => read(c, p => withFd(p, "r", fd => readFileSync(fd, fn("w")))), () => wasRead],
+    ["readFile(path, cb)", c => read(c, p => viaCallback(cb => fs.readFile(p, cb), "w")), () => wasRead],
+    [
+      "readFile(path, fn, cb)",
+      c => read(c, p => viaLastCallback("w", (slot, cb) => fs.readFile(p, slot, cb))),
+      () => wasRead,
+    ],
+    ["promises.readFile(path, fn)", c => read(c, p => fs.promises.readFile(p, fn("w"))), () => wasRead],
+    [
+      "FileHandle#readFile(fn)",
+      c =>
+        read(c, async p => {
+          await using fh = await fs.promises.open(p, "r");
+          return await fh.readFile(fn("w"));
+        }),
+      () => wasRead,
+    ],
+
+    // writeFile: `flag: "a"` appends, `encoding` decodes the data, `flush` and `signal` fail the call.
+    ["writeFileSync(path, data, fn)", c => write(c, p => writeFileSync(p, "6869", fn("a"))), () => "6869"],
+    [
+      "writeFileSync(fd, data, fn)",
+      c => write(c, p => withFd(p, "w", fd => writeFileSync(fd, "6869", fn("a")))),
+      () => "6869",
+    ],
+    [
+      "writeFile(path, data, cb)",
+      c => write(c, p => viaCallback(cb => fs.writeFile(p, "6869", cb), "a")),
+      () => "6869",
+    ],
+    [
+      "writeFile(path, data, fn, cb)",
+      c => write(c, p => viaLastCallback("a", (slot, cb) => fs.writeFile(p, "6869", slot, cb))),
+      () => "6869",
+    ],
+    ["promises.writeFile(path, data, fn)", c => write(c, p => fs.promises.writeFile(p, "6869", fn("a"))), () => "6869"],
+    [
+      "writeFileSync(path, data, fn) file mode",
+      c => create(c, p => writeFileSync(p, "", fn("a"))),
+      c => create(c, p => writeFileSync(p, "")),
+    ],
+    [
+      "writeFile(path, data, cb) file mode",
+      c => create(c, p => viaCallback(cb => fs.writeFile(p, "", cb), "a")),
+      c => create(c, p => writeFileSync(p, "")),
+    ],
+
+    // appendFile: `flag: "w"` truncates.
+    ["appendFileSync(path, data, fn)", c => write(c, p => fs.appendFileSync(p, "6869", fn("w"))), () => "old6869"],
+    [
+      "appendFile(path, data, fn, cb)",
+      c => write(c, p => viaLastCallback("w", (slot, cb) => fs.appendFile(p, "6869", slot, cb))),
+      () => "old6869",
+    ],
+    [
+      "promises.appendFile(path, data, fn)",
+      c => write(c, p => fs.promises.appendFile(p, "6869", fn("w"))),
+      () => "old6869",
+    ],
+
+    // readdir: `withFileTypes` returns Dirents, `encoding` hex-encodes the names.
+    ["readdirSync(path, fn)", c => readdirSync(c.sub, fn("r")), () => ["a"]],
+    ["promises.readdir(path, fn)", c => fs.promises.readdir(c.sub, fn("r")), () => ["a"]],
+
+    // readlink, realpath, mkdtemp: `encoding` hex-encodes the path.
+    ["readlinkSync(path, fn)", c => readlinkSync(c.link, fn("r")), c => readlinkSync(c.link)],
+    ["promises.readlink(path, fn)", c => fs.promises.readlink(c.link, fn("r")), c => readlinkSync(c.link)],
+    ["realpathSync(path, fn)", c => realpathSync(c.link, fn("r")), c => realpathSync(c.link)],
+    ["realpathSync.native(path, fn)", c => realpathSync.native(c.link, fn("r")), c => realpathSync.native(c.link)],
+    [
+      "realpath.native(path, fn, cb)",
+      c => viaLastCallback("r", (slot, cb) => fs.realpath.native(c.link, slot, cb)),
+      c => realpathSync.native(c.link),
+    ],
+    ["promises.realpath(path, fn)", c => fs.promises.realpath(c.link, fn("r")), c => realpathSync.native(c.link)],
+    ["mkdtempSync(prefix, fn)", c => mkdtempIn(c, prefix => mkdtempSync(prefix, fn("r"))), () => true],
+    ["promises.mkdtemp(prefix, fn)", c => mkdtempIn(c, prefix => fs.promises.mkdtemp(prefix, fn("r"))), () => true],
+    [
+      "mkdtempDisposableSync(prefix, fn)",
+      c => mkdtempIn(c, prefix => (fs as any).mkdtempDisposableSync(prefix, fn("r")).path),
+      () => true,
+    ],
+    [
+      "promises.mkdtempDisposable(prefix, fn)",
+      c => mkdtempIn(c, async prefix => (await (fs.promises as any).mkdtempDisposable(prefix, fn("r"))).path),
+      () => true,
+    ],
+  ];
+
+  // A JS wrapper or the FileHandle method drops the function before the native call in these.
+  const droppedInJs: typeof rows = [
+    [
+      "FileHandle#writeFile(data, fn)",
+      c =>
+        write(c, async p => {
+          await using fh = await fs.promises.open(p, "w");
+          await fh.writeFile("6869", fn("a"));
+        }),
+      () => "6869",
+    ],
+    [
+      "appendFile(path, data, cb)",
+      c => write(c, p => viaCallback(cb => fs.appendFile(p, "6869", cb), "w")),
+      () => "old6869",
+    ],
+    [
+      "FileHandle#appendFile(data, fn)",
+      c =>
+        write(c, async p => {
+          await using fh = await fs.promises.open(p, "a");
+          await fh.appendFile("6869", fn("w"));
+        }),
+      () => "old6869",
+    ],
+    ["readdir(path, cb)", c => viaCallback(cb => fs.readdir(c.sub, cb), "r"), () => ["a"]],
+    ["readlink(path, cb)", c => viaCallback(cb => fs.readlink(c.link, cb), "r"), c => readlinkSync(c.link)],
+    ["realpath(path, cb)", c => viaCallback(cb => fs.realpath(c.link, cb), "r"), c => realpathSync(c.link)],
+    [
+      "realpath.native(path, cb)",
+      c => viaCallback(cb => fs.realpath.native(c.link, cb), "r"),
+      c => realpathSync.native(c.link),
+    ],
+    ["mkdtemp(prefix, cb)", c => mkdtempIn(c, prefix => viaCallback(cb => mkdtemp(prefix, cb), "r")), () => true],
+  ];
+
+  it.each([...rows, ...droppedInJs])("%s", async (_, withFunction, expected) => {
+    using dir = tempDir("fs-function-options", {});
+    const c = makeCtx(String(dir));
+    expect(await withFunction(c)).toEqual(await expected(c));
+  });
+
+  // `typeof` is "function" for each of these. A `get` trap records a read through the Proxy.
+  const kinds: [string, (trapped: PropertyKey[]) => Function][] = [
+    ["a class", () => class {}],
+    ["a bound function", () => function () {}.bind(null)],
+    ["an async function", () => async () => {}],
+    ["a generator function", () => function* () {}],
+    [
+      "a Proxy of a function",
+      trapped =>
+        new Proxy(() => {}, {
+          get(target, key, receiver) {
+            trapped.push(key);
+            return Reflect.get(target, key, receiver);
+          },
+        }),
+    ],
+  ];
+  it.each(kinds)("%s is a function", (_, make) => {
+    using dir = tempDir("fs-function-options-kind", {});
+    const c = makeCtx(String(dir));
+    const trapped: PropertyKey[] = [];
+    const options: any = Object.assign(make(trapped), { encoding: "hex" });
+    const written = c.file();
+    writeFileSync(written, "6869", options);
+    expect({
+      readFileSync: readFileSync(c.file(), options),
+      writeFileSync: content(written),
+      readdirSync: readdirSync(c.sub, options),
+      readlinkSync: readlinkSync(c.link, options),
+      trapped,
+    }).toEqual({
+      readFileSync: Buffer.from("old"),
+      writeFileSync: "6869",
+      readdirSync: ["a"],
+      readlinkSync: readlinkSync(c.link),
+      trapped: [],
+    });
+  });
+
+  it("reads no option from the function", async () => {
+    using dir = tempDir("fs-function-options-reads", {});
+    const c = makeCtx(String(dir));
+    const names = ["encoding", "flag", "mode", "signal", "flush", "withFileTypes", "recursive"];
+    const reads: string[] = [];
+    const pending: Promise<unknown>[] = [];
+    const options: any = () => {};
+    // Every call parses its arguments before it returns, so the accessors are gone before anything else runs.
+    for (const name of names) {
+      Object.defineProperty(Function.prototype, name, {
+        configurable: true,
+        get() {
+          reads.push(name);
+        },
+      });
+    }
+    try {
+      readFileSync(c.file(), options);
+      writeFileSync(c.file(), "", options);
+      fs.appendFileSync(c.file(), "", options);
+      readdirSync(c.sub, options);
+      readlinkSync(c.link, options);
+      realpathSync(c.link, options);
+      realpathSync.native(c.link, options);
+      mkdtempSync(join(c.dir, "tmp-"), options);
+      pending.push(
+        viaCallback(cb => fs.readFile(c.file(), cb)),
+        viaCallback(cb => fs.writeFile(c.file(), "", cb)),
+        viaCallback(cb => fs.appendFile(c.file(), "", cb)),
+        promisify(fs.readFile)(c.file()),
+        promisify(fs.writeFile)(c.file(), ""),
+        fs.promises.readFile(c.file(), options),
+        fs.promises.writeFile(c.file(), "", options),
+        fs.promises.appendFile(c.file(), "", options),
+        fs.promises.readdir(c.sub, options),
+        fs.promises.readlink(c.link, options),
+        fs.promises.realpath(c.link, options),
+        fs.promises.mkdtemp(join(c.dir, "tmp-"), options),
+      );
+    } finally {
+      for (const name of names) delete (Function.prototype as any)[name];
+    }
+    await Promise.all(pending);
+    expect(reads).toEqual([]);
+  });
+
+  it("Function.prototype.flag does not reach fs.readFile(path, cb)", async () => {
+    using dir = tempDir("fs-function-options-prototype", {});
+    const p = makeCtx(String(dir)).file();
+    let pending: Promise<Buffer | undefined>;
+    (Function.prototype as any).flag = "w";
+    try {
+      pending = viaCallback<Buffer>(cb => fs.readFile(p, cb));
+    } finally {
+      delete (Function.prototype as any).flag;
+    }
+    expect([await pending, content(p)]).toEqual(wasRead);
+  });
+
+  // The function that lodash returns has own `cancel` and `flush` methods.
+  const lodash = { debounce, throttle };
+  it.each(["debounce", "throttle"] as const)("fs.writeFile takes a lodash %s() callback", async wrap => {
+    using dir = tempDir("fs-function-options-lodash", {});
+    const p = join(String(dir), "out.txt");
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    const callback = lodash[wrap](resolve);
+    try {
+      fs.writeFile(p, "data", callback);
+      expect(await promise).toBeNull();
+      expect(content(p)).toBe("data");
+    } finally {
+      callback.cancel();
+    }
+  });
+
+  it("an options object, a string and a Proxy of an object still apply", () => {
+    using dir = tempDir("fs-function-options-object", {});
+    const p = makeCtx(String(dir)).file();
+    expect([
+      readFileSync(p, { encoding: "hex" }),
+      readFileSync(p, "hex"),
+      readFileSync(p, new Proxy({ encoding: "hex" as const }, {})),
+    ]).toEqual(["6f6c64", "6f6c64", "6f6c64"]);
+  });
+
+  // Node's mkdir does not call getOptions():
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1319-L1332
+  it("mkdirSync still reads its options from a function", () => {
+    using dir = tempDir("fs-function-options-mkdir", {});
+    const nested = join(String(dir), "a", "b");
+    mkdirSync(nested, Object.assign(() => {}, { recursive: true }) as any);
+    expect(statSync(nested).isDirectory()).toBe(true);
   });
 });
 

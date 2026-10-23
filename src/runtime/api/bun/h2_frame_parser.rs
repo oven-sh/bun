@@ -4172,7 +4172,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch_with_extra(js::on_stream_data_get_cached, stream_ctx, chunk);
     }
 
-    fn on_stream_end(&self, stream_id: u32, state: u8) {
+    fn on_stream_end(
+        &self,
+        stream_id: u32,
+        state: u8,
+        frame: crate::api::h2::connection::EndStreamFrame,
+    ) {
         // The engine only sees the inbound half while outbound flows through the legacy path, so it
         // can't know the local side already sent END_STREAM. Combine with the legacy stream's local
         // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7),
@@ -4198,6 +4203,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                     _ => legacy_state,
                 };
             }
+        }
+        // onStreamHeaders carried this END_STREAM to JS already: only a full close dispatches.
+        if effective == 6 && frame == crate::api::h2::connection::EndStreamFrame::Headers {
+            return;
         }
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
         self.dispatch_with_extra(

@@ -411,6 +411,23 @@ export function shimExpectations(): BinaryExpectations {
   };
 }
 
+/** Of `elf`, what the program headers and the dynamic section answer. */
+type ElfLayout = Pick<
+  NonNullable<BinaryExpectations["elf"]>,
+  "type" | "execStack" | "rwxLoad" | "relro" | "bindNow" | "tlsSegment"
+>;
+
+/** The stripped `bun`, the file that ships: whatever `binaryExpectations()` says that is read without a symbol table. ELF only. */
+export function strippedExpectations(cfg: Config): (Omit<BinaryExpectations, "elf"> & { elf: ElfLayout }) | undefined {
+  const expect = binaryExpectations(cfg);
+  if (expect.elf === undefined) return undefined;
+  delete expect.staticInitializers;
+  delete expect.forbiddenSymbols;
+  delete expect.debugInfo;
+  const { type, execStack, rwxLoad, relro, bindNow, tlsSegment } = expect.elf;
+  return { ...expect, elf: { type, execStack, rwxLoad, relro, bindNow, tlsSegment } };
+}
+
 export function binaryExpectations(cfg: Config): BinaryExpectations {
   const format = binaryFormat(cfg);
   const src = (f: string) => join(cfg.cwd, "src", f);

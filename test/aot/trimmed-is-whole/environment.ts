@@ -185,6 +185,29 @@ export class Bench {
   }
 
   #runs = 0;
+  #looks = 0;
+
+  // Where a run stands that has said nothing for ten seconds: whether the shell has become the program yet and how much processor time it
+  // has had, what its threads wait for, and what the services that judge a new executable have logged meanwhile.
+  async lookAt(pid: number, name: string) {
+    const services = ["amfid", "syspolicyd", "XprotectService", "taskgated", "trustd"].map(service => `process == "${service}"`).join(" OR ");
+    const [processes, sample, log] = await Promise.all(
+      [
+        ["/bin/ps", "-o", "pid,stat,time,etime,comm", "-p", String(pid)],
+        ["/usr/bin/sample", String(pid), "1", "-mayDie"],
+        ["/usr/bin/log", "show", "--last", "15s", "--style", "compact", "--predicate", services],
+      ].map(async cmd => {
+        try {
+          await using asked = Bun.spawn({ cmd, env: this.env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 20_000, killSignal: "SIGKILL" });
+          return (await Promise.all([asked.stdout.text(), asked.stderr.text()])).join("").trimEnd().split("\n");
+        } catch (error) {
+          return [`${cmd[0]}: ${error}`];
+        }
+      }),
+    );
+    const callGraph = Math.max(0, sample.findIndex(line => line.startsWith("Call graph:")));
+    console.error([`SLOW: ${name}: after 10 s:`, ...processes, ...sample.slice(callGraph, callGraph + 60), ...log.slice(-40)].join("\n  "));
+  }
 
   async run(program: Program, how: "whole" | "trimmed", it: Case): Promise<Ran> {
     let executable = await this.executable(program, how, it.build);
@@ -226,13 +249,31 @@ export class Bench {
         : { stdin: streams.stdin === "pipe" ? "pipe" : "ignore", stdout: "pipe", stderr: "pipe" }),
       ...(it.ipc ? { serialization: it.ipc, ipc: (message: unknown) => void answers.push("sent " + JSON.stringify(message)) } : {}),
     } as never) as Bun.Subprocess<"pipe", "pipe", "pipe">;
-    const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    // TODO: on macOS the first starts of a fresh trimmed executable have said nothing for more than ten seconds, while the whole one that
+    // was started beside it answered. Why is not known. Until it is, a run has a minute, and the log names every run that took over ten seconds.
+    const started = performance.now();
+    let timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    let looked: Promise<void> | undefined;
+    const look = setTimeout(() => {
+      if (process.platform === "darwin" && !it.signal && this.#looks++ < 3) looked = this.lookAt(child.pid, `${program}, ${how}: ${it.name}`);
+    }, 10_000);
     let stdout = "";
     try {
-      if (it.ipc) child.send({ from: "the parent", when: new Date(0), pattern: /a/ });
+      // A program that takes nothing from its parent may have ended by now: then there is nobody to tell.
+      const tell = async (say: () => unknown) => {
+        try {
+          await say();
+        } catch (error) {
+          const hasEnded = child.exitCode !== null || child.signalCode !== null;
+          if (!hasEnded && (error as NodeJS.ErrnoException).code !== "EPIPE") throw error;
+        }
+      };
+      if (it.ipc) await tell(() => child.send({ from: "the parent", when: new Date(0), pattern: /a/ }));
       if (!usesTerminal && streams.stdin === "pipe") {
-        child.stdin.write("from a pipe\n");
-        await child.stdin.end();
+        await tell(async () => {
+          child.stdin.write("from a pipe\n");
+          await child.stdin.end();
+        });
       }
       const stderr = usesTerminal ? Promise.resolve("") : child.stderr.text();
       if (program === "serve" && !usesTerminal && streams.stdout === "pipe") {
@@ -250,6 +291,9 @@ export class Bench {
             answers.push(await fetch(base + path, init).then(async answer => `${answer.status} ${await answer.text()}`, error => "no answer: " + error.code));
           }
           child.kill(it.signal ?? "SIGTERM");
+          // It has answered, so it has started. A server that the signal has stopped answers nothing more: it is ended ten seconds from here.
+          clearTimeout(timer);
+          timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
           if (it.signal && (await Promise.race([child.exited, Bun.sleep(3000).then(() => "runs on")])) === "runs on") {
             answers.push("runs on: " + (await fetch(base + "/text").then(async answer => `${answer.status} ${await answer.text()}`, () => "no answer")));
             child.kill("SIGKILL");
@@ -276,6 +320,10 @@ export class Bench {
       };
     } finally {
       clearTimeout(timer);
+      clearTimeout(look);
+      await looked;
+      const seconds = (performance.now() - started) / 1000;
+      if (seconds > 10 && !it.signal) console.error(`SLOW: ${program}, ${how}: ${it.name}: ${seconds.toFixed(1)} s`);
       rmSync(cwd, { recursive: true, force: true });
     }
   }

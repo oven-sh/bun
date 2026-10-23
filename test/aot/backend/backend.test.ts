@@ -17,7 +17,7 @@
 import { SQL } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isDockerEnabled, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunExeWithEveryCommand, isDockerEnabled, isWindows, tempDir } from "harness";
 import { join } from "path";
 import * as dockerCompose from "../../docker/index.ts";
 import { built, spawned, unsupported } from "../run-programs";
@@ -128,7 +128,7 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
     if (process.env.AOT_BACKEND_MODULES) {
       symlinkSync(process.env.AOT_BACKEND_MODULES, join(folder, "node_modules"));
     } else {
-      const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
+      const install = await spawned([bunExeWithEveryCommand(), "install", "--ignore-scripts"], folder, bunEnv);
       expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({
         stderr: expect.any(String),
         exitCode: 0,

@@ -74,6 +74,8 @@ const forms = {
   "Map of n numbers that are far apart": n => [Array.from({ length: n }, (_, at) => at * 1000003.5), numbers => { const map = new Map(); for (const number of numbers) map.set(number, 1); return map.size; }],
   "a list written at indexes that are far apart": n => [Array.from({ length: n }, (_, at) => (at * 2654435761) % 4000000000), indexes => { const list = []; for (const index of indexes) list[index] = 1; return Object.keys(list).length; }],
   "a list written from the end": n => [n, count => { const list = []; for (let index = count; index--; ) list[index] = index; return list.length; }],
+  "a list with a name of its own, emptied from the front": n => [Object.assign(Array.from({ length: 10 * n }, (_, at) => at), { owner: "data" }), list => { let sum = 0; while (list.length) sum += list.shift(); return sum; }],
+  "a list with a name of its own, filled at the front": n => [Object.assign(Array.from({ length: 200 }, (_, at) => at), { owner: "data" }), list => { for (let at = 0; at < 10 * n; at++) list.unshift(at); return list.length + list[0] + list.owner; }],
   "a regular expression over the text": n => [ordersText(n), text => [...text.matchAll(/"(\w+)":(\d+)/g)].length],
   "split and join the text": n => [ordersText(n), text => text.split(",").join(";").length],
   "replaceAll in the text": n => [ordersText(n), text => text.replaceAll('"a"', '"alpha"').length],

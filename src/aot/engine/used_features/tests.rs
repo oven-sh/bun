@@ -37,11 +37,19 @@ fn use_of_word(feature: u32) -> FeatureUseRecord {
         feature,
         builtin: ABSENT_WORD,
         witness: NO_WITNESS,
+        kind: FeatureUseKind::Named,
     }
 }
 
 fn use_of(feature: Feature) -> FeatureUseRecord {
     use_of_word(u32::from(feature.index()))
+}
+
+fn unnamed_use_of(feature: Feature) -> FeatureUseRecord {
+    FeatureUseRecord {
+        kind: FeatureUseKind::Unnamed,
+        ..use_of(feature)
+    }
 }
 
 fn unseen_code(cause: EngineCause) -> UnseenCodeRecord {
@@ -120,6 +128,22 @@ fn features_keep_first_witness() {
         [used(Feature::RegExp, 0), used(Feature::Fetch, 2)]
     );
     assert!(found.causes.is_empty());
+}
+
+#[test]
+fn unnamed_use_keeps_only_what_needs_no_name() {
+    let records = [
+        unnamed_use_of(Feature::RegExp),
+        unnamed_use_of(Feature::IntlCollation),
+        unnamed_use_of(Feature::Temporal),
+        unnamed_use_of(Feature::IntlSegmenter),
+        use_of(Feature::IntlSegmenter),
+        unnamed_use_of(Feature::WebAssembly),
+    ];
+    assert_eq!(
+        features_of(&records).features,
+        [used(Feature::RegExp, 0), used(Feature::IntlSegmenter, 4)]
+    );
 }
 
 #[test]

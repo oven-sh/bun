@@ -28,6 +28,8 @@ export default b.declarations(
   ),
   extendAll(["NodeVm"], "node:vm"),
 
+  extendAll(["DataFileLoaders"], "node:module._load"),
+
   extendAll(
     ["NodeZlib"],
     "%NativeZlib%",

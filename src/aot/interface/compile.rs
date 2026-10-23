@@ -6,6 +6,7 @@ use crate::engine::EngineResult;
 use crate::link::ProgramNames;
 use crate::linked;
 use crate::load::source_provider::SourceProvider;
+use crate::module_list::ModuleList;
 use crate::options::Options;
 use crate::report::SourceTexts;
 use crate::statistics::{Stage, Statistics};
@@ -17,6 +18,8 @@ pub struct ProgramSummary {
     pub texts: SourceTexts,
     pub statistics: Statistics,
     pub validates_by_type: bool,
+    /// Where `Options::lists_modules` asks for it.
+    pub modules: Option<ModuleList>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

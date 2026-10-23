@@ -1265,6 +1265,29 @@ impl<'a> Transpiler<'a> {
         const USE_SHARED_BUFFER: bool,
     >(
         &mut self,
+        this_parse: ParseOptions<'a, '_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
+    ) -> Option<ParseResult<'a>> {
+        self.parse_internal::<RETURN_FILE_ONLY, USE_SHARED_BUFFER, false>(
+            this_parse,
+            client_entry_point_,
+        )
+    }
+
+    /// References no JavaScript parser, so `--trim` can remove the parser and keep this.
+    pub fn parse_data_file<const RETURN_FILE_ONLY: bool>(
+        &mut self,
+        this_parse: ParseOptions<'a, '_>,
+    ) -> Option<ParseResult<'a>> {
+        self.parse_internal::<RETURN_FILE_ONLY, false, true>(this_parse, None)
+    }
+
+    fn parse_internal<
+        const RETURN_FILE_ONLY: bool,
+        const USE_SHARED_BUFFER: bool,
+        const DATA_ONLY: bool,
+    >(
+        &mut self,
         mut this_parse: ParseOptions<'a, '_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
@@ -1298,7 +1321,7 @@ impl<'a> Transpiler<'a> {
                 break 'brk client_entry_point.source.clone();
             }
 
-            if path.namespace == b"node" {
+            if !DATA_ONLY && path.namespace == b"node" {
                 if let Some(code) = NodeFallbackModules::contents_from_path(path.text) {
                     break 'brk bun_ast::Source::init_path_string(path.text, code);
                 }
@@ -1434,7 +1457,9 @@ impl<'a> Transpiler<'a> {
             options::Loader::Js
             | options::Loader::Jsx
             | options::Loader::Ts
-            | options::Loader::Tsx => {
+            | options::Loader::Tsx
+                if !DATA_ONLY =>
+            {
                 // wasm magic number
                 if source.is_web_assembly() {
                     return Some(ParseResult::empty_with(
@@ -1737,7 +1762,11 @@ impl<'a> Transpiler<'a> {
                 );
             }
             options::Loader::Css => {}
-            options::Loader::File
+            options::Loader::Js
+            | options::Loader::Jsx
+            | options::Loader::Ts
+            | options::Loader::Tsx
+            | options::Loader::File
             | options::Loader::Napi
             | options::Loader::Base64
             | options::Loader::Dataurl

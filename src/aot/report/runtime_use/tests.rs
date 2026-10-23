@@ -7,7 +7,7 @@ use bun_trim::{
 use super::*;
 use crate::engine::testing::ResultRecords;
 use crate::engine::{FeatureUseRecord, LocaleUseRecord, TextRange, UnseenCodeRecord};
-use crate::ir::generated::{LocaleUseKind, UnseenCodeCause as EngineCause};
+use crate::ir::generated::{FeatureUseKind, LocaleUseKind, UnseenCodeCause as EngineCause};
 use crate::ir::ids::ABSENT_WORD;
 use crate::report::testing::{
     DEPENDENCY, LINE_1_COLUMN_5, LINE_2_COLUMN_14, NO_LOCATION, PROGRAM, RUNTIME, ReportFixture,
@@ -65,6 +65,7 @@ fn feature_use(feature: Feature, builtin: u32, location: SourceLocation) -> Feat
         feature: u32::from(feature.index()),
         builtin,
         witness: witness(ABSENT_WORD, location),
+        kind: FeatureUseKind::Named,
     }
 }
 

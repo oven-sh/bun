@@ -1,13 +1,13 @@
 use bun_sema::util::SharedSort;
 use bun_trim::{
     FeatureSet, LocaleTag, UnseenCode, UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales,
-    WitnessIndex,
+    WitnessIndex, features_kept_only_when_named,
 };
 
 use super::{
     EngineResult, FeatureUseRecord, LocaleUseRecord, TextRange, UnseenCodeRecord, feature_of,
 };
-use crate::ir::generated::{LocaleUseKind, UnseenCodeCause as EngineCause};
+use crate::ir::generated::{FeatureUseKind, LocaleUseKind, UnseenCodeCause as EngineCause};
 
 pub fn used_features(result: &EngineResult) -> UsedFeatures {
     if result.image().is_none() {
@@ -27,6 +27,7 @@ fn from_records(
     locales: &[LocaleUseRecord],
     text_of: &dyn Fn(TextRange) -> Vec<u8>,
 ) -> UsedFeatures {
+    let only_when_named = features_kept_only_when_named();
     let mut seen = FeatureSet::EMPTY;
     let mut used = Vec::new();
     for (index, record) in features.iter().enumerate() {
@@ -34,7 +35,8 @@ fn from_records(
         let Some(feature) = feature_of(record.feature) else {
             return UsedFeatures::default();
         };
-        if seen.contains(feature) {
+        let is_named = record.kind == FeatureUseKind::Named;
+        if seen.contains(feature) || (!is_named && only_when_named.contains(feature)) {
             continue;
         }
         seen.insert(feature);

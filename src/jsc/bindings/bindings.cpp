@@ -3763,6 +3763,7 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
 // A fixed-length buffer doesn't point to its memory, so this checks every live one.
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v, size_t* out_offset)
 {
+#if ENABLE(WEBASSEMBLY)
     auto value = JSC::JSValue::decode(v);
     auto* buf = existingArrayBuffer(value);
     if (!buf || !buf->isWasmMemory() || buf->isShared())
@@ -3781,6 +3782,11 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v,
     });
     space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
     return JSC::JSValue::encode(found);
+#else
+    UNUSED_PARAM(v);
+    UNUSED_PARAM(out_offset);
+    return {};
+#endif
 }
 
 // Returns the current byte range of `v`, a buffer, a view or a WebAssembly.Memory. Returns null and 0 if it's detached or out of bounds.
@@ -3800,11 +3806,14 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
             *out_len = buf->byteLength();
             return;
         }
-    } else if (auto* memory = dynamicDowncast<JSC::JSWebAssemblyMemory>(value)) {
+    }
+#if ENABLE(WEBASSEMBLY)
+    else if (auto* memory = dynamicDowncast<JSC::JSWebAssemblyMemory>(value)) {
         *out_ptr = static_cast<uint8_t*>(memory->basePointer());
         *out_len = memory->memory().size();
         return;
     }
+#endif
     *out_ptr = nullptr;
     *out_len = 0;
 }

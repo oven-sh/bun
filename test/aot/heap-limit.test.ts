@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
@@ -766,8 +766,7 @@ console.log(entries, sum);
     120_000,
   );
 
-  // TODO: on macOS arm64 the process exits with 70 and prints nothing where the error can be caught. Why is not known.
-  test.skipIf(isASAN).todoIf(isMacOS && isArm64)(
+  test.skipIf(isASAN)(
     "a program that fills the room for the shapes of objects gets an error that names it",
     async () => {
       using folder = tempDir("aot-heap-limit", {

@@ -425,6 +425,7 @@ fn executable_details(executable: Option<ExecutableDetails>, untyped_note: &[u8]
     let outcome = CompileOutcome {
         output_files: Vec::new(),
         graph_bytes: None,
+        metafile: None,
         summary: Vec::new(),
         report_messages: Vec::new(),
         trim_log_lines: Vec::new(),

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { beforeAll, describe, test } from "../supported";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunExeWithEveryCommand, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { run as runCommand } from "../harness/run";
@@ -50,7 +50,7 @@ function testEachProgram(
       if (installed) {
         expect((await run(["cp", "-R", join(installed, folder, "node_modules"), packages])).exitCode).toBe(0);
       } else {
-        const { stderr, exitCode } = await run([bunExe(), "install", "--ignore-scripts", "--linker", "hoisted"]);
+        const { stderr, exitCode } = await run([bunExeWithEveryCommand(), "install", "--ignore-scripts", "--linker", "hoisted"]);
         expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
       }
       symlinkSync(join(import.meta.dir, "..", "..", "..", "packages", "bun-types"), join(packages, "@types", "bun"));

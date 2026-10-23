@@ -18,7 +18,8 @@ for (let i = 0; i < 8; i++) {
 }
 await server.stop();
 let alive = 8;
-for (let i = 0; i < 20 && alive > 0; i++) { await Bun.sleep(1); Bun.gc(true); alive = streams.filter(ref => ref.deref() !== undefined).length; }
+// A collection that starts under a resumed async function scans that call's native frames too, and a stale word in a slot they never write can name the last stream. A timer's callback has no such frame above it.
+for (let i = 0; i < 20 && alive > 0; i++) { await new Promise(resolve => setTimeout(() => { Bun.gc(true); resolve(); }, 1)); alive = streams.filter(ref => ref.deref() !== undefined).length; }
 console.log("alive", alive, "which", streams.map((ref, i) => (ref.deref() !== undefined ? i : "")).join(""));
 if (alive > 0) {
   const s = Bun.generateHeapSnapshot();

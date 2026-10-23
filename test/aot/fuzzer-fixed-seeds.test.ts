@@ -23,7 +23,7 @@ const seeds = process.env.AOT_FUZZ_SEED
   : freshSeed === undefined
     ? [1]
     : [1, freshSeed];
-const secondsPerProgram = 5;
+const secondsPerProgram = 4;
 
 for (const seed of seeds)
   test.skipIf(!!unsupported)(

@@ -132,6 +132,7 @@ fn load_project<R>(
             entry_point_names: entry_points,
         },
         removable: RemovableOptions::default(),
+        lists_modules: false,
     };
     let caches = ThreadCaches::default();
     let mut build = Build::new(&options, &WithoutServices, &caches, LimitValues::for_host());

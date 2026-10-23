@@ -210,10 +210,50 @@ mod write_execute {
     const PR_SET_MDWE: libc::c_int = 65;
     const PR_GET_MDWE: libc::c_int = 66;
     const PR_MDWE_REFUSE_EXEC_GAIN: libc::c_ulong = 1;
+    #[cfg(not(bun_hardened))]
     const PR_MDWE_NO_INHERIT: libc::c_ulong = 2;
     const UNUSED: libc::c_ulong = 0;
 
     static IS_FILTERED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    #[cfg(bun_hardened)]
+    pub(super) enum Failure {
+        Failed {
+            call: &'static str,
+            errno: bun_errno::SystemErrno,
+        },
+        NotInForce {
+            call: &'static str,
+        },
+    }
+
+    /// What a check of the file can tell the two kinds of hardened build apart by.
+    #[cfg(all(bun_hardened, not(bun_starts_without_mdwe)))]
+    #[used]
+    #[unsafe(no_mangle)]
+    static Bun__startsOnlyWhereWriteExecuteMemoryIsDenied: [u8; 58] =
+        *b"hardened start: the kernel must deny write-execute memory\0";
+    #[cfg(all(bun_hardened, bun_starts_without_mdwe))]
+    #[used]
+    #[unsafe(no_mangle)]
+    static Bun__startsWhereWriteExecuteMemoryCannotBeDenied: [u8; 58] =
+        *b"hardened start: a kernel without PR_SET_MDWE is accepted \0";
+
+    #[cfg(bun_locked_environment)]
+    #[used]
+    #[unsafe(no_mangle)]
+    static Bun__readsFewEnvironmentVariables: [u8; 59] =
+        *b"hardened environment: what only tests set is never read   \0";
+    #[cfg(all(bun_hardened, not(bun_locked_environment)))]
+    #[used]
+    #[unsafe(no_mangle)]
+    static Bun__readsEveryEnvironmentVariable: [u8; 59] =
+        *b"hardened environment: every variable is read, as for tests\0";
+
+    #[cfg(bun_hardened)]
+    fn last_errno() -> bun_errno::SystemErrno {
+        bun_errno::from_errno(bun_sys::last_errno())
+    }
 
     fn is_denied_by_the_kernel() -> bool {
         // SAFETY: the request takes and returns integers only.
@@ -257,7 +297,27 @@ mod write_execute {
     }
 
     #[cfg(bun_hardened)]
-    fn install(program: &[bun_exe_format::executable_memory_filter::Instruction]) -> bool {
+    fn gain_no_new_privileges() -> Result<(), Failure> {
+        let call = "prctl(PR_SET_NO_NEW_PRIVS)";
+        let yes: libc::c_ulong = 1;
+        // SAFETY: the requests take and return integers only.
+        let (set, in_force) = unsafe {
+            let set = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, yes, UNUSED, UNUSED, UNUSED);
+            let errno = last_errno();
+            let read = libc::prctl(libc::PR_GET_NO_NEW_PRIVS, UNUSED, UNUSED, UNUSED, UNUSED);
+            ((set, errno), read == 1)
+        };
+        match (in_force, set) {
+            (true, _) => Ok(()),
+            (false, (0, _)) => Err(Failure::NotInForce { call }),
+            (false, (_, errno)) => Err(Failure::Failed { call, errno }),
+        }
+    }
+
+    #[cfg(bun_hardened)]
+    fn install(
+        program: &[bun_exe_format::executable_memory_filter::Instruction],
+    ) -> Result<(), Failure> {
         const SET_MODE_FILTER: libc::c_ulong = 1;
         const ALL_THREADS: libc::c_ulong = 1;
         let filter = libc::sock_fprog {
@@ -265,25 +325,28 @@ mod write_execute {
             filter: program.as_ptr().cast_mut().cast(),
         };
         // SAFETY: the kernel copies the program, which has the layout of `sock_filter`, before the call returns.
-        unsafe {
-            libc::prctl(
-                libc::PR_SET_NO_NEW_PRIVS,
-                1 as libc::c_ulong,
-                UNUSED,
-                UNUSED,
-                UNUSED,
-            ) == 0
-                && libc::syscall(
-                    libc::SYS_seccomp,
-                    SET_MODE_FILTER,
-                    ALL_THREADS,
-                    &raw const filter,
-                ) == 0
-        }
+        let answer = unsafe {
+            libc::syscall(
+                libc::SYS_seccomp,
+                SET_MODE_FILTER,
+                ALL_THREADS,
+                &raw const filter,
+            )
+        };
+        let errno = match answer {
+            0 => return Ok(()),
+            -1 => last_errno(),
+            // The id of a thread that could not take the filter.
+            _ => bun_errno::SystemErrno::ESRCH,
+        };
+        let call = "seccomp(SECCOMP_SET_MODE_FILTER)";
+        Err(Failure::Failed { call, errno })
     }
 
     #[cfg(bun_hardened)]
-    pub(super) fn refuse_new_executable_memory(image_code: core::ops::Range<u64>) {
+    pub(super) fn refuse_new_executable_memory(
+        image_code: core::ops::Range<u64>,
+    ) -> Result<(), Failure> {
         use bun_exe_format::executable_memory_filter::{Libraries, program};
         use bun_removable_features::{Feature, is_removed};
         let libraries = match [
@@ -300,20 +363,52 @@ mod write_execute {
         let mut code_of_this_process = executable_segments();
         code_of_this_process.push(image_code);
         let program = program(&code_of_this_process, libraries);
-        IS_FILTERED.store(install(&program), core::sync::atomic::Ordering::Relaxed);
+        install(&program)?;
+        IS_FILTERED.store(true, core::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     /// Kernels before 6.7 reject `PR_MDWE_NO_INHERIT`, and child processes may need a JIT.
+    #[cfg(not(bun_hardened))]
     pub(super) fn deny() {
         if is_denied_by_the_kernel() {
             return;
         }
-        let bits = match cfg!(bun_hardened) {
-            true => PR_MDWE_REFUSE_EXEC_GAIN,
-            false => PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT,
-        };
+        let bits = PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT;
         // SAFETY: the request takes and returns integers only.
         unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+    }
+
+    /// Child processes inherit it. Whoever started this process may have set it already.
+    #[cfg(bun_hardened)]
+    pub(super) fn deny() -> Result<(), Failure> {
+        #[cfg(not(bun_starts_without_mdwe))]
+        core::hint::black_box(&raw const Bun__startsOnlyWhereWriteExecuteMemoryIsDenied);
+        #[cfg(bun_starts_without_mdwe)]
+        core::hint::black_box(&raw const Bun__startsWhereWriteExecuteMemoryCannotBeDenied);
+        #[cfg(bun_locked_environment)]
+        core::hint::black_box(&raw const Bun__readsFewEnvironmentVariables);
+        #[cfg(not(bun_locked_environment))]
+        core::hint::black_box(&raw const Bun__readsEveryEnvironmentVariable);
+        gain_no_new_privileges()?;
+        if is_denied_by_the_kernel() {
+            return Ok(());
+        }
+        let call = "prctl(PR_SET_MDWE), which Linux has since 6.3,";
+        let bits = PR_MDWE_REFUSE_EXEC_GAIN;
+        // SAFETY: the request takes and returns integers only.
+        let set = unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        let errno = last_errno();
+        if is_denied_by_the_kernel() {
+            return Ok(());
+        }
+        if set == 0 {
+            return Err(Failure::NotInForce { call });
+        }
+        if cfg!(bun_starts_without_mdwe) && errno == bun_errno::SystemErrno::EINVAL {
+            return Ok(());
+        }
+        Err(Failure::Failed { call, errno })
     }
 }
 
@@ -330,6 +425,13 @@ pub fn is_write_execute_memory_denied() -> bool {
     write_execute::is_denied()
 }
 
+#[cfg(bun_hardened)]
+pub fn deny_write_execute_memory() {
+    if let Err(failure) = write_execute::deny() {
+        exit_with(&sentence_of_failure(failure));
+    }
+}
+
 pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     let Some(program) = graph.compiled_program() else {
@@ -338,6 +440,14 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
     ONCE.call_once(|| {
         // Keeps the linker from dropping it.
         core::hint::black_box(&raw const HOST_DESCRIPTION);
+        #[cfg(bun_hardened)]
+        if program.backing_file.is_some() {
+            exit_with(
+                "this build of Bun only runs compiled code that is part of the executable itself",
+            );
+        }
+        #[cfg(bun_hardened)]
+        deny_write_execute_memory();
         bun_resolve_builtins::seal_internals();
         set_mismatch_log();
         let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
@@ -363,17 +473,15 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         if let Some(sentence) = sentence_of(verdict) {
             exit_with(sentence);
         }
+        #[cfg(not(bun_hardened))]
         write_execute::deny();
-        #[cfg(all(
-            target_os = "linux",
-            any(target_arch = "x86_64", target_arch = "aarch64"),
-            bun_hardened
-        ))]
+        #[cfg(bun_hardened)]
         {
             let code = Bun__AOT__imageCode();
-            write_execute::refuse_new_executable_memory(
-                code.ptr as u64..code.ptr as u64 + code.len as u64,
-            );
+            let code = code.ptr as u64..code.ptr as u64 + code.len as u64;
+            if let Err(failure) = write_execute::refuse_new_executable_memory(code) {
+                exit_with(&sentence_of_failure(failure));
+            }
         }
         program.set_module_lookup(find_module_path);
         bun_crash_handler::report_aborts();
@@ -477,7 +585,18 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::StampMismatch => "the compiler that built it doesn't match the runtime in this executable. Rebuild it",
         ImageVerdict::IdentityMismatch => "it was built for a different build of Bun than the one in this executable. Rebuild it",
         ImageVerdict::CodeAtFixedAddress => "its code can't be placed at a random address here, and it doesn't run at a fixed one. The system refuses to map the file as executable memory and to move the loaded code with mremap (Linux 5.13 or later)",
+        ImageVerdict::OutsideItsSegments => "its header names code or data outside the segments the executable loads them in. Something modified the executable after it was built",
     })
+}
+
+#[cfg(bun_hardened)]
+fn sentence_of_failure(failure: write_execute::Failure) -> String {
+    use write_execute::Failure::{Failed, NotInForce};
+    let what_happened = match failure {
+        Failed { call, errno } => format!("{call} failed with {errno}"),
+        NotInForce { call } => format!("{call} succeeded and is not in force"),
+    };
+    format!("{what_happened}, and this build of Bun doesn't run without it")
 }
 
 fn exit_with(sentence: &str) -> ! {

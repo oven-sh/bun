@@ -186,6 +186,7 @@ fn create_options<'a>(
             entry_point_names: to_byte_strings(entry_point_names),
         },
         removable: Default::default(),
+        lists_modules: false,
     }
 }
 

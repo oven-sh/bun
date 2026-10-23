@@ -14,6 +14,18 @@ async function hasCompiler(): Promise<boolean> {
   return !result.logs.some(log => String(log.message ?? log).includes("isn't available in this build of Bun"));
 }
 
+async function revisionOf(bun: string): Promise<string> {
+  await using proc = Bun.spawn({ cmd: [bun, "--revision"], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return stdout.trim();
+}
+
+// In place of bun-aot: it answers --revision as every Bun does, and then does what `script` says.
+function writeStandIn(path: string, revision: string, script: string) {
+  writeFileSync(path, `#!/bin/sh\nif [ "$1" = --revision ]; then echo "${revision}"; exit 0; fi\n${script}\n`);
+  chmodSync(path, 0o755);
+}
+
 test.skipIf(isWindows)("a Bun without the compiler runs an --aot command in the bun-aot beside it", async () => {
   if (await hasCompiler()) return;
 
@@ -21,9 +33,7 @@ test.skipIf(isWindows)("a Bun without the compiler runs an --aot command in the 
   const bun = join(String(dir), "bun");
   copyFileSync(bunExe(), bun);
   chmodSync(bun, 0o755);
-  const bunWithCompiler = join(String(dir), "bun-aot");
-  writeFileSync(bunWithCompiler, '#!/bin/sh\necho "bun-aot: $*"\nexit 7\n');
-  chmodSync(bunWithCompiler, 0o755);
+  writeStandIn(join(String(dir), "bun-aot"), await revisionOf(bun), 'echo "bun-aot: $*"\nexit 7');
 
   for (const command of [
     ["build", "--compile", "--aot", "hello.ts"],
@@ -41,6 +51,70 @@ test.skipIf(isWindows)("a Bun without the compiler runs an --aot command in the 
       stdout: `bun-aot: ${command.join(" ")}\n`,
       stderr: "",
       exitCode: 7,
+    });
+  }
+});
+
+test.skipIf(isWindows)("bun-aot takes the place of the Bun that hands over: its pid, its signals", async () => {
+  if (await hasCompiler()) return;
+
+  using dir = tempDir("hand-over-in-place", { "hello.ts": "console.log(1);\n" });
+  const bun = join(String(dir), "bun");
+  copyFileSync(bunExe(), bun);
+  chmodSync(bun, 0o755);
+  writeStandIn(join(String(dir), "bun-aot"), await revisionOf(bun), "echo $$\nkill -TERM $$\nsleep 30");
+
+  await using proc = Bun.spawn({
+    cmd: [bun, "compile", "hello.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, signal: proc.signalCode }).toEqual({
+    stdout: `${proc.pid}\n`,
+    stderr: "",
+    signal: "SIGTERM",
+  });
+});
+
+test.skipIf(isWindows)("a bun-aot of another revision is named and not run", async () => {
+  if (await hasCompiler()) return;
+
+  using dir = tempDir("hand-over-another-revision", { "hello.ts": "console.log(1);\n" });
+  const bun = join(String(dir), "bun");
+  copyFileSync(bunExe(), bun);
+  chmodSync(bun, 0o755);
+  const revision = await revisionOf(bun);
+
+  for (const [write, said] of [
+    [
+      (path: string) => writeStandIn(path, "0.0.0+000000000", "echo ran"),
+      `bun-aot is Bun 0.0.0+000000000, and this is Bun ${revision}`,
+    ],
+    [
+      (path: string) => {
+        writeFileSync(path, "#!/bin/sh\necho ran\nexit 3\n");
+        chmodSync(path, 0o755);
+      },
+      "bun-aot does not answer --revision",
+    ],
+  ] as const) {
+    write(join(String(dir), "bun-aot"));
+    await using proc = Bun.spawn({
+      cmd: [bun, "compile", "hello.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.split("\n", 1)[0]).toStartWith("error: ");
+    expect({ stdout, said: stderr.split("\n", 1)[0].slice(-said.length), exitCode }).toEqual({
+      stdout: "",
+      said,
+      exitCode: 1,
     });
   }
 });

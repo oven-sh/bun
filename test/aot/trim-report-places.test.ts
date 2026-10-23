@@ -224,9 +224,8 @@ describe.concurrent(
       const { lines } = await report(
         `const cookies = JSON.parse(process.argv[2]);\nconsole.log(cookies[process.argv[3]]("b"));`,
       );
-      expect(kept(lines, "String.prototype.localeCompare")).toEqual([
-        "used (String.prototype.localeCompare) at main.ts:3:13",
-      ]);
+      expect(kept(lines, "String.prototype.normalize")).toEqual(["used (String.prototype.normalize) at main.ts:3:13"]);
+      expect(lines).toContain("removed Intl.Collator and localeCompare (intl): unused");
     });
 
     // The function is there and prints its name. Nobody calls it, so what is behind it is not kept.

@@ -46,9 +46,12 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
     let mut editor = ImageEditor::open(executable)?;
     let format = editor.format();
     let sections = find_trim_sections(&editor)?;
-    check_state_untrimmed(&mut editor, sections.state)?;
+    let is_cut_template = check_state_untrimmed(&mut editor, sections.state)?;
     let icu_ranges = remove_icu_items(&mut editor, plan)?;
-    let removable = merge_removable_bytes(&plan.ranges, icu_ranges);
+    let mut removable = merge_removable_bytes(&plan.ranges, icu_ranges);
+    if is_cut_template {
+        removable = keep_file_backed_parts(&editor, &removable);
+    }
     check_removable_bytes(&mut editor, &removable, sections)?;
     clear_removed_module_texts(&mut editor, &removable)?;
     let cut_plan = editor.cut_model().choose(&removable);
@@ -56,7 +59,9 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
     let removed_ranges: Vec<AddressRange> = removable.iter().map(|item| item.range).collect();
     editor.remove_relocations_in(&removed_ranges)?;
     write_removal_state(&mut editor, sections.state, plan)?;
-    write_removed_ranges(&mut editor, plan, sections)?;
+    if !plan.keeps_table {
+        write_removed_ranges(&mut editor, plan, sections)?;
+    }
     let file_bytes_saved = editor.remove_ranges(&cut_plan.cuts)?;
     Ok(TrimSummary {
         removed: plan.removed(),
@@ -111,10 +116,11 @@ fn state_bytes<'e>(
         .ok_or(TrimInternalError::RangeOutsideImage)
 }
 
+/// True for a template: a cut that kept the table has taken features out.
 fn check_state_untrimmed(
     editor: &mut ImageEditor<'_>,
     state_section: AddressRange,
-) -> Result<(), TrimError> {
+) -> Result<bool, TrimError> {
     let state = state_bytes(editor, state_section)?;
     if !state.starts_with(&RemovableFeatureState::MAGIC) {
         return Err(TrimInternalError::MalformedTable.into());
@@ -124,7 +130,22 @@ fn check_state_untrimmed(
     if state[flags].iter().any(|byte| *byte != 0) {
         return Err(UnsupportedReason::AlreadyTrimmed.into());
     }
-    Ok(())
+    let removal = &state[offset_of!(RemovableFeatureState, removal)..];
+    Ok(removal.iter().any(|byte| *byte != 0))
+}
+
+fn keep_file_backed_parts(
+    editor: &ImageEditor<'_>,
+    removable: &[RemovableBytes],
+) -> Vec<RemovableBytes> {
+    let parts_of = |item: &RemovableBytes| {
+        let parts = editor.file_backed_parts(item.range);
+        let item = *item;
+        parts
+            .into_iter()
+            .map(move |range| RemovableBytes { range, ..item })
+    };
+    removable.iter().flat_map(parts_of).collect()
 }
 
 fn remove_icu_items(
@@ -237,16 +258,24 @@ fn clear_removed_module_texts(
     if removed.is_empty() {
         return Ok(());
     }
+    // A cut that made a template may have taken texts out of the section. The index in front of them stays.
+    let index = match editor.file_backed_parts(section).first() {
+        Some(first) if first.start == section.start => *first,
+        _ => return Err(TrimInternalError::RangeOutsideImage),
+    };
     let bytes = editor
-        .bytes_at_mut(section)
+        .bytes_at_mut(index)
         .ok_or(TrimInternalError::RangeOutsideImage)?;
-    if Builtins::parse(bytes).is_err() {
+    if index == section && Builtins::parse(bytes).is_err() {
         return Ok(());
     }
     let module_count = read_u32(bytes, MODULE_COUNT_OFFSET) as usize;
     let records_offset = read_u32(bytes, MODULE_RECORDS_OFFSET) as usize;
     let data_address = section.start + u64::from(read_u32(bytes, MODULE_DATA_OFFSET));
-    let records = &mut bytes[records_offset..][..module_count * MODULE_RECORD_BYTES];
+    let records = bytes
+        .get_mut(records_offset..)
+        .and_then(|records| records.get_mut(..module_count * MODULE_RECORD_BYTES))
+        .ok_or(TrimInternalError::RangeOutsideImage)?;
     let record_addresses = (section.start + records_offset as u64..).step_by(MODULE_RECORD_BYTES);
     for (record, address) in records
         .as_chunks_mut::<MODULE_RECORD_BYTES>()
@@ -698,6 +727,7 @@ mod tests {
             },
             ranges,
             icu_packages: Vec::new(),
+            keeps_table: false,
         }
     }
 
@@ -988,6 +1018,54 @@ mod tests {
         apply(&mut executable, &plan).unwrap();
         assert!(matches!(
             apply(&mut executable, &plan),
+            Err(TrimError::Unsupported(UnsupportedReason::AlreadyTrimmed)),
+        ));
+    }
+
+    #[test]
+    fn template_is_cut_again_to_what_one_cut_gives() {
+        let first_range = planned(CUT_START, CUT_END, true, true, unused_feature());
+        let second_ranges = [
+            planned(0x4000, 0x5000, false, false, named_feature()),
+            planned(CUT_END, CUT_END + 0x3080, true, true, named_feature()),
+        ];
+        let template_plan = TrimPlan {
+            decision: Decision {
+                unused: FeatureSet::from_features(&[unused_feature()]),
+                ..create_plan(Vec::new()).decision
+            },
+            keeps_table: true,
+            ..create_plan(vec![first_range])
+        };
+        let whole_plan = create_plan(vec![second_ranges[0], first_range, second_ranges[1]]);
+
+        let mut template = toy_elf(EM_X86_64, TABLE_BYTES);
+        let old_len = template.len();
+        apply(&mut template, &template_plan).unwrap();
+        assert!(template.len() < old_len);
+        let table = range(TABLE_ADDRESS, TABLE_ADDRESS + TABLE_BYTES);
+        assert!(
+            read_at(&mut template, table)
+                .iter()
+                .all(|byte| *byte == 0xee)
+        );
+        let state = read_state(&mut template);
+        let flags = offset_of!(RemovableFeatureState, is_trimmed)
+            ..offset_of!(RemovableFeatureState, removal);
+        assert!(state[flags].iter().all(|byte| *byte == 0));
+
+        let mut cut_twice = template.clone();
+        apply(&mut cut_twice, &whole_plan).unwrap();
+        let mut cut_once = toy_elf(EM_X86_64, TABLE_BYTES);
+        apply(&mut cut_once, &whole_plan).unwrap();
+        assert_eq!(cut_twice.len(), cut_once.len());
+        assert_eq!(read_state(&mut cut_twice), read_state(&mut cut_once));
+        assert_eq!(
+            read_records(&mut cut_twice, TABLE_BYTES),
+            read_records(&mut cut_once, TABLE_BYTES)
+        );
+        assert!(matches!(
+            apply(&mut cut_twice, &whole_plan),
             Err(TrimError::Unsupported(UnsupportedReason::AlreadyTrimmed)),
         ));
     }

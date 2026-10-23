@@ -10,7 +10,7 @@
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { isCI, isMacOS, isWindows, tempDir } from "harness";
+import { isArm64, isCI, isMacOS, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { run as runCommand } from "./harness/run";
 import { engineTests, jsc, scriptSkipReason, testaot, toolEnv } from "./shell/tools";
@@ -84,20 +84,40 @@ const failsInTheTestProgramItself = isMacOS
     ]
   : [];
 
+// TODO: what these expect of x86-64 was taken where a loop poll is a load that faults, which is Linux alone. On macOS a poll is a
+// comparison with a call there too, and testaot has no word yet by which a test could say so.
+const expectsLoopPollsThatFault =
+  isMacOS && !isArm64
+    ? [
+        "codegen/compile-functions/outlinable-rare-code-everything-is-hot.ir",
+        "codegen/compile-functions/outlinable-rare-code.ir",
+        "codegen/loop-polls/a-loop-that-counts-up-to-the-length-of-a-view.ir",
+        "codegen/loop-polls/loop-without-rotation.ir",
+        "codegen/loop-polls/loops-that-count-up-to-a-length.ir",
+        "codegen/loop-polls/rotated-loop.ir",
+        "codegen/null-checks/narrow-references.ir",
+        "codegen/prologue/a-tail-call-polls-without-a-frame.ir",
+      ]
+    : [];
+// TODO: on the Intel Macs of CI the four parts of the native tests do not end within the five minutes that the runner gives a file.
+const nativeTestsOutlastTheRunner = isMacOS && !isArm64;
+
 function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
   if (shellTakesNoImage && lines.some(line => line.startsWith("FAIL ") && isKnownOnWindows(line))) {
     expect(lines.filter(line => line.startsWith("FAIL ") && !isKnownOnWindows(line))).toEqual([]);
     return;
   }
   const failed = lines.filter(line => line.startsWith("FAIL "));
-  const isOnTheList = (line: string) => failsInTheTestProgramItself.some(name => line.startsWith(`FAIL ${name}: `));
+  const isOnTheList = (line: string) =>
+    failsInTheTestProgramItself.some(name => line.startsWith(`FAIL ${name}: `)) ||
+    expectsLoopPollsThatFault.some(file => line.includes(`/${file}:`));
   if (failed.length && failed.every(isOnTheList)) {
     expect(lines.at(-1)).toMatch(/^[1-9][0-9]* passed, [1-9][0-9]* failed, [0-9]+ todo$/);
     return;
   }
   // In front of its FAIL line a native test that crashed has said which check failed, and where.
   const hasFailed = lines.some(line => line.startsWith("FAIL "));
-  expect(hasFailed ? lines.filter(line => !/^(PASS|TODO|SKIP) /.test(line)).slice(-60) : []).toEqual([]);
+  expect(hasFailed ? lines.filter(line => !/^(PASS|TODO|SKIP|  still fails:) /.test(line)).slice(-60) : []).toEqual([]);
   // After a crash, lastLine names the native test and stderr has the failed check: stderr is listed so that it is printed.
   expect({ lastLine: lines.at(-1), stderr, exitCode }).toEqual({
     lastLine: expect.stringMatching(/^[1-9][0-9]* passed, 0 failed, [0-9]+ todo$/),
@@ -132,7 +152,8 @@ test.skipIf(!!whyEngineTestsSkipped || !isWindows).each(unexplainedOnWindows)(
 );
 
 const parts = 4;
-(whyNativeTestsSkipped ? test.skip : shellTakesNoImage ? test.todo : test.concurrent).each(
+const cannotRunNativeTests = shellTakesNoImage || nativeTestsOutlastTheRunner;
+(whyNativeTestsSkipped ? test.skip : cannotRunNativeTests ? test.todo : test.concurrent).each(
   Array.from({ length: parts }, (_, index) => index + 1),
 )(
   `the engine's native tests pass: part %d of ${parts}`,

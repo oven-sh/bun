@@ -4,7 +4,7 @@ const fs = require("node:fs"), zlib = require("node:zlib"), crypto = require("no
 class U extends Uint8Array {} class L extends Array {}
 const values = () => [new Int8Array(2), new Uint8Array(2), new Uint8ClampedArray(2), new Int16Array(2), new Uint16Array(2), new Int32Array(2), new Uint32Array(2), new Float16Array(2), new Float32Array(2), new Float64Array(2), new BigInt64Array(2), new BigUint64Array(2), new DataView(new ArrayBuffer(2)), Buffer.from("ab"), new U(2), Uint8Array.prototype, Object.getPrototypeOf(Uint8Array.prototype), Object.create(Uint8Array.prototype), new Proxy(new Uint8Array(2), {}), new ArrayBuffer(2), new SharedArrayBuffer(2), [1, 2], new L(1, 2), Array.prototype, Object.create(Array.prototype), new Proxy([1, 2], {}), { length: 2, 0: 1, 1: 2 }, "ab", 5, null, undefined];
 function attempt(run) { try { const r = run(); return typeof r === "object" && r !== null ? Object.prototype.toString.call(r) : String(r); } catch (e) { return e.code ?? e.constructor.name; } }
-const sink = fs.openSync("/dev/null", "w");
+const sink = fs.openSync(process.platform === "win32" ? "\\\\.\\nul" : "/dev/null", "w");
 const asked = {
   isTypedArray: v => types.isTypedArray(v),
   isUint8Array: v => types.isUint8Array(v),

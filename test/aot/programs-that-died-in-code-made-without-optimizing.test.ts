@@ -1,4 +1,4 @@
-// In a very large program the functions that are not hot are compiled without optimizing, by a generator of its own with an arm for each processor.
+// A generator of its own, with an arm for each processor, compiles a function without optimizing. It runs on request alone.
 // `--aot-testing=GenerateAllCodeDirectly` compiles every function that way. ./joined-programs.ts tries it on three groups of programs in a run, others for each
 // commit. The programs here have died or answered wrongly that way, so every run takes them.
 //

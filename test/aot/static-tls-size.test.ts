@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { isASAN, isLinux } from "harness";
 import { readFileSync } from "node:fs";
 
-test.skipIf(!isLinux)("the static TLS block that every thread pays for stays small", () => {
+// AddressSanitizer adds thread-local state of its own.
+test.skipIf(!isLinux || isASAN)("the static TLS block that every thread pays for stays small", () => {
   const file = readFileSync(process.execPath);
   const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
   expect(file.subarray(0, 4)).toEqual(Buffer.from([0x7f, 0x45, 0x4c, 0x46]));

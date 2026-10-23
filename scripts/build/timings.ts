@@ -847,6 +847,7 @@ const ruleLane: Record<RuleName, Lane> = {
   shim_verify: "link and checks",
   smoke_test: "link and checks",
   strip: "link and checks",
+  stripped_verify: "link and checks",
   host_tool_cc: "other",
   mkdir_stamp: "other",
   regen: "other",

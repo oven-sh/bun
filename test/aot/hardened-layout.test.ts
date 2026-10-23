@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import { bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { canTrim } from "../bundler/compile-trim-features";
 import { isHardened } from "./hardened";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
@@ -82,32 +83,51 @@ async function run(cmd: string[]) {
   return { stdout, stderr, exitCode };
 }
 
+const waysToBuild: [string, string[]][] = [["--aot", ["--aot"]]];
+if (canTrim) waysToBuild.push(["--aot --trim", ["--aot", "--trim"]]);
+
 describe.skipIf(!isHardened)("a Bun built with --hardened=on", () => {
   test("is position-independent with full RELRO and separate code", () => {
     expect(describeLayout(bunExe())).toEqual(hardened);
   });
 
-  test("builds executables with the same layout, which load at a different address each time", async () => {
-    using dir = tempDir("aot-hardened-layout", { "program.ts": program });
-    const executable = join(String(dir), "program");
-    const built = await run([
-      bunExe(),
-      "build",
-      "--compile",
-      "--aot",
-      join(String(dir), "program.ts"),
-      "--outfile",
-      executable,
-    ]);
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-    expect(describeLayout(executable)).toEqual(hardened);
+  test.each(waysToBuild)(
+    "builds executables with the same layout, which load at a different address each time: %s",
+    async (_, options) => {
+      using dir = tempDir("aot-hardened-layout", { "program.ts": program });
+      const executable = join(String(dir), "program");
+      const built = await run([
+        bunExe(),
+        "build",
+        "--compile",
+        ...options,
+        join(String(dir), "program.ts"),
+        "--outfile",
+        executable,
+      ]);
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+      expect(describeLayout(executable)).toEqual(hardened);
 
-    const runs = await Promise.all(Array.from({ length: 3 }, () => run([executable])));
-    for (const { stderr, exitCode } of runs) expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const lines = runs.map(({ stdout }) => stdout.split("\n"));
-    for (const [denyWriteExecute] of lines) expect(["1", "-1"]).toContain(denyWriteExecute);
-    const bases = lines.map(mappings => mappings.find(line => line.endsWith(executable))!.split("-")[0]);
-    expect(new Set(bases).size).toBe(bases.length);
-    for (const mappings of lines) expect(mappings.filter(line => /^\S+ .wx/.test(line))).toEqual([]);
-  }, 120_000);
+      const runs = await Promise.all(Array.from({ length: 3 }, () => run([executable])));
+      for (const { stderr, exitCode } of runs) expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const lines = runs.map(({ stdout }) => stdout.split("\n"));
+      for (const [denyWriteExecute] of lines) expect(["1", "-1"]).toContain(denyWriteExecute);
+      const bases = lines.map(mappings => mappings.find(line => line.endsWith(executable))!.split("-")[0]);
+      expect(new Set(bases).size).toBe(bases.length);
+      for (const mappings of lines) expect(mappings.filter(line => /^\S+ .wx/.test(line))).toEqual([]);
+
+      const relro = readElf64ProgramHeaders(executable).find(header => header.type === gnuRelro)!;
+      for (const mappings of lines) {
+        const startOfFile = mappings.find(line => /^\S+ \S+ 0+ /.test(line) && line.endsWith(executable))!;
+        const start = BigInt("0x" + startOfFile.split("-")[0]) + relro.vaddr;
+        const end = start + (relro.memsz / pageSize) * pageSize;
+        const permissions = mappings
+          .map(line => /^([0-9a-f]+)-([0-9a-f]+) (\S+)/.exec(line))
+          .filter(match => match && BigInt("0x" + match[1]) < end && BigInt("0x" + match[2]) > start)
+          .map(match => match![3]);
+        expect(new Set(permissions)).toEqual(new Set(["r--p"]));
+      }
+    },
+    120_000,
+  );
 });

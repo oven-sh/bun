@@ -5,6 +5,7 @@ mod data_loaders;
 mod data_values;
 mod defines;
 mod macros;
+mod metafile;
 mod native_plugins;
 mod options;
 mod output;
@@ -16,6 +17,7 @@ use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};
 use crate::{EventLoop, OutputFile, Transpiler};
 use bun_aot::engine::{EngineResult, ExecutableIdentity, TargetImageForm};
 use bun_aot::link::ProgramNames;
+use bun_aot::module_list::ModuleList;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
 use bun_aot::{BuildFailed, Compilation};
@@ -24,6 +26,7 @@ use bun_options_types::aot_options::AotOptions;
 use bun_resolver::package_names::{BuildPaths, PackageName};
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
+pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
 pub use options::expand_entry_points;
 use options::{OptionsInput, embedded_entry_point_names, options_from_bundler};
 use services::BundlerServices;
@@ -67,6 +70,8 @@ pub struct AotBuild {
     pub texts: SourceTexts,
     pub statistics: Statistics,
     pub validates_by_type: bool,
+    /// For a build that writes a metafile.
+    pub modules: Option<ModuleList>,
 }
 
 pub struct AotBuildFailure {

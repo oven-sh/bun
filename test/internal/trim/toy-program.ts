@@ -15,7 +15,10 @@ import {
 } from "../../../scripts/build/trim/features.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
-import { rustSource as removableFeaturesRustSource } from "../../../src/codegen/generate-removable-features.ts";
+import {
+  initialRemovalAssembly,
+  rustSource as removableFeaturesRustSource,
+} from "../../../src/codegen/generate-removable-features.ts";
 import { run as runCommand } from "../../aot/harness/run";
 
 export const repositoryRoot: string = join(import.meta.dir, "..", "..", "..");
@@ -608,6 +611,7 @@ async function hasTargetLibraries(folder: string, rustc: string, target: string)
 export async function buildGuardCrate(folder: string, rustc: string, target?: string): Promise<string | undefined> {
   if (target !== undefined && !(await hasTargetLibraries(folder, rustc, target))) return undefined;
   writeFileSync(join(folder, "removable_features.rs"), removableFeaturesRustSource(model));
+  writeFileSync(join(folder, "removable_features_initial_removal.s"), initialRemovalAssembly(model));
   const crateRoot = join(repositoryRoot, "src", "trim", "removable_features", "lib.rs");
   const cmd = [
     rustc,

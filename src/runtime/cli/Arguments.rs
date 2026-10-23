@@ -718,6 +718,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-symbols"),
         parse_param!("--no-builtin-modules"),
         parse_param!("--trim-without <STR>..."),
+        parse_param!("--trim-template"),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
             "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"

@@ -1,1 +1,1 @@
-{ "build": ["--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"] }
+{ "build": ["--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1", "--aot-testing=GenerateColdCodeDirectly"] }

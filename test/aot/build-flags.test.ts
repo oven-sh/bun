@@ -33,6 +33,30 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     },
     prints: "on off\n",
   },
+  "--format=cjs": {
+    flags: ["--format=cjs"],
+    files: {
+      "main.ts": `import { a } from "./a"; const b = require("./b.cjs"); console.log(a, b.b, import.meta.main);`,
+      "a.ts": `export const a = "a";`,
+      "b.cjs": `exports.b = "b";`,
+    },
+    prints: "a b true\n",
+  },
+  "--format=iife": {
+    flags: ["--format=iife"],
+    files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "a";` },
+    prints: "a\n",
+  },
+  "--bytecode-depth": {
+    flags: ["--bytecode", "--bytecode-depth=1"],
+    files: { "main.ts": `function outer() { return function inner() { return "inner"; }; } console.log(outer()());` },
+    prints: "inner\n",
+  },
+  "--bytecode-order": {
+    flags: ["--bytecode", "--bytecode-order=app.order"],
+    files: { "main.ts": `console.log("ordered");`, "app.order": "" },
+    prints: "ordered\n",
+  },
   "--env": {
     flags: ["--env=PUBLIC_*"],
     files: { "main.ts": `console.log(process.env.PUBLIC_ONE);`, ".env": "PUBLIC_ONE=from-dotenv\n" },

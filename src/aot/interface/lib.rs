@@ -8,6 +8,8 @@ pub mod ir;
 pub mod link;
 mod linked;
 pub mod load;
+#[path = "../module_list.rs"]
+pub mod module_list;
 mod opaque;
 #[path = "../options.rs"]
 pub mod options;

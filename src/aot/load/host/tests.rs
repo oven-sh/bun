@@ -252,6 +252,7 @@ fn with_host_in<R>(
             entry_point_names: entry_points.to_vec(),
         },
         removable: RemovableOptions::default(),
+        lists_modules: false,
     };
     let provider = ScriptedProvider::default();
     let disk = create_disk(&options, NonZeroUsize::MIN);

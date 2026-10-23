@@ -14,8 +14,9 @@ pub use feature_set::FeatureSet;
 pub use generated::{FEATURES_HASH, Feature, TrimFeature};
 pub use requirement::RuntimeRequirement;
 pub use state::{
-    MAX_REMOVED_RANGES, RemovableFeatureState, RemovedRange, abort_for_removed_feature,
-    find_removed_range, is_removed, is_trimmed, removal_of, removed_feature_at,
+    MAX_REMOVED_RANGES, RemovableFeatureState, RemovedRange, abort_for_command_left_out,
+    abort_for_removed_feature, find_removed_range, is_left_out_of_link, is_removed, is_trimmed,
+    removal_of, removed_feature_at,
 };
 
 #[repr(u8)]

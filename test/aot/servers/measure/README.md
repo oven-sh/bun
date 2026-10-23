@@ -45,6 +45,31 @@ halve either, and `SERVERS=express,fastify` or `ROUTES=text,json` measure a part
 - **Idle cores.** `measure.py` compares what the kernel charged to a lane's cores with what it charged to the server and the client. A row during which anything else ran there
   is marked void, and the table says how many are. Instructions, memory and sizes hold on a busy machine; requests per second, latency and CPU time do not.
 
+## From exec to the millionth request, thread by thread
+
+    python3 test/aot/servers/measure/cost_by_request.py --column aot=<bun with --aot>:--aot --column own=<the same bun> --column released=<released bun> \
+        --servers express,fastify --routes text --cores 0-7 --work <a folder> --out rows.jsonl
+    python3 test/aot/servers/measure/cost_by_request.py --table rows.jsonl
+
+The table above compares servers that are warm. This one shows what it costs to get there, and who pays. A JIT compiles on threads of its own while the server answers. With a spare core
+to run on, that work does not lower requests per second at all, but it is CPU time like any other.
+
+- **Windows by request number.** A process is sent exactly as many requests as bring it to 1,000, 3,000, 10,000 .. 1,000,000 (`--marks`), and its counters are read at each mark. Every number is there
+  for the window between two marks and as a sum from exec. The first window is exec to the first correct response.
+- **Every thread by itself.** `count_threads.c` starts the server and opens a set of counters on each thread before the thread runs its first instruction: user and kernel instructions, user and kernel cycles,
+  time on a core. Nothing is sampled or estimated, threads that end keep their counts, and the threads add up to the process. The tables group them by the names they give themselves: the thread that runs
+  JavaScript, the JIT's compiler threads, the collector's threads, everything else. Kernel counts need `kernel.perf_event_paranoid` at 1 or below; the tables leave them out elsewhere.
+- **One core, four cores.** As above. On one core the compiler threads take time from the thread that answers; on four they do not, and only CPU time and instructions show them.
+- **Break-even.** The request at which a JIT's sum from exec, over all threads, falls below the compiled server's: by instructions and by CPU time.
+- **Is the JIT ever done?** The last table has the CPU time of the compiler threads in the last window, per request and per second. `--run-env own:BUN_JSC_reportCompileTimes=1 --log dfg='using DFG' --log ftl='using FTL'`
+  counts the functions compiled in every window, and `BUN_JSC_printEachOSRExit=1` with `--log exits='Speculation failure'` the times optimized code was left for slower code. Those two print a lot: take no timings from such a run.
+- **What holds on a busy machine.** Instructions. CPU time and cycles need idle cores, and idle neighbors: give `--cores` a whole group of cores that share a last-level cache. Every table has the spread between
+  the starts and ends with the share of the server's cores that went to somebody else, and a break-even that the spread does not decide is marked `~`. `--plain` reads CPU time alone, with no counters
+  and no `count_threads`: counters are saved and restored at every context switch, and this shows what that costs.
+- **One route or all of them.** A process serves one route of `--routes`. With `--in-turn` it serves all of them, a request of each in turn: more code is warm at once, which is closer to a real server.
+
+Three columns, three starts, one route, both pinnings: six minutes a server on eight cores.
+
 ## The small rows
 
     python3 test/aot/perf/against_the_jit.py <bun with --aot> <released bun> [--cores 0-15]

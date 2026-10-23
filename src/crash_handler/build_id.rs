@@ -32,9 +32,9 @@ core::arch::global_asm!(
 core::arch::global_asm!(
     ".section .note.bun,\"aR\",@note",
     ".p2align 3",
-    ".long 4, 3584, 1",
+    ".long 4, 4088, 1",
     ".asciz \"Bun\"",
-    ".zero 3584",
+    ".zero 4088",
     ".section .note.bun.build-id,\"a\",@note",
     ".globl Bun__buildIdNote",
     ".type Bun__buildIdNote,@object",

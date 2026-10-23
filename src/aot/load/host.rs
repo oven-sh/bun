@@ -648,6 +648,7 @@ impl CodeHost for LoadHost<'_> {
                 hir: parsed.hir,
                 host_values: parsed.host_values,
                 payload: Some(Box::new(ParsedSource {
+                    byte_count: text.len(),
                     is_from_plugin,
                     plugin_module,
                     web_assembly: parsed.web_assembly,
@@ -672,6 +673,7 @@ impl CodeHost for LoadHost<'_> {
             hir: parse_for_compile(arena, &compile_options, text, atoms),
             host_values: &[],
             payload: Some(Box::new(ParsedSource {
+                byte_count: text.len(),
                 is_from_plugin,
                 plugin_module,
                 ..ParsedSource::new(source_kind, loader)

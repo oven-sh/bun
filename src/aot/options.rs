@@ -18,6 +18,8 @@ pub struct Options<'a> {
     pub load: LoadOptions,
     pub paths: PathOptions,
     pub removable: RemovableOptions,
+    // --metafile
+    pub lists_modules: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -184,6 +186,7 @@ mod tests {
                 entry_point_names: vec![b"main".to_vec()],
             },
             removable: RemovableOptions::default(),
+            lists_modules: false,
         }
     }
 

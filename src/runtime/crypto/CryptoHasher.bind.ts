@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::crypto::crypto_hasher" });
 
@@ -21,9 +22,10 @@ const digestIn = (newBuffer: "Buffer" | "Uint8Array") =>
   );
 
 const method = { capability: "heap", throws: true } as const;
+const uses = { output: [...table.handedOver, table.writesContents()] };
 const update = { ...method, returns: b.self, passThis: true, mutates: true } as const;
 const digestOf = (newBuffer: "Buffer" | "Uint8Array") =>
-  ({ ...method, args: { output: DigestOutput.nullable }, returns: digestIn(newBuffer), mutates: true }) as const;
+  ({ ...method, args: { output: DigestOutput.nullable }, returns: digestIn(newBuffer), mutates: true, uses }) as const;
 
 export const CryptoHasher = b.class({
   rustPath: "crate::crypto::crypto_hasher::CryptoHasher",
@@ -53,6 +55,7 @@ export const CryptoHasher = b.class({
       ...method,
       args: { algorithm: b.string, input, output: DigestOutput.optional },
       returns: digestIn("Buffer"),
+      uses,
     },
   },
 });
@@ -70,7 +73,7 @@ const staticHasher = (name: string) =>
     },
     static: {
       byteLength: { getter: b.u32, rustName: "static_byte_length" },
-      hash: { ...hash, length: 2 },
+      hash: { ...hash, uses, length: 2 },
     },
   });
 

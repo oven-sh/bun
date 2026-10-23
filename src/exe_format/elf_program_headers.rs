@@ -17,6 +17,10 @@ pub(crate) const PT_NOTE: u32 = 4;
 pub(crate) const PT_PHDR: u32 = 6;
 // FreeBSD reads program headers from the first page only (imgact_elf.c, phdr_in_zero_page).
 const MAX_TABLE_END_OFFSET: u64 = 4096;
+// Linux refuses a table that is larger than a page (binfmt_elf.c, load_elf_phdrs).
+const MAX_TABLE_SIZE: u64 = 4096;
+const EI_OSABI: usize = 7;
+const ELFOSABI_FREEBSD: u8 = 9;
 // Type of the note named "Bun\0" whose descriptor is room for the program header table.
 pub(crate) const NT_BUN_PROGRAM_HEADER_ROOM: u32 = 1;
 
@@ -184,9 +188,12 @@ fn find_table_address(headers: &[Elf64_Phdr], table: FileExtent) -> Option<u64> 
         .and_then(|load| load.p_vaddr.checked_add(table.offset))
 }
 
-fn compute_room_capacity(room: FileExtent) -> usize {
-    let first_page_size = MAX_TABLE_END_OFFSET.saturating_sub(room.offset);
-    (room.size.min(first_page_size) / PROGRAM_HEADER_SIZE as u64) as usize
+fn compute_room_capacity(room: FileExtent, os_abi: u8) -> usize {
+    let max_size = match os_abi {
+        ELFOSABI_FREEBSD => MAX_TABLE_END_OFFSET.saturating_sub(room.offset),
+        _ => MAX_TABLE_SIZE,
+    };
+    (room.size.min(max_size) / PROGRAM_HEADER_SIZE as u64) as usize
 }
 
 fn find_room(elf: &[u8], headers: &[Elf64_Phdr]) -> Option<TableLocation> {
@@ -200,7 +207,7 @@ fn find_room(elf: &[u8], headers: &[Elf64_Phdr]) -> Option<TableLocation> {
     let address = find_table_address(headers, room)?;
     Some(TableLocation {
         file_offset: room.offset,
-        capacity: compute_room_capacity(room),
+        capacity: compute_room_capacity(room, *elf.get(EI_OSABI)?),
         address: Some(address),
     })
 }
@@ -641,6 +648,7 @@ pub(crate) mod tests {
     }
 
     fn move_room_past_first_page(elf: &mut Vec<u8>) {
+        elf[EI_OSABI] = ELFOSABI_FREEBSD;
         let header = create_room_note_header(ROOM_SIZE);
         write_bytes(elf, MAX_TABLE_END_OFFSET, &header);
         edit_segment(elf, NOTE_INDEX, |segment| {
@@ -679,12 +687,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn room_capacity_ends_in_first_page() {
+    fn room_capacity_ends_in_first_page_on_freebsd() {
         let compute_capacity_at = |offset: u64| {
-            compute_room_capacity(FileExtent {
-                offset,
-                size: u64::from(ROOM_SIZE),
-            })
+            let size = u64::from(ROOM_SIZE);
+            compute_room_capacity(FileExtent { offset, size }, ELFOSABI_FREEBSD)
         };
         assert_eq!(compute_capacity_at(ROOM_OFFSET), ROOM_CAPACITY);
         assert_eq!(compute_capacity_at(0x3a0), 56);
@@ -701,10 +707,23 @@ pub(crate) mod tests {
         edit_segment(&mut elf, NOTE_INDEX, |segment| {
             segment.p_filesz = notes_size
         });
+        assert_eq!(read_table(&elf).capacity() as u64, room_size / PHDR_SIZE);
 
+        elf[EI_OSABI] = ELFOSABI_FREEBSD;
         let table = read_table(&elf);
         assert_eq!(table.capacity(), ROOM_CAPACITY);
         assert!(table.end_file_offset() <= MAX_TABLE_END_OFFSET);
+    }
+
+    #[test]
+    fn room_capacity_is_one_page_on_linux() {
+        let compute_capacity = |offset: u64, size: u64| {
+            const ELFOSABI_NONE: u8 = 0;
+            compute_room_capacity(FileExtent { offset, size }, ELFOSABI_NONE)
+        };
+        assert_eq!(compute_capacity(0x2f8, 73 * PHDR_SIZE), 73);
+        assert_eq!(compute_capacity(0x2f8, 2 * MAX_TABLE_SIZE), 73);
+        assert_eq!(compute_capacity(2 * MAX_TABLE_END_OFFSET, PHDR_SIZE), 1);
     }
 
     #[test]

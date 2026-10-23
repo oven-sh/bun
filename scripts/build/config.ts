@@ -139,6 +139,18 @@ export interface Config {
    */
   aot: boolean;
   /**
+   * `bun-aot`: the commands that `bun` runs itself and never hands over stay out of the link (`not-in-bun-aot` in
+   * src/trim/features/tools.def). Asked for one of them, the executable says that it doesn't have it.
+   */
+  onlyHandedOverCommands: boolean;
+  /**
+   * Default true. Off compiles JavaScriptCore without its JIT tiers (Baseline, DFG, FTL, WebAssembly's BBQ and OMG plans,
+   * RegExp code made at run time): JavaScript, RegExps and WebAssembly that arrive at run time are interpreted. Programs
+   * compiled with `--aot` run as before, and one compiled by a Bun with the tiers runs on a Bun without them. B3, Air and
+   * the assembler stay as the back end of the ahead-of-time compiler.
+   */
+  jit: boolean;
+  /**
    * Linux with glibc: the relative relocations of the executable are packed (DT_RELR). Smaller, and faster to load.
    * Only glibc 2.36 and later load such a file, so it is for a build whose users are known.
    */
@@ -167,6 +179,25 @@ export interface Config {
    */
   hardened: boolean;
   /**
+   * An executable that a hardened build compiles ahead of time exits at start unless the kernel denies it memory that
+   * is written and then executed: prctl(PR_SET_MDWE), Linux 6.3. On with `hardened`. Off: it also starts on an older
+   * kernel, where its seccomp filter alone refuses new executable memory. No environment variable does the same.
+   */
+  requireMdwe: boolean;
+  /**
+   * The environment variables that only a compiler, a test or somebody who debugs Bun sets are never read: those that
+   * write a file, print addresses, switch a check off or bring in other code. An executable compiled ahead of time takes a
+   * short list of BUN_JSC_* options, and the allocator its sizes and its pace. On with `hardened`. Off: a hardened
+   * build that tests can steer as they steer any other. No environment variable does the same.
+   */
+  lockEnvironment: boolean;
+  /**
+   * What an executable compiled ahead of time maps for as long as a VM or the process lives (its instance, its tables) lies
+   * between two pages that cannot be touched, at an address drawn for that mapping alone: an address of one says nothing
+   * about another's, nor about the C library's. Costs a few system calls and 8 KB of page tables a mapping.
+   */
+  guardedPages: boolean;
+  /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
    * acquire atomic load per syscall, zero when compiled out.
@@ -184,6 +215,13 @@ export interface Config {
    * false whatever `BUN_JSC_useWasm` says.
    */
   webAssembly: boolean;
+  /**
+   * Default true. Off builds a Bun with no `ShadowRealm` global: the engine's `useShadowRealm` option
+   * is false whatever `BUN_JSC_useShadowRealm` says. A WebKit built from source (`webkit: "local"`) is
+   * also built with ENABLE_SHADOW_REALM=0, which leaves the class out of the binary; a prebuilt one
+   * keeps it.
+   */
+  shadowRealm: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -394,7 +432,9 @@ export interface PartialConfig {
   mode?: Mode;
   lto?: boolean;
   trimmable?: boolean;
+  jit?: boolean;
   aot?: boolean;
+  onlyHandedOverCommands?: boolean;
   relr?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
@@ -409,9 +449,13 @@ export interface PartialConfig {
   valgrind?: boolean;
   fuzzilli?: boolean;
   hardened?: boolean;
+  requireMdwe?: boolean;
+  lockEnvironment?: boolean;
+  guardedPages?: boolean;
   socketFaultInjection?: boolean;
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
+  shadowRealm?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -891,6 +935,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
   const fuzzilli = partial.fuzzilli ?? false;
+  const onlyHandedOverCommands = partial.onlyHandedOverCommands ?? false;
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
   const version = pkgJson.version;
@@ -908,6 +953,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     canary,
     canaryRevision,
     fuzzilli,
+    onlyHandedOverCommands,
     version,
     revision,
     nodejsVersion,
@@ -955,6 +1001,7 @@ export type CodegenFields = Pick<
   | "canary"
   | "canaryRevision"
   | "fuzzilli"
+  | "onlyHandedOverCommands"
   | "version"
   | "revision"
   | "nodejsVersion"
@@ -1010,6 +1057,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     canary,
     canaryRevision,
     fuzzilli,
+    onlyHandedOverCommands,
     version,
     revision,
     nodejsVersion,
@@ -1122,6 +1170,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   const valgrind = partial.valgrind ?? false;
   const hardened = partial.hardened ?? false;
+  const requireMdwe = partial.requireMdwe ?? hardened;
+  const lockEnvironment = partial.lockEnvironment ?? hardened;
+  const guardedPages = partial.guardedPages ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1146,10 +1197,28 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
   assert(!hardened || (linux && abi !== "android"), "hardened=true requires os=linux and abi=gnu or musl");
+  assert(!requireMdwe || hardened, "requireMdwe=true requires hardened=true");
+  assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
+  assert(
+    !guardedPages || (linux && webkit === "local"),
+    "guardedPages=true requires os=linux and webkit=local: no prebuilt WebKit is compiled with it",
+  );
+  const jit = partial.jit ?? true;
+  assert(
+    jit || webkit === "local",
+    "jit=false requires webkit=local: there is no prebuilt WebKit without the JIT tiers",
+  );
+  assert(jit || (partial.aot ?? true), "jit=false requires aot=true");
+  assert(jit || !(partial.trimmable ?? false), "jit=false can't be combined with trimmable=true");
   assert(
     !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
     "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
     { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
+  );
+  assert(
+    !hardened || toolchain.llvmStrip !== undefined,
+    "hardened=true requires llvm-strip (GNU strip writes a file without PT_GNU_RELRO)",
+    { hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent)." },
   );
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
 
@@ -1387,6 +1456,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: "full",
     lto,
+    jit,
     trimmable:
       (partial.trimmable ?? false) &&
       release &&
@@ -1395,6 +1465,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       linksWithLld({ darwin, crossTarget }) &&
       host.os !== "windows",
     aot: partial.aot ?? true,
+    onlyHandedOverCommands,
     relr: partial.relr ?? false,
     pgoGenerate,
     pgoUse,
@@ -1410,9 +1481,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     valgrind,
     fuzzilli,
     hardened,
+    requireMdwe,
+    lockEnvironment,
+    guardedPages,
     socketFaultInjection,
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
+    shadowRealm: partial.shadowRealm ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1442,16 +1517,16 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ld: ld64StripSwap?.ld ?? toolchain.ld,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
-    // llvm-strip.
+    // llvm-strip. Hardened: llvm-strip, native or cross. Removing a mapped section makes GNU strip write
+    // new program headers, without PT_GNU_RELRO.
     strip:
       ld64StripSwap?.strip ??
+      (hardened ? toolchain.llvmStrip : undefined) ??
       (crossTarget !== undefined
         ? linux && abi === "gnu" && existsSync(`/usr/bin/${crossTarget}-strip`)
           ? `/usr/bin/${crossTarget}-strip`
           : (toolchain.llvmStrip ?? toolchain.strip)
-        : hardened
-          ? (toolchain.llvmStrip ?? toolchain.strip)
-          : toolchain.strip),
+        : toolchain.strip),
     nm: toolchain.nm,
     readobj: toolchain.readobj,
     objdump: toolchain.objdump,
@@ -1796,7 +1871,9 @@ export function formatConfig(cfg: Config, exe: string): string {
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
   if (cfg.trimmable) features.push("trimmable");
+  if (!cfg.jit) features.push("no-jit");
   if (!cfg.aot) features.push("no-aot");
+  if (cfg.onlyHandedOverCommands) features.push("only-handed-over-commands");
   if (cfg.relr) features.push("relr");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
@@ -1812,11 +1889,15 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
   if (cfg.hardened) features.push("hardened");
+  if (cfg.requireMdwe !== cfg.hardened) features.push("require-mdwe:off");
+  if (cfg.lockEnvironment !== cfg.hardened) features.push("lock-environment:off");
+  if (cfg.guardedPages) features.push("guarded-pages");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
   if (!cfg.codeGenerationFromStrings) features.push("code-generation-from-strings:off");
   if (!cfg.webAssembly) features.push("webassembly:off");
+  if (!cfg.shadowRealm) features.push("shadow-realm:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

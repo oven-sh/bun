@@ -14,3 +14,8 @@ function isPositionIndependent(path: string) {
 
 /** Whether the Bun under test was built with `--hardened=on`. */
 export const isHardened = isLinux && isPositionIndependent(bunExe());
+
+/** Whether it was built without `--lock-environment=off` too. */
+export const locksEnvironment =
+  isHardened &&
+  Bun.spawnSync(["grep", "-q", "-a", "hardened environment: what only tests set is never read", bunExe()]).exitCode === 0;

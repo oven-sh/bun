@@ -175,7 +175,7 @@ fn default_options_convert() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn unsupported_values_report_argument() {
-    let cases: [(Configure, &str); 23] = [
+    let cases: [(Configure, &str); 22] = [
         (
             |o| o.banner = Cow::Borrowed(b"let a;"),
             "--banner with code",
@@ -195,7 +195,6 @@ fn unsupported_values_report_argument() {
         (|o| o.target = Target::BunMacro, "this target"),
         (|o| o.target = Target::ServerComponentsSsr, "this target"),
         (|o| o.bytecode = true, "--bytecode"),
-        (|o| o.metafile = true, "--metafile"),
         (|o| o.transform_only = true, "--no-bundle"),
         (|o| o.server_components = true, "--server-components"),
         (
@@ -257,7 +256,7 @@ fn development_server_reports_once() {
 #[cfg_attr(miri, ignore)]
 fn each_unsupported_field_reports() {
     let messages = report_errors(|options| {
-        options.metafile = true;
+        options.bytecode = true;
         options.transform_only = true;
     });
     assert_eq!(messages.len(), 2);

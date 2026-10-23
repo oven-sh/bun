@@ -222,3 +222,4 @@ src/jsc/bindings/GeneratedBindings.zig
 
 # hawk analysis scaffolding (see tools/hawk/); generated per-run, never committed
 src/runtime/hawk_root.rs
+__pycache__/

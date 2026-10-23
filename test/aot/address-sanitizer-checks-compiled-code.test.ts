@@ -137,3 +137,80 @@ console.log(sum);
   },
   240_000,
 );
+
+// A report names what touched the memory and the compiled frames below it, as an error's stack does.
+const callers = `class Walker {
+  total = 0;
+  visit(outer: Outer): void {
+    this.total += read(outer.a.r);
+  }
+}
+function walk(list: Outer[]): number {
+  const walker = new Walker();
+  for (let i = 0; i < list.length; i++) walker.visit(list[i]);
+  return walker.total;
+}`;
+const walked = (read: string) =>
+  leaves(read + "\n" + callers).replace(
+    "for (let i = 0; i < kept.length; i++) sum += read(kept[i].a.r);",
+    "sum = walk(kept);",
+  );
+const at = (name: string) => String.raw`    at ${name} \(\S*entry\.ts:\d+:\d+\)\n`;
+
+// The pinned engine does not print the names yet.
+(isASAN && isLinux && process.arch === "x64" ? test.todo : test.skip).each([
+  [
+    "code that B3 generates",
+    typedRead,
+    ["--aot-heat=everything-is-hot"],
+    new RegExp(
+      String.raw`function \d+, at \d+ bytes into the code of the image\n` +
+        at("visit") +
+        at("walk") +
+        String.raw`    at \S*entry\.ts:\d+:\d+\n=`,
+    ),
+  ],
+  [
+    "code that is generated directly",
+    typedRead,
+    ["--aot-testing=GenerateAllCodeDirectly"],
+    new RegExp(
+      String.raw`function \d+, at \d+ bytes into the code of the image\n` +
+        at("walk") +
+        String.raw`    at \S*entry\.ts:\d+:\d+\n=`,
+    ),
+  ],
+  [
+    "a stub",
+    looseEquality,
+    ["--aot-heat=everything-is-hot"],
+    new RegExp(
+      String.raw`a stub LooseEquals\w*, at \d+ bytes into the code of the image\n` +
+        at("same") +
+        at("read") +
+        at("visit") +
+        at("walk") +
+        String.raw`    at \S*entry\.ts:\d+:\d+\n=`,
+    ),
+  ],
+] as [string, string, string[], RegExp][])(
+  "A report of AddressSanitizer names the compiled frames for %s",
+  async (_, read, flags, report) => {
+    using dir = tempDir("asan-names", { "entry.ts": walked(read) });
+    const executable = join(String(dir), "sabotaged");
+    const build = await run(
+      [bunExe(), "build", "--compile", "--aot", ...staleCells, ...flags, "entry.ts", "--outfile", executable],
+      String(dir),
+    );
+    expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const { stderr } = await run([executable], String(dir), {
+      ...bunEnv,
+      ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":symbolize=0",
+    });
+    expect(stderr).toMatch(report);
+  },
+  240_000,
+);

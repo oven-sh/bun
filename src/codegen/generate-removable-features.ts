@@ -60,9 +60,20 @@ function rustFeatureNameFunction(features: Feature[]): string[] {
   ];
 }
 
-export function rustSource(model: FeatureModel): string {
+const commandsLeftOut = ({ features }: FeatureModel, isBunAot: boolean) =>
+  features.filter(feature => isBunAot && feature.notInBunAot);
+
+/** The `removal` bytes of `Bun__removableFeatureState` as the link leaves them. */
+export function initialRemovalAssembly(model: FeatureModel, isBunAot = false): string {
+  const removal = new Uint8Array(featureIndexLimit);
+  for (const { index } of commandsLeftOut(model, isBunAot)) removal[index] = 1;
+  return `.byte ${removal.join(",")}\n`;
+}
+
+export function rustSource(model: FeatureModel, isBunAot = false): string {
   checkNotEmpty(model);
   const { features, trimFeatures } = model;
+  const leftOut = commandsLeftOut(model, isBunAot);
   const featurePath = (feature: Feature) => `Feature::${feature.rustName}`;
   const trimFeaturePath = (trimFeature: TrimFeature) => `TrimFeature::${trimFeature.rustName}`;
   const featureList = (names: FeatureName[]) =>
@@ -100,6 +111,7 @@ export function rustSource(model: FeatureModel): string {
     ...rustSlice("ALL_TRIM_FEATURES", "TrimFeature", trimFeatures.map(trimFeaturePath)),
     ...rustSlice("FEATURE_RECORDS", "FeatureRecord", features.map(featureRecord)),
     ...rustSlice("TRIM_FEATURE_RECORDS", "TrimFeatureRecord", trimFeatures.map(trimFeatureRecord)),
+    ...rustSlice("LEFT_OUT_OF_LINK", "Feature", leftOut.map(featurePath)),
     ...rustFeatureNameFunction(features),
     "pub(crate) const RUST_SOURCE_VERSION: u32 = 2;",
     "",
@@ -142,24 +154,30 @@ export function cppHeader(model: FeatureModel): string {
   ].join("\n");
 }
 
-function generate(repositoryRoot: string, codegenDir: string): void {
+function withoutMinimumsOfCommandsLeftOut(model: FeatureModel): FeatureModel {
+  const features = model.features.map(feature => (feature.notInBunAot ? { ...feature, minimumBytes: {} } : feature));
+  return { ...model, features };
+}
+
+function generate(repositoryRoot: string, codegenDir: string, isBunAot: boolean): void {
   const model = loadFeatures(repositoryRoot);
   const outputs = {
-    "removable_features.rs": rustSource(model) + rustTableFormat().join("\n") + "\n",
+    "removable_features.rs": rustSource(model, isBunAot) + rustTableFormat().join("\n") + "\n",
+    "removable_features_initial_removal.s": initialRemovalAssembly(model, isBunAot),
     "BunRemovableFeatures.h": cppHeader(model),
-    "removable-features.json": serializeFeatureModel(model),
+    "removable-features.json": serializeFeatureModel(isBunAot ? withoutMinimumsOfCommandsLeftOut(model) : model),
   };
   for (const [name, text] of Object.entries(outputs)) writeIfNotChanged(join(codegenDir, name), text);
 }
 
 if (import.meta.main) {
   const [repositoryRoot, codegenDir, ...rest] = process.argv.slice(2);
-  if (repositoryRoot === undefined || codegenDir === undefined || rest.length > 0) {
-    console.error(`usage: bun ${generatorPath} <repository root> <codegen dir>`);
+  if (repositoryRoot === undefined || codegenDir === undefined || rest.some(flag => flag !== "--bun-aot")) {
+    console.error(`usage: bun ${generatorPath} <repository root> <codegen dir> [--bun-aot]`);
     process.exit(1);
   }
   try {
-    generate(repositoryRoot, codegenDir);
+    generate(repositoryRoot, codegenDir, rest.length > 0);
   } catch (error) {
     if (!(error instanceof BuildError)) throw error;
     process.stderr.write(error.format());

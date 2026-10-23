@@ -25,7 +25,7 @@ class Odd { get [Symbol.toStringTag]() { return "Odd!"; } [util.inspect.custom](
 attempt("odd", () => process.nextTick(new Odd() as any));
 attempt("odd-read", () => fs.readFileSync(new Odd() as any));
 // The printer of warnings writes through process.stderr once the program has replaced its `write`, and drops what that answers.
-const basename = process.argv0.split("/").pop()!;
+const basename = process.argv0.split(/[\\/]/).pop()!;
 process.stderr.write = ((text: string) => {
   console.log("written", JSON.stringify(text.replace(String(process.pid), "PID").replace(/`\S+ --trace-warnings/, "`EXE --trace-warnings")));
   return { odd: "answer" };

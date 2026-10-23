@@ -33,6 +33,7 @@ export const mimalloc: Dependency = {
       : []),
     "patches/mimalloc/secure-guard-pages-are-protected.patch",
     "patches/mimalloc/out-of-memory-is-no-corruption.patch",
+    ...(cfg.lockEnvironment ? ["patches/mimalloc/environment-sets-sizes-and-pace-only.patch"] : []),
   ],
 
   build: cfg => {

@@ -12,7 +12,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, inShare, wanted as programsWanted, slot, spawned, unsupported } from "../run-programs";
+import { built, inShare, wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump } from "../run-programs";
 
 export type Generated = {
   name: string;
@@ -30,6 +30,10 @@ export type Generated = {
   isOnlyCompiled?: true;
   /** It leaves an error that nobody catches: plain Bun goes on and exits with 1, and so does the executable. */
   leavesAnError?: true;
+  /** It ends in one of many ways. The executable ends with the exit code that plain Bun ends with. */
+  exitsAsPlainBunDoes?: true;
+  /** Under `alsoUnder` it runs out of room for objects. Where no error can be thrown there, the executable stops with "FATAL: out of memory", which is meant. */
+  mayStopOutOfMemory?: true;
   /** Nobody has looked at the program. Where TypeScript rejects it, or plain Bun fails on it or needs too long, there is nothing to compare. A crash of the build still fails the test. */
   mayBeUnjudgeable?: true;
   /** Set where plain Bun runs the program for reference, and nowhere else. */
@@ -98,7 +102,7 @@ export function generated(title: string, programs: Generated[]) {
               const compiled = await spawned([executable], folder, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
               if (fromSources) expect({ stdout: fromSources.stdout, signal: fromSources.signal, exitCode: fromSources.exitCode }).toEqual({ stdout: compiled.stdout, signal: compiled.signal, exitCode: compiled.exitCode });
               const plain = await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv });
-              const exitCode = program.leavesAnError ? 1 : 0;
+              const exitCode = program.exitsAsPlainBunDoes ? plain.exitCode : program.leavesAnError ? 1 : 0;
               expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode });
               expect(compiled.stderr).toContain("[aot] module: ");
               if (program.mayBeRefused && compiled.exitCode === 0 && compiled.stdout.startsWith("THROWS TypeError ")) return;
@@ -110,7 +114,8 @@ export function generated(title: string, programs: Generated[]) {
               }
               expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({ departing: [], signal: null, exitCode, lines: theirs.length });
               for (const under of program.alsoUnder ?? []) {
-                const again = await spawned([executable], folder, { ...bunEnv, ...under });
+                const again = await spawned(program.mayStopOutOfMemory ? withoutCoreDump([executable]) : [executable], folder, { ...bunEnv, ...under });
+                if (program.mayStopOutOfMemory && again.stderr.includes("FATAL: out of memory")) continue;
                 expect({ under, stdout: again.stdout, signal: again.signal, exitCode: again.exitCode }).toEqual({ under, stdout: plain.stdout, signal: null, exitCode });
               }
             } finally {

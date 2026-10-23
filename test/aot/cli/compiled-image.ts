@@ -1,8 +1,22 @@
 /**
  * Byte offsets of members of JSC::AOT::ImageHeader (aot/image/AOTImageFormat.h in WebKit).
- * `prefixSize` is the size of the part of the header that holds them.
+ * `prefixSize` is the size of the part of the header that tells an image from other bytes.
  */
-export const imageHeader = { magic: 0, stamp: 8, identity: 16, size: 32, codeOffset: 40, prefixSize: 48 } as const;
+export const imageHeader = {
+  magic: 0,
+  stamp: 8,
+  identity: 16,
+  size: 32,
+  codeOffset: 40,
+  prefixSize: 48,
+  codeSize: 48,
+  executableSize: 64,
+  formatVersion: 72,
+  sections: 208,
+  numberOfSections: 27,
+  constantsOffset: 464,
+  constantsSize: 468,
+} as const;
 
 const minFileAlignment = 512;
 const minImagePageSize = 16384n;

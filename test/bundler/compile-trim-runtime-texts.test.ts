@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunExeWithEveryCommand,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDirWithBunTypes as tempDir,
+} from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
@@ -188,7 +196,7 @@ const programs = { "hello.ts": `console.log("hello world");` };
 using dir = tempDir("compile-trim-runtime-texts", programs);
 said([bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"], String(dir));
 const file = canTrim ? readFileSync(join(String(dir), "hello" + (isWindows ? ".exe" : ""))) : Buffer.alloc(0);
-const listed = said([bunExe(), "lint", "--rules", "--format", "json"], String(dir)).stdout;
+const listed = said([bunExeWithEveryCommand(), "lint", "--rules", "--format", "json"], String(dir)).stdout;
 
 describe.skipIf(!canTrim)("an executable without the Bun command line holds none of its texts", () => {
   const whole = readFileSync(bunExe());

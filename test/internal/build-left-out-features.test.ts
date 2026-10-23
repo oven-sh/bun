@@ -1,0 +1,120 @@
+/**
+ * Build options that leave a feature out of Bun: what each one passes to the compilers, and what a Bun that was built
+ * with it lacks. The second half runs against such a Bun only.
+ */
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { computeFlags } from "../../scripts/build/flags.ts";
+
+function mockToolchain(): Toolchain {
+  return {
+    cc: "/fake/llvm/bin/clang",
+    cxx: "/fake/llvm/bin/clang++",
+    hostCc: undefined,
+    hostCxx: undefined,
+    clangVersion: "23.1.1",
+    clangResourceDir: "/fake/llvm/lib/clang/23",
+    ar: "/fake/llvm/bin/llvm-ar",
+    ld: "/fake/llvm/bin/ld.lld",
+    ld64Lld: "/fake/llvm/bin/ld64.lld",
+    rustLlvmVersion: "23.1.1",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
+    strip: "/fake/bin/strip",
+    llvmStrip: "/fake/llvm/bin/llvm-strip",
+    nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
+    dsymutil: "/fake/llvm/bin/dsymutil",
+    bun: "/fake/bin/bun",
+    jsRuntime: "/fake/bin/bun",
+    esbuild: "/fake/bin/esbuild",
+    ccache: undefined,
+    cmake: "/fake/bin/cmake",
+    cargo: undefined,
+    cargoHome: undefined,
+    rustupHome: undefined,
+    msvcLinker: undefined,
+    rc: undefined,
+    nasm: undefined,
+  };
+}
+
+function config(partial: PartialConfig, buildDir: string): Config {
+  return resolveConfig(
+    {
+      os: "linux",
+      arch: "x64",
+      abi: "gnu",
+      buildType: "Release",
+      webkit: "local",
+      buildDir,
+      linuxSysroot: buildDir,
+      ...partial,
+    },
+    mockToolchain(),
+  );
+}
+
+async function run(source: string, env: Record<string, string> = {}) {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  return { stdout: stdout.trim(), stderr, exitCode };
+}
+
+test("--shadow-realm=off defines BUN_DISABLE_SHADOW_REALM, and nothing else does", () => {
+  using dir = tempDir("build-left-out-features", {});
+  const define = "BUN_DISABLE_SHADOW_REALM=1";
+  expect(computeFlags(config({ shadowRealm: false }, String(dir))).defines).toContain(define);
+  expect(computeFlags(config({}, String(dir))).defines).not.toContain(define);
+  expect(computeFlags(config({ shadowRealm: true, webAssembly: false }, String(dir))).defines).not.toContain(define);
+});
+
+const hasShadowRealm = typeof ShadowRealm !== "undefined";
+
+describe.skipIf(hasShadowRealm)("a Bun built with --shadow-realm=off", () => {
+  test("has no ShadowRealm global", async () => {
+    const source = `
+      let thrown;
+      try { new ShadowRealm(); } catch (error) { thrown = error; }
+      console.log(typeof ShadowRealm, "ShadowRealm" in globalThis, thrown instanceof ReferenceError, thrown.message);
+    `;
+    expect(await run(source)).toEqual({
+      stdout: "undefined false true ShadowRealm is not defined",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("BUN_JSC_useShadowRealm=1 does not bring it back", async () => {
+    expect(await run("console.log(typeof ShadowRealm)", { BUN_JSC_useShadowRealm: "1" })).toEqual({
+      stdout: "undefined",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a program may define the name", async () => {
+    expect(await run("globalThis.ShadowRealm = class {}; console.log(typeof new ShadowRealm())")).toEqual({
+      stdout: "object",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test.skipIf(!hasShadowRealm)("a Bun built without the option has ShadowRealm", async () => {
+  expect(await run("console.log(new ShadowRealm().evaluate('1 + 1'))")).toEqual({
+    stdout: "2",
+    stderr: "",
+    exitCode: 0,
+  });
+});

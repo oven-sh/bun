@@ -14,7 +14,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
-import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
+import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -601,6 +601,7 @@ export function emitPostLink(
   n.phony("check", [
     ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
     ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
+    ...emitStrippedVerify(n, cfg, strippedExe),
     ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
   ]);
 
@@ -615,6 +616,13 @@ function smokeTestStamp(cfg: Config, exeName: string): string | undefined {
 /** Stamp of verify-binary.ts' scans of the executable, when the LLVM readers are available. */
 function binaryVerifyStamp(cfg: Config, exeName: string): string | undefined {
   return binaryVerifyTools(cfg) !== undefined ? resolve(cfg.buildDir, `${exeName}.binary-verified`) : undefined;
+}
+
+/** Stamp of the same scans of the stripped `bun`, where `strippedExpectations()` has something to say. */
+function strippedVerifyStamp(cfg: Config): string | undefined {
+  return binaryVerifyTools(cfg) !== undefined && strippedExpectations(cfg) !== undefined
+    ? resolve(cfg.buildDir, "bun.binary-verified")
+    : undefined;
 }
 
 /** Stamp of the duplicate-definition scan of the link inputs (its report is `<exe>.duplicate-symbols.txt`). */
@@ -695,6 +703,38 @@ function emitBinaryVerify(
     // Same reason as emitSmokeTest: never run while strip is mid-write when
     // the wrapper runtime is <buildDir>/bun itself.
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
+    vars: { spec: q(spec) },
+  });
+  return [stamp];
+}
+
+/**
+ * The same scan for the stripped `bun`, against `strippedExpectations()`: what the strip step writes is what ships, and
+ * a strip can write other program headers than it read. A validation of the strip edge.
+ */
+function emitStrippedVerify(n: Ninja, cfg: Config, strippedExe: string | undefined): string[] {
+  const stamp = strippedVerifyStamp(cfg);
+  const tools = binaryVerifyTools(cfg);
+  const expect = strippedExpectations(cfg);
+  if (strippedExe === undefined || stamp === undefined || tools === undefined || expect === undefined) return [];
+  const name = "bun";
+  const spec = resolve(cfg.buildDir, `${name}.verify.json`);
+  writeIfChanged(spec, JSON.stringify({ name, exe: strippedExe, tools, expect }, null, 2) + "\n");
+  const q = (p: string) => quote(p, cfg.windows);
+  n.rule("stripped_verify", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${name} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} binary $spec`,
+    description: `check ${name} exports, dynamic deps, hardening`,
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "stripped_verify",
+    inputs: [strippedExe],
+    implicitInputs: [
+      spec,
+      verifyBinaryPath,
+      resolve(import.meta.dirname, "binary-expectations.ts"),
+      ...linkDepends(cfg),
+    ],
     vars: { spec: q(spec) },
   });
   return [stamp];
@@ -842,10 +882,12 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
   }
 
   const postlinkInputs = [...machoPostlinkImplicitInputs(cfg), ...(cfg.hardened ? [closeElfGapsPath] : [])];
+  const verified = strippedVerifyStamp(cfg);
   const node = {
     outputs: [out],
     inputs: [inputExe],
     ...(postlinkInputs.length > 0 ? { implicitInputs: postlinkInputs } : {}),
+    ...(verified !== undefined ? { validations: [verified] } : {}),
   };
   if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
   else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });

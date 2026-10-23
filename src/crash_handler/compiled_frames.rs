@@ -178,18 +178,19 @@ pub fn report_compiled_frames(report: &[u8]) -> DecodedReport {
     }
 }
 
-pub(crate) fn removed_feature_reached(addresses: [Option<usize>; 2]) -> Option<Feature> {
+/// `pc`: where the processor tried to run an instruction. The addresses of a removed range are free for later mappings, so
+/// a fault on data there says nothing about the feature.
+pub(crate) fn removed_feature_entered(pc: usize) -> Option<Feature> {
     // On ELF the compiled program can be mapped where the largest removed range was.
-    addresses
-        .into_iter()
-        .flatten()
-        .filter(|&address| offset_in_code(address).is_none())
-        .find_map(bun_removable_features::removed_feature_at)
+    if offset_in_code(pc).is_some() {
+        return None;
+    }
+    bun_removable_features::removed_feature_at(pc)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::removed_feature_reached;
+    use super::removed_feature_entered;
 
     /// The engine's, as in an executable without compiled code.
     #[unsafe(no_mangle)]
@@ -199,9 +200,9 @@ mod tests {
 
     #[test]
     fn untrimmed_executable_reaches_no_removed_feature() {
-        let local_function = removed_feature_reached as *const () as usize;
-        assert!(removed_feature_reached([Some(0), Some(usize::MAX)]).is_none());
-        assert!(removed_feature_reached([None, None]).is_none());
-        assert!(removed_feature_reached([Some(local_function), None]).is_none());
+        let local_function = removed_feature_entered as *const () as usize;
+        assert!(removed_feature_entered(0).is_none());
+        assert!(removed_feature_entered(usize::MAX).is_none());
+        assert!(removed_feature_entered(local_function).is_none());
     }
 }

@@ -4,7 +4,7 @@
 const { createRequire } = require("node:module");
 const inner = require("./inner.cjs");
 const made = createRequire(__filename);
-const nameOf = path => path.slice(path.lastIndexOf("/") + 1);
+const nameOf = path => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 console.log("the program resolves:", nameOf(made.resolve("./inner.cjs")), typeof made.resolve.paths, made("node:path").basename("/a/b.txt"));
 
 globalThis.report = (road, found) => console.log("the text, " + road + ":", found);

@@ -6,7 +6,8 @@ use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::report::{self, ReportEntry, ReportInput};
 use bun_aot::statistics::{Stage, StatisticId, Statistics};
 use bun_ast::{Kind, Log};
-use bun_bundler::aot::{AotBuild, AotBuildFailure};
+use bun_bundler::aot::{AotBuild, AotBuildFailure, MetafileOutput, write_metafile};
+use bun_bundler::linker_context::metafile_builder::generate_markdown;
 use bun_core::ZBox;
 use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sys::Fd;
@@ -65,6 +66,7 @@ pub(super) fn collect_reports(
     CompileOutcome {
         output_files: Vec::new(),
         graph_bytes: None,
+        metafile: None,
         summary,
         report_messages,
         trim_log_lines: Vec::new(),
@@ -127,6 +129,49 @@ pub(super) fn write_obfuscation_map(
     );
     let path = [outfile, b".map".as_slice()].concat();
     write_file(root_dir, &path, &bytes)
+}
+
+/// `None`: the build asks for no metafile.
+pub(super) fn collect_metafile(build: &AotBuild, outfile: &[u8]) -> Option<Vec<u8>> {
+    let output = MetafileOutput {
+        file_name: bun_paths::basename(outfile),
+        byte_count: build.engine.image().map_or(0, |image| image.len() as u64),
+    };
+    Some(write_metafile(build.modules.as_ref()?, &output))
+}
+
+/// An empty path: the command line asks for no such file.
+pub(super) fn write_metafiles(
+    outcome: &CompileOutcome,
+    json_path: &[u8],
+    markdown_path: &[u8],
+) -> Result<(), CompileFailure> {
+    let Some(json) = outcome.metafile.as_deref() else {
+        return Ok(());
+    };
+    if !json_path.is_empty() {
+        write_file_in_new_folders(json_path, json)?;
+    }
+    if markdown_path.is_empty() {
+        return Ok(());
+    }
+    match generate_markdown(json) {
+        Ok(markdown) => write_file_in_new_folders(markdown_path, &markdown),
+        Err(error) => {
+            bun_core::warn!("Failed to generate markdown metafile: {}", error.name());
+            Ok(())
+        }
+    }
+}
+
+fn write_file_in_new_folders(path: &[u8], bytes: &[u8]) -> Result<(), CompileFailure> {
+    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+    bun_sys::File::make_open(path, flags, 0o664)
+        .and_then(|file| file.write_all(bytes))
+        .map_err(|error| CompileFailure::FileNotWritten {
+            path: path.to_vec(),
+            error,
+        })
 }
 
 fn write_report_file(

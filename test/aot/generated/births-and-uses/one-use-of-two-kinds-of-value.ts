@@ -415,7 +415,7 @@ export function programsWith(typed = false, { which = "", turns = 60, onePlace =
   return made;
 }
 
-// In a very large program whatever is neither hot nor warm is generated directly, without the optimizer. No program here is that large, so some are built as if all of their code were.
+// On request code is generated directly, without the optimizer. Some are built with all of their code made that way.
 export function programs(typed = false) {
   const directly = ["--aot-testing=GenerateAllCodeDirectly"];
   const called = (suffix: string, flags: string[] | undefined, list: ReturnType<typeof programsWith>) => list.map(program => ({ name: program.name + suffix, file: program.file, flags, get text() { return program.text; } }));

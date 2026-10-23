@@ -2202,7 +2202,7 @@ unsafe fn __bun_transpile_source_code(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> Result<ResolvedSource, bun_jsc::CrateError> {
-    transpile_source_code_inner(jsc_vm, args).map_err(|e| to_jsc_fetch_error(&e))
+    transpile_source_code_inner::<false>(jsc_vm, args).map_err(|e| to_jsc_fetch_error(&e))
 }
 
 /// Inner body of [`__bun_transpile_source_code`] — split for `?`-on-`Result`
@@ -2212,11 +2212,11 @@ unsafe fn __bun_transpile_source_code(
 /// `vm.transpiler` while also touching `vm.module_loader` / `vm.bun_watcher`,
 /// which would alias under `&mut` (PORTING.md §Forbidden). Per-field deref via
 /// the raw ptr, mirroring `auto_tick` above.
-fn transpile_source_code_inner(
+fn transpile_source_code_inner<const DATA_ONLY: bool>(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> crate::Result<ResolvedSource> {
-    let mut resolved_source = transpile_source_code_of_any_provenance(jsc_vm, args)?;
+    let mut resolved_source = transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args)?;
     resolved_source.is_static |= is_input_static(jsc_vm, args);
     Ok(resolved_source)
 }
@@ -2245,7 +2245,7 @@ fn is_input_static(jsc_vm: *mut VirtualMachine, args: &TranspileArgs<'_>) -> boo
 }
 
 /// The body of [`transpile_source_code_inner`], which says whether the result is static code.
-fn transpile_source_code_of_any_provenance(
+fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> crate::Result<ResolvedSource> {
@@ -2474,11 +2474,15 @@ fn transpile_source_code_of_any_provenance(
                 }
             });
 
-            let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
+            let is_node_override = !DATA_ONLY && specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
             // SAFETY: per fn contract.
-            let (macro_mode, has_any_macro_remappings) =
-                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
+            let (macro_mode, has_any_macro_remappings) = unsafe {
+                (
+                    (*jsc_vm).macro_mode,
+                    !DATA_ONLY && (*jsc_vm).has_any_macro_remappings,
+                )
+            };
             let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
                 bun_resolver::package_json::MacroMap::default()
             } else {
@@ -2697,7 +2701,8 @@ fn transpile_source_code_of_any_provenance(
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
-                    runtime_transpiler_cache: if !disable_transpilying
+                    runtime_transpiler_cache: if !DATA_ONLY
+                        && !disable_transpilying
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
                         Some(&mut cache)
@@ -2717,7 +2722,15 @@ fn transpile_source_code_of_any_provenance(
                 // `parse_maybe_return_file_only_allow_shared_buffer` body, so
                 // dispatch at runtime via the const-generic bool.
                 let return_file_only = disable_transpilying || loader == L::Json;
-                let parse_result: Option<ParseResult> = if return_file_only {
+                let parse_result: Option<ParseResult> = if DATA_ONLY {
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    let transpiler = unsafe { &mut (*jsc_vm).transpiler };
+                    if return_file_only {
+                        transpiler.parse_data_file::<true>(parse_options)
+                    } else {
+                        transpiler.parse_data_file::<false>(parse_options)
+                    }
+                } else if return_file_only {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {
                         (*jsc_vm)
@@ -2751,7 +2764,9 @@ fn transpile_source_code_of_any_provenance(
                     arena_guard.2 = false; // give_back_arena = false
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
-                    note_compile_cache_parse_failure(path, loader, module_type);
+                    if !DATA_ONLY {
+                        note_compile_cache_parse_failure(path, loader, module_type);
+                    }
                     return Err(crate::Error::ParseError);
                 };
 
@@ -2765,7 +2780,7 @@ fn transpile_source_code_of_any_provenance(
                         (*extra).module_type = ModuleType::Unknown;
                     }
                     // Re-enter with `&parse_result.source` as `virtual_source`.
-                    return transpile_source_code_inner(
+                    return transpile_source_code_inner::<DATA_ONLY>(
                         jsc_vm,
                         &TranspileArgs {
                             specifier: args.specifier,
@@ -2801,7 +2816,9 @@ fn transpile_source_code_of_any_provenance(
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
-                    note_compile_cache_parse_failure(path, loader, module_type);
+                    if !DATA_ONLY {
+                        note_compile_cache_parse_failure(path, loader, module_type);
+                    }
                     return Err(crate::Error::ParseError);
                 }
 
@@ -2843,9 +2860,10 @@ fn transpile_source_code_of_any_provenance(
                     });
                 }
 
-                if matches!(loader, L::Text)
-                    && bun_jsc::compiled_program::compiled_program().is_some()
-                {
+                let exports_values =
+                    DATA_ONLY || bun_jsc::compiled_program::compiled_program().is_some();
+
+                if matches!(loader, L::Text) && exports_values {
                     let Ok(jsvalue_for_export) =
                         bun_core::String::clone_utf8(&parse_result.source.contents)
                             .into_js(global_object)
@@ -2861,11 +2879,16 @@ fn transpile_source_code_of_any_provenance(
                 }
 
                 // JSON/TOML/YAML/JSON5/XML: export as a JS object.
-                if matches!(
-                    loader,
-                    L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
-                ) {
-                    let jsvalue_for_export = if parse_result.empty {
+                let is_markdown_value = loader == L::Md && exports_values;
+                if is_markdown_value
+                    || matches!(
+                        loader,
+                        L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
+                    )
+                {
+                    let jsvalue_for_export = if parse_result.empty && is_markdown_value {
+                        JSValue::UNDEFINED
+                    } else if parse_result.empty {
                         JSValue::create_empty_object(global_object, 0)
                     } else {
                         // `ast.parts.at(0).stmts[0].data.s_expr.value.toJS(...)`
@@ -2877,12 +2900,21 @@ fn transpile_source_code_of_any_provenance(
                         // arena outlives this call (returned to the VM by the
                         // scopeguard above only after we return).
                         let stmt = &(*part.stmts)[0];
-                        let bun_ast::StmtData::SExpr(s_expr) = &stmt.data else {
+                        let value = match &stmt.data {
+                            bun_ast::StmtData::SExpr(s_expr) => &s_expr.value,
+                            bun_ast::StmtData::SExportDefault(export_default) => {
+                                match &export_default.value {
+                                    bun_ast::StmtOrExpr::Expr(html) => html,
+                                    bun_ast::StmtOrExpr::Stmt(_) => {
+                                        unreachable!("Markdown exports an expression")
+                                    }
+                                }
+                            }
                             // Parser guarantees JSON/TOML/YAML produce a single
                             // `SExpr` part; anything else is a parser bug.
-                            unreachable!("JSON/TOML/YAML parse result is always SExpr")
+                            _ => unreachable!("JSON/TOML/YAML parse result is always SExpr"),
                         };
-                        match bun_js_parser_jsc::expr_to_js(&s_expr.value, global_object) {
+                        match bun_js_parser_jsc::expr_to_js(value, global_object) {
                             Ok(v) => v,
                             Err(e) => {
                                 return Err(match e {
@@ -2902,9 +2934,17 @@ fn transpile_source_code_of_any_provenance(
                     return Ok(ResolvedSource {
                         source_url: input_specifier.create_if_different(path.text),
                         jsvalue_for_export,
-                        tag: ResolvedSourceTag::ExportsObject,
+                        tag: if is_markdown_value {
+                            ResolvedSourceTag::ExportDefaultOnly
+                        } else {
+                            ResolvedSourceTag::ExportsObject
+                        },
                         ..Default::default()
                     });
+                }
+
+                if DATA_ONLY {
+                    return Err(crate::Error::ModuleNotFound);
                 }
 
                 // already-bundled (bytecode cache hit).
@@ -3402,7 +3442,7 @@ fn transpile_source_code_of_any_provenance(
                 (*extra).loader = L::File;
                 (*extra).module_type = ModuleType::Unknown;
             }
-            transpile_source_code_inner(jsc_vm, args)
+            transpile_source_code_inner::<DATA_ONLY>(jsc_vm, args)
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -4294,6 +4334,36 @@ fn what_loading_gives(loader: Loader) -> Loaded {
     }
 }
 
+fn loader_refusal_error<const DATA_ONLY: bool>(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    is_commonjs_require: bool,
+    loader: Loader,
+) -> Option<JSValue> {
+    let loaded = what_loading_gives(loader);
+    if loaded == Loaded::Data {
+        return None;
+    }
+    let code = if is_commonjs_require {
+        bun_jsc::ErrCode::MODULE_NOT_FOUND
+    } else {
+        bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
+    };
+    let refusal = if loaded == Loaded::Code {
+        bun_jsc::compiled_program::error_if_code_outside_image_is_refused(global, code, specifier)
+    } else {
+        bun_jsc::compiled_program::error_if_host_object_outside_image_is_refused(
+            global, code, specifier,
+        )
+    };
+    if DATA_ONLY && refusal.is_none() {
+        return Some(bun_jsc::module_loader::module_not_compiled_in_error(
+            global, code, specifier,
+        ));
+    }
+    refusal
+}
+
 /// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
 const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 
@@ -4325,17 +4395,36 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             RuntimeTranspiler,
             Throw,
             {
-                let code = if is_commonjs_require {
-                    bun_jsc::ErrCode::MODULE_NOT_FOUND
-                } else {
-                    bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
-                };
-                *ret = ErrorableResolvedSource::err(
-                    bun_jsc::module_loader::module_not_compiled_in_error(global, code, specifier),
-                );
-                ptr::null_mut()
+                bun_removable_features::call_removable_or!(
+                    DataFileLoaders,
+                    Throw,
+                    {
+                        let code = if is_commonjs_require {
+                            bun_jsc::ErrCode::MODULE_NOT_FOUND
+                        } else {
+                            bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
+                        };
+                        *ret = ErrorableResolvedSource::err(
+                            bun_jsc::module_loader::module_not_compiled_in_error(
+                                global, code, specifier,
+                            ),
+                        );
+                        ptr::null_mut()
+                    },
+                    transpile_file::<true>,
+                    jsc_vm,
+                    global,
+                    specifier,
+                    referrer,
+                    type_attribute,
+                    ret,
+                    allow_promise,
+                    is_commonjs_require,
+                    force_loader,
+                    module_loader
+                )
             },
-            transpile_file,
+            transpile_file::<false>,
             jsc_vm,
             global,
             specifier,
@@ -4352,7 +4441,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
 
 /// SAFETY: `jsc_vm` is the live per-thread VM.
 #[inline(never)]
-unsafe fn transpile_file(
+unsafe fn transpile_file<const DATA_ONLY: bool>(
     jsc_vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     specifier: &bun_core::String,
@@ -4444,26 +4533,12 @@ unsafe fn transpile_file(
         }
     }
 
-    let loaded = what_loading_gives(lr.loader.unwrap_or(Loader::File));
-    if loaded != Loaded::Data {
-        let code = if is_commonjs_require {
-            bun_jsc::ErrCode::MODULE_NOT_FOUND
-        } else {
-            bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
-        };
-        let refusal = if loaded == Loaded::Code {
-            bun_jsc::compiled_program::error_if_code_outside_image_is_refused(
-                global, code, specifier,
-            )
-        } else {
-            bun_jsc::compiled_program::error_if_host_object_outside_image_is_refused(
-                global, code, specifier,
-            )
-        };
-        if let Some(error) = refusal {
-            *ret = ErrorableResolvedSource::err(error);
-            return ptr::null_mut();
-        }
+    if let Some(loader) = lr.loader
+        && let Some(error) =
+            loader_refusal_error::<DATA_ONLY>(global, specifier, is_commonjs_require, loader)
+    {
+        *ret = ErrorableResolvedSource::err(error);
+        return ptr::null_mut();
     }
 
     // ── module_type sniff from extension / package.json ─────────────────────
@@ -4502,9 +4577,14 @@ unsafe fn transpile_file(
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
     // We only run the transpiler concurrently when we can — today that's import statements and
     // import expressions. Node compile cache: lazily initialize from env on the first fetch.
-    bun_jsc::node_compile_cache::init_from_env_once();
+    if !DATA_ONLY {
+        bun_jsc::node_compile_cache::init_from_env_once();
+    }
 
     'transpile_async: {
+        if DATA_ONLY {
+            break 'transpile_async;
+        }
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
         let (has_loaded, is_in_preload, has_plugins, store_enabled) = unsafe {
@@ -4614,6 +4694,18 @@ unsafe fn transpile_file(
         }
     };
 
+    if lr.loader.is_none()
+        && let Some(error) = loader_refusal_error::<DATA_ONLY>(
+            global,
+            specifier,
+            is_commonjs_require,
+            synchronous_loader,
+        )
+    {
+        *ret = ErrorableResolvedSource::err(error);
+        return ptr::null_mut();
+    }
+
     // Reset the module loader's arena on scope exit.
     // `jsc_vm` is the live per-thread VM (BackRef invariant).
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
@@ -4662,7 +4754,7 @@ unsafe fn transpile_file(
         extra: &raw mut extra,
     };
 
-    match transpile_source_code_inner(jsc_vm, &args) {
+    match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             promise.cast::<c_void>()
@@ -4801,7 +4893,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         extra: &raw mut extra,
     };
 
-    match transpile_source_code_inner(jsc_vm, &args) {
+    match transpile_source_code_inner::<false>(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             bun_analytics::features::virtual_modules

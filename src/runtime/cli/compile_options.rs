@@ -113,9 +113,8 @@ pub(crate) enum OptionName {
     ExecArgv,
     Trim,
     TrimWithout,
+    TrimTemplate,
     TrimLocales,
-    BytecodeDepth,
-    BytecodeOrder,
     CodeGenerationFromStrings,
     Threads,
     References,
@@ -133,6 +132,7 @@ pub(crate) struct TrimFlags<'a> {
     pub remove_internal: Vec<&'a [u8]>,
     pub locales: Option<Vec<&'a [u8]>>,
     pub logs: bool,
+    pub is_template: bool,
 }
 
 #[derive(Default)]
@@ -149,9 +149,6 @@ pub(crate) struct CompileFlags<'a> {
     pub admits_inspector: bool,
     pub trim: TrimFlags<'a>,
     pub developer_words: Vec<(&'static str, Option<&'a [u8]>)>,
-    pub has_other_format: bool,
-    pub has_bytecode_depth: bool,
-    pub has_bytecode_order: bool,
     pub is_cross_compile: bool,
     pub exec_argv: &'a [u8],
 }
@@ -166,12 +163,10 @@ pub(crate) enum OptionError<'a> {
         option: OptionName,
         needed: OptionName,
     },
-    NotSupportedWithAot(OptionName),
     EmbeddedOptionLoadsCode {
         option: Box<[u8]>,
         excluded_by: OptionName,
     },
-    RequiresEsm,
     BothAotAndNoAot,
     CrossCompile,
     InvalidValue {
@@ -217,10 +212,6 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Inspector, BuildApi) => "compile.inspector",
         (Name::ExecArgv, BuildFlag | CompileCommand) => "--compile-exec-argv",
         (Name::ExecArgv, BuildApi) => "compile.execArgv",
-        (Name::BytecodeDepth, BuildFlag | CompileCommand) => "--bytecode-depth",
-        (Name::BytecodeDepth, BuildApi) => "bytecodeDepth",
-        (Name::BytecodeOrder, BuildFlag | CompileCommand) => "--bytecode-order",
-        (Name::BytecodeOrder, BuildApi) => "compile.bytecodeOrder",
         (Name::CodeGenerationFromStrings, BuildFlag | CompileCommand) => {
             "--disallow-code-generation-from-strings"
         }
@@ -228,6 +219,7 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::HugeHeap, _) => "--aot-huge-heap",
         (Name::InPlace, _) => "--compile-in-place",
         (Name::TrimWithout, _) => "--trim-without",
+        (Name::TrimTemplate, _) => "--trim-template",
         (Name::Threads, _) => "--aot-threads",
         (Name::References, _) => "--aot-references",
         (Name::Report, _) => "--aot-report",
@@ -256,11 +248,6 @@ impl OptionError<'_> {
                     out.extend_from_slice(b": true");
                 }
             }
-            OptionError::NotSupportedWithAot(option) => {
-                write_spelling(OptionName::Aot, origin, out);
-                out.extend_from_slice(b" does not support ");
-                write_spelling(*option, origin, out);
-            }
             OptionError::EmbeddedOptionLoadsCode {
                 option,
                 excluded_by,
@@ -274,12 +261,6 @@ impl OptionError<'_> {
                     b" because the executable only runs code that was compiled into it",
                 );
             }
-            OptionError::RequiresEsm => out.extend_from_slice(match origin {
-                RequestOrigin::CompileCommand | RequestOrigin::BuildFlag => {
-                    b"--aot requires --format=esm"
-                }
-                RequestOrigin::BuildApi => b"compile.aot requires format: 'esm'",
-            }),
             OptionError::BothAotAndNoAot => {
                 out.extend_from_slice(b"Cannot use both --aot and --no-aot")
             }
@@ -412,6 +393,8 @@ fn check_requires_executable<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionE
         OptionName::Trim
     } else if !trim.remove_internal.is_empty() {
         OptionName::TrimWithout
+    } else if trim.is_template {
+        OptionName::TrimTemplate
     } else {
         return Ok(());
     };
@@ -448,15 +431,6 @@ fn check_requires_aot<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a
 fn check_aot_combination<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a>> {
     if flags.is_cross_compile {
         return Err(OptionError::CrossCompile);
-    }
-    if flags.has_bytecode_depth {
-        return Err(OptionError::NotSupportedWithAot(OptionName::BytecodeDepth));
-    }
-    if flags.has_bytecode_order {
-        return Err(OptionError::NotSupportedWithAot(OptionName::BytecodeOrder));
-    }
-    if flags.has_other_format {
-        return Err(OptionError::RequiresEsm);
     }
     Ok(())
 }
@@ -537,6 +511,7 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
             .as_ref()
             .map(|tags| tags.iter().map(|tag| Box::from(*tag)).collect()),
         logs: trim.logs,
+        is_template: trim.is_template,
     })
 }
 
@@ -798,13 +773,10 @@ fn read_build_flags<'c>(
                 .filter(|name| !name.is_empty())
                 .collect(),
             locales: (!locale_lists.is_empty()).then(|| split_at_commas(locale_lists).collect()),
+            is_template: args.flag(b"--trim-template"),
             ..Default::default()
         },
         developer_words: read_developer_words(args),
-        has_other_format: args.option(b"--format").is_some()
-            && options.output_format != Format::Esm,
-        has_bytecode_depth: args.has(b"--bytecode-depth"),
-        has_bytecode_order: args.has(b"--bytecode-order"),
         is_cross_compile: !options.compile_target.is_this_bun(),
         exec_argv: options.compile_exec_argv.as_deref().unwrap_or_default(),
     }

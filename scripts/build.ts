@@ -437,7 +437,9 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   mode: "string",
   lto: "boolean",
   trimmable: "boolean",
+  jit: "boolean",
   aot: "boolean",
+  onlyHandedOverCommands: "boolean",
   relr: "boolean",
   pgoGenerate: "string",
   pgoUse: "string",
@@ -452,9 +454,13 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   valgrind: "boolean",
   fuzzilli: "boolean",
   hardened: "boolean",
+  requireMdwe: "boolean",
+  lockEnvironment: "boolean",
+  guardedPages: "boolean",
   socketFaultInjection: "boolean",
   codeGenerationFromStrings: "boolean",
   webAssembly: "boolean",
+  shadowRealm: "boolean",
   unifiedSources: "boolean",
   archiveDeps: "boolean",
   timeTrace: "boolean",
@@ -662,7 +668,8 @@ Options:
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, relr, assertions, logs, baseline,
-                                  canary, valgrind, hardened,
+                                  canary, valgrind, hardened, requireMdwe,
+                                  lockEnvironment, guardedPages,
                                   webkit (prebuilt|local),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),

@@ -274,6 +274,7 @@ pub struct TrimPlan {
     pub(crate) decision: Decision,
     pub(crate) ranges: Vec<PlannedRange>,
     pub(crate) icu_packages: Vec<PlannedIcuPackage>,
+    pub(crate) keeps_table: bool,
 }
 
 impl TrimPlan {
@@ -282,6 +283,7 @@ impl TrimPlan {
             decision: Decision::empty(),
             ranges: Vec::new(),
             icu_packages: Vec::new(),
+            keeps_table: false,
         }
     }
 

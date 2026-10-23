@@ -2,7 +2,7 @@
 import { EventEmitter } from "node:events";
 const opaque = value => [value, 0][Number(process.argv.length > 100)];
 // A frame of one of Bun's own modules has a line of Bun's source file in an executable, and of the module as it is built into Bun elsewhere.
-const shorten = text => String(text).replace(/\((?:node:|bun:|internal[:\/])[^()]*\)/g, "(a module of Bun)").replace(/(?:file:\/\/)?\/[^\s():]*\//g, "");
+const shorten = text => String(text).replace(/\((?:node:|bun:|internal[:\/])[^()]*\)/g, "(a module of Bun)").replace(/(?:file:\/\/)?(?:[A-Z]:)?[\\\/][^\s():]*[\\\/]/g, "");
 function framesOf(stack, count = 6) {
   const frames = [];
   for (const text of String(stack).split("\n").slice(1)) frames.push(shorten(text.trim()));

@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-5c2923e5";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-8ec44cba";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -193,6 +193,7 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       schemaUsers: [],
       builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations), join(builtinsGenerator, "engine.ts")],
       builtinTableOutputs: [],
+      builtinsLeftOut: [],
     };
   }
   const wk = webkitLayout(cfg);
@@ -228,6 +229,7 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       ...aotGeneratedFiles(lists, "BUILTIN_TABLE"),
       join(builtinsGeneratedDirectory, engineDeclarations),
     ],
+    builtinsLeftOut: cfg.shadowRealm ? [] : ["ShadowRealm"],
   };
 }
 
@@ -306,6 +308,7 @@ const rows: Row[] = [
   ["BUN_SKIP_FAILING_ASSERTIONS", 1],
   ["BUSE_TZONE", 0],
   ["ENABLE_ACCESSIBILITY_ISOLATED_TREE", 0],
+  ["ENABLE_AOT", c => (c.jit ? undefined : 1)], // PlatformEnable.h turns it on by itself only where the FTL is on
   ["ENABLE_API_TESTS", c => on(!c.windows)],
   ["ENABLE_APPLE_PAY", 0],
   ["ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_LINE_ITEM", 0],
@@ -346,11 +349,11 @@ const rows: Row[] = [
   ["ENABLE_DARK_MODE_CSS", 0],
   ["ENABLE_DATACUE_VALUE", 0],
   ["ENABLE_DEVICE_ORIENTATION", 0],
-  ["ENABLE_DFG_JIT", 1],
+  ["ENABLE_DFG_JIT", c => on(c.jit)],
   ["ENABLE_DRAG_SUPPORT", 0],
   ["ENABLE_ENCRYPTED_MEDIA", 0],
   ["ENABLE_EXPERIMENTAL_FEATURES", 0],
-  ["ENABLE_FTL_JIT", 1],
+  ["ENABLE_FTL_JIT", c => on(c.jit)],
   ["ENABLE_FULLSCREEN_API", 1],
   ["ENABLE_FUZZILLI", c => (c.windows ? undefined : c.fuzzilli ? 1 : 0)],
   ["ENABLE_GAMEPAD", 0],
@@ -364,7 +367,7 @@ const rows: Row[] = [
   ["ENABLE_IOS_TOUCH_EVENTS", 0],
   ["ENABLE_IPC_TESTING_SWIFT", 0],
   ["ENABLE_JAVASCRIPT_SHELL", 1],
-  ["ENABLE_JIT", 1],
+  ["ENABLE_JIT", c => on(c.jit)],
   ["ENABLE_JSC_GLIB_API", 0],
   ["ENABLE_LAYOUT_TESTS", 0],
   ["ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER", 0],
@@ -409,6 +412,8 @@ const rows: Row[] = [
   ["ENABLE_SAMPLING_PROFILER", 1],
   ["ENABLE_SANDBOX_EXTENSIONS", 0],
   ["ENABLE_SERVICE_CONTROLS", 0],
+  // PlatformEnable.h turns it on where nothing defines it, as in a prebuilt WebKit.
+  ["ENABLE_SHADOW_REALM", c => (c.shadowRealm ? undefined : 0)],
   ["ENABLE_SHAREABLE_RESOURCE", 0],
   ["ENABLE_SMOOTH_SCROLLING", 1],
   ["ENABLE_SPATIAL_PORTAL", 0],
@@ -428,7 +433,7 @@ const rows: Row[] = [
   ["ENABLE_VIDEO_PRESENTATION_MODE", 0],
   ["ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN", 1],
   ["ENABLE_WEBASSEMBLY", 1],
-  ["ENABLE_WEBASSEMBLY_BBQJIT", 1],
+  ["ENABLE_WEBASSEMBLY_BBQJIT", c => on(c.jit)],
   ["ENABLE_WEBASSEMBLY_OMGJIT", 1],
   ["ENABLE_WEBDRIVER", 0],
   ["ENABLE_WEBDRIVER_BIDI", 0],

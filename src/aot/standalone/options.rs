@@ -66,6 +66,7 @@ impl StandaloneBuild {
             load: self.load_options(),
             paths: self.path_options(&working_directory),
             removable: RemovableOptions::default(),
+            lists_modules: false,
         }
     }
 

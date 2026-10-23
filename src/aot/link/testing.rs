@@ -258,6 +258,7 @@ fn with_bound_build_without_bun_modules<R>(
             entry_point_names: entry_points,
         },
         removable: Default::default(),
+        lists_modules: false,
     };
     let caches = ThreadCaches::default();
     let limits = LimitValues::for_host();

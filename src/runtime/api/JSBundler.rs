@@ -497,12 +497,7 @@ pub(crate) mod js_bundler {
             Ok(())
         }
 
-        fn compile_flags<'a>(
-            &'a self,
-            compile: &'a CompileOptions,
-            has_other_format: bool,
-            has_bytecode_depth: bool,
-        ) -> CompileFlags<'a> {
+        fn compile_flags<'a>(&'a self, compile: &'a CompileOptions) -> CompileFlags<'a> {
             CompileFlags {
                 is_executable: true,
                 aot: self.aot,
@@ -524,11 +519,9 @@ pub(crate) mod js_bundler {
                         .as_ref()
                         .map(|tags| tags.iter().map(Vec::as_slice).collect()),
                     logs: self.logs,
+                    is_template: false,
                 },
                 developer_words: vec![],
-                has_other_format,
-                has_bytecode_depth,
-                has_bytecode_order: !compile.bytecode_order.is_empty(),
                 is_cross_compile: !compile.compile_target.is_this_bun(),
                 exec_argv: &compile.exec_argv.list,
             }
@@ -1598,17 +1591,9 @@ pub(crate) mod js_bundler {
                 config,
                 this.compile.as_ref().map(|c| c.compile_target),
             )? {
-                // `bytecode: true` alone chose CommonJS above: only a written format is another format.
-                let has_other_format = raw.aot
-                    && this.format != options::Format::Esm
-                    && (!this.bytecode || config.get(global_this, "format")?.is_some());
                 let compile = this.compile.insert(compile);
-                let settings = compile_options::resolve(&raw.compile_flags(
-                    compile,
-                    has_other_format,
-                    this.bytecode_depth != u32::MAX,
-                ))
-                .map_err(|error| throw_option_error(global_this, error))?;
+                let settings = compile_options::resolve(&raw.compile_flags(compile))
+                    .map_err(|error| throw_option_error(global_this, error))?;
                 compile.aot = settings.aot;
                 compile.trim = settings.trim;
                 if compile.aot.is_some() {

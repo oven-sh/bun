@@ -7,6 +7,7 @@ mod import_graph;
 mod link_stage;
 mod load_stage;
 mod lower_stage;
+mod module_list;
 #[cfg(test)]
 mod module_reach_tests;
 mod program_reach;
@@ -23,6 +24,7 @@ mod time_tests;
 pub(crate) use self::lower_stage::collect_file_inputs;
 
 use self::import_graph::ImportGraph;
+use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
 use crate::builtins::{BuiltinNames, Platforms};
 use crate::diagnostic_codes::Code;
@@ -35,6 +37,7 @@ use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_
 use crate::load::source_provider::SourceProvider;
 use crate::load::typed_packages::TypedPackages;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
+use crate::module_list::ModuleList;
 use crate::modules::{DeferredData, ModuleGraph};
 use crate::options::Options;
 use crate::package_diagnostics::PackageView;
@@ -64,6 +67,8 @@ pub struct ProgramSummary {
     pub texts: SourceTexts,
     pub statistics: Statistics,
     pub validates_by_type: bool,
+    /// Where `Options::lists_modules` asks for it.
+    pub modules: Option<ModuleList>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -176,6 +181,7 @@ struct FrontEndOutput {
     entry_points: Vec<EntryPointPaths>,
     folders: Vec<FolderPaths>,
     validates_by_type: bool,
+    modules: Option<ListedModules>,
 }
 
 impl FrontEndOutput {
@@ -187,6 +193,7 @@ impl FrontEndOutput {
             texts: self.texts,
             statistics,
             validates_by_type: self.validates_by_type,
+            modules: self.modules.map(|modules| modules.list),
         };
         (self.program, summary)
     }
@@ -286,6 +293,7 @@ pub fn compile(
         identity: options.executable_identity,
         image_form: options.image_form,
         thread_count: options.thread_count(),
+        reports_functions: options.lists_modules,
     };
     let mut engine_options = match EngineOptions::new(&request) {
         Ok(engine_options) => engine_options,
@@ -313,7 +321,7 @@ pub fn compile(
     let emitted = build
         .run_through_emit(body_placement)
         .and_then(|(bytes, output)| build.write_program_file(&bytes).map(|()| (bytes, output)));
-    let (bytes, output) = match emitted {
+    let (bytes, mut output) = match emitted {
         Ok(emitted) => emitted,
         Err(stage) => return Err(build.finish::<()>(Err(stage), log).unwrap_err()),
     };
@@ -321,6 +329,9 @@ pub fn compile(
         engine_options.check_only();
     }
     let engine = build.run_engine(bytes, &engine_options, &output);
+    if let Some(modules) = &mut output.modules {
+        modules.count_code(engine.functions(), &output.names);
+    }
     let has_errors = build.diagnostics.has_errors();
     let is_internal_error = build.diagnostics.has_internal_errors();
     let refused_entry_points = build.find_refused_entry_points();

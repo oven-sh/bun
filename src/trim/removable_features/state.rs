@@ -45,7 +45,11 @@ core::arch::global_asm!(
     ".p2align 3",
     "_Bun__removableFeatureState:",
     ".ascii \"BUNFEAT\\0\"",
-    ".zero 528",
+    ".zero 16",
+    include_str!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/removable_features_initial_removal.s"
+    )),
     ".text",
 );
 
@@ -56,7 +60,11 @@ core::arch::global_asm!(
     ".p2align 3",
     "Bun__removableFeatureState:",
     ".ascii \"BUNFEAT\\0\"",
-    ".zero 528",
+    ".zero 16",
+    include_str!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/removable_features_initial_removal.s"
+    )),
     ".text",
 );
 
@@ -69,7 +77,11 @@ core::arch::global_asm!(
     ".p2align 3",
     "Bun__removableFeatureState:",
     ".ascii \"BUNFEAT\\0\"",
-    ".zero 528",
+    ".zero 16",
+    include_str!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/removable_features_initial_removal.s"
+    )),
     ".text",
 );
 
@@ -104,9 +116,26 @@ fn state() -> &'static RemovableFeatureState {
     &Bun__removableFeatureState
 }
 
+/// A guard of such a feature is decided when it is compiled, so the linker drops what only that guard reaches.
+pub(crate) const fn is_left_out_of_link_index(index: u16) -> bool {
+    let left_out = crate::generated::LEFT_OUT_OF_LINK;
+    let mut position = 0;
+    while position < left_out.len() {
+        if left_out[position] as u16 == index {
+            return true;
+        }
+        position += 1;
+    }
+    false
+}
+
+pub const fn is_left_out_of_link(feature: Feature) -> bool {
+    is_left_out_of_link_index(feature as u16)
+}
+
 #[inline(always)]
 pub(crate) fn is_removed_index(index: u16) -> bool {
-    state().removal[index as usize] != Removal::Present as u8
+    is_left_out_of_link_index(index) || state().removal[index as usize] != Removal::Present as u8
 }
 
 #[inline(always)]
@@ -166,6 +195,22 @@ pub fn abort_for_removed_feature(feature: Feature) -> ! {
     }
     // SAFETY: the function takes any feature index and has no other precondition.
     unsafe { Bun__abortForRemovedFeature(feature.index()) }
+}
+
+#[cold]
+#[inline(never)]
+pub fn abort_for_command_left_out(index: u16) -> ! {
+    unsafe extern "C" {
+        fn Bun__abortForCommandLeftOut(feature: u16) -> !;
+    }
+    // SAFETY: the function takes any feature index and has no other precondition.
+    unsafe { Bun__abortForCommandLeftOut(index) }
+}
+
+#[cfg(test)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__abortForCommandLeftOut(feature: u16) -> ! {
+    panic!("command left out {feature}");
 }
 
 #[cfg(test)]
@@ -263,8 +308,11 @@ mod tests {
         assert_eq!(state().magic, RemovableFeatureState::MAGIC);
         assert!(!is_trimmed());
         for &feature in Feature::ALL {
-            assert!(!is_removed(feature));
-            assert_eq!(removal_of(feature), Removal::Present);
+            assert_eq!(is_removed(feature), is_left_out_of_link(feature));
+            assert_eq!(
+                removal_of(feature) == Removal::Present,
+                !is_left_out_of_link(feature)
+            );
         }
     }
 

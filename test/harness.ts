@@ -126,7 +126,8 @@ if (isASAN) {
   // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas.
   if (/[\\/]test[\\/]aot[\\/]/.test(Bun.main)) {
     bunEnv.Malloc = "1";
-    bunEnv.ASAN_OPTIONS += ":detect_leaks=0";
+    // The slow unwinder aborts in a frame of compiled code and cuts the report off.
+    bunEnv.ASAN_OPTIONS += ":detect_leaks=0:fast_unwind_on_fatal=1";
   }
 }
 
@@ -173,6 +174,13 @@ if (isDebug) {
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
+}
+
+/** `bun-aot` is linked without `bun install`, `bun lint` and other commands that `bun` never hands over to it. */
+export function bunExeWithEveryCommand() {
+  const path = process.env.BUN_WITH_EVERY_COMMAND;
+  if (!path) return bunExe();
+  return isWindows ? path.replaceAll("\\", "/") : path;
 }
 
 /**

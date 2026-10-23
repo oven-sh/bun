@@ -1,5 +1,4 @@
 # path = require("node:path"); const answer = somethingThatNoTableLists(path); const either = answer || path; either[String(Date.now())]()
-# As holder-of-exports-beside-the-unknown-object-is-not-searched-under-a-key-nobody-knows.ir, but the read stands in the program's own code
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f2
 # CHECK-NOT: unreached f3

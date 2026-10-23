@@ -314,10 +314,46 @@ impl core::ops::Deref for ZStr {
     }
 }
 
+/// What only a compiler, a test or somebody who debugs Bun sets: it writes a file, prints addresses or brings in other code.
+#[cfg(bun_locked_environment)]
+fn is_never_read(key: &[u8]) -> bool {
+    const WORDS: [&[u8]; 24] = [
+        b"BUN_AOT_TYPE_MISMATCH_LOG",
+        b"BUN_AOT_TYPE_MISMATCH_LOG_FORMAT",
+        b"BUN_AOT_VERBOSE",
+        b"BUN_BE_BUN",
+        b"BUN_BYTECODE_DIGEST_OUT",
+        b"BUN_BYTECODE_ORDER_NAMES_OUT",
+        b"BUN_BYTECODE_ORDER_OUT",
+        b"BUN_CRASH_REPORT_URL",
+        b"BUN_DESTRUCT_VM_ON_EXIT",
+        b"BUN_DUMP_STATE_ON_CRASH",
+        b"BUN_DUMP_SYMBOLS",
+        b"BUN_FEATURE_FLAG_DUMP_CODE",
+        b"BUN_INSPECT",
+        b"BUN_INSPECT_CONNECT_TO",
+        b"BUN_INSPECT_PRELOAD",
+        b"BUN_INSTRUMENTS",
+        b"BUN_OPTIONS",
+        b"BUN_POSTGRES_SOCKET_MONITOR",
+        b"BUN_POSTGRES_SOCKET_MONITOR_READER",
+        b"BUN_TCC_OPTIONS",
+        b"BUN_THREADPOOL_STATS",
+        b"BUN_TRACE",
+        b"BUN_WATCHER_TRACE",
+        b"MI_VERBOSE",
+    ];
+    key.starts_with(b"BUN_DEBUG") || WORDS.contains(&key)
+}
+
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
 /// process-static bytes (env block lives for the process). On POSIX wraps
 /// `libc::getenv`; on Windows scans `environ` case-insensitively.
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(bun_locked_environment)]
+    if is_never_read(key.as_bytes()) {
+        return None;
+    }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = key;
@@ -367,6 +403,10 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 /// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
 /// CI-detection vars where casing varies across providers).
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(bun_locked_environment)]
+    if is_never_read(key.as_bytes()) {
+        return None;
+    }
     #[cfg(unix)]
     unsafe {
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
@@ -4525,6 +4565,51 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
         libc::execve(exec_path, pointers.as_ptr().cast(), c_environ().cast());
     }
     std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
+}
+
+/// Replaces this process with the program at `argv[0]`: the pid, the descriptors and the signals stay. Returns the errno.
+#[cfg(unix)]
+pub fn exec_program(argv: &[&[u8]]) -> i32 {
+    unsafe extern "C" {
+        safe fn on_before_reload_process_posix(close_inherited_fds: bool);
+    }
+    let argv: Vec<ZBox> = argv.iter().map(ZBox::from_bytes).collect();
+    let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
+    pointers.push(core::ptr::null());
+    on_before_reload_process_posix(false);
+    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, and `environ` is the
+    // process's own.
+    unsafe {
+        libc::execve(pointers[0], pointers.as_ptr().cast(), c_environ().cast());
+    }
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
+}
+
+/// What the program at `argv[0]` writes to its standard output, if it exits with 0. It reads nothing, what it writes to its
+/// standard error is dropped, and `without` is not in its environment.
+#[allow(clippy::disallowed_types)]
+pub fn spawn_sync_read_stdout(argv: &[&[u8]], without: &str) -> Option<Vec<u8>> {
+    #[cfg(unix)]
+    fn to_os(bytes: &[u8]) -> std::ffi::OsString {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::OsStr::from_bytes(bytes).to_os_string()
+    }
+    #[cfg(windows)]
+    fn to_os(bytes: &[u8]) -> std::ffi::OsString {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide = vec![0u16; bytes.len() + 1];
+        let length = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wide, bytes).len();
+        std::ffi::OsString::from_wide(&wide[..length])
+    }
+    let (program, arguments) = argv.split_first()?;
+    let output = std::process::Command::new(to_os(program))
+        .args(arguments.iter().map(|argument| to_os(argument)))
+        .env_remove(without)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    output.status.success().then_some(output.stdout)
 }
 
 // ── spawn_sync_inherit ────────────────────────────────────────────────────

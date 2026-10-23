@@ -92,6 +92,11 @@ const noticedBy: Record<string, Row> = {
     "what-the-inner-object-held-is-let-go.ts",
     "what-an-inner-object-in-its-room-held-is-let-go.ts",
   ),
+  NoCallCollects: {
+    folder: "collector",
+    flags: ["--aot-validate"],
+    programs: ["young-cells-stored-into-old-arrays-survive.ts", "references-in-optional-fields-survive-collections.ts"],
+  },
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {

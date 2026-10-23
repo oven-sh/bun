@@ -621,7 +621,11 @@ JSC_DECLARE_HOST_FUNCTION(functionTotalCompileTime);
 JSC_DEFINE_HOST_FUNCTION(functionTotalCompileTime,
     (JSGlobalObject*, CallFrame*))
 {
+#if ENABLE(JIT)
     return JSValue::encode(jsNumber(JIT::totalCompileTime().milliseconds()));
+#else
+    return JSValue::encode(jsNumber(0));
+#endif
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);

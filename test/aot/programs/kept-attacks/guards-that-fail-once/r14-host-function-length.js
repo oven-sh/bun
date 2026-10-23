@@ -1,7 +1,10 @@
 // Guards that fail once: host function length. It prints what plain Bun prints.
 const fs = require("node:fs");
 const trip = process.argv[2] === "trip";
-const N = Number(process.argv[3] ?? 1000000);
+// An open costs far more on Windows.
+const isWindows = process.platform === "win32";
+const N = Number(process.argv[3] ?? (isWindows ? 20000 : 1000000));
+const nullDevice = isWindows ? "\\\\.\\nul" : "/dev/null";
 const variant = process.argv[4] ?? "readFileSync";
 
 let touched = 0;
@@ -9,7 +12,7 @@ if (trip) touched = fs.readFileSync.length + fs.existsSync.length + performance.
 
 function readsFile() {
   let sum = 0;
-  for (let i = 0; i < N; i++) sum = (sum + fs.readFileSync("/dev/null").length) | 0;
+  for (let i = 0; i < N; i++) sum = (sum + fs.readFileSync(nullDevice).length) | 0;
   return sum;
 }
 function asksForFile() {

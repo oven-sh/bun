@@ -69,6 +69,11 @@ for (const program of [
   "a-library-module-arrives-late-beside-a-hidden-value-and-is-read-by-reflect-get",
   "a-library-module-stands-beside-a-hidden-value-and-is-copied-by-object-assign",
   "a-library-module-stands-beside-a-hidden-value-and-is-walked-by-object-values",
+  "a-library-module-arrives-late-beside-a-hidden-value-and-becomes-a-prototype-by-object-create",
+  "a-library-module-stands-beside-a-hidden-value-and-becomes-a-prototype-by-object-create",
+  "a-library-module-arrives-late-beside-a-hidden-value-and-is-read-by-reflect-get-with-a-receiver",
+  "a-library-module-arrives-late-beside-a-hidden-value-and-lies-two-links-above-what-is-read",
+  "the-global-object-is-printed",
   "evaluators-and-a-loader-beside-a-hidden-value-are-called",
   "evaluators-and-a-loader-arrive-late-beside-a-hidden-value-and-are-called",
 ]) {

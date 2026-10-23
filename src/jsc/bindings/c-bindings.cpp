@@ -27,6 +27,7 @@
 #include <climits>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #endif
 #else
 #include <uv.h>
@@ -598,14 +599,34 @@ UnsafeStack* makeUnsafeStack(const pthread_attr_t* attributes, void* (*routine)(
     return stack;
 }
 
+// Runs before the C library's own initializers: it formats nothing.
+[[noreturn]] void abortBecauseOf(const char* call, int error)
+{
+    char digits[12];
+    char* first = digits + sizeof(digits);
+    for (unsigned rest = static_cast<unsigned>(error); first == digits + sizeof(digits) || rest; rest /= 10)
+        *--first = static_cast<char>('0' + rest % 10);
+    const struct iovec sentence[] = {
+        { const_cast<char*>("error: the main thread got no second stack: "), 44 },
+        { const_cast<char*>(call), strlen(call) },
+        { const_cast<char*>(" failed with errno "), 19 },
+        { first, static_cast<size_t>(digits + sizeof(digits) - first) },
+        { const_cast<char*>("\n"), 1 },
+    };
+    [[maybe_unused]] ssize_t written = writev(STDERR_FILENO, sentence, 5);
+    abort();
+}
+
 void giveMainThreadItsUnsafeStack()
 {
     struct rlimit limit;
     size_t size = !getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY ? limit.rlim_cur : unsafeStackDefaultSize;
     size_t mappingSize;
     void* mapping = mapUnsafeStack(size, mappingSize);
-    if (!mapping || pthread_key_create(&unsafeStackKey, retireUnsafeStack))
-        abort();
+    if (!mapping)
+        abortBecauseOf("mmap or mprotect", errno);
+    if (int error = pthread_key_create(&unsafeStackKey, retireUnsafeStack))
+        abortBecauseOf("pthread_key_create", error);
     __safestack_unsafe_stack_ptr = topOfUnsafeStack(mapping, mappingSize);
 }
 

@@ -8,11 +8,16 @@ pub struct TrimRequest {
     pub remove_internal: Vec<Feature>,
     pub locales: Option<Vec<Box<[u8]>>>,
     pub logs: bool,
+    /// The result is what other executables are built on: it keeps all that a program can ask for, and can be trimmed again.
+    pub is_template: bool,
 }
 
 impl TrimRequest {
     pub fn is_enabled(&self) -> bool {
-        self.removes_unused || !self.remove.is_empty() || !self.remove_internal.is_empty()
+        self.removes_unused
+            || !self.remove.is_empty()
+            || !self.remove_internal.is_empty()
+            || self.is_template
     }
 }
 
@@ -38,6 +43,15 @@ mod tests {
     fn remove_internal_enables() {
         let request = TrimRequest {
             remove_internal: vec![Feature::Jit],
+            ..TrimRequest::default()
+        };
+        assert!(request.is_enabled());
+    }
+
+    #[test]
+    fn template_enables() {
+        let request = TrimRequest {
+            is_template: true,
             ..TrimRequest::default()
         };
         assert!(request.is_enabled());

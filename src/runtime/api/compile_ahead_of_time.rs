@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena;
 use bun_aot::report::ReportMessage;
 use bun_ast::{Data, Kind, Log, Msg};
-use bun_bundler::aot::PluginSetup;
+use bun_bundler::aot::{MetafileFiles, PluginSetup, write_metafile_files};
 use bun_bundler::bundle_v2::{BuildResult, BundleV2Result, CompletionStruct};
 use bun_bundler::options;
 use bun_bundler::transpiler::Transpiler;
@@ -296,6 +296,7 @@ impl JSBundleCompletionTask {
     ) -> bun_bundler::Result<()> {
         let CompileOutcome {
             output_files,
+            metafile,
             report_messages,
             trim_log_lines,
             ..
@@ -308,10 +309,18 @@ impl JSBundleCompletionTask {
         entry.dest_path = full_path;
         entry.is_executable = true;
 
+        let metafile_markdown = metafile.as_deref().and_then(|json| {
+            let files = MetafileFiles {
+                output_directory: &self.config.outdir.list,
+                json_path: &self.config.metafile_json_path.list,
+                markdown_path: &self.config.metafile_markdown_path.list,
+            };
+            write_metafile_files(json, &files)
+        });
         self.set_result(BundleV2Result::Value(BuildResult {
             output_files: vec![entry],
-            metafile: None,
-            metafile_markdown: None,
+            metafile: metafile.map(Vec::into_boxed_slice),
+            metafile_markdown,
         }));
         Ok(())
     }

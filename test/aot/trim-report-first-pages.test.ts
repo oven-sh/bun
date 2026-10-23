@@ -93,9 +93,9 @@ describe.concurrent("keeps nothing of the language where one of its objects esca
   });
 });
 
-// A value nobody knows is converted to a string here: the body of a Response, a member of a form, the message of an error. `toString` is looked up by its name, and every class of the language has one:
-// that of Intl.Locale and those of Temporal stay. No locale data, no segmenter, no WebAssembly, no interpreter.
-describe.concurrent("keeps of the language what a conversion to a string may call", () => {
+// A value nobody knows is converted to a string here: the body of a Response, a member of a form, the message of an error. `toString` is looked up by its name.
+// Intl.Locale and the classes of Temporal have one too, but nobody has an instance in a program that names none of them.
+describe.concurrent("keeps nothing of Intl and Temporal for a conversion to a string", () => {
   test.each([
     [
       "a server that answers the JSON that it was sent",
@@ -114,13 +114,12 @@ describe.concurrent("keeps of the language what a conversion to a string may cal
     expect(rest).toEqual({
       first: tight.first,
       locales: tight.locales,
-      keepsOfTheLanguage: ["intl", "temporal"],
+      keepsOfTheLanguage: [],
       exitCode: 0,
     });
   });
 });
 
-// TODO: formData() is said to settle with anything, and with that the error classes of WebAssembly are in unknown hands.
 test("a server that reads a form", async () => {
   const { escapes, ...rest } = await report(
     `Bun.serve({ port: 3000, async fetch(request) { return new Response(String((await request.formData()).get("a"))); } });`,
@@ -128,7 +127,7 @@ test("a server that reads a form", async () => {
   expect(rest).toEqual({
     first: tight.first,
     locales: tight.locales,
-    keepsOfTheLanguage: ["intl", "temporal", "webassembly"],
+    keepsOfTheLanguage: [],
     exitCode: 0,
   });
 });

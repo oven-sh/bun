@@ -159,7 +159,8 @@ test.skipIf(!isLinux)(
     const file = readFileSync(executable);
     const image = findImage(file);
     const code = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
-    const end = image + Number(file.readBigUInt64LE(image + imageHeader.size));
+    const end = code + Number(file.readBigUInt64LE(image + imageHeader.executableSize));
+    expect(end).toBeLessThan(image + Number(file.readBigUInt64LE(image + imageHeader.size)));
 
     const segments = loadSegments(executable);
     expect(segments.filter(segment => segment.flags & mayWrite && segment.flags & mayExecute)).toEqual([]);
@@ -178,17 +179,193 @@ test.skipIf(!isLinux)(
   120_000,
 );
 
+const programWithTables = `import { readFileSync } from "node:fs";
+function nameOf(digit: number): string {
+  switch (digit) {
+    case 0: return "zero";
+    case 1: return "one";
+    case 2: return "two";
+    case 3: return "three";
+    case 4: return "four";
+    case 5: return "five";
+    case 6: return "six";
+    case 7: return "seven";
+    case 8: return "eight";
+    case 9: return "nine";
+    default: return "many";
+  }
+}
+const words = Array.from("3141592653", digit => nameOf(Number(digit)));
+console.log(words.join(" ").replace(/[aeiou\\u00e0-\\u00ff\\u0430-\\u044f]+/g, "").length * 0.125);
+console.log(readFileSync("/proc/self/maps", "utf8"));
+`;
+
+function rowsOfMap(path: string, kind: string) {
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .map(line => line.split("\t"))
+    .filter(fields => fields[0] === kind);
+}
+
+async function buildWithMap(directory: string) {
+  const executable = join(directory, "program");
+  const map = join(directory, "map");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", join(directory, "program.ts"), "--outfile", executable],
+    env: { ...bunEnv, BUN_JSC_aotMapFilePath: map },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+  return { executable, map };
+}
+
+test.skipIf(!isLinux || process.arch !== "x64")(
+  "what lies between two functions is breakpoints",
+  async () => {
+    using dir = tempDir("aot-code-mapping-padding", { "program.ts": programWithTables });
+    const { executable, map } = await buildWithMap(String(dir));
+    const file = readFileSync(executable);
+    const image = findImage(file);
+    const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+    const pieces = [
+      ...rowsOfMap(map, "F").map(fields => ({ start: Number(fields[2]), size: Number(fields[3]) })),
+      ...rowsOfMap(map, "U").map(fields => ({ start: Number(fields[1]), size: Number(fields[2]) })),
+    ].sort((a, b) => a.start - b.start);
+    expect(pieces.length).toBeGreaterThan(100);
+    const paddingBytes = new Set<number>();
+    let numberOfGaps = 0;
+    let end = pieces[0].start;
+    for (const piece of pieces) {
+      // Shared code lies between functions too, in runs of whole kilobytes.
+      if (piece.start > end && piece.start - end < 16) {
+        numberOfGaps++;
+        for (const byte of file.subarray(codeOffset + end, codeOffset + piece.start)) paddingBytes.add(byte);
+      }
+      end = Math.max(end, piece.start + piece.size);
+    }
+    expect(numberOfGaps).toBeGreaterThan(10);
+    expect([...paddingBytes]).toEqual([0xcc]);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  "a throw that names nothing has no data behind its call",
+  async () => {
+    using dir = tempDir("aot-code-mapping-throw", {
+      "program.ts": `function total(lists: number[][] | null, index: number): number {
+  let sum = 0;
+  for (const value of lists![index]) sum += value;
+  return sum;
+}
+for (const lists of [[[1, 2], [3]], null, [[4]]]) {
+  try {
+    console.log(total(lists, 0), Math.max(...lists![1]));
+  } catch (error) {
+    console.log((error as Error).constructor.name);
+  }
+}
+`,
+    });
+    const { executable, map } = await buildWithMap(String(dir));
+    expect(await run([executable])).toEqual({
+      stdout: "3 3\nTypeError\nTypeError\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+    const stubs = rowsOfMap(map, "T").map(fields => fields.at(-1)!);
+    expect(stubs.filter(name => name.startsWith("ThrowAtSite.WordInRegister"))).not.toEqual([]);
+    expect(stubs.filter(name => name.startsWith("ThrowAtSite.WordsAfterCall"))).toEqual([]);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  "a throw names a text that is one of the last of very many",
+  async () => {
+    using dir = tempDir("aot-code-mapping-late-names", {
+      "program.ts": `const names: string[] = [${Array.from({ length: 140_000 }, (_, index) => `"n${index}"`).join(",\n")}];
+function read(o: { lastNameOfAll: number } | null): number { return o!.lastNameOfAll; }
+function store(o: { lastStoreOfAll: number } | undefined): void { o!.lastStoreOfAll = 1; }
+function call(o: { lastMethodOfAll?: () => number }): number { return o.lastMethodOfAll!(); }
+function early(): number { const get = () => lastBindingOfAll; const value = get(); let lastBindingOfAll = 1; return value + lastBindingOfAll; }
+for (const f of [() => read(null), () => store(undefined), () => call({}), early]) {
+  try {
+    console.log(f());
+  } catch (error) {
+    console.log(/last[A-Za-z]+/.exec((error as Error).message)![0]);
+  }
+}
+console.log(names.length, names.at(-1));
+`,
+    });
+    const { executable, map } = await buildWithMap(String(dir));
+    expect(await run([executable])).toEqual({
+      stdout: "lastNameOfAll\nlastStoreOfAll\nlastMethodOfAll\nlastBindingOfAll\n140000 n139999\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(rowsOfMap(map, "T").filter(fields => fields.at(-1) === "ThrowAtSite.WordsAfterCall").length).toBe(1);
+  },
+  120_000,
+);
+
+test.skipIf(!isLinux)(
+  "the constants and jump tables of compiled code lie behind it, in pages that cannot be executed",
+  async () => {
+    using dir = tempDir("aot-code-mapping-data", { "program.ts": programWithTables });
+    const { executable, map } = await buildWithMap(String(dir));
+    const file = readFileSync(executable);
+    const image = findImage(file);
+    const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+    const executableSize = Number(file.readBigUInt64LE(image + imageHeader.executableSize));
+    const dataSize = image + Number(file.readBigUInt64LE(image + imageHeader.size)) - codeOffset - executableSize;
+
+    const constants = rowsOfMap(map, "K").map(([, offset, size]) => ({ offset: Number(offset), size: Number(size) }));
+    expect(constants).toEqual([{ offset: expect.any(Number), size: expect.any(Number) }]);
+    expect(constants[0].size).toBeGreaterThan(0);
+    expect(constants[0].offset).toBeGreaterThanOrEqual(executableSize);
+    expect(constants[0].offset + constants[0].size).toBeLessThanOrEqual(executableSize + dataSize);
+    for (const kind of ["F", "U", "X", "XR"]) {
+      const [offsetField, sizeField] = kind === "F" ? [2, 3] : [1, 2];
+      const ends = rowsOfMap(map, kind).map(fields => Number(fields[offsetField]) + Number(fields[sizeField]));
+      expect({ kind, isExecutable: ends.every(end => end <= executableSize) }).toEqual({ kind, isExecutable: true });
+    }
+
+    const roads: string[][] = [[executable]];
+    if (Bun.which("setarch"))
+      roads.push(["setarch", process.arch === "arm64" ? "aarch64" : "x86_64", "-R", executable]);
+    for (const cmd of roads) {
+      const { stdout, exitCode } = await run(cmd);
+      expect({ firstLine: stdout.split("\n")[0], exitCode }).toEqual({ firstLine: "3.625", exitCode: 0 });
+      const mappings = mappingsOf(stdout).filter(mapping => mapping.path === executable);
+      const code = mappings.find(mapping => mapping.offset === codeOffset && mapping.access === "r-xp")!;
+      expect(mappings.filter(mapping => mapping.start === code.start + executableSize)).toEqual([
+        { start: code.start + executableSize, access: "r--p", offset: codeOffset + executableSize, path: executable },
+      ]);
+      expect(mappings.filter(mapping => mapping.access.includes("x") && mapping.offset > codeOffset)).toEqual([]);
+    }
+  },
+  120_000,
+);
+
 test.skipIf(!isLinux)("Bun has room for the program headers of an executable", async () => {
   const [note, descriptorSizeOffset, noteHeaderBytes] = [4, 4, 16];
   const rooms = readElf64ProgramHeaders(bunExe()).filter(header => header.type === note && header.align === 8n);
-  expect(rooms.map(room => room.filesz)).toEqual([3600n]);
+  expect(rooms.map(room => room.filesz)).toEqual([4104n]);
   const offset = Number(rooms[0].offset);
   const header = new DataView(
     await Bun.file(bunExe())
       .slice(offset, offset + noteHeaderBytes)
       .arrayBuffer(),
   );
-  expect(header.getUint32(descriptorSizeOffset, true)).toBe(3584);
+  expect(header.getUint32(descriptorSizeOffset, true)).toBe(4088);
   expect(offset + noteHeaderBytes).toBeLessThan(1024);
 });
 

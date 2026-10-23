@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // `bun` is built without the ahead-of-time compiler. Asked for it, it runs the command in `bun-aot`, which a release lays beside it.
@@ -57,14 +57,8 @@ const withoutAmounts = (ran: Ran): Ran => {
 };
 
 /** The command in `bun`, which hands it over, and in `bun-aot` itself. */
-async function inBoth(
-  command: string[],
-  cwd: string,
-  given?: { stdin?: string; env?: Record<string, string>; saysItsNameTwice?: boolean },
-) {
+async function inBoth(command: string[], cwd: string, given?: { stdin?: string; env?: Record<string, string> }) {
   const handedOver = withoutAmounts(await run([bunExe(), ...command], cwd, given));
-  // TODO: `bun test` has printed its first line by the time it hands over, and `bun-aot` prints it again.
-  if (given?.saysItsNameTwice) handedOver.stdout = handedOver.stdout.replace(/^(bun test v.*\n)\1/, "$1");
   const itself = withoutAmounts(await run([bunWithCompiler, ...command], cwd, given));
   expect(handedOver).toEqual(itself);
   return handedOver;
@@ -209,12 +203,8 @@ describe.skipIf(!!nothingToTry)("bun hands over to the bun-aot beside it", () =>
     "bun test --aot passes and fails as the tests do",
     async () => {
       using dir = tempDir("hand-over-test", files);
-      expect(
-        (await inBoth(["test", "--aot", "passes.test.ts"], String(dir), { saysItsNameTwice: true })).exitCode,
-      ).toBe(0);
-      expect((await inBoth(["test", "--aot"], join(String(dir), "failing"), { saysItsNameTwice: true })).exitCode).toBe(
-        1,
-      );
+      expect((await inBoth(["test", "--aot", "passes.test.ts"], String(dir))).exitCode).toBe(0);
+      expect((await inBoth(["test", "--aot"], join(String(dir), "failing"))).exitCode).toBe(1);
     },
     limit,
   );
@@ -241,13 +231,13 @@ describe.skipIf(!!nothingToTry)("bun hands over to the bun-aot beside it", () =>
     });
   });
 
-  // TODO: `bun` waits for `bun-aot` as for any child. What ends the one does not end the other, and a signal comes back as exit code 1.
-  test.todo("a signal that ends bun-aot is what bun ends with", async () => {
+  // TODO: on Windows `bun` waits for `bun-aot` as for any child, and what ends the one does not end the other.
+  test.todoIf(isWindows)("a signal that ends bun-aot is what bun ends with", async () => {
     using dir = tempDir("hand-over-dies", files);
     expect((await inBoth(["run", "--aot", "dies.ts"], String(dir))).signal).toBe("SIGKILL");
   });
 
-  test.todo("a signal that is sent to bun ends the program", async () => {
+  test.todoIf(isWindows)("a signal that is sent to bun ends the program", async () => {
     using dir = tempDir("hand-over-signal", files);
     const proc = Bun.spawn({
       cmd: [bunExe(), "run", "--aot", "waits.ts"],
@@ -273,11 +263,21 @@ describe.skipIf(!!nothingToTry)("bun hands over to the bun-aot beside it", () =>
     expect(outlived).toBe(false);
   });
 
-  test.todo("bun test --aot prints its first line once", async () => {
-    using dir = tempDir("hand-over-test-once", files);
-    await inBoth(["test", "--aot", "passes.test.ts"], String(dir));
+  test.skipIf(isWindows)("a bun-aot of another revision is refused by name and not run", async () => {
+    using dir = tempDir("hand-over-another-revision", files);
+    const bun = join(String(dir), "bun");
+    copyFileSync(bunExe(), bun);
+    chmodSync(bun, 0o755);
+    const other = join(String(dir), "bun-aot");
+    writeFileSync(other, '#!/bin/sh\nif [ "$1" = --revision ]; then echo 0.0.1+000000000; exit 0; fi\necho ran\n');
+    chmodSync(other, 0o755);
+    const ours = (await run([bun, "--revision"], String(dir))).stdout.trim();
+    const ran = await run([bun, "build", "--compile", "--aot", "hello.ts"], String(dir));
+    expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      stdout: "",
+      exitCode: 1,
+      signal: null,
+    });
+    expect(ran.stderr.split("\n", 1)[0]).toEndWith(`bun-aot is Bun 0.0.1+000000000, and this is Bun ${ours}`);
   });
-
-  // TODO: whatever has that name is run.
-  test.todo("a bun-aot of another revision is refused by name and not run");
 });

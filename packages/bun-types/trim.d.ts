@@ -171,8 +171,8 @@ declare module "bun" {
        * built-in modules that your code doesn't import all need it. `trim` only removes it from an
        * executable built with `aot`.
        *
-       * Without it, `new Function()`, `new Bun.Transpiler()` and `Bun.registerMacro()` throw an
-       * `Error`.
+       * Without it, `new Function()`, `node:module._load()`, `new Bun.Transpiler()` and
+       * `Bun.registerMacro()` throw an `Error`.
        *
        * Adds about 3.7 MB on Linux x64 and 2.7 MB on macOS arm64.
        */

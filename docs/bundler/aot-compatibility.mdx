@@ -80,7 +80,6 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | `cc()` from `bun:ffi`, on Linux 6.7 or later                      | `Error: Cannot compile C code because this process can't create executable memory (PR_SET_MDWE)`         | Compile the C file when you build, and load the library with `dlopen()`                                        |
 | A native addon that generates machine code, on Linux 6.7 or later | Whatever the addon does when `mprotect` or `mmap` fails                                                  | Run that code in a child process. Child processes aren't restricted                                            |
 | Breakpoints, stepping, `debugger` statements                      | A breakpoint never binds                                                                                 | `bun --inspect-brk ./app.ts`, from your source files                                                           |
-| `--bytecode-depth`, `--bytecode-order`                            | An error from `bun build`                                                                                | Nothing. The executable has no bytecode                                                                        |
 | `import()`, `require()` or `import * as` of an HTML file          | An error from the build                                                                                  | `import page from "./page.html"`, as in a [full-stack executable](/bundler/executables#full-stack-executables) |
 | A query string in an import path: `import "./a.ts?raw"`           | `bun compile does not support a query string in an import path`                                          | Import the path without it                                                                                     |
 | `importValue()` of one of your modules in a `ShadowRealm`         | `SyntaxError: The module ... was compiled ahead of time and can't be imported inside a ShadowRealm`      | `evaluate()`, with the code as a string                                                                        |
@@ -89,7 +88,7 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | `bun --aot` with `-e` or `-p`                                     | An error                                                                                                 | [Run under the compiler's rules](/bundler/aot-debugging#run-under-the-compilers-rules) has the list            |
 | `--inspect` in `BUN_OPTIONS`, `BUN_INSPECT`                       | An error when the executable starts                                                                      | Build with [`--compile-inspector`](#options-that-load-code)                                                    |
 | `--preload` in `BUN_OPTIONS`                                      | An error when the executable starts                                                                      | [Import the file from your entry point](#options-that-load-code)                                               |
-| `banner` or `footer` with code, `metafile`, `format: "cjs"`       | An error from the build                                                                                  | [Plugins and build options](#plugins-and-build-options)                                                        |
+| `banner` or `footer` with code                                    | An error from the build                                                                                  | [Plugins and build options](#plugins-and-build-options)                                                        |
 
 ## Type errors are TypeScript 7's
 
@@ -439,7 +438,7 @@ The code behind the IPC channel is kept for `process.on("message", ...)` only wh
 
 ### Code that isn't in the executable
 
-A dynamic `import()` or `require()` can only load code that's in the executable. Anything else throws: JavaScript, TypeScript, WebAssembly or a native addon.
+A dynamic `import()` or `require()` can only load code that's in the executable. Anything else throws: JavaScript, TypeScript, WebAssembly or a native addon. So does everything that Bun would read as JavaScript: a file with no extension, a file with an extension that Bun doesn't know, and a `data:` or `blob:` URL.
 
 ```txt
 error: Cannot load '/home/me/plugins/late.ts': it isn't in this executable. Pass it to bun compile as another entry point, or mark it --external.
@@ -455,7 +454,7 @@ warn: TS100064: this import path isn't a constant. If it resolves to code that i
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | The file compiled            | Pass it as an additional entry point                                                                                              |
 | One package loaded from disk | `--external <package>`. Bun interprets it, and everything it loads                                                                |
-| Data                         | Nothing. JSON, JSON5, TOML, YAML, XML, text and other files that run no code load from disk as usual                              |
+| Data                         | Nothing. JSON, JSON5, TOML, YAML, XML, text, Markdown and CSS files run no code, so they load from disk as usual                  |
 | A database or an HTML page   | Import it by a constant path. `import(name, { with: { type: "sqlite" } })` and `require(name)` of an `.html` file throw like code |
 
 An `--external` package has `require`, `module`, `require.cache` and every built-in module, whole: the compiler can't see what the package calls, so a build with `--external` compiles every function of the built-in modules in the executable, not only the ones that your program calls. That makes the executable a few megabytes larger. The package doesn't see the modules of your program, as in an executable built without `--aot`: its `module.parent` has the path of the file that required it and empty `exports`, and `require.cache` lists the files that were loaded from disk. If a file of your program [names a way between module objects](#module-objects), the package finds your modules through `process.mainModule` too. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too: it can add a global or a property, and it can't replace one that your compiled code uses. `globalThis.fetch = polyfill` in such a package throws a `TypeError` if your program calls `fetch`.
@@ -735,7 +734,9 @@ This differs:
 | One path in two namespaces                                                    | One module                             | Two modules                                                                |
 | `minify`                                                                      | Renames functions and classes          | `name` is what you wrote                                                   |
 | `sourcemap`                                                                   | A map is one of the outputs            | There's no map. Stack traces have the positions of your sources either way |
-| `banner` or `footer` with code, `metafile`, `format: "cjs"`                   | Work                                   | The build fails. A `banner` or `footer` that's only comments is fine       |
+| `metafile`                                                                    | One output for each entry point        | [One output, the executable](#metafile)                                    |
+| `format`, `bytecode`, `--bytecode-depth`, `--bytecode-order`                  | Change what's in the executable        | No effect. Nothing is bundled, and the executable has no bytecode          |
+| `banner` or `footer` with code                                                | Work                                   | The build fails. A `banner` or `footer` that's only comments is fine       |
 
 The text that `onLoad` returns is type checked like a file. `onResolve` doesn't change what the type checker reads: it resolves an import as TypeScript does. So a module that's in no file needs a declaration, like in your editor.
 
@@ -747,6 +748,18 @@ declare module "settings:*" {
 ```
 
 If the module doesn't match its declaration, the program [behaves as under `bun run`](/bundler/aot-types#when-a-value-doesnt-match-its-type).
+
+### Metafile
+
+`--metafile`, `--metafile-md` and `metafile` in `Bun.build` write [the same format](/bundler#metafile) as without `--aot`. `inputs` lists every file of yours and of your packages that's in the executable, with its imports. Nothing is bundled, so a few things differ:
+
+- `outputs` has one entry, the executable, whatever the number of entry points. Its `entryPoint` is the first one.
+- `bytes` of the output is the size of your compiled program inside of the executable. That includes the parts of Bun's own modules, like `node:fs`, that are compiled with it. It doesn't include the Bun runtime.
+- `bytesInOutput` is the machine code of the functions in that file. A function that's inlined counts for the file that calls it.
+- Files that a [computed path](#dynamic-imports) or `import.meta.resolve` names are inputs, and imports of the file that names them.
+- An import that's only types, or that nothing uses, isn't listed. When a file that only re-exports is left out of the executable, its importer lists the files behind it instead, without `original`.
+
+The executable is the same with and without a metafile.
 
 `bun build` on the command line has no plugins, with or without `--aot`. [`Bun.plugin`](/runtime/plugins) in your program is about [code that isn't in the executable](#code-from-strings): a plugin can't replace a module that was compiled.
 

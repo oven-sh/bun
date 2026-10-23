@@ -59,6 +59,7 @@ const needNoCompiler = [
   "aot/shell-completions-list-flags.test.ts",
   "aot/test-files-self-skip.test.ts",
   "cli/aot-compile-executable-path.test.ts",
+  "cli/aot-leaves-out-commands.test.ts",
   "cli/aot-unknown-flags.test.ts",
   "cli/hand-over-to-bun-aot.test.ts",
   "cli/hand-over-to-the-real-bun-aot.test.ts",

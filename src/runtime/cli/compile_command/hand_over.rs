@@ -38,6 +38,32 @@ fn find_or_fetch() -> Vec<u8> {
     }
 }
 
+fn refuse_another_revision(path: &[u8]) {
+    let answer = bun_core::spawn_sync_read_stdout(&[path, b"--revision"], "BUN_OPTIONS");
+    let revision = answer.as_deref().map(<[u8]>::trim_ascii);
+    if revision == Some(Global::package_json_version_with_revision.as_bytes()) {
+        return;
+    }
+    match revision {
+        Some(revision) => {
+            bun_core::err_generic!(
+                "{} is Bun {}, and this is Bun {}",
+                BStr::new(path),
+                BStr::new(revision),
+                Global::package_json_version_with_revision
+            );
+        }
+        None => {
+            bun_core::err_generic!("{} does not answer --revision", BStr::new(path));
+        }
+    }
+    bun_core::pretty_errorln!(
+        "<d>note<r>: ahead-of-time compilation runs in the bun-aot of the same revision as this Bun"
+    );
+    Output::flush();
+    Global::exit(1);
+}
+
 /// Returns if this executable is that Bun.
 #[cold]
 #[inline(never)]
@@ -59,6 +85,7 @@ pub(crate) fn run_in_bun_with_compiler() {
     if path == this_executable {
         return;
     }
+    refuse_another_revision(&path);
 
     // What `BUN_OPTIONS` put behind the name of the program, the other Bun puts there itself.
     let mut argv: Vec<&[u8]> = vec![path.as_slice()];
@@ -69,15 +96,19 @@ pub(crate) fn run_in_bun_with_compiler() {
         argv.push(argument);
     }
     Output::flush();
+    #[cfg(unix)]
+    Output::err_generic(
+        "failed to run {}: errno {}",
+        (BStr::new(&path), bun_core::exec_program(&argv)),
+    );
+    #[cfg(not(unix))]
     match bun_core::spawn_sync_inherit(&argv) {
         Ok(status) => Global::exit(u32::try_from(status.code()).unwrap_or(1)),
-        Err(error) => {
-            Output::err_generic(
-                "failed to run {}: {}",
-                (BStr::new(&path), BStr::new(error.name())),
-            );
-            Output::flush();
-            Global::exit(1);
-        }
+        Err(error) => Output::err_generic(
+            "failed to run {}: {}",
+            (BStr::new(&path), BStr::new(error.name())),
+        ),
     }
+    Output::flush();
+    Global::exit(1);
 }

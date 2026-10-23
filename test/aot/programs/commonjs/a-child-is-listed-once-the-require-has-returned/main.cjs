@@ -1,5 +1,5 @@
 // `module.children` lists a file once the require() of it has returned: not while its body runs, never if the body throws, and at once where the file is still running further up (a cycle).
-const names = () => module.children.map(child => child.id.split("/").pop()).join();
+const names = () => module.children.map(child => child.id.split(/[\\/]/).pop()).join();
 exports.names = names;
 require("./child.cjs");
 console.log("behind the child:", names());

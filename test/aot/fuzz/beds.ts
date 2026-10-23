@@ -248,14 +248,17 @@ export class ProductBed implements Bed {
     modes.push({ name: "hot-and-nothing-inlined", flags: ["--aot-heat=everything-is-hot", "--aot-disable=InlineCalls"] });
     modes.push({ name: "no-flow-results", flags: ["--aot-disable=flow-results"] });
     modes.push({ name: "hot-without-flow-results", flags: ["--aot-heat=everything-is-hot", "--aot-disable=flow-results"] });
-    // In a very large program what is neither hot nor warm is generated directly, without the optimizing back end. A small program never takes that road by itself.
-    // all-code-direct hands the generator code that was optimized by its true heat, which no build of a user does. counts-as-very-large is the rule itself, cold-and-very-large the rule with nothing left hot or warm.
-    // Cold alone generates nothing directly: it is a mode of the optimizing back end.
+    // Every function goes through the optimizing back end. The direct generator, which makes machine code without it, runs on request alone.
+    // all-code-direct hands the generator code that was optimized by its true heat. cold-code-direct hands it what is neither hot nor warm of a program that counts as very large, all-cold-code-direct the same with nothing left hot or warm.
+    // counts-as-very-large and cold-and-very-large are what a user's build of a very large program gets: modes of the optimizing back end, as cold alone is.
     modes.push({ name: "all-code-direct", flags: ["--aot-testing=GenerateAllCodeDirectly"] });
     modes.push({ name: "every-function-cold", flags: ["--aot-heat=everything-is-cold"] });
     modes.push({ name: "counts-as-very-large", flags: ["--aot-limit=MaxWarmCodeValues:1"] });
     modes.push({ name: "cold-and-very-large", flags: ["--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"] });
     if (program.extension === "ts") modes.push({ name: "erased-cold-and-very-large", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1"] });
+    modes.push({ name: "cold-code-direct", flags: ["--aot-limit=MaxWarmCodeValues:1", "--aot-testing=GenerateColdCodeDirectly"] });
+    modes.push({ name: "all-cold-code-direct", flags: ["--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1", "--aot-testing=GenerateColdCodeDirectly"] });
+    if (program.extension === "ts") modes.push({ name: "erased-all-cold-code-direct", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold", "--aot-limit=MaxWarmCodeValues:1", "--aot-testing=GenerateColdCodeDirectly"] });
     if (program.extension === "ts") modes.push({ name: "erased-and-cold", flags: ["--aot-erase-types", "--aot-heat=everything-is-cold"] });
     modes.push({ name: "direct-and-validated", flags: ["--aot-testing=GenerateAllCodeDirectly", "--aot-validate"] });
     modes.push({ name: "direct-and-proofs-checked", flags: ["--aot-testing=GenerateAllCodeDirectly,CheckProofsAtRunTime"] });
@@ -584,8 +587,10 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
     return failure("build error", normalized(error));
   }
   const invalid = validationMessage.exec(run.stderr + "\n" + run.stdout);
-  if (invalid && !validationMessage.test(plain.stderr + "\n" + plain.stdout)) return failure("validation failure", invalid[0].slice(0, 200), normalized(invalid[0]));
-  if (run.signal) return failure("crash", `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: ).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim());
+  // The line in front of an alarm about a native call names the entry and the rule that it broke: two entries, or two rules, are two findings.
+  const nativeCall = /^AOT native call: .*$/m.exec(run.stderr)?.[0] ?? "";
+  if (invalid && !validationMessage.test(plain.stderr + "\n" + plain.stdout)) return failure("validation failure", `${invalid[0]} ${nativeCall}`.trim().slice(0, 200), normalized(`${invalid[0]} ${nativeCall}`));
+  if (run.signal) return failure("crash", `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: |FATAL: out of memory).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim());
   if (run.timedOut) return failure("hang", "");
   if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) return { kind: "same" };
   const exits = run.exitCode === plain.exitCode ? "" : ` | exit codes ${plain.exitCode} ${run.exitCode}: ${uncaught(run.exitCode ? run : plain).slice(0, 160)}`;

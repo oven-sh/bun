@@ -1,4 +1,4 @@
-use bun_removable_features::TrimFeature;
+use bun_removable_features::{Feature, TrimFeature};
 
 #[derive(Debug)]
 pub enum TrimError {
@@ -13,6 +13,8 @@ pub enum TrimRequestError {
     UnknownNames(Vec<Box<[u8]>>),
     AllowedAndRemoved(TrimFeature),
     UnknownLocale(Box<[u8]>),
+    MissingFromTemplate(Feature),
+    TemplateWithoutProgramFeature(Feature),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -92,6 +94,19 @@ impl TrimError {
                     b"compile.trim: this build of Bun has no data for the locale ",
                 );
                 write_quoted(out, tag);
+            }
+            TrimError::Request(TrimRequestError::MissingFromTemplate(feature)) => {
+                out.extend_from_slice(
+                    b"the Bun executable that this build starts from doesn't have ",
+                );
+                out.extend_from_slice(feature.text().as_bytes());
+                out.extend_from_slice(b", which this executable needs");
+            }
+            TrimError::Request(TrimRequestError::TemplateWithoutProgramFeature(feature)) => {
+                out.extend_from_slice(
+                    b"a template keeps everything that a program can use, so it can't leave out ",
+                );
+                out.extend_from_slice(feature.text().as_bytes());
             }
             TrimError::Unsupported(reason) => {
                 out.extend_from_slice(b"this build of Bun doesn't support --trim (");

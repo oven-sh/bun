@@ -52,6 +52,7 @@ pub(crate) fn finish_build(
         texts,
         statistics,
         validates_by_type,
+        modules,
     } = summary;
     let (output_files, entry_points) =
         collect_output_files(entry_paths, names_of_entry_points, embedded);
@@ -65,6 +66,7 @@ pub(crate) fn finish_build(
         texts,
         statistics,
         validates_by_type,
+        modules,
     }
 }
 

@@ -102,9 +102,6 @@ const rejected: [string[], string][] = [
     ["compile", `--target=${other}`],
     "bun compile can't cross-compile. It only builds for the platform it runs on\nnote: run this on the target platform, or pass --no-aot to bundle your code with the Bun runtime instead, like bun build --compile",
   ],
-  [["build", "--compile", "--aot", "--bytecode-depth=1"], "--aot does not support --bytecode-depth"],
-  [["compile", "--bytecode-order=app.order"], "--aot does not support --bytecode-order"],
-  [["build", "--compile", "--aot", "--format=cjs"], "--aot requires --format=esm"],
   [
     ["compile", "--aot-type-errors=warn"],
     "unknown flag --aot-type-errors. The --aot flags for this command are --aot, --aot-huge-heap, --aot-log-type-mismatches",
@@ -308,7 +305,6 @@ describe.concurrent("bun compile", () => {
       ...unbuildable,
       "reject.ts": `const requests = [
   { entrypoints: ["./wrong.ts"], compile: { outfile: "./out", aotExplain: "guards" } },
-  { entrypoints: ["./wrong.ts"], format: "cjs", compile: { aot: true, outfile: "./out" } },
   { entrypoints: ["./wrong.ts"], compile: { aot: true, target: ${JSON.stringify(other)}, outfile: "./out" } },
 ];
 for (const request of requests) {
@@ -326,7 +322,6 @@ for (const request of requests) {
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
       stdout:
         "compile.aotExplain requires compile.aot: true\n" +
-        "compile.aot requires format: 'esm'\n" +
         "compile.aot can't cross-compile. It only builds for the platform it runs on\n",
       exitCode: 0,
     });

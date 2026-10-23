@@ -119,6 +119,8 @@ async function run(executable: string, cwd: string): Promise<Ran> {
     if (/^== end$/m.test(ran.stdout)) break;
     const [, index, name] = [...ran.stdout.matchAll(/^== (\d+) (\S+)$/gm)].at(-1) ?? [];
     stopped.push(`${name ?? "before the first program"}: ${ran.signal ?? `exit code ${ran.exitCode}`}`);
+    // No machine that runs one of these lanes can be asked afterwards.
+    if (ran.signal) console.error(`DIED: ${name ?? "before the first program"}: ${ran.signal}\n${ran.stderr.slice(0, 4000)}`);
     from = Number(index ?? from) + 1;
   }
   return { printed: byProgram(output), stopped };
@@ -176,7 +178,9 @@ async function compare(folder: string, carrier: string[], group: number | string
     const line = a.findIndex((text, index) => text !== b[index]);
     return `${name}, line ${line + 1}: ${(a[line] ?? "<end>").slice(0, 160)} | expected: ${(b[line] ?? "<end>").slice(0, 160)}`;
   };
-  expect({ stopped: actual.stopped, differing: differing.map(firstLines) }).toEqual({ stopped: expected.stopped, differing: [] });
+  // The measure is a build of the same compiler: a program that a signal ends in both builds alike is a fault of both.
+  const endedBySignal = [...new Set([...expected.stopped, ...actual.stopped])].filter(stop => !/: exit code \d+$/.test(stop));
+  expect({ endedBySignal, stopped: actual.stopped, differing: differing.map(firstLines) }).toEqual({ endedBySignal: [], stopped: expected.stopped, differing: [] });
 }
 
 /**

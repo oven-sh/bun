@@ -57,6 +57,7 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
             texts: interface::report::SourceTexts(Opaque::new(summary.texts)),
             statistics: wrap_statistics(summary.statistics),
             validates_by_type: summary.validates_by_type,
+            modules: summary.modules,
         },
     }
 }

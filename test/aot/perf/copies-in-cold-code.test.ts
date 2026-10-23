@@ -2,7 +2,7 @@
 // Each row below names a loop of ./copies-in-cold-code/main.ts, the loop that does the same without the copy, how many more instructions per iteration it may take than that one,
 // and over how many iterations, in an executable whose code is all cold.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
@@ -12,11 +12,12 @@ import { beforeAll, describe, test } from "../supported";
 const root = join(import.meta.dir, "copies-in-cold-code");
 // ARM64 compares with memory by a load and a compare, and the stub copies 16 bytes by two loads and two stores: the first loop takes 164 instructions there and 130 on x86-64.
 const isArm64 = process.arch === "arm64";
+// With musl the third loop takes 855 instructions more than its baseline and the fourth 4,200.
 const rows: [loop: string, baseline: string, allowance: number, iterations: number][] = [
   ["a copy where the type is written", "no copy", isArm64 ? 190 : 150, 400_000],
   ["a copy of anything", "no copy", 345, 400_000],
-  ["a copy into another type", "no copy into another type", 800, 400_000],
-  ["a copy of a kind never met", "no copy of a kind never met", 3_700, 8_000],
+  ["a copy into another type", "no copy into another type", isMusl ? 950 : 800, 400_000],
+  ["a copy of a kind never met", "no copy of a kind never met", isMusl ? 4_700 : 3_700, 8_000],
 ];
 
 const skipped =

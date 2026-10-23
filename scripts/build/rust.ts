@@ -267,7 +267,7 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_lint: ["compressed/lint/", "compressed/src/lint/"],
   bun_lint_driver: ["compressed/lint/", "compressed/codegen/lint-rule-pages.txt.zst"],
   bun_parsers: ["json_byte_class.rs", "xml_byte_class.rs"],
-  bun_removable_features: ["removable_features.rs"],
+  bun_removable_features: ["removable_features.rs", "removable_features_initial_removal.s"],
   bun_resolver: ["node-fallbacks/"],
   bun_runtime: "all",
   bun_sema: ["compressed/src/sema/"],
@@ -361,6 +361,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     rustflags.push(
       ...(cfg.hardened ? ["-Crelocation-model=pie", "-Zplt=yes", "--cfg=bun_hardened"] : ["-Crelocation-model=static"]),
     );
+    if (cfg.hardened && !cfg.requireMdwe) rustflags.push("--cfg=bun_starts_without_mdwe");
+    if (cfg.lockEnvironment) rustflags.push("--cfg=bun_locked_environment");
   }
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
@@ -438,6 +440,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `debug_assertions` only because the two were coextensive until now.
   rustflags.push("--check-cfg=cfg(bun_debug)");
   rustflags.push("--check-cfg=cfg(bun_hardened)");
+  rustflags.push("--check-cfg=cfg(bun_starts_without_mdwe)");
+  rustflags.push("--check-cfg=cfg(bun_locked_environment)");
   if (cfg.debug) {
     rustflags.push("--cfg=bun_debug");
   }

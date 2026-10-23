@@ -583,14 +583,19 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
 
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
     let outside_language = [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
+    let only_when_named = bun_trim::features_kept_only_when_named();
     match cause {
-        LoadsModuleByName => FeatureSet::EMPTY,
+        LoadsModuleByName => FeatureSet::from_features(&[Feature::DataFileLoaders]),
         FlowGaveUp | EvaluatesText | RunsUnseenCode => program_features
             .iter()
             .filter(|feature| {
                 let is_added_for_cause = *feature == Feature::ProcessInformation
                     || (cause == RunsUnseenCode && *feature == Feature::NativeAddons);
-                is_added_for_cause || (feature.is_engine() && !outside_language.contains(feature))
+                let has_to_be_named = cause != FlowGaveUp && only_when_named.contains(*feature);
+                is_added_for_cause
+                    || (feature.is_engine()
+                        && !outside_language.contains(feature)
+                        && !has_to_be_named)
             })
             .collect(),
         _ => program_features,

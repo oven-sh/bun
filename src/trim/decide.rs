@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use bun_removable_features::{EnteredFrom, Feature, FeatureSet};
+use bun_removable_features::{EnteredFrom, Feature, FeatureSet, TrimFeature};
 
 use crate::model::{
     Decision, EdgeStrength, FeatureEdges, OptionRequirement, RetainReason, Retained, TrimInput,
@@ -18,7 +18,17 @@ const ALWAYS_ENTERED: [Feature; 4] = [
 const ENGINE_FEATURES_OUTSIDE_LANGUAGE: [Feature; 3] =
     [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
 
+// Megabytes of code and data. Evaluated text and computed keys don't keep them: the program has to name them or list them in `allow`.
+const KEPT_ONLY_WHEN_NAMED: [TrimFeature; 3] = [
+    TrimFeature::Intl,
+    TrimFeature::Temporal,
+    TrimFeature::Webassembly,
+];
+
 const HOLDS_GET_BUILTIN_MODULE: Feature = Feature::ProcessInformation;
+
+// A path that is computed at run time may name a data file on disk: JSON, TOML, text.
+const LOADS_FILES_FROM_DISK: Feature = Feature::DataFileLoaders;
 
 // `Bun.build` checks types, compiles ahead of time, and copies this executable's runtime into the executables it writes.
 const ENTERED_BY_BUNDLER: [Feature; 4] = [
@@ -128,6 +138,14 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
     retained.insert_set(&features, RetainReason::NotRequested);
 }
 
+pub fn features_kept_only_when_named() -> FeatureSet {
+    let mut features = FeatureSet::EMPTY;
+    for name in KEPT_ONLY_WHEN_NAMED {
+        features.union_with(&name.features());
+    }
+    features
+}
+
 fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
     match cause {
@@ -138,10 +156,14 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
         }
         UnseenCodeCause::ReportMissing => program_features,
         UnseenCodeCause::FlowResultDisabled => program_features,
-        UnseenCodeCause::FlowGaveUp => features_reachable_by_text(),
+        UnseenCodeCause::FlowGaveUp => {
+            let mut features = language_features();
+            features.insert(HOLDS_GET_BUILTIN_MODULE);
+            features
+        }
         UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
-        UnseenCodeCause::LoadsModuleByName => FeatureSet::EMPTY,
+        UnseenCodeCause::LoadsModuleByName => FeatureSet::from_features(&[LOADS_FILES_FROM_DISK]),
         UnseenCodeCause::RunsUnseenCode => {
             let mut features = features_reachable_by_text();
             features.insert(Feature::NativeAddons);
@@ -153,6 +175,7 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
 
 fn features_reachable_by_text() -> FeatureSet {
     let mut features = language_features();
+    features.subtract(&features_kept_only_when_named());
     features.insert(HOLDS_GET_BUILTIN_MODULE);
     features
 }
@@ -206,7 +229,7 @@ fn collect_retained(present: &FeatureSet, mut reasons: Vec<Retained>) -> Vec<Ret
 #[cfg(test)]
 mod tests {
     use bun_options_types::trim::TrimRequest;
-    use bun_removable_features::{Removal, RuntimeRequirement, TrimFeature};
+    use bun_removable_features::{Removal, RuntimeRequirement};
 
     use super::*;
     use crate::model::EdgeStrength::{self, AbortingGuard, RecoverableGuard, Reference};
@@ -385,13 +408,16 @@ mod tests {
     }
 
     #[test]
-    fn analysis_that_gave_up_retains_what_text_does() {
+    fn analysis_that_gave_up_retains_whole_language() {
         let text = UsedFeatures::with_cause(UnseenCodeCause::EvaluatesText);
+        let text = decide_request(&text, &removing_unused()).unused;
         let gave_up = UsedFeatures::with_cause(UnseenCodeCause::FlowGaveUp);
-        assert_eq!(
-            decide_request(&gave_up, &removing_unused()).unused,
-            decide_request(&text, &removing_unused()).unused
-        );
+        let gave_up = decide_request(&gave_up, &removing_unused()).unused;
+        assert!(gave_up.is_subset_of(&text));
+        for feature in [Feature::IntlCollation, Feature::Temporal] {
+            assert!(text.contains(feature), "{feature:?}");
+            assert!(!gave_up.contains(feature), "{feature:?}");
+        }
     }
 
     #[test]
@@ -402,8 +428,7 @@ mod tests {
             Feature::Interpreter,
             Feature::BuiltinSourceText,
             Feature::RegExp,
-            Feature::Temporal,
-            Feature::IntlCollation,
+            Feature::StringNormalize,
             Feature::DataView,
             HOLDS_GET_BUILTIN_MODULE,
         ] {
@@ -423,6 +448,44 @@ mod tests {
         for feature in [Feature::WebAssembly, Feature::Inspector, Feature::Jit] {
             assert!(decision.unused.contains(feature), "{feature:?}");
         }
+    }
+
+    #[test]
+    fn only_cause_opening_whole_runtime_retains_what_has_to_be_named() {
+        let only_when_named = features_kept_only_when_named();
+        for feature in [
+            Feature::IntlCollation,
+            Feature::IntlSegmenter,
+            Feature::IntlLocale,
+            Feature::Temporal,
+            Feature::WebAssembly,
+        ] {
+            assert!(only_when_named.contains(feature), "{feature:?}");
+        }
+        for cause in UnseenCodeCause::ALL {
+            let used = UsedFeatures::with_cause(cause);
+            let decision = decide_request(&used, &removing_unused());
+            if CAUSES_OPENING_WHOLE_RUNTIME.contains(&cause) {
+                assert!(!decision.unused.intersects(&only_when_named), "{cause:?}");
+            } else if cause != UnseenCodeCause::FlowGaveUp {
+                assert!(only_when_named.is_subset_of(&decision.unused), "{cause:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn evaluated_text_keeps_what_is_allowed_by_name() {
+        let request = TrimRequest {
+            allow: vec![TrimFeature::Temporal],
+            ..removing_unused()
+        };
+        let used = UsedFeatures::with_cause(UnseenCodeCause::EvaluatesText);
+        let decision = decide_request(&used, &request);
+        assert_eq!(
+            decision.reason_of(Feature::Temporal),
+            Some(RetainReason::Allowed(TrimFeature::Temporal))
+        );
+        assert!(decision.unused.contains(Feature::IntlCollation));
     }
 
     #[test]
@@ -446,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_import_keeps_only_what_is_used() {
+    fn dynamic_import_keeps_what_is_used_and_what_loads_files_from_disk() {
         let used = UsedFeatures {
             causes: vec![UnseenCode {
                 cause: UnseenCodeCause::LoadsModuleByName,
@@ -455,8 +518,10 @@ mod tests {
             ..using(&[Feature::Sql])
         };
         let by_name = decide_request(&used, &removing_unused());
-        let expected = decide_request(&using(&[Feature::Sql]), &removing_unused()).unused;
+        let used = using(&[Feature::Sql, Feature::DataFileLoaders]);
+        let expected = decide_request(&used, &removing_unused()).unused;
         assert_eq!(by_name.unused, expected);
+        assert!(!by_name.unused.contains(Feature::DataFileLoaders));
         assert!(by_name.unused.contains(Feature::RuntimeTranspiler));
         assert!(by_name.unused.contains(Feature::Interpreter));
     }

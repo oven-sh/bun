@@ -173,39 +173,10 @@ fn rejects_options_without_aot() {
 }
 
 #[test]
-fn rejects_options_conflicting_with_aot() {
-    assert_messages(
-        CompileFlags {
-            has_bytecode_depth: true,
-            ..compiled()
-        },
-        "--aot does not support --bytecode-depth",
-        "compile.aot does not support bytecodeDepth",
-    );
-    assert_messages(
-        CompileFlags {
-            has_bytecode_order: true,
-            ..compiled()
-        },
-        "--aot does not support --bytecode-order",
-        "compile.aot does not support compile.bytecodeOrder",
-    );
-    assert_messages(
-        CompileFlags {
-            has_other_format: true,
-            ..compiled()
-        },
-        "--aot requires --format=esm",
-        "compile.aot requires format: 'esm'",
-    );
-}
-
-#[test]
 fn cross_compile_error_uses_request_origin() {
     let reason = "can't cross-compile. It only builds for the platform it runs on";
     let error = rejected(CompileFlags {
         is_cross_compile: true,
-        has_other_format: true,
         ..compiled()
     });
     assert_eq!(text(&error, BuildFlag), format!("--aot {reason}"));

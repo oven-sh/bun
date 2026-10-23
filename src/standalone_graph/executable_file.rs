@@ -280,7 +280,8 @@ fn append_elf_symbols(file: &bun_sys::File, size: u64, symbols: ImageSymbols<'_>
     tail.write(|offset, bytes| file.pwrite_all(bytes, offset as i64).is_ok())
 }
 
-/// Reads `ImageHeader::size` and `ImageHeader::codeOffset`, whose offsets AOTImageFormat.h asserts.
+/// What is executed. The data behind it belongs to the image's code part too, and is only read.
+/// Reads `ImageHeader::size`, `ImageHeader::codeOffset` and `ImageHeader::executableSize`, whose offsets AOTImageFormat.h asserts.
 fn find_code_range(payload: &[u8], image: ImageRange) -> Option<core::ops::Range<u64>> {
     let bytes = payload
         .get(image.offset as usize..)?
@@ -291,10 +292,12 @@ fn find_code_range(payload: &[u8], image: ImageRange) -> Option<core::ops::Range
             .first_chunk::<8>()
             .map(|word| u64::from_le_bytes(*word))
     };
-    let (size, code_offset) = (word_at(32)?, word_at(40)?);
-    let start = u64::from(image.offset);
-    (code_offset < size && size <= u64::from(image.length))
-        .then(|| start + code_offset..start + size)
+    let (size, code_offset, executable_size) = (word_at(32)?, word_at(40)?, word_at(64)?);
+    (code_offset < size && size <= u64::from(image.length) && executable_size <= size - code_offset)
+        .then(|| {
+            let start = u64::from(image.offset) + code_offset;
+            start..start + executable_size
+        })
 }
 
 pub(crate) fn write_elf(

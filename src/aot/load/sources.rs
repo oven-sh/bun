@@ -80,6 +80,7 @@ pub(crate) struct EvaluatedTextSite {
 pub(crate) struct ParsedSource {
     pub kind: SourceKind,
     pub loader: Loader,
+    pub byte_count: usize,
     pub is_from_plugin: bool,
     pub plugin_module: Option<PluginModuleName>,
     pub web_assembly: Option<Vec<u8>>,
@@ -99,6 +100,7 @@ impl ParsedSource {
         ParsedSource {
             kind,
             loader,
+            byte_count: 0,
             is_from_plugin: false,
             plugin_module: None,
             web_assembly: None,
@@ -149,6 +151,7 @@ fn find_compiler_function(path: &[u8], export_name: &[u8]) -> Option<RuntimeFunc
 struct SourceEntry {
     kind: SourceKind,
     loader: Loader,
+    byte_count: u64,
     is_from_plugin: bool,
     public_path: Box<[u8]>,
     display_path: Box<[u8]>,
@@ -181,6 +184,11 @@ impl Sources {
 
     pub fn loader(&self, file: FileId) -> Loader {
         self.entries[file.idx()].loader
+    }
+
+    /// How long the text was that the loader, or a plugin in its place, read for the file.
+    pub fn byte_count(&self, file: FileId) -> u64 {
+        self.entries[file.idx()].byte_count
     }
 
     pub fn is_from_plugin(&self, file: FileId) -> bool {

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { test } from "../supported";
-import { bunEnv, bunExe, isASAN, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunExeWithEveryCommand, isASAN, nodeExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -177,7 +177,7 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
       expect(
         installed
           ? await run(site, ["cp", "-R", join(installed, name, "node_modules"), "node_modules"])
-          : await run(site, [bunExe(), "install", "--ignore-scripts", "--linker", "hoisted"]),
+          : await run(site, [bunExeWithEveryCommand(), "install", "--ignore-scripts", "--linker", "hoisted"]),
       ).toEqual({ output: "", exitCode: 0 });
 
       mkdirSync(join(site, "node_modules", "@types"), { recursive: true });

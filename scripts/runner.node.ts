@@ -322,6 +322,11 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    /** The step that built the `bun` that has every command, or a path to it, for when the Bun under test is `bun-aot`. */
+    ["every-command-step"]: {
+      type: "string",
+      default: undefined,
+    },
     ["bail"]: {
       type: "boolean",
       default: false,
@@ -748,6 +753,14 @@ async function runTests(): Promise<TestResult[]> {
     !isQuiet && console.log("bun-aot:", beside, getRevision(beside));
   }
 
+  // `bun-aot` has no `bun install`.
+  let installerPath = execPath;
+  if (options["every-command-step"]) {
+    installerPath = await getExecPathFromBuildkite(options["every-command-step"], options["build-id"], "release-bun");
+    process.env.BUN_WITH_EVERY_COMMAND = installerPath;
+    !isQuiet && console.log("bun with every command:", installerPath, getRevision(installerPath));
+  }
+
   const expectations = getTestExpectations();
   const modifiers = getTestModifiers(execPath);
   // "1.2.3+abcdef123", and not "1.2.3-canary.1+abcdef123" or "1.2.3-debug+abcdef123".
@@ -974,7 +987,7 @@ async function runTests(): Promise<TestResult[]> {
   if (!isQuiet) {
     for (const path of [cwd, testsPath]) {
       const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
-      await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+      await runTest(title, async () => spawnBunInstall(installerPath, { cwd: path }));
     }
   }
 
@@ -1005,7 +1018,7 @@ async function runTests(): Promise<TestResult[]> {
 
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
-    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
+    if (isCI && !isWindows && (await installCiRemapServer(installerPath))) {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers<{ port: number }>();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers<Error | string>();
       let exiting = false;
@@ -1382,7 +1395,7 @@ async function runTests(): Promise<TestResult[]> {
 
       const packageJson = join(relative(cwd, vendorPath), "package.json").replace(/\\/g, "/");
       if (packageManager === "bun") {
-        const installResult = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd: vendorPath }));
+        const installResult = await runTest(packageJson, () => spawnBunInstall(installerPath, { cwd: vendorPath }));
         if (!installResult?.ok) {
           continue;
         }
@@ -3017,7 +3030,7 @@ function addPath(...paths: (string | undefined)[]): string {
 }
 
 function getTestLabel(): string | undefined {
-  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hand-over)$/, "");
+  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hand-over|hardened)$/, "");
 }
 
 /**

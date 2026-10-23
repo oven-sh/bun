@@ -112,6 +112,7 @@ export const rows: Row[] = [
   ]),
 
   variant("all-code-direct", ["--aot-testing=GenerateAllCodeDirectly"]),
+  variant("cold-code-direct", ["--aot-limit=MaxWarmCodeValues:1", "--aot-testing=GenerateColdCodeDirectly"]),
   variant("collecting-beside-the-program", [], besideTheProgram),
   variant(
     "collections-at-allocations",

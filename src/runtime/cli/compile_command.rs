@@ -101,6 +101,7 @@ pub(crate) struct CompileRequest<'r, 'a> {
 pub(crate) struct CompileOutcome {
     pub(crate) output_files: Vec<OutputFile>,
     pub(crate) graph_bytes: Option<Vec<u8>>,
+    pub(crate) metafile: Option<Vec<u8>>,
     pub(crate) summary: Vec<u8>,
     pub(crate) report_messages: Vec<ReportMessage>,
     pub(crate) trim_log_lines: Vec<Vec<u8>>,

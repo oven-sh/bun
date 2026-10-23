@@ -297,6 +297,7 @@ fn freeze_file(
     Ok(SourceEntry {
         kind,
         loader,
+        byte_count: payload.map_or(0, |payload| payload.byte_count as u64),
         is_from_plugin: payload.is_some_and(|payload| payload.is_from_plugin),
         public_path,
         display_path,

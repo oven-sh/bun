@@ -25,6 +25,7 @@ fn fill(record: &mut CompileOptions, options: &AotOptions, thread_count: NonZero
         identity: IDENTITY,
         image_form: None,
         thread_count,
+        reports_functions: false,
     };
     fill_record(record, &request);
 }
@@ -177,6 +178,7 @@ fn image_form_of_the_target_replaces_the_default() {
         identity: IDENTITY,
         image_form: None,
         thread_count: THREAD_COUNT,
+        reports_functions: false,
     };
     let mut record: CompileOptions = zeroed();
     record.target.image_form = ImageForm::PositionIndependent;

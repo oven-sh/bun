@@ -395,6 +395,18 @@ impl<'a> ImageEditor<'a> {
         self.bytes.get_mut(file_start as usize..file_end as usize)
     }
 
+    /// What an earlier cut has left of `range`, ascending.
+    pub fn file_backed_parts(&self, range: AddressRange) -> Vec<AddressRange> {
+        self.spans
+            .iter()
+            .map(|span| AddressRange {
+                start: range.start.max(span.addresses.start),
+                end: range.end.min(span.addresses.end),
+            })
+            .filter(|part| part.start < part.end)
+            .collect()
+    }
+
     pub fn cut_model(&self) -> CutModel {
         let bytes: &[u8] = &**self.bytes;
         match self.format {

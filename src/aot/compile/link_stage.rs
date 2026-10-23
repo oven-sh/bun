@@ -1,3 +1,4 @@
+use super::module_list::collect_module_list;
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
 use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild};
 use crate::link::{
@@ -122,6 +123,8 @@ impl Build<'_> {
             },
         });
         let mut texts = None;
+        let mut modules = None;
+        let (lists_modules, runs_tests) = (self.options.lists_modules, self.options.aot.runs_tests);
         let input = LinkInput {
             units,
             projects,
@@ -131,6 +134,14 @@ impl Build<'_> {
         };
         let linked = link::link_while(input, &mut |keys: &ProgramKeys| {
             texts = Some(collect_source_texts(&loaded, &keys.modules, &in_parallel));
+            if lists_modules {
+                modules = Some(collect_module_list(
+                    &loaded,
+                    &bound,
+                    &keys.modules,
+                    runs_tests,
+                ));
+            }
         });
         let Linked {
             program,
@@ -173,6 +184,7 @@ impl Build<'_> {
             texts: texts.expect("link has called it"),
             entry_points,
             folders,
+            modules,
         })
     }
 }

@@ -287,7 +287,7 @@ const TIMINGS_META_DATA = "timings:";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Base triplet (bun[-aot]-os-arch[-musl][-baseline]). Variant suffix (-profile,
+ * Base triplet (bun[-aot]-os-arch[-musl][-hardened][-baseline]). Variant suffix (-profile,
  * -asan) is added by the caller. Matches ci.ts getTargetTriplet() and
  * cmake's bunTriplet — any drift breaks test-step downloads.
  */
@@ -296,6 +296,8 @@ export function computeBunTriplet(cfg: Config): string {
   let t = `${cfg.aot && !cfg.asan ? "bun-aot" : "bun"}-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
   if (cfg.abi === "android") t += "-android";
+  // The release fetches its files by name, and CI builds a hardened Bun beside the one that ships.
+  if (cfg.hardened) t += "-hardened";
   // No `-baseline` suffix: x64 is always baseline and the historical
   // `-baseline` names are published as release-side aliases.
   return t;
@@ -529,9 +531,9 @@ export function orderFileContext(): OrderFileContext {
   };
 }
 
-/** Targets that use an order file. Every build links. */
+/** Targets that use an order file. Every build links. No step traces a hardened build, so there is none of its name to inherit. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
-  return usesOrderFile(cfg) && ctx.buildkite;
+  return usesOrderFile(cfg) && ctx.buildkite && !cfg.hardened;
 }
 
 /**

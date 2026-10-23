@@ -67,7 +67,7 @@ trim-feature jit : JIT
   about "The JIT compilers for JavaScript, regular expressions and WebAssembly. An executable built with `aot` never starts them, so `trim` removes them. Without `aot`, `trim` keeps them."
   saves 14.1 14.2
 
-trim-feature interpreter : RuntimeTranspiler Interpreter BuiltinSourceText
+trim-feature interpreter : RuntimeTranspiler DataFileLoaders Interpreter BuiltinSourceText
   about "Everything that runs code that isn't in the executable: the JavaScript parser, the interpreter and the transpiler. `eval()`, `new Function()`, `import()` and `require()` of files that weren't compiled into the executable, `Bun.Transpiler`, `Bun.plugin()`, and built-in modules that your code doesn't import all need it. `trim` only removes it from an executable built with `aot`."
   saves 3.7 2.7
 

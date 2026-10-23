@@ -110,31 +110,40 @@ macro_rules! removable_body_of_either {
 
 #[macro_export]
 macro_rules! removable_definition {
-    ($feature:ident, $function:path) => {
+    ($feature:ident, $function:path) => {{
+        if const { $crate::is_left_out_of_link($crate::Feature::$feature) } {
+            $crate::abort_for_command_left_out($crate::Feature::$feature.index());
+        }
         $crate::record_removable_entry_point!(
             { $crate::Feature::$feature.index() },
             { $crate::StubKind::Abort as u8 },
             $function,
             $crate::GuardOrigin::Definition
         )
-    };
+    }};
 }
 
 #[macro_export]
 macro_rules! removable_host_function_definition {
-    ($feature:ident, $function:path) => {
+    ($feature:ident, $function:path) => {{
+        if const { $crate::is_left_out_of_link($crate::Feature::$feature) } {
+            $crate::abort_for_command_left_out($crate::Feature::$feature.index());
+        }
         $crate::record_removable_entry_point!(
             { $crate::Feature::$feature.index() },
             { $crate::StubKind::Throw as u8 },
             $function,
             $crate::GuardOrigin::Definition
         )
-    };
+    }};
 }
 
 #[macro_export]
 macro_rules! call_removable {
     ($feature:ident, Abort, $function:path $(, $argument:expr)* $(,)?) => {{
+        if const { $crate::is_left_out_of_link($crate::Feature::$feature) } {
+            $crate::abort_for_command_left_out($crate::Feature::$feature.index());
+        }
         $crate::record_removable_entry_point!(
             { $crate::Feature::$feature.index() },
             { $crate::StubKind::Abort as u8 },
@@ -180,6 +189,12 @@ pub fn run_removable_body<
     stub: S,
 ) -> R {
     const { assert!((FEATURE as usize) < Feature::INDEX_LIMIT) };
+    if const { crate::state::is_left_out_of_link_index(FEATURE) } {
+        if STUB == crate::StubKind::Abort as u8 {
+            crate::state::abort_for_command_left_out(FEATURE);
+        }
+        return stub();
+    }
     if STUB != crate::StubKind::Abort as u8 && crate::state::is_removed_index(FEATURE) {
         return stub();
     }
@@ -193,6 +208,12 @@ pub fn run_body_of_either<const FIRST: u16, const SECOND: u16, R, B: FnOnce() ->
     const {
         assert!((FIRST as usize) < Feature::INDEX_LIMIT && (SECOND as usize) < Feature::INDEX_LIMIT)
     };
+    if const {
+        crate::state::is_left_out_of_link_index(FIRST)
+            && crate::state::is_left_out_of_link_index(SECOND)
+    } {
+        crate::state::abort_for_command_left_out(FIRST);
+    }
     crate::record_removable_entry_point!(
         FIRST,
         crate::StubKind::Abort as u8,

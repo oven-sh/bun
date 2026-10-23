@@ -98,7 +98,9 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   names the programs that differ or stopped the executable; each is then run alone with the same flags.
 - **The direct code generators and the check of references.** `run-programs.ts` builds every program with
   `--aot-check=validate-references`, and a build with that check sends every function through B3. A build whose flags hold
-  `--aot-testing=GenerateAllCodeDirectly` therefore goes without it, and must count `FunctionsGeneratedDirectly`.
+  `--aot-testing=GenerateAllCodeDirectly` therefore goes without it, and must count `FunctionsGeneratedDirectly`. So does one with
+  `--aot-testing=GenerateColdCodeDirectly`, which hands the generator what is neither hot nor warm of a very large program
+  (`variant-cold-code-direct`). Without either word no code is generated directly.
 - **The share.** All programs in all ways are 130 hours of one processor, and CI has 24 shards of twelve minutes on four vCPUs. So a
   run that is told nothing takes a share, and which one follows from `Bun.revision`: each commit takes other programs, and in
   time all are taken. `inShare(name, oneIn)` and `partInShare(part, parts, oneIn)` of `run-programs.ts` decide: one program in

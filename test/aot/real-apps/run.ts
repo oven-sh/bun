@@ -121,7 +121,7 @@ export class Runner {
       await $`git init -q && git remote add origin https://github.com/${project.repository} && git fetch -q --depth 1 origin ${project.commit} && git -c advice.detachedHead=false checkout -q FETCH_HEAD`.cwd(source);
     }
     if (existsSync(join(source, "node_modules"))) return true;
-    return (await this.spawn(project, source, [this.bun, "install", "--ignore-scripts"], true)).exitCode === 0;
+    return (await this.spawn(project, source, [process.env.BUN_WITH_EVERY_COMMAND || this.bun, "install", "--ignore-scripts"], true)).exitCode === 0;
   }
 
   async compareTypes(project: Project): Promise<Result["types"]> {

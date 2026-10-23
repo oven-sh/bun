@@ -1610,24 +1610,21 @@ mod draft {
             matches!(sig, libc::SIGSEGV | libc::SIGBUS).then_some(addr),
         );
 
-        if matches!(
-            sig,
-            libc::SIGSEGV | libc::SIGBUS | libc::SIGILL | libc::SIGTRAP
-        ) {
-            let pc = context.map(|(pc, _, _)| pc);
-            let trap = if cfg!(target_arch = "x86_64") && sig == libc::SIGTRAP {
-                pc.map(|pc| pc.wrapping_sub(1))
-            } else {
-                pc
-            };
-            let fault = if sig == libc::SIGTRAP {
-                None
-            } else {
-                Some(addr)
-            };
-            if let Some(feature) = crate::compiled_frames::removed_feature_reached([fault, trap]) {
-                bun_removable_features::abort_for_removed_feature(feature);
-            }
+        // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
+        const SEGV_MAPERR: c_int = 1;
+        let pc = context.map(|(pc, _, _)| pc);
+        // macOS raises SIGSEGV only where nothing is mapped, and SIGBUS where a mapping refuses the access. On ARM64 the
+        // si_code of that SIGSEGV is SEGV_ACCERR.
+        // SAFETY: kernel provides a valid siginfo_t.
+        let is_unmapped = cfg!(target_os = "macos") || unsafe { (*info).si_code } == SEGV_MAPERR;
+        let entered = match sig {
+            libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
+            libc::SIGTRAP | libc::SIGILL => pc,
+            libc::SIGSEGV if is_unmapped => pc.filter(|&pc| pc == addr),
+            _ => None,
+        };
+        if let Some(feature) = entered.and_then(crate::compiled_frames::removed_feature_entered) {
+            bun_removable_features::abort_for_removed_feature(feature);
         }
 
         crash_handler(
@@ -2064,16 +2061,20 @@ mod draft {
     static WINDOWS_EXE_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
 
     #[cfg(windows)]
-    fn is_in_exe_image(pc: usize) -> bool {
-        let base = WINDOWS_EXE_IMAGE_BASE.load(Ordering::Relaxed);
-        let end = WINDOWS_EXE_IMAGE_END.load(Ordering::Relaxed);
-        base == 0 || (base..end).contains(&pc)
-    }
-
-    #[cfg(windows)]
     fn accessed_address_windows(record: &bun_sys::windows::EXCEPTION_RECORD) -> Option<usize> {
         (record.ExceptionCode == bun_sys::windows::EXCEPTION_ACCESS_VIOLATION)
             .then(|| record.ExceptionInformation[1])
+    }
+
+    #[cfg(windows)]
+    fn removed_feature_entered_windows(
+        record: &bun_sys::windows::EXCEPTION_RECORD,
+    ) -> Option<bun_removable_features::Feature> {
+        let pc = record.ExceptionAddress as usize;
+        if accessed_address_windows(record).is_some_and(|accessed| accessed != pc) {
+            return None;
+        }
+        crate::compiled_frames::removed_feature_entered(pc)
     }
 
     #[cfg(windows)]
@@ -2112,11 +2113,7 @@ mod draft {
             return bun_sys::windows::EXCEPTION_CONTINUE_EXECUTION;
         }
 
-        let fault_pc = record.ExceptionAddress as usize;
-        let fault = accessed_address_windows(record).filter(|_| is_in_exe_image(fault_pc));
-        if let Some(feature) =
-            crate::compiled_frames::removed_feature_reached([Some(fault_pc), fault])
-        {
+        if let Some(feature) = removed_feature_entered_windows(record) {
             bun_removable_features::abort_for_removed_feature(feature);
         }
 
@@ -2190,10 +2187,7 @@ mod draft {
             return ExceptionContinueSearch;
         };
         let pc = record.ExceptionAddress as usize;
-        if let Some(feature) = crate::compiled_frames::removed_feature_reached([
-            Some(pc),
-            accessed_address_windows(record),
-        ]) {
+        if let Some(feature) = removed_feature_entered_windows(record) {
             bun_removable_features::abort_for_removed_feature(feature);
         }
         crash_handler(
@@ -2223,10 +2217,7 @@ mod draft {
             return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH;
         };
         let pc = record.ExceptionAddress as usize;
-        if let Some(feature) = crate::compiled_frames::removed_feature_reached([
-            Some(pc),
-            accessed_address_windows(record),
-        ]) {
+        if let Some(feature) = removed_feature_entered_windows(record) {
             bun_removable_features::abort_for_removed_feature(feature);
         }
         crash_handler(

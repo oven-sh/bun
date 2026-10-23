@@ -83,6 +83,8 @@ feature Valkey "Bun.redis and Bun.RedisClient"
 feature RuntimeTranspiler "Bun.Transpiler and the transpiler for code loaded at run time"
   minimum 700000
 
+feature DataFileLoaders "import() and require() of JSON, TOML, YAML, text and other data files that aren't in the executable"
+
 feature Bundler "Bun.build, HTML imports and the development server"
   minimum 450000
 

@@ -15,6 +15,7 @@ use bun_core::ThreadLock;
 pub use bv2_impl::api;
 pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
+pub(crate) use bv2_impl::write_metafile_output;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
@@ -5890,7 +5891,7 @@ pub mod bv2_impl {
 
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
     /// Metafile paths are relative to outdir, like all other output files.
-    fn write_metafile_output(
+    pub(crate) fn write_metafile_output(
         output_files: &mut Vec<options::OutputFile>,
         outdir: &[u8],
         file_path: &[u8],

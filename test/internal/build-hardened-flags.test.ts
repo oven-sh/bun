@@ -14,7 +14,7 @@ import {
 import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 import type { DirectBuild } from "../../scripts/build/source.ts";
 
-function mockToolchain(): Toolchain {
+function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang",
     cxx: "/fake/llvm/bin/clang++",
@@ -46,10 +46,11 @@ function mockToolchain(): Toolchain {
     msvcLinker: undefined,
     rc: undefined,
     nasm: undefined,
+    ...overrides,
   };
 }
 
-function linuxConfig(partial: PartialConfig, buildDir: string): Config {
+function linuxConfig(partial: PartialConfig, buildDir: string, toolchain = mockToolchain()): Config {
   return resolveConfig(
     {
       os: "linux",
@@ -61,7 +62,7 @@ function linuxConfig(partial: PartialConfig, buildDir: string): Config {
       linuxSysroot: buildDir,
       ...partial,
     },
-    mockToolchain(),
+    toolchain,
   );
 }
 
@@ -125,6 +126,7 @@ test("--hardened=on gives every C and C++ source, every crate and the link its m
   expect(flags.link).toEqual(expect.arrayContaining(linkFlags));
   expect(flags.allocator).toContain("MI_SECURE=1");
   expect(patchesOfAllocator(cfg)).toContain("patches/mimalloc/secure-guard-pages-are-protected.patch");
+  expect(patchesOfAllocator(cfg)).toContain("patches/mimalloc/environment-sets-sizes-and-pace-only.patch");
 });
 
 test("only a build with the ahead-of-time compiler patches what the allocator does in every free", () => {
@@ -144,6 +146,35 @@ test("a build without --hardened has none of them", () => {
   const all = Object.values(flags).flat();
   for (const flag of [...compilerFlags, ...rustFlags, ...linkFlags, "MI_SECURE=1"]) expect(all).not.toContain(flag);
   expect(flags.c).toContain("-fno-stack-protector");
+  expect(patchesOfAllocator(cfg)).not.toContain("patches/mimalloc/environment-sets-sizes-and-pace-only.patch");
+});
+
+test("only --require-mdwe=off lets a hardened build's executables start on a kernel without PR_SET_MDWE", () => {
+  using dir = tempDir("build-hardened-flags-mdwe", {});
+  const startsWithout = "--cfg=bun_starts_without_mdwe";
+  expect(everyFlagOf(linuxConfig({ hardened: true }, String(dir))).rust).not.toContain(startsWithout);
+  expect(everyFlagOf(linuxConfig({ hardened: true, requireMdwe: false }, String(dir))).rust).toContain(startsWithout);
+  expect(everyFlagOf(linuxConfig({}, String(dir))).rust).not.toContain(startsWithout);
+  expect(() => linuxConfig({ requireMdwe: true }, String(dir))).toThrow("requireMdwe=true requires hardened=true");
+});
+
+test("only --lock-environment=off lets tests steer a hardened build by the environment", () => {
+  using dir = tempDir("build-hardened-flags-environment", {});
+  const patch = "patches/mimalloc/environment-sets-sizes-and-pace-only.patch";
+  const locked = linuxConfig({ hardened: true }, String(dir));
+  expect(everyFlagOf(locked).rust).toContain("--cfg=bun_locked_environment");
+  expect(everyFlagOf(locked).cxx).toContain("-DBUN_LOCKED_ENVIRONMENT=1");
+  for (const cfg of [
+    linuxConfig({ hardened: true, lockEnvironment: false }, String(dir)),
+    linuxConfig({}, String(dir)),
+  ]) {
+    expect(everyFlagOf(cfg).rust).not.toContain("--cfg=bun_locked_environment");
+    expect(everyFlagOf(cfg).cxx).not.toContain("-DBUN_LOCKED_ENVIRONMENT=1");
+    expect(patchesOfAllocator(cfg)).not.toContain(patch);
+  }
+  expect(() => linuxConfig({ lockEnvironment: true }, String(dir))).toThrow(
+    "lockEnvironment=true requires hardened=true",
+  );
 });
 
 test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the same calls", () => {
@@ -163,6 +194,16 @@ test("--hardened=on is refused where nothing can be hardened", () => {
     { abi: "android", arch: "aarch64" },
   ] as PartialConfig[])
     expect(() => linuxConfig({ hardened: true, ...partial }, String(dir))).toThrow("hardened=true requires os=linux");
+});
+
+test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at all", () => {
+  using dir = tempDir("build-hardened-flags-strip", {});
+  for (const arch of ["x64", "aarch64"] as const)
+    expect(linuxConfig({ hardened: true, arch }, String(dir)).strip).toBe("/fake/llvm/bin/llvm-strip");
+  expect(() => linuxConfig({ hardened: true }, String(dir), mockToolchain({ llvmStrip: undefined }))).toThrow(
+    "hardened=true requires llvm-strip",
+  );
+  expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
 const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"];

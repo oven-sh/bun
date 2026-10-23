@@ -17,7 +17,7 @@ pub use bun_exe_format::cut_model::{NoCutReason, Uncut, UncutReason};
 pub use bun_removable_features::{
     EnteredFrom, Feature, FeatureSet, Removal, RuntimeRequirement, TrimFeature,
 };
-pub use decide::decide;
+pub use decide::{decide, features_kept_only_when_named};
 pub use error::{TrimError, TrimInternalError, TrimRequestError, UnsupportedReason};
 pub use model::{
     Decision, EdgeStrength, ExecutableSettings, FeatureEdge, FeatureEdges, LocaleTag,

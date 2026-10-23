@@ -65,6 +65,7 @@ pub(crate) fn options_from_bundler<'r>(
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
             jsx_has_side_effects: input.bundle_options.jsx.side_effects,
         },
+        lists_modules: input.bundle_options.metafile,
     })
 }
 
@@ -72,7 +73,7 @@ pub(crate) fn options_from_bundler<'r>(
 fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> bool {
     // Every field is named: a new bundler option must not compile until it is classified here.
     let BundleOptions {
-        banner, footer, output_format, target, bytecode, metafile, transform_only,
+        banner, footer, output_format, target, bytecode, transform_only,
         server_components, allow_unresolved, macro_remap, inject, framework, dev_server,
         hot_module_reloading, ignore_module_resolution_errors, disable_transpilation, repl_mode,
         react_compiler_parse_test_pragmas,
@@ -95,7 +96,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         extra_cjs_extensions: _, global_cache: _, install_preference: _, install: _,
         inline_entrypoint_import_meta_main: _, type_check: _,
         deprecated_namespace_object_setters: _, bytecode_depth: _, optimize_bytecode: _,
-        bytecode_order: _, compile_target_builtins: _, metafile_json_path: _,
+        bytecode_order: _, compile_target_builtins: _, metafile: _, metafile_json_path: _,
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
         supports_multiple_outputs: _, rewrite_jest_for_tests: _, code_coverage: _, debugger: _,
     } = options;
@@ -108,7 +109,6 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         format_argument(*output_format),
         target_argument(*target),
         bytecode.then_some("--bytecode"),
-        metafile.then_some("--metafile"),
         transform_only.then_some("--no-bundle"),
         server_components.then_some("--server-components"),
         (!matches!(allow_unresolved, AllowUnresolved::All)).then_some("--allow-unresolved"),

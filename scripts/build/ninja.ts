@@ -38,6 +38,7 @@ const ruleVars = {
   shim_verify: ["spec"],
   smoke_test: [],
   strip: ["stripflags"],
+  stripped_verify: ["spec"],
   // codegen.ts
   bun_install: ["dir", "stamp"],
   codegen: ["cwd", "args", "desc"],

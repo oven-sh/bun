@@ -318,6 +318,33 @@ extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, c
 // reporter, which crashes if fopen fails. VirtualMachine::write_profiles writes the report instead.
 static const char8_t* s_samplingProfilerDirectory = nullptr;
 
+#if defined(BUN_LOCKED_ENVIRONMENT)
+// Sizes, the collector's pace, and switches that only take something away.
+static bool isOptionThatCompiledCodeTakesFromEnvironment(const char* assignment)
+{
+    static constexpr ASCIILiteral names[] = {
+        "codeBlockAgingLeaseMultiplier"_s,
+        "crashIfInterpreterIsUsed"_s,
+        "criticalGCMemoryThreshold"_s,
+        "forceRAMSize"_s,
+        "gcMaxHeapSize"_s,
+        "heapGrowthMaxIncrease"_s,
+        "heapGrowthSteepnessFactor"_s,
+        "jitMemoryReservationSize"_s,
+        "largeHeapSize"_s,
+        "mediumHeapSize"_s,
+        "numberOfGCMarkers"_s,
+        "smallHeapSize"_s,
+        "structureHeapSizeInKB"_s,
+        "useConcurrentJIT"_s,
+        "useWasm"_s,
+    };
+    return std::ranges::any_of(names, [&](ASCIILiteral name) {
+        return !strncmp(assignment, name.characters(), name.length()) && assignment[name.length()] == '=';
+    });
+}
+#endif
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool runsCompiledCode, bool locksBuiltins, bool isCompiler)
 {
     static std::once_flag jsc_init_flag;
@@ -363,7 +390,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::exposeInternalModuleLoader() = false;
             JSC::Options::useSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
+#if defined(BUN_DISABLE_SHADOW_REALM)
+            JSC::Options::useShadowRealm() = false;
+#else
             JSC::Options::useShadowRealm() = true;
+#endif
             JSC::Options::useV8DateParser() = true;
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
@@ -429,6 +460,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                         continue;
                     }
 
+#if defined(BUN_LOCKED_ENVIRONMENT)
+                    if (runsCompiledCode && !isOptionThatCompiledCodeTakesFromEnvironment(env + 8))
+                        continue;
+#endif
                     if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
                         onCrash(env, strlen(env));
                     }
@@ -455,6 +490,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
+#endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+            // After the loop: BUN_JSC_useShadowRealm=1 does not bring it back.
+            JSC::Options::useShadowRealm() = false;
 #endif
             // This is the only assertOptionsAreCoherent() rule that BUN_JSC_* can break, and that assertion aborts.
             if (JSC::Options::useWasm() && !JSC::Options::useWasmIPInt() && !(JSC::Options::useBBQJIT() && JSC::Options::useJIT())) [[unlikely]] {
@@ -1138,6 +1177,7 @@ namespace Zig {
 
 using namespace WebCore;
 
+#if !defined(BUN_DISABLE_SHADOW_REALM)
 JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1153,6 +1193,7 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
 
     return shadow;
 }
+#endif
 
 extern "C" int Bun__VM__scriptExecutionStatus(void*);
 JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject*)
@@ -1200,9 +1241,18 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
+#if ENABLE(WEBASSEMBLY)
         &compileStreaming,
         &instantiateStreaming,
+#else
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+#endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &deriveShadowRealmGlobalObject,
+#endif
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -1231,9 +1281,18 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
+#if ENABLE(WEBASSEMBLY)
         &compileStreaming,
         &instantiateStreaming,
+#else
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+#endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &deriveShadowRealmGlobalObject,
+#endif
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -1262,9 +1321,18 @@ const JSC::GlobalObjectMethodTable& StandaloneGlobalObject::globalObjectMethodTa
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
+#if ENABLE(WEBASSEMBLY)
         &compileStreaming,
         &instantiateStreaming,
+#else
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+#endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &deriveShadowRealmGlobalObject,
+#endif
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -2923,11 +2991,13 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeNoColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
          } },
+#if ENABLE(WEBASSEMBLY)
         { OBJECT_OFFSETOF(GlobalObject, m_wasmStreamingConsumeStreamFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(WebAssembly, Abort, void)
              init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
+#endif
         { OBJECT_OFFSETOF(GlobalObject, m_nativeMicrotaskTrampoline), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
          } },
@@ -4727,6 +4797,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     return result;
 }
 
+#if ENABLE(WEBASSEMBLY)
 extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
 
 extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
@@ -4790,6 +4861,7 @@ void GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSPro
 {
     handleResponseOnStreamingAction(globalObject, promise, source, JSC::Wasm::CompilerMode::FullCompile, importObject, WTF::move(compileOptions));
 }
+#endif // ENABLE(WEBASSEMBLY)
 
 JSFunction* GlobalObject::thenable(Zig::FFIFunction handler)
 {

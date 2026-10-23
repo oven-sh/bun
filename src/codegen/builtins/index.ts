@@ -65,6 +65,8 @@ export interface GenerateOptions {
   target: TargetPlatform;
   bindgenSources: readonly string[];
   typesOnly: readonly string[];
+  /** What the checkout of JavaScriptCore is compiled without. */
+  leftOut?: readonly string[];
 }
 
 export interface GeneratedFiles {
@@ -95,7 +97,7 @@ const usage =
   "usage: bun src/codegen/builtins/index.ts --codegen-path=<dir> " +
   `--target=<${targetPlatforms.join("|")}> --sources=<crate>=<a.bind.ts>,.. ` +
   "(--javascriptcore=<Source/JavaScriptCore> [--engine-out=<dir>] | --prebuilt-generated=<dir>) " +
-  "[--engine-directory=<Source/JavaScriptCore/aot>] [--types-only=<b.bind.ts>,..] [--check]";
+  "[--engine-directory=<Source/JavaScriptCore/aot>] [--types-only=<b.bind.ts>,..] [--left-out=<global>,..] [--check]";
 
 const singleRoot = (root: string): { Engine: string; Host: string } => ({ Engine: root, Host: root });
 
@@ -139,7 +141,7 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
 }
 
 async function loadEngine(options: GenerateOptions, problems: Problems): Promise<EngineDeclarations> {
-  if (options.javaScriptCore !== null) return collectEngine(options.javaScriptCore, problems);
+  if (options.javaScriptCore !== null) return collectEngine(options.javaScriptCore, problems, options.leftOut);
   if (options.prebuiltGenerated === null) {
     throw new GeneratorError("the table needs a JavaScriptCore checkout or what a prebuilt WebKit was compiled with");
   }
@@ -314,6 +316,7 @@ function readCommandLine(): CommandLine {
     "engine-directory",
     "prebuilt-generated",
     "types-only",
+    "left-out",
     "check",
   ]);
   const textOf = (name: string): string | null => {
@@ -343,6 +346,7 @@ function readCommandLine(): CommandLine {
       target,
       bindgenSources: listOf(sources).sort(compareBytes),
       typesOnly: listOf(textOf("types-only") ?? ""),
+      leftOut: listOf(textOf("left-out") ?? ""),
     },
     codegenPath,
     engineOut,

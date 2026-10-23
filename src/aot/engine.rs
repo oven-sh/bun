@@ -47,6 +47,7 @@ pub struct EngineRequest<'a> {
     pub identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub thread_count: NonZeroUsize,
+    pub reports_functions: bool,
 }
 
 pub struct EngineOptions {
@@ -142,6 +143,9 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
         MismatchPolicy::Silent
     };
     record.reports = reports_of(options);
+    if request.reports_functions {
+        record.reports |= ReportSet::FUNCTIONS;
+    }
     record.thread_count = u32::try_from(request.thread_count.get()).unwrap_or(u32::MAX);
     if options.admits_inspector {
         record.admitted_code |= AdmittedCode::INSPECTOR;

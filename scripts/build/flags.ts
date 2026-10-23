@@ -464,6 +464,11 @@ export const globalFlags: Flag[] = [
     desc: "No ahead-of-time compiler and no run time for its programs (wtf/PlatformEnable.h turns it on wherever the FTL is on)",
   },
   {
+    flag: "-DENABLE_AOT_GUARDED_PAGES=1",
+    when: c => c.guardedPages,
+    desc: "What a compiled program maps for good lies between two pages without access, each mapping at a random address of its own",
+  },
+  {
     flag: computeHardeningFlags,
     when: c => c.hardened,
     desc: "Stack protector, checked libc calls (in an optimized build without ASan), stack clash protection, zeroed locals up to 4 KB, no assumptions from undefined behavior, traps on an index outside a fixed-size array, libstdc++ assertions, position-independent code",
@@ -681,6 +686,11 @@ export const globalFlags: Flag[] = [
 
 export const bunOnlyFlags: Flag[] = [
   {
+    flag: "-DBUN_LOCKED_ENVIRONMENT=1",
+    when: c => c.lockEnvironment,
+    desc: "Hardened: an executable compiled ahead of time takes a short list of BUN_JSC_* options",
+  },
+  {
     flag: "-DBUN_SAFE_STACK=1",
     when: c => usesSafeStack(c),
     desc: "Hardened: every thread gets the second stack that the libraries compiled with SafeStack keep their arrays on",
@@ -889,6 +899,11 @@ export const defines: Flag[] = [
     flag: "BUN_DISABLE_WEBASSEMBLY=1",
     when: c => !c.webAssembly,
     desc: "No WebAssembly global: JSC's useWasm option is always false",
+  },
+  {
+    flag: "BUN_DISABLE_SHADOW_REALM=1",
+    when: c => !c.shadowRealm,
+    desc: "No ShadowRealm global: JSC's useShadowRealm option is always false",
   },
   {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.

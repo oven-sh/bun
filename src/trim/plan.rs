@@ -1,10 +1,16 @@
 use core::ops::Range;
 
+use core::mem::offset_of;
+
 use bun_exe_format::builtins::Image;
-use bun_removable_features::{Feature, FeatureSet, RuntimeRequirement};
+use bun_exe_format::image::KnownSection;
+use bun_exe_format::section::find_known_section;
+use bun_removable_features::{
+    Feature, FeatureSet, RemovableFeatureState, Removal, RuntimeRequirement,
+};
 
 use crate::decide::decide;
-use crate::error::TrimError;
+use crate::error::{TrimError, TrimInternalError, TrimRequestError};
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
     Decision, FeatureEdges, IcuPackage, ModuleText, OptionRequirement, PlannedIcuPackage,
@@ -19,6 +25,18 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
     }
     let table = read_trim_table(executable)?;
     let decision = decide(input, &table.edges);
+    let is_kept = |feature: &Feature| !decision.unused.contains(*feature);
+    if let Some(missing) = read_removed_features(executable)?.iter().find(is_kept) {
+        return Err(TrimRequestError::MissingFromTemplate(missing).into());
+    }
+    let is_template = input.request.is_template;
+    let outside_programs = Feature::all_outside_compiled_programs();
+    let is_of_programs = |feature: &Feature| !outside_programs.contains(*feature);
+    if let Some(feature) = decision.unused.iter().find(is_of_programs)
+        && is_template
+    {
+        return Err(TrimRequestError::TemplateWithoutProgramFeature(feature).into());
+    }
 
     // Unseen code can ask for any locale, and `--trim-without` alone does not look at the program.
     let follows_used_locales =
@@ -34,8 +52,34 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
         input.request.locales.as_deref(),
         &table.icu_languages,
     )?;
-    let runs_library_text = can_run_library_text(input.used, &decision.requirements);
-    Ok(plan_table(&table, decision, &wanted, runs_library_text))
+    let runs_library_text = is_template || can_run_library_text(input.used, &decision.requirements);
+    let plan = plan_table(&table, decision, &wanted, runs_library_text);
+    if !is_template {
+        return Ok(plan);
+    }
+    // The cut that follows edits each ICU package as a whole.
+    Ok(TrimPlan {
+        keeps_table: true,
+        icu_packages: Vec::new(),
+        ..plan
+    })
+}
+
+/// What the cut that made a template took out of it.
+fn read_removed_features(executable: &mut Image<'_>) -> Result<FeatureSet, TrimError> {
+    let Ok(location) = find_known_section(executable, KnownSection::RemovableFeatureState) else {
+        return Ok(FeatureSet::EMPTY);
+    };
+    let mut state = [0u8; size_of::<RemovableFeatureState>()];
+    if location.size < state.len() as u64
+        || !(executable.read)(location.file_offset as usize, &mut state)
+    {
+        return Err(TrimInternalError::MalformedTable.into());
+    }
+    let removal = &state[offset_of!(RemovableFeatureState, removal)..];
+    let is_removed =
+        |feature: &&Feature| removal[usize::from(feature.index())] != Removal::Present as u8;
+    Ok(Feature::ALL.iter().filter(is_removed).copied().collect())
 }
 
 fn runs_unseen_code(option: &OptionRequirement) -> bool {
@@ -114,6 +158,7 @@ pub(crate) fn plan_table(
         decision,
         ranges,
         icu_packages,
+        keeps_table: false,
     }
 }
 

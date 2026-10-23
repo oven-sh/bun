@@ -343,16 +343,22 @@ declare const require: any;`,
     options: `bytecode: true`,
     prints: "main\n",
   },
-  "options that a build with aot refuses: metafile": {
+  "metafile": {
     files: { "main.ts": `console.log("main");` },
     options: `metafile: true`,
     prints: "main\n",
-    refused: "--metafile",
   },
-  "options that a build with aot refuses: format cjs": {
-    files: { "main.ts": `console.log("main");` },
+  "format cjs": {
+    files: {
+      "main.ts": `import { a } from "./a"; console.log("main", a, typeof require, import.meta.main);`,
+      "a.ts": `export const a = 1;`,
+    },
     options: `format: "cjs"`,
+    prints: "main 1 function true\n",
+  },
+  "bytecode with a depth and format cjs": {
+    files: { "main.ts": `console.log("main");` },
+    options: `bytecode: true, bytecodeDepth: 1, format: "cjs"`,
     prints: "main\n",
-    refused: "format: 'esm'",
   },
 });

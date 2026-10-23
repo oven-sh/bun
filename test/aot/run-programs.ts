@@ -405,6 +405,7 @@ function expectStatistics(buildOutput: string, bounds: StatisticBound[]) {
 // The check of references reads what B3's road leaves behind, so a build with it generates no code directly: a program that is here for the direct code generators is built without.
 // There are none on Windows.
 const generatesAllCodeDirectly = (program: CompiledProgram) => !isWindows && program.buildFlags.includes("--aot-testing=GenerateAllCodeDirectly");
+const generatesCodeDirectly = (program: CompiledProgram) => generatesAllCodeDirectly(program) || (!isWindows && program.buildFlags.includes("--aot-testing=GenerateColdCodeDirectly"));
 // A function that the direct generator turns down while it plans goes to B3 and is counted nowhere: one that handles a 32-bit float, say. A small program may have no other function,
 // so the demand is on the programs of a test file together.
 const builtAllDirectly = { programs: 0, withoutDirectCode: [] as string[] };
@@ -421,7 +422,7 @@ function expectDirectCodeInMostPrograms() {
 
 async function buildCompiled(program: CompiledProgram) {
   const executable = nextExecutablePath(program.outputFolder ?? program.cwd, "program");
-  const checks = generatesAllCodeDirectly(program) ? [] : ["--aot-check=validate-references"];
+  const checks = generatesCodeDirectly(program) ? [] : ["--aot-check=validate-references"];
   const flags = [...checks, ...program.carrier, ...program.buildFlags, ...(program.statistics?.length || program.stubCopiesExpected || generatesAllCodeDirectly(program) ? ["--explain=statistics"] : [])];
   const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, ...program.entryPoints, "--outfile", executable];
   const ran = await spawned(cmd, program.cwd, { ...bunEnv, ...program.buildEnvironment });

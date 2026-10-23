@@ -82,7 +82,9 @@ pub(crate) fn compile_to_executable(
             outfile,
             plan: trimming.plan(),
         };
-        write_product(request, &mut build, product, &mut outcome)
+        write_product(request, &mut build, product, &mut outcome)?;
+        outcome.metafile = outfile.and_then(|outfile| reports::collect_metafile(&build, outfile));
+        Ok(())
     });
     // The report names the executable, so it comes last. A build that could not write one still reports.
     reports::write_build_report(&build, options, &used, &trimming, &outcome)?;

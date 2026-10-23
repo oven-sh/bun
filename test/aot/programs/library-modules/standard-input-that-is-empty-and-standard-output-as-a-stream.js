@@ -10,7 +10,7 @@ console.log("async iteration:", pieces, process.stdin.readableEnded);
 console.log("Bun.stdin:", JSON.stringify(await Bun.stdin.text()));
 console.log("descriptor 0:", fs.readFileSync(0).length);
 const lines = [];
-for await (const line of readline.createInterface({ input: fs.createReadStream("/dev/null") })) lines.push(line);
+for await (const line of readline.createInterface({ input: fs.createReadStream(process.platform === "win32" ? "\\\\.\\nul" : "/dev/null") })) lines.push(line);
 console.log("lines:", lines.length);
 
 process.stdout.write("write, ");

@@ -7732,18 +7732,31 @@ impl<'s> Files<'s> {
             }
         }
         // In its own file such a name stays the file's own, so it adds to nothing that another file declares.
-        for &id in declaring.iter().filter(|id| self.modules[id.idx()].hir.is_script_with_code) {
+        for &id in declaring
+            .iter()
+            .filter(|id| self.modules[id.idx()].hir.is_script_with_code)
+        {
             let module = &self.modules[id.idx()];
             let erased = find_erased_declarations(&module.hir);
             let locals = module.bound.table(module.bound.scopes[0].locals).iter();
             let is_erased = |symbol: SymbolId| {
-                module.bound.symbol(symbol).decls.iter().all(|it| erased.contains(it))
+                module
+                    .bound
+                    .symbol(symbol)
+                    .decls
+                    .iter()
+                    .all(|it| erased.contains(it))
             };
-            let found: Vec<(Atom, SymbolId)> =
-                locals.copied().filter(|&(_, symbol)| is_erased(symbol)).collect();
+            let found: Vec<(Atom, SymbolId)> = locals
+                .copied()
+                .filter(|&(_, symbol)| is_erased(symbol))
+                .collect();
             for (name, symbol) in found {
                 if !self.globals.contains_key(name) {
-                    let merged = self.get_merged_symbol(Sym { file: id, id: symbol });
+                    let merged = self.get_merged_symbol(Sym {
+                        file: id,
+                        id: symbol,
+                    });
                     self.globals.insert(name, merged);
                 }
             }

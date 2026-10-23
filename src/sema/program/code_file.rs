@@ -88,7 +88,8 @@ pub(super) fn load_code_file<'s, 'r>(
         let imports_jsx_factory = options.written_module_detection == ModuleDetection::Auto
             && options.jsx_imports_its_factory
             && (tree.hir.exprs.iter()).any(|e| matches!(e.kind, ExprKind::Jsx(_)));
-        let was_script = is_script_for_project && !tree.hir.has_module_syntax && !imports_jsx_factory;
+        let was_script =
+            is_script_for_project && !tree.hir.has_module_syntax && !imports_jsx_factory;
         mark_as_module(&mut tree.hir);
         tree.hir.is_script_with_code =
             was_script && tree.hir.is_forced_module && tree.hir.declares_beside_code();

@@ -86,10 +86,24 @@ pub(crate) struct Listener {
     pub(crate) hot_run: Cell<u32>,
 }
 
-bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, cause| {
+    let connections = match cause {
+        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
+            Connections::CloseAsThreadEnds
+        }
+        _ => Connections::Close,
+    };
     // SAFETY: trait contract — `this` is live (armed ⇒ not finalized).
-    Listener::do_stop(unsafe { &*this }, true)
+    Listener::do_stop(unsafe { &*this }, connections)
 });
+
+/// What stopping a listener does to the connections it accepted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Connections {
+    Keep,
+    Close,
+    CloseAsThreadEnds,
+}
 
 #[derive(Clone, Copy, Default)]
 pub(crate) enum ListenerType {
@@ -301,7 +315,7 @@ impl Listener {
         let stop_stale = |handlers: &Handlers| {
             if let Some(previous) = stale {
                 previous.handlers.copy_callbacks_from(cx.global(), handlers);
-                Listener::do_stop(previous, false);
+                Listener::do_stop(previous, Connections::Keep);
             }
         };
 
@@ -728,15 +742,26 @@ impl Listener {
     }
 
     pub(crate) fn dispose(&self, _: &mut JsScope<'_>) {
-        self.do_stop(true);
+        self.do_stop(Connections::Close);
     }
 
     pub(crate) fn stop(&self, _: &mut JsScope<'_>, close_active_connections: JsLocal<'_>) {
         log!("close");
-        self.do_stop(close_active_connections.to_js() == JSValue::TRUE);
+        self.do_stop(if close_active_connections.to_js() == JSValue::TRUE {
+            Connections::Close
+        } else {
+            Connections::Keep
+        });
     }
 
-    fn do_stop(&self, force_close: bool) {
+    fn do_stop(&self, on_stop: Connections) {
+        let force_close = on_stop != Connections::Keep;
+        let close_all = || {
+            self.group.with_mut(|g| match on_stop {
+                Connections::CloseAsThreadEnds => g.close_all_as_thread_ends(),
+                _ => g.close_all(),
+            })
+        };
         self.unregister_for_hot_reload();
         let connections = self.handlers.active_connections.get();
         // Accepted sockets have no handle of their own: this one is how their context's stop
@@ -747,7 +772,7 @@ impl Listener {
         if matches!(self.listener.get(), ListenerType::None) {
             // Stopped gracefully earlier; what is still connected goes now.
             if force_close && connections != 0 {
-                self.group.with_mut(|g| g.close_all());
+                close_all();
             }
             return;
         }
@@ -767,7 +792,7 @@ impl Listener {
             self.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
         } else if force_close {
-            self.group.with_mut(|g| g.close_all());
+            close_all();
         }
 
         match listener {

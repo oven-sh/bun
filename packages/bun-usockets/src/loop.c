@@ -233,7 +233,7 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
          * runtime's stop phase has already stopped those owners before this sweep,
          * and closing a listen socket from under one that was not would be a UAF. */
         if (g->head_sockets || g->head_connecting_sockets || g->low_prio_count) {
-            us_socket_group_close_all_ex(g, /* also_listeners */ 0);
+            us_socket_group_close_all_ex(g, /* also_listeners */ 0, /* thread_ends */ 1);
             any = 1;
         }
         /* close_all → unlink may have spliced our cached `next` out too (an
@@ -338,9 +338,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
  * (us_internal_timer_sweep). */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
-/* An accepted socket's handlers run inside the accept loop, so a client they answer can reconnect
- * before the next accept(). Unbounded, the loop never ends under that load and starves timers and
- * every other socket. The listener's poll is level-triggered and reports the rest on the next tick. */
+/* An accepted socket's handlers run inside the accept loop. The bound lets timers and other sockets run between batches. The listener's poll is level-triggered and reports the rest on the next tick. */
 static const int MAX_ACCEPTS_PER_READINESS_EVENT = 32;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
@@ -763,8 +761,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     if(s->flags.is_ipc) {
                         struct msghdr msg = {0};
                         struct iovec iov = {0};
-                        /* The protocol sends one descriptor per message. macOS installs every descriptor a peer
-                         * sends before it truncates the control message, so the ones that don't fit here leak. */
+                        /* The protocol sends one descriptor per message. The buffer has room for more, so that extra ones are received and can be closed. */
                         char cmsg_buf[CMSG_SPACE(64 * sizeof(int))];
 
                         iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;

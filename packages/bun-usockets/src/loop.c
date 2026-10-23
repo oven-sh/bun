@@ -357,10 +357,12 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 
         if(us_socket_is_closed(s)) {
             s->flags.low_prio_state = 2;
+            us_internal_disable_sweep_timer(loop);
             continue;
         }
 
         us_internal_socket_group_link_socket(s->group, s);
+        us_internal_disable_sweep_timer(loop);
         if (s->flags.is_paused) {
             /* us_socket_pause found the reads already off and only set the flag. Hand back an
              * ordinary paused socket: us_socket_resume arms the reads, and the readable dispatch
@@ -730,6 +732,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * maybe_unlink() inside it still sees the group as
                          * non-empty. */
                         g->low_prio_count++;
+                        /* The queue's hold on the sweep timer (see sweep_timer_count). Before the group's goes, so the count doesn't pass through 0. */
+                        us_internal_enable_sweep_timer(loop);
                         us_internal_socket_group_unlink_socket(g, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are

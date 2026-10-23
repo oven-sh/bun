@@ -1385,7 +1385,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 9);
+    let result = JSValue::create_empty_object(global_object, 11);
     result.put(
         global_object,
         b"activeTasks",
@@ -1441,6 +1441,27 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         b"iteration",
         // SAFETY: usockets_loop() returns the live process-global loop.
         JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
+    );
+    result.put(
+        global_object,
+        b"sweepTimerCount",
+        // SAFETY: as above.
+        JSValue::js_number(unsafe {
+            (*event_loop.usockets_loop())
+                .internal_loop_data
+                .sweep_timer_count
+        } as f64),
+    );
+    #[cfg(not(windows))]
+    result.put(
+        global_object,
+        b"sweepDeadline",
+        // SAFETY: as above.
+        JSValue::js_number(unsafe {
+            (*event_loop.usockets_loop())
+                .internal_loop_data
+                .sweep_next_tick_ns
+        } as f64),
     );
     Ok(result)
 }

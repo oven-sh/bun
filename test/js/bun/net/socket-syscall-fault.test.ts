@@ -215,6 +215,34 @@ test.concurrent(
   60_000,
 );
 
+// A sweep visits the parked sockets, so they hold its timer like the sockets that are linked in a group. The fixture's
+// loop has the server's sockets only. It counts the holders after each step and names the steps that moved the deadline.
+test.concurrent(
+  "TLS low-prio queue: the timeout sweep keeps running while every socket waits in the handshake queue",
+  async () => {
+    expect(await runFixture("tls-parked-handshake-sweep-timer-fixture.ts")).toEqual({
+      summary: {
+        idle: 0,
+        accepted: 20,
+        parked: 20,
+        notParked: 5,
+        allParked: 15,
+        linked: [16, 15, 16, 15, 16, 15],
+        closedInQueue: 10,
+        releasedDifference: 0,
+        closed: 0,
+        lastOneParked: 1,
+        deadlineMoved: [],
+        iterationsWhileParked: 0,
+      },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
 // A parked socket's input can't wake the loop, so the loop must keep iterating until the queue is empty. The fixture
 // parks 59 of 64 sockets and pauses all but the one released last, so no readable event drives the next iteration.
 // Reaching that socket takes ceil(58 / 5) = 12 iterations, plus its handshake's round trips.

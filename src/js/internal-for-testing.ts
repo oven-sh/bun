@@ -874,6 +874,10 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
+  /** The sockets the usockets timeout sweep runs for. Its timer is armed while this isn't 0. */
+  sweepTimerCount: number;
+  /** When the next sweep is due, in ns of the monotonic clock, or -1 while the timer is off. Not on Windows, where libuv has the timer. */
+  sweepDeadline?: number;
 } = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {

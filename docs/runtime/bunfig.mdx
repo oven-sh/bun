@@ -267,7 +267,10 @@ Exclude files from coverage reports using glob patterns. Accepts a single patter
 [test]
 # Single pattern
 coveragePathIgnorePatterns = "**/*.spec.ts"
+```
 
+```toml title="bunfig.toml" icon="settings"
+[test]
 # Multiple patterns
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",
@@ -1008,10 +1011,12 @@ The default registry is `https://registry.npmjs.org/`. To change it:
 [install]
 # set default registry as a string
 registry = "https://registry.npmjs.org"
-# set a token
-registry = { url = "https://registry.npmjs.org", token = "123456" }
-# set a username/password
-registry = "https://username:password@registry.npmjs.org"
+
+# if needed, set a token
+# registry = { url = "https://registry.npmjs.org", token = "123456" }
+
+# if needed, set a username/password
+# registry = "https://username:password@registry.npmjs.org"
 ```
 
 ### `install.linkWorkspacePackages`
@@ -1030,14 +1035,14 @@ To configure a registry for a particular scope (for example, `@myorg/<package>`)
 ```toml title="bunfig.toml" icon="settings"
 [install.scopes]
 # registry as string
-myorg = "https://username:password@registry.myorg.com/"
+"@myorg1" = "https://username:password@registry.myorg.com/"
 
 # registry with username/password
 # you can reference environment variables
-myorg = { username = "myusername", password = "$npm_password", url = "https://registry.myorg.com/" }
+"@myorg2" = { username = "myusername", password = "$NPM_PASS", url = "https://registry.myorg.com/" }
 
 # registry with token
-myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
+"@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
 ### `install.ca` and `install.cafile`

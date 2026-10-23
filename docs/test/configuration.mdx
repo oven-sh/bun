@@ -32,8 +32,8 @@ root = "src"  # Only scan for tests in the src directory
 # Only run tests in the src directory
 root = "src"
 
-# Run tests in a specific test directory
-root = "tests"
+# Or run tests in a specific test directory
+# root = "tests"
 
 # Run tests in multiple specific directories (not currently supported - use patterns instead)
 # root = ["src", "lib"]  # This syntax is not supported
@@ -95,7 +95,10 @@ Use it when your project contains submodules, vendored code, or other directorie
 [test]
 # Single pattern
 pathIgnorePatterns = "vendor/**"
+```
 
+```toml title="bunfig.toml" icon="settings"
+[test]
 # Multiple patterns
 pathIgnorePatterns = [
   "vendor/**",
@@ -291,7 +294,7 @@ Specify the coverage threshold as a single number or as an object with per-metri
 coverageThreshold = 0.8
 
 # Detailed thresholds
-coverageThreshold = { lines = 0.9, functions = 0.8 }
+# coverageThreshold = { lines = 0.9, functions = 0.8 }
 ```
 
 Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and any file's line or function coverage is below it. Bun accepts the `statements` key but does not currently enforce it. The check applies with any coverage reporter.
@@ -302,7 +305,10 @@ Setting a threshold makes `bun test` exit with code 1 when coverage is enabled a
 [test]
 # Require 90% coverage across the board
 coverageThreshold = 0.9
+```
 
+```toml title="bunfig.toml" icon="settings"
+[test]
 # Different requirements for different metrics
 coverageThreshold = {
   lines = 0.85,      # 85% line coverage
@@ -318,7 +324,10 @@ Exclude specific files or file patterns from coverage reports using glob pattern
 [test]
 # Single pattern
 coveragePathIgnorePatterns = "**/*.spec.ts"
+```
 
+```toml title="bunfig.toml" icon="settings"
+[test]
 # Multiple patterns
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",

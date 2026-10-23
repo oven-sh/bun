@@ -107,6 +107,20 @@ export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "
   chunkPaths?: string,
 ) => string | null | undefined;
 
+/** The native step of fs.cp with preserveTimestamps: dest gets the atime and mtime of src, then mode. */
+export const fsCopyTimesAndMode = {
+  sync: $newRustFunction("node_fs_binding.rs", "copyTimesAndModeSync", 3) as (
+    src: string,
+    dest: string,
+    mode: number,
+  ) => void,
+  promise: $newRustFunction("node_fs_binding.rs", "copyTimesAndMode", 3) as (
+    src: string,
+    dest: string,
+    mode: number,
+  ) => Promise<void>,
+};
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",

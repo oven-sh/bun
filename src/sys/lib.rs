@@ -4361,29 +4361,66 @@ mod windows_impl {
             Err(_) => Ok(false),
         }
     }
+    /// The times go to the file system as whole 100 ns ticks. `uv_fs_utime` takes them as
+    /// doubles of seconds, and a double of today's seconds moves in steps of 238 ns.
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
-        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
-        let mut req = uv::fs_t::uninitialized();
+        let with_path = |err: Error| err.with_path_and_syscall(path.as_bytes(), Tag::utime);
+        // `path` can carry a `\\?\` prefix already: see `access`.
+        if !bun_paths::string_paths::fits_in_wide_path_buffer(
+            bun_paths::string_paths::without_nt_prefix(path.as_bytes()),
+        ) {
+            return Err(with_path(Error::new(E::ENAMETOOLONG, Tag::utime)));
+        }
+        let (Some(last_access), Some(last_write)) =
+            (file_time_ticks(atime), file_time_ticks(mtime))
+        else {
+            return Err(with_path(Error::new(E::EINVAL, Tag::utime)));
+        };
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        // No `\\?\` prefix is added, as `uv_fs_utime` adds none: behind that prefix Windows
+        // takes `..` and a trailing dot as names.
+        let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path.as_bytes());
+        // The access and the flags of `uv_fs_utime`: a directory opens too, and a link is followed.
+        let fd = open_windows_device_path(
+            wpath,
+            bun_windows_sys::FILE_WRITE_ATTRIBUTES,
+            w::OPEN_EXISTING,
+            w::FILE_FLAG_BACKUP_SEMANTICS,
+        )
+        .map_err(with_path)?;
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+        // A field that is 0 keeps its value on the file.
+        let mut info = w::FILE_BASIC_INFORMATION {
+            CreationTime: 0,
+            LastAccessTime: last_access,
+            LastWriteTime: last_write,
+            ChangeTime: 0,
+            FileAttributes: 0,
+        };
+        // SAFETY: FFI; fd is a valid HANDLE, info/io valid for the call.
         let rc = unsafe {
-            uv::uv_fs_utime(
-                core::ptr::null_mut(),
-                &mut req,
-                path.as_ptr().cast::<_>(),
-                a,
-                m,
-                None,
+            w::ntdll::NtSetInformationFile(
+                fd.native(),
+                &mut io,
+                core::ptr::from_mut(&mut info).cast::<core::ffi::c_void>(),
+                core::mem::size_of::<w::FILE_BASIC_INFORMATION>() as u32,
+                w::FILE_INFORMATION_CLASS::FileBasicInformation,
             )
         };
-        // uv_fs_utime runs fs__capture_path which
-        // uv__malloc's the WTF-16 path into the req even for sync (cb=NULL)
-        // calls; only uv_fs_req_cleanup frees it. fs_t has no Drop impl, so
-        // call it explicitly before any return.
-        req.deinit();
-        if let Some(err) = rc.to_error(Tag::utime) {
-            return Err(err.with_path(path.as_bytes()));
+        let _ = close(fd);
+        if rc != bun_windows_sys::NTSTATUS::SUCCESS {
+            return Err(with_path(Error::new(rc, Tag::utime)));
         }
         Ok(())
+    }
+    /// `time` as the 100 ns ticks since 1601 that the file system counts. `None` for a time
+    /// that is not after 1601: such a value means something else to `NtSetInformationFile`.
+    fn file_time_ticks(time: TimeLike) -> Option<i64> {
+        time.sec
+            .checked_mul(10_000_000)?
+            .checked_add(time.nsec / 100)?
+            .checked_add(w::EPOCH_DIFFERENCE_100NS)
+            .filter(|ticks| *ticks > 0)
     }
     pub fn exists_z(path: &ZStr) -> bool {
         // GetFileAttributesW != INVALID.

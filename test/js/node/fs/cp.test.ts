@@ -1,3 +1,4 @@
+import * as internalForTesting from "bun:internal-for-testing";
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
@@ -428,6 +429,256 @@ test("cp with missing callback throws", () => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
+});
+
+type CopyWithTimes = (
+  src: string,
+  dest: string,
+  options: { recursive?: boolean; dereference?: boolean; preserveTimestamps: true },
+) => Promise<void>;
+
+// The callback form gets its own row: `impls` above has no such form.
+const preserveTimestampsForms: [string, CopyWithTimes][] = [
+  ["cpSync", async (src, dest, options) => fs.cpSync(src, dest, options)],
+  ["promises.cp", (src, dest, options) => fs.promises.cp(src, dest, options)],
+  [
+    "cp",
+    (src, dest, options) => {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      fs.cp(src, dest, options, err => (err ? reject(err) : resolve()));
+      return promise;
+    },
+  ],
+];
+
+function fileTimes(path: string) {
+  const { atimeNs, mtimeNs } = fs.statSync(path, { bigint: true });
+  return { atimeNs, mtimeNs };
+}
+
+describe.each(preserveTimestampsForms)("fs.%s with preserveTimestamps", (_form, copy) => {
+  test("gives the copy the exact atime and mtime of its source", async () => {
+    await using basename = tempDir("cp-times", {
+      "from/now.txt": "a",
+      "from/nested/now.txt": "b",
+      "from/sub-millisecond.txt": "c",
+      "from/whole-millisecond.txt": "d",
+      "from/before-1970.txt": "e",
+      "from/read-only.txt": "f",
+      "single.txt": "g",
+      "replaced.txt": "h",
+      "replaced-copy.txt": "the copy replaces this file",
+    });
+    const names = [
+      "now.txt",
+      join("nested", "now.txt"),
+      "sub-millisecond.txt",
+      "whole-millisecond.txt",
+      "before-1970.txt",
+      "read-only.txt",
+    ];
+    const copies = [
+      ...names.map(name => ({ src: join("from", name), dest: join("result", name) })),
+      { src: "single.txt", dest: "single-copy.txt" },
+      { src: "replaced.txt", dest: "replaced-copy.txt" },
+    ];
+    const from = (name: string) => join(basename, "from", name);
+
+    // No value that utimes takes can carry both of these mtimes. A Date holds
+    // whole milliseconds, so it loses 777544 ns of the first one. The seconds
+    // of the second one are not a double: the nearest double is 94 ns away.
+    // The first atime is after every other time of its file, so the read of
+    // the copy does not move it (relatime), and only a copy of it can match.
+    fs.utimesSync(from("sub-millisecond.txt"), Date.now() / 1000 + 3600.000123, 1614834367.111777555);
+    fs.utimesSync(
+      from("whole-millisecond.txt"),
+      new Date("2021-03-04T05:06:09.500Z"),
+      new Date("2021-03-04T05:06:07.123Z"),
+    );
+    expect(fs.statSync(from("sub-millisecond.txt"), { bigint: true }).mtimeNs % 1_000_000n).not.toBe(0n);
+    // fs.stat on Windows reads a time before 1970 back as a date in 2096 (the
+    // seconds wrap at 2^32, in node too), so there is no such source there.
+    if (!isWindows) {
+      const before1970 = new Date("1960-01-02T03:04:05.123Z");
+      fs.utimesSync(from("before-1970.txt"), before1970, before1970);
+    }
+    fs.chmodSync(from("read-only.txt"), 0o444);
+
+    try {
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true, preserveTimestamps: true });
+      await copy(join(basename, "single.txt"), join(basename, "single-copy.txt"), { preserveTimestamps: true });
+      await copy(join(basename, "replaced.txt"), join(basename, "replaced-copy.txt"), { preserveTimestamps: true });
+
+      // Only stat the files from here on: a read of the data can change atime.
+      const times = (path: string) => fileTimes(join(basename, path));
+      expect(Object.fromEntries(copies.map(({ dest }) => [dest, times(dest)]))).toEqual(
+        Object.fromEntries(copies.map(({ src, dest }) => [dest, times(src)])),
+      );
+      expect(fs.statSync(join(basename, "result", "read-only.txt")).mode & 0o777).toBe(0o444);
+    } finally {
+      // Windows does not remove a read-only file.
+      for (const path of [from("read-only.txt"), join(basename, "result", "read-only.txt")]) {
+        if (fs.existsSync(path)) fs.chmodSync(path, 0o644);
+      }
+    }
+  });
+
+  test("with dereference gives the copy of a link the times of the target", async () => {
+    await using basename = tempDir("cp-times-link", {
+      "target.txt": "a",
+      "target-in-tree.txt": "b",
+      "from/file.txt": "c",
+    });
+    const target = join(basename, "target.txt");
+    const targetInTree = join(basename, "target-in-tree.txt");
+    fs.utimesSync(target, 1614834369.5, 1614834367.111777555);
+    fs.utimesSync(targetInTree, 1614834379.5, 1614834377.222888999);
+    fs.symlinkSync(target, join(basename, "link.txt"));
+    fs.symlinkSync(targetInTree, join(basename, "from", "link.txt"));
+    // The links have other times than their targets, so the times of a link do not pass.
+    expect(fs.lstatSync(join(basename, "link.txt"), { bigint: true }).mtimeNs).not.toBe(fileTimes(target).mtimeNs);
+
+    const options = { dereference: true, preserveTimestamps: true } as const;
+    await copy(join(basename, "link.txt"), join(basename, "link-copy.txt"), options);
+    await copy(join(basename, "from"), join(basename, "result"), { recursive: true, ...options });
+
+    const copied = (path: string) => ({ isFile: fs.lstatSync(path).isFile(), ...fileTimes(path) });
+    expect({
+      single: copied(join(basename, "link-copy.txt")),
+      inTree: copied(join(basename, "result", "link.txt")),
+    }).toEqual({
+      single: { isFile: true, ...fileTimes(target) },
+      inTree: { isFile: true, ...fileTimes(targetInTree) },
+    });
+  });
+});
+
+// The step itself, with no copy before it: nothing but the step can give dest
+// these times. The walkers create the same two functions on first use.
+describe.each(["sync", "promise"] as const)("the %s step of fs.cp that copies the times", arm => {
+  test("gives dest the atime and mtime of src, then the mode", async () => {
+    using dir = tempDir("cp-times-step", {
+      "src.txt": "a",
+      "dest.txt": "b",
+      "read-only-dest.txt": "c",
+    });
+    const src = join(dir, "src.txt");
+    const dest = join(dir, "dest.txt");
+    const readOnlyDest = join(dir, "read-only-dest.txt");
+    fs.utimesSync(src, 1614834369.333444555, 1614834367.111777555);
+    fs.utimesSync(dest, 1500000000, 1500000001);
+    fs.utimesSync(readOnlyDest, 1500000002, 1500000003);
+    fs.chmodSync(readOnlyDest, 0o444);
+
+    try {
+      const step = internalForTesting.fsCopyTimesAndMode[arm];
+      await step(src, dest, 0o444);
+      await step(src, readOnlyDest, 0o644);
+
+      const result = (path: string) => ({ ...fileTimes(path), ownerCanWrite: (fs.statSync(path).mode & 0o200) !== 0 });
+      expect({ dest: result(dest), readOnlyDest: result(readOnlyDest) }).toEqual({
+        dest: { ...fileTimes(src), ownerCanWrite: false },
+        readOnlyDest: { ...fileTimes(src), ownerCanWrite: true },
+      });
+    } finally {
+      // Windows does not remove a read-only file.
+      fs.chmodSync(dest, 0o644);
+      fs.chmodSync(readOnlyDest, 0o644);
+    }
+  });
+});
+
+// The walkers take copyFile from node:fs when the first cp call loads them, so a
+// wrapper that is in place before that call can change a file between the copy
+// and the step that copies the times.
+test("fs.cp with preserveTimestamps reads the times after the copy and names the step that fails", async () => {
+  using dir = tempDir("cp-times-step-order", {});
+  const script = `
+    import fs from "node:fs";
+    let afterCopy;
+    const { copyFileSync } = fs;
+    fs.copyFileSync = (src, dest, mode) => {
+      copyFileSync(src, dest, mode);
+      afterCopy(src, dest);
+    };
+    const { copyFile } = fs.promises;
+    fs.promises.copyFile = async (src, dest, mode) => {
+      await copyFile(src, dest, mode);
+      afterCopy(src, dest);
+    };
+    const forms = {
+      "cpSync": async (src, dest, options) => fs.cpSync(src, dest, options),
+      "promises.cp": (src, dest, options) => fs.promises.cp(src, dest, options),
+      "cp": (src, dest, options) =>
+        new Promise((resolve, reject) => fs.cp(src, dest, options, err => (err ? reject(err) : resolve()))),
+    };
+    const removeSrc = src => fs.unlinkSync(src);
+    const removeDest = (src, dest) => fs.unlinkSync(dest);
+    const stampSrc = src => fs.utimesSync(src, 1614834369.333444555, 1614834367.111777555);
+    const withOption = { preserveTimestamps: true };
+    // A filter sends the copy through the same walker without the option.
+    const withoutOption = { filter: () => true };
+    const rows = [
+      ["src removed", withOption, removeSrc],
+      ["dest removed", withOption, removeDest],
+      ["src removed, option off", withoutOption, removeSrc],
+      ["dest removed, option off", withoutOption, removeDest],
+      ["src stamped", withOption, stampSrc],
+    ];
+    // Windows does not unlink the read-only copy.
+    if (process.platform !== "win32") rows.push(["dest removed, read-only src", withOption, removeDest, 0o444]);
+    const results = {};
+    for (const [form, copy] of Object.entries(forms)) {
+      for (const [row, options, change, srcMode = 0o644] of rows) {
+        fs.writeFileSync("src.txt", "x", { mode: srcMode });
+        afterCopy = change;
+        let result;
+        try {
+          await copy("src.txt", "dest.txt", options);
+          result = "no error";
+          if (change === stampSrc) {
+            const src = fs.statSync("src.txt", { bigint: true });
+            const dest = fs.statSync("dest.txt", { bigint: true });
+            result = {
+              srcMtimeMs: Number(src.mtimeMs),
+              destMinusSrc: [String(dest.atimeNs - src.atimeNs), String(dest.mtimeNs - src.mtimeNs)],
+            };
+          }
+        } catch (e) {
+          result = { code: e.code, syscall: e.syscall, path: e.path };
+        }
+        results[form + ": " + row] = result;
+        fs.rmSync("src.txt", { force: true });
+        fs.rmSync("dest.txt", { force: true });
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const expected: Record<string, unknown> = {};
+  for (const form of ["cpSync", "promises.cp", "cp"]) {
+    expected[form + ": src removed"] = { code: "ENOENT", syscall: "stat", path: "src.txt" };
+    expected[form + ": dest removed"] = { code: "ENOENT", syscall: "utime", path: "dest.txt" };
+    // Without the option the step does not run: nothing reads src again.
+    expected[form + ": src removed, option off"] = "no error";
+    expected[form + ": dest removed, option off"] = { code: "ENOENT", syscall: "chmod", path: "dest.txt" };
+    // dest has the times that src got after the copy, not those of the copy.
+    expected[form + ": src stamped"] = { srcMtimeMs: 1614834367111, destMinusSrc: ["0", "0"] };
+    // The step does not chmod dest before it sets the times.
+    if (!isWindows) {
+      expected[form + ": dest removed, read-only src"] = { code: "ENOENT", syscall: "utime", path: "dest.txt" };
+    }
+  }
+  expect({ results: stdout.trim() && JSON.parse(stdout), stderr }).toEqual({ results: expected, stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the

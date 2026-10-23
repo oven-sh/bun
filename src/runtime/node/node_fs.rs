@@ -551,6 +551,11 @@ mod _async_tasks {
         pub(crate) type Close = UVFSRequest<ret::Close, args::Close, { NodeFSFunctionEnum::Close }>;
         pub(crate) type CopyFile =
             AsyncFSTask<ret::CopyFile, args::CopyFile<'static>, { NodeFSFunctionEnum::CopyFile }>;
+        pub(crate) type CopyTimesAndMode = AsyncFSTask<
+            ret::CopyTimesAndMode,
+            args::CopyTimesAndMode<'static>,
+            { NodeFSFunctionEnum::CopyTimesAndMode },
+        >;
         pub(crate) type Exists =
             AsyncFSTask<ret::Exists, args::Exists<'static>, { NodeFSFunctionEnum::Exists }>;
         pub(crate) type Fchmod =
@@ -1106,6 +1111,7 @@ mod _async_tasks {
         args::Exists<'static>,
         args::Access<'static>,
         args::CopyFile<'static>,
+        args::CopyTimesAndMode<'static>,
         args::Cp<'static>,
     );
     impl_fs_argument!(
@@ -4473,6 +4479,35 @@ pub(crate) mod args {
         }
     }
 
+    /// One file that `fs.cp` copied with `preserveTimestamps`: see
+    /// [`NodeFS::copy_times_and_mode`].
+    pub(crate) struct CopyTimesAndMode<'a> {
+        pub(crate) src: PathLike<'a>,
+        pub(crate) dest: PathLike<'a>,
+        pub(crate) mode: Mode,
+    }
+    impl CopyTimesAndMode<'static> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
+            let src = PathLike::from_js_required(ctx, arguments, "src")?;
+            // `Drop for PathLike` runs on early return.
+            let dest = PathLike::from_js_required(ctx, arguments, "dest")?;
+            let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
+            let mode: Mode = node::mode_from_js(ctx, mode_arg)?.ok_or_else(|| {
+                validators::throw_err_invalid_arg_type(
+                    ctx,
+                    format_args!("mode"),
+                    "number",
+                    mode_arg,
+                )
+            })?;
+            arguments.eat();
+            Ok(CopyTimesAndMode { src, dest, mode })
+        }
+    }
+
     #[derive(Copy, Clone, Default)]
     pub(crate) struct CpFlags {
         pub(crate) recursive: bool,
@@ -4597,6 +4632,7 @@ pub(crate) mod ret {
     pub(crate) type AppendFile = ();
     pub(crate) type Close = ();
     pub(crate) type CopyFile = ();
+    pub(crate) type CopyTimesAndMode = ();
     pub(crate) type Cp = ();
     pub(crate) type Exists = bool;
     pub(crate) type Fchmod = ();
@@ -8175,6 +8211,41 @@ impl NodeFS {
         }
     }
 
+    /// The last step for one file that `fs.cp` copies with `preserveTimestamps`: `dest` gets
+    /// the atime and mtime that `fs.stat` reports for `src` after the copy, then `mode`.
+    ///
+    /// Deliberately more exact than Node: the times stay integers from the stat result to
+    /// the kernel. Node passes them through `utimes` as `Date`s (its JS walker) or as
+    /// doubles of seconds (its native `CopyUtimes`), which hold a file time to 1 ms or to
+    /// 238 ns. An exact `utimes` is nodejs/node#50859 and libuv/libuv#4841.
+    /// https://github.com/nodejs/node/blob/v26.11.1/lib/internal/fs/cp/cp.js#L287-L293
+    /// https://github.com/nodejs/node/blob/v26.11.1/src/node_file.cc#L4751-L4752
+    pub(crate) fn copy_times_and_mode(
+        &mut self,
+        args: &args::CopyTimesAndMode,
+        _: Flavor,
+    ) -> Maybe<ret::CopyTimesAndMode> {
+        let mut dest_buf = paths::path_buffer_pool::get();
+        let src = args.src.slice_z(&mut self.sync_error_buf);
+        let dest = args.dest.slice_z(&mut dest_buf);
+        let stat = match Syscall::stat(src) {
+            Ok(stat) => stat,
+            Err(err) => return Err(err.with_path(args.src.slice())),
+        };
+        let [atime, mtime] = [sys::stat_atime(&stat), sys::stat_mtime(&stat)].map(|time| {
+            let (sec, nsec) = super::stat::StatsSmall::timespec_parts(time);
+            sys::TimeLike { sec, nsec }
+        });
+        if let Err(err) = sys::utimens(dest, atime, mtime) {
+            // `err.syscall` must be node's operation name, not `utimensat(2)`.
+            return Err(err.with_path_and_syscall(args.dest.slice(), sys::Tag::utime));
+        }
+        match Syscall::chmod(dest, args.mode) {
+            Err(err) => Err(err.with_path(args.dest.slice())),
+            Ok(_) => Ok(()),
+        }
+    }
+
     pub(crate) fn watch(&mut self, args: &args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
         match args.create_fs_watcher() {
             // SAFETY: `create_fs_watcher` returns a freshly-heap-allocated
@@ -9286,6 +9357,7 @@ node_fs_ops! {
     Chown => chown, args::Chown<'static>, ret::Chown;
     Close => close, args::Close, ret::Close, uv = uv_close;
     CopyFile => copy_file, args::CopyFile<'static>, ret::CopyFile;
+    CopyTimesAndMode => copy_times_and_mode, args::CopyTimesAndMode<'static>, ret::CopyTimesAndMode;
     Exists => exists, args::Exists<'static>, ret::Exists;
     Fchmod => fchmod, args::FChmod, ret::Fchmod;
     Fchown => fchown, args::Fchown, ret::Fchown;
@@ -10148,6 +10220,7 @@ pub(crate) enum NodeFSFunctionEnum {
     Chown,
     Close,
     CopyFile,
+    CopyTimesAndMode,
     Exists,
     Fchmod,
     Fchown,

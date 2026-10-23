@@ -540,7 +540,9 @@ function wrapClearFunction(original) {
 // agent activates pre-user-code, so mutating the binding's methods here (own
 // properties shadowing the natives) wraps every consumer. writeFile/readFile
 // are single native calls in Bun, so the implied open/write|read(/fstat)/close
-// sub-ops Node would emit are synthesized from the name tables.
+// sub-ops Node would emit are synthesized from the name tables. The step of
+// fs.cp that copies the times (preserveTimestamps) is not a method of the
+// binding and emits nothing, like Node's native cp.
 function installFsInstrumentation() {
   const binding = require("internal/fs/binding");
   const syncOps: Record<string, string[]> = {

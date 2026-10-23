@@ -382,6 +382,48 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     .to_js(global)
 }
 
+/// `(src, dest, mode)`: [`NodeFS::copy_times_and_mode`] for `fs.cpSync`. The two arms are
+/// not `NodeJSFS` methods: `internal/fs/cp-sync` and `internal/fs/cp` create them on the
+/// first copy with `preserveTimestamps`, so a process that never asks for it has neither.
+#[bun_jsc::host_fn]
+pub(crate) fn copy_times_and_mode_sync(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: `bun_vm()` returns the live VM; borrowed only while parsing on
+    // the JS thread (same contract as `run_sync` above).
+    let vm: &VirtualMachine = global.bun_vm();
+    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let args = args::CopyTimesAndMode::from_js(global, &mut slice)?;
+    match NodeFS::default().copy_times_and_mode(&args, Flavor::Sync) {
+        Err(ref err) => Err(global.throw_value(err.to_js(global))),
+        Ok(()) => Ok(JSValue::UNDEFINED),
+    }
+}
+
+/// The promise arm of [`copy_times_and_mode_sync`], for `fs.promises.cp` and `fs.cp`.
+#[bun_jsc::host_fn]
+pub(crate) fn copy_times_and_mode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = match parse_async_args::<args::CopyTimesAndMode<'static>>(global, frame.arguments())?
+    {
+        ParsedAsyncArgs::Args(args) => args,
+        ParsedAsyncArgs::Rejected(error) => {
+            return reject_before_schedule(global, None, error);
+        }
+    };
+    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+    // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
+    // `create` does not read it for a work-pool job.
+    let binding = unsafe { &*vm.node_fs().cast::<Binding>() };
+    Ok(async_::CopyTimesAndMode::create(
+        &global.js_thread_of_caller(frame),
+        binding,
+        args,
+        vm,
+        None,
+    ))
+}
+
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
 /// exact argument parser `fs.rm` uses and return the parsed options, so node's
 /// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production

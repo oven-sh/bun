@@ -26,7 +26,7 @@ impl<const BIG: bool> StatType<BIG> {
 
     /// Matches Node's `static_cast<unsigned long>` of stat times: 32-bit wrap on win32, signed-preserving elsewhere.
     #[inline]
-    fn timespec_parts(ts: StatTimespec) -> (i64, i64) {
+    pub(crate) fn timespec_parts(ts: StatTimespec) -> (i64, i64) {
         #[cfg(windows)]
         return (
             ((ts.sec as i32) as u32) as i64,

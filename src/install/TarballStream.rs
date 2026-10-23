@@ -551,7 +551,12 @@ impl Extraction {
             self.bytes_consumed += used;
             match event {
                 Event::NeedInput => return Ok(()),
-                Event::Entry(entry) => self.begin_entry(entry)?,
+                Event::Entry(entry) => {
+                    self.begin_entry(entry)?;
+                    if self.out.is_none() {
+                        decoder.skip_entry();
+                    }
+                }
                 Event::Data { offset, bytes } => self.write_block(offset, bytes)?,
                 Event::EndOfEntry { size } => self.finish_output_file(size)?,
                 Event::EndOfArchive => {
@@ -628,7 +633,7 @@ impl Extraction {
     }
 
     /// Process one entry header. Opens the output file (or creates the
-    /// directory). With `out` left empty, the entry's data is dropped.
+    /// directory). With `out` left empty, the entry's data is skipped.
     fn begin_entry(&mut self, entry: &tar::Entry) -> crate::Result<()> {
         self.out = None;
         let mut os_path_buf: Vec<OSPathChar> = Vec::new();

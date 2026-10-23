@@ -520,8 +520,6 @@ impl Archiver {
         // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
-        let mut reader = open_memory(file_buffer, false)?;
-
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();
@@ -541,6 +539,7 @@ impl Archiver {
         };
         let _close_dir = bun_sys::CloseOnDrop::new(dir);
 
+        let mut reader = open_memory(file_buffer, false)?;
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
         'loop_: loop {

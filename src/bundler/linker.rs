@@ -406,10 +406,10 @@ impl Linker {
                             continue;
                         }
 
-                        if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
-                            import_record.path =
-                                PFs::Path::init(&import_record.path.text[b"bun:".len()..]);
-                            import_record.path.namespace = b"bun";
+                        if let Some(builtin) = bun_resolve_builtins::Alias::bun_prefixed_builtin(
+                            import_record.path.text,
+                        ) {
+                            import_record.path = PFs::Path::init(builtin);
                         }
                     }
                 }
@@ -495,12 +495,12 @@ impl Linker {
 
     pub(crate) fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
-        let fs = self.fs();
+        let top_level_dir = self.fs().top_level_dir();
         let mut hash_key = path.text;
 
         // Shorter hash key is faster to hash
-        if strings::starts_with(path.text, fs.top_level_dir) {
-            hash_key = &path.text[fs.top_level_dir.len()..];
+        if strings::starts_with(path.text, top_level_dir) {
+            hash_key = &path.text[top_level_dir.len()..];
         }
 
         bun_wyhash::hash(hash_key)

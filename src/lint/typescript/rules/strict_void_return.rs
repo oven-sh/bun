@@ -31,10 +31,10 @@ const SUGGEST_WRAP_IN_ASYNC_IIFE: Message = Message::new(
     "Wrap the function body in an async IIFE.",
 );
 
-/// What the functions return that all the signatures of a callee expect for an argument.
+/// Summarizes the return types of the functions that a callee's signatures expect for one argument.
 #[derive(Copy, Clone)]
 pub struct ExpectedReturnTypes {
-    /// `void`, nullish, `any` or a type parameter, which is not resolved even for an overload that matches the call.
+    /// `void`, nullish, `any` or a type parameter, which isn't resolved even for an overload that matches the call.
     are_all_void: bool,
     is_any_void: bool,
     are_all_nullish_or_any: bool,
@@ -63,33 +63,34 @@ impl ExpectedReturnTypes {
     }
 }
 
-/// What stands where a function is expected.
+/// The node in a position that expects a function.
 #[derive(Copy, Clone)]
 enum FuncNode<'a> {
     Expr(Expr<'a>),
-    /// The `FunctionExpression` that is the `value` of a method or an accessor.
+    /// The `FunctionExpression` that's the `value` of a method or an accessor.
     Method(Func<'a>),
 }
 
-/// Whether the type of `node` can have call signatures at all.
+/// True if `node`'s type can have call signatures at all.
 fn may_be_function(node: Expr) -> bool {
-    !matches!(
-        node.tag(),
-        ExprTag::Missing
-            | ExprTag::Spread
-            | ExprTag::Null
-            | ExprTag::True
-            | ExprTag::False
-            | ExprTag::Number
-            | ExprTag::String
-            | ExprTag::BigInt
-            | ExprTag::Regex
-            | ExprTag::Template
-            | ExprTag::Array
-            | ExprTag::Object
-            | ExprTag::Class
-            | ExprTag::Unary
-    )
+    node.has_jsdoc_cast()
+        || !matches!(
+            node.tag(),
+            ExprTag::Missing
+                | ExprTag::Spread
+                | ExprTag::Null
+                | ExprTag::True
+                | ExprTag::False
+                | ExprTag::Number
+                | ExprTag::String
+                | ExprTag::BigInt
+                | ExprTag::Regex
+                | ExprTag::Template
+                | ExprTag::Array
+                | ExprTag::Object
+                | ExprTag::Class
+                | ExprTag::Unary
+        )
 }
 
 fn is_void(ty: Type) -> bool {
@@ -107,22 +108,31 @@ fn is_nullish_or_any(ty: Type) -> bool {
 }
 
 fn is_void_returning_function_type(ty: Type) -> bool {
+    let returns_void = |signature: Signature| {
+        tsutils::union_constituents(signature.get_return_type())
+            .iter()
+            .all(is_void)
+    };
+    // tsgolint gets the signatures of each union constituent. An intersection has the signatures of all its
+    // constituents.
+    if ty.file().language().is_oxlint {
+        let mut signatures = tsutils::union_constituents(ty)
+            .iter()
+            .flat_map(|type_part| type_part.get_call_signatures())
+            .peekable();
+        return signatures.peek().is_some() && signatures.all(returns_void);
+    }
     let signatures = tsutils::get_call_signatures_of_type(ty);
-    !signatures.is_empty()
-        && signatures.iter().all(|signature| {
-            tsutils::union_constituents(signature.get_return_type())
-                .iter()
-                .all(is_void)
-        })
+    !signatures.is_empty() && signatures.iter().all(|it| returns_void(*it))
 }
 
-/// Whether the contextual type of `node` is that of a void function.
+/// True if `node`'s contextual type is a void function.
 fn expects_void_function(node: Expr) -> bool {
     node.contextual_type()
         .is_some_and(is_void_returning_function_type)
 }
 
-/// The `Property` or the `MethodDefinition` that the function is in, otherwise the function.
+/// The `Property` or `MethodDefinition` that contains the function, otherwise the function.
 fn func_head_span(func: Func) -> Span {
     match func.owner() {
         Node::Expr(e) => match e.parent() {
@@ -152,7 +162,8 @@ fn make_sync_func_fix<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Vec<Fix> {
     fixes
 }
 
-/// Makes the function sync and adds a `void` operator to the body of the arrow function. `None` if the body has no side effects.
+/// Makes the function sync and adds a `void` operator to the arrow function's body. `None` if the body has no side
+/// effects.
 fn add_void_to_arrow_fix<'a>(fixer: Fixer<'a>, func: Func<'a>, body: Expr<'a>) -> Option<Vec<Fix>> {
     if !has_side_effect(body, HasSideEffectOptions::default()) {
         return None;
@@ -169,7 +180,8 @@ fn add_void_to_arrow_fix<'a>(fixer: Fixer<'a>, func: Func<'a>, body: Expr<'a>) -
     Some(fixes)
 }
 
-/// Makes the function sync and wraps the body in an inner async IIFE, which is an arrow function so that `this` stays what it is.
+/// Makes the function sync and wraps the body in an inner async IIFE. The IIFE is an arrow function so that `this`
+/// doesn't change.
 fn wrap_in_async_iife_fix<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Vec<Fix> {
     let mut fixes = make_sync_func_fix(fixer, func);
     if let Some(arrow) = func.arrow_span() {
@@ -189,8 +201,8 @@ impl StrictVoidReturn {
             || flags.intersects(TypeFlags::ANY) && ty.is_unresolved()
     }
 
-    /// Whether `node` is a function that is not void already. Nothing is ever reported for anything else, so this is asked first:
-    /// it is cheaper than finding out what is expected.
+    /// True if `node` is a function that isn't already void. Nothing else is ever reported, and this is cheaper than
+    /// finding the expected type, so it's checked first.
     fn returns_a_value(&self, node: FuncNode) -> bool {
         let actual_type = match node {
             FuncNode::Expr(e) => e.ty(),
@@ -202,7 +214,7 @@ impl StrictVoidReturn {
                 .iter()
                 .all(|ty| self.is_allowed_return_type(ty))
         };
-        // tsgolint asks the type itself, and a union with `undefined` has no signatures: `a ? () => 1 : undefined`.
+        // tsgolint uses the type's own signatures, and a union with `undefined` has none: `a ? () => 1 : undefined`.
         match apparent_type.file().language().is_oxlint {
             true => apparent_type.get_call_signatures().iter().any(returns_a_value),
             false => tsutils::get_call_signatures_of_type(apparent_type).iter().any(|it| returns_a_value(*it)),
@@ -237,7 +249,7 @@ impl StrictVoidReturn {
                     true => ty.get_construct_signatures(),
                     false => ty.get_call_signatures(),
                 };
-                tsutils::union_constituents(call.callee().ty())
+                tsutils::union_constituents(call.callee().ts_node_with_parentheses().get_type_at_location())
                     .iter()
                     .flat_map(signatures_of)
                     .collect()
@@ -247,7 +259,7 @@ impl StrictVoidReturn {
             let expected = ExpectedReturnTypes::of(func_signatures, arg_idx, call.callee());
             let has_single_signature = func_signatures.len() == 1;
 
-            // The contextual type is that of the first overload, though another one may match the call.
+            // The contextual type comes from the first overload, though another one may match the call.
             let is_void_expected = (has_single_signature || expected.are_all_void)
                 && expects_void_function(arg_node)
                 || expected.is_any_void && expected.are_all_nullish_or_any;
@@ -272,7 +284,7 @@ impl StrictVoidReturn {
             || matches!(prop_node.parent(), Node::Expr(object) if !object.is_assignment_target());
         match prop_node.kind() {
             PropKind::Init => {}
-            // With a default value it is an `AssignmentPattern`.
+            // With a default value it's an `AssignmentPattern`.
             PropKind::Shorthand if value_node.tag() == ExprTag::Ident => {}
             PropKind::Method => {
                 let (Some(func), Some(key), Node::Expr(object)) =
@@ -285,7 +297,8 @@ impl StrictVoidReturn {
                 };
                 if self.returns_a_value(FuncNode::Method(func))
                     && let Some(prop_symbol) = object
-                        .contextual_type()
+                        .ts_node()
+                        .get_contextual_type()
                         .and_then(|it| it.get_property(name.bytes()))
                     && is_void_returning_function_type(prop_symbol.get_type_at_location(prop_node))
                 {
@@ -308,13 +321,17 @@ impl StrictVoidReturn {
         if member.is_signature() || member.flags().contains(Flags::ABSTRACT) {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
         let func_node = match member.kind() {
-            MemberKind::Property if !member.flags().contains(Flags::ACCESSOR) => {
+            // An auto-accessor is a `PropertyDeclaration` in tsgolint.
+            MemberKind::Property if is_oxlint || !member.flags().contains(Flags::ACCESSOR) => {
                 match member.init() {
                     Some(value) if may_be_function(value) => FuncNode::Expr(value),
                     _ => return,
                 }
             }
+            // tsgolint doesn't listen to accessors.
+            MemberKind::Getter | MemberKind::Setter if is_oxlint => return,
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => match member.func() {
                 Some(func) if func.has_body() => FuncNode::Method(func),
                 _ => return,
@@ -342,6 +359,12 @@ impl StrictVoidReturn {
         let func = match func_node {
             FuncNode::Method(func) => func,
             FuncNode::Expr(e) => match e.kind() {
+                // In tsgolint a parenthesized function is a `ParenthesizedExpression`, not a function, and it's
+                // reported whole.
+                _ if cx.language().is_oxlint && e.is_parenthesized() => {
+                    cx.report(e.outer_span(), NON_VOID_FUNC);
+                    return;
+                }
                 ExprKind::Fn(func) => func,
                 _ => {
                     cx.report(e, NON_VOID_FUNC);
@@ -350,7 +373,7 @@ impl StrictVoidReturn {
             },
         };
 
-        // oxlint points at the function.
+        // oxlint reports the whole function.
         let head = if cx.language().is_oxlint {
             func.span()
         } else {
@@ -398,9 +421,15 @@ impl StrictVoidReturn {
 
         for statement in func.returns() {
             if let StmtKind::Return(Some(argument)) = statement.kind()
-                && !self.is_allowed_return_type(argument.ty())
+                && !match cx.language().is_oxlint {
+                    // tsgolint checks each constituent of a union.
+                    true => tsutils::union_constituents(argument.ty())
+                        .iter()
+                        .all(|ty| self.is_allowed_return_type(ty)),
+                    false => self.is_allowed_return_type(argument.ty()),
+                }
             {
-                // oxlint points at the statement.
+                // oxlint reports the statement.
                 let Span { start, end } = statement.span();
                 let end = if cx.language().is_oxlint {
                     end
@@ -449,9 +478,11 @@ impl Rule for StrictVoidReturn {
                 }
             }
             ExprKind::Assign { value, .. } => {
-                // A default value is in an `AssignmentPattern`.
+                // A default value is in an `AssignmentPattern`. In tsgolint every default except a shorthand property's
+                // is a `BinaryExpression`.
+                let is_oxlint = cx.language().is_oxlint;
                 let is_assignment_pattern = || {
-                    node.is_assignment_target()
+                    !is_oxlint && node.is_assignment_target()
                         || matches!(node.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand)
                 };
                 if self.is_candidate(value)
@@ -485,8 +516,8 @@ impl Rule for StrictVoidReturn {
         }
     }
 
-    // The body of an arrow function can be reported twice at one place: for what is around the function, and for the type
-    // that the function says it returns. The originals come to the function after what is around it.
+    // An arrow function's body can be reported twice at the same location: once for the function's context and once for
+    // the function's declared return type. Upstream and tsgolint visit the function after its context.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let bodies = cx.file().funcs().filter_map(|func| match func.body() {
             FnBody::Expr(body) if func.is_arrow() && may_be_function(body) => Some(body),

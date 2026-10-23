@@ -1,64 +1,121 @@
-//! The scopes, variables and references of a file as arrays of numbers: what [`crate::semantic`]
-//! knows, with the nodes of the ESTree by their numbers. `worker/scope.js` makes the objects of
-//! `eslint-scope` and `@typescript-eslint/scope-manager` of it.
+//! A file's scopes, variables, definitions and references for JavaScript plugins, as arrays of numbers.
 //!
-//! The message: [`HEADER`] words with how many there are of each, then
-//! - for each scope 5 words: its [`ScopeKind`] and in bit 8 whether it is strict, its block,
-//!   the scope around it, its variable scope, the index of its first variable
-//! - for each variable, scope by scope, 2 words: the index of its first definition, flags
-//! - for each definition 2 words: the node that is the name, its [`DeclarationKind`]
-//! - for each reference, in the order of [`File::references_as_visited`], 5 words: the identifier,
-//!   flags, what is written, the variable, the scope that it is in
-//! - for each global variable that something refers to and the file does not declare, 2
-//!   words: the index of a reference to it, flags
-//! - for each variable that a `/* global */` comment names: where the name is in the text, from and
-//!   to, its setting, how many comments name it, and where each of these starts
+//! [`crate::semantic`] does the analysis. This module turns the result into what `eslint-scope` or
+//! `@typescript-eslint/scope-manager` report under ESLint, in their order, with ESTree nodes by number.
+//! `src/jsc/bindings/LintScopes.cpp` only builds objects from the arrays.
 //!
-//! After the last scope and the last variable there is one more, for where the lists of the last end.
+//! oxlint analyzes every file with typescript-eslint's scope manager, without TypeScript's libraries, and adds the
+//! globals itself: [`Builder::add_oxlint_globals`].
+//!
+//! # The message
+//!
+//! [`HEADER`] words, then the parts in this order. A list is stored as its offset into the last part, where its length
+//! comes before its items. Offset 0 is the empty list. [`NONE`] represents `null`. A map is a list of pairs, each a
+//! node and a list.
+//!
+//! | Part | Words |
+//! | --- | --- |
+//! | header | counts of scopes, declared variables, all variables, definitions, references and implicit globals, the length of the lists, the list `scopeManager.scopes`, two maps, from a block to its scopes and from a node to the variables it declares, then how many of the implicit globals are in `globalScope.implicit` |
+//! | scopes | 9 each: [`ScopeKind`] with flags from bit 8 on, block, upper scope, variable scope, then the lists of the variables in `taints`, `childScopes`, `variables`, `references`, `through` |
+//! | variables | 8 each: name, scope, flags, the lists `defs`, `references` and `identifiers`, what ESLint sets on a global with the shape above bit 8, the list of start offsets of the `/* global */` comments |
+//! | definitions | 7 each: [`DeclarationKind`], name, node, parent, index, flags, `kind` |
+//! | references | 6 each: identifier, flags, written expression, resolved variable, scope, `maybeImplicitGlobal.node` |
+//! | implicit globals | 1 each: a list of pairs, identifier and assigning node |
+//! | lists | |
+//!
+//! Declared variables come first, scope by scope, in the order [`mark_used`] counts them. After them
+//! come the second variable of each class declaration and the globals that the file doesn't declare. In a map the implicit
+//! globals are numbered after all variables.
+//!
+//! A name is a number with a tag in its low 2 bits. See [`Name`].
 
-use super::wire;
-use crate::ast::{ExprKind, File, Node};
-use crate::estree::{Field, NodeType, VNode, Value};
-use crate::language::Global;
-use crate::semantic::{Declaration, Reference, Scope, ScopeKind};
+use super::ast::Numbered;
+use super::wire::{self, push_list};
+use crate::ast::{File, Node};
+use crate::estree::{Dialect, Field, NodeType, VNode, Value};
+use crate::language::{Global, SourceType};
+use crate::semantic::{Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind};
 use crate::span::Span;
+use crate::utils::estree_compat::normalize;
+use crate::utils::sort;
 use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
-const HEADER: usize = 6;
+const HEADER: usize = 11;
 const NONE: u32 = u32::MAX;
 
-/// In the flags of a variable.
+/// Variable flags.
 const IS_TYPE: u32 = 1 << 0;
 const IS_VALUE: u32 = 1 << 1;
 const IS_USED: u32 = 1 << 2;
 const IS_EXPORTED: u32 = 1 << 3;
 const IS_ARGUMENTS: u32 = 1 << 4;
-/// In those of a global variable.
+/// Flags that only a global variable has.
 const IS_WRITABLE: u32 = 1 << 5;
 const IS_IN_LIB: u32 = 1 << 6;
-/// Something other than a library of TypeScript defines it.
+/// Something other than a TypeScript library defines it.
 const IS_CONFIGURED: u32 = 1 << 7;
+/// `eslint-scope`'s `variable.stack`.
+const IS_STACK: u32 = 1 << 8;
+/// `eslint-scope`'s `variable.tainted`.
+const IS_TAINTED_VARIABLE: u32 = 1 << 9;
 
-/// In the flags of a reference, above its [`ReferenceFlags`](crate::semantic::ReferenceFlags): it
-/// resolves to a global variable.
+/// Flags in a scope's kind.
+const IS_STRICT: u32 = 1 << 8;
+/// `eslint-scope`'s `scope.thisFound`.
+const HAS_THIS: u32 = 1 << 9;
+/// It's the scope of a function that has `arguments`, which `eslint-scope` lists in `scope.taints`.
+const HAS_ARGUMENTS: u32 = 1 << 10;
+
+/// Reference flags, above the [`ReferenceFlags`]. This one means it refers to a global variable that the file doesn't
+/// declare.
 const TO_GLOBAL: u32 = 1 << 8;
+/// `eslint-scope`'s `reference.partial`.
+const IS_PARTIAL: u32 = 1 << 9;
+/// `eslint-scope`'s `reference.tainted`.
+const IS_TAINTED: u32 = 1 << 10;
+/// typescript-eslint's `reference.maybeImplicitGlobal` is `null`. Without a node and without this it's `undefined`.
+const HAS_NULL_IMPLICIT_GLOBAL: u32 = 1 << 11;
 
-/// The first of the ESTree nodes made of `base` that `is_it` accepts.
+/// Definition flags. This one is `definition.rest`.
+const IS_REST: u32 = 1 << 0;
+/// `eslint-scope` leaves `parent`, `index` and `kind` undefined for a class name in the class's own scope.
+const LACKS_PARENT: u32 = 1 << 1;
+
+/// Bits of a global's settings. The low 2 bits are `eslintImplicitGlobalSetting`.
+const SETTING_UNDEFINED: u32 = 3;
+const IS_WRITEABLE: u32 = 1 << 2;
+/// The config or a comment lists the variable, so it also has `eslintExplicitGlobal`.
+const IS_LISTED: u32 = 1 << 3;
+const IS_EXPLICIT: u32 = 1 << 4;
+/// ESLint has set something on the variable.
+const HAS_SETTING: u32 = 1 << 5;
+
+/// A variable's shape tells which properties it has beyond the common ones. This bit is for the four that ESLint sets
+/// on a global.
+const SHAPE_GLOBAL: u32 = 1 << 0;
+/// It's one of typescript-eslint's `ImplicitLibVariable`s.
+const SHAPE_LIB: u32 = 1 << 1;
+/// `eslintUsed`, which every typescript-eslint variable has.
+const SHAPE_USED: u32 = 1 << 2;
+const SHAPE_EXPORTED: u32 = 1 << 3;
+
+/// The first ESTree node made from `base` that `predicate` accepts.
 fn find<'a>(
     base: Node<'a>,
-    mut is_it: impl FnMut(VNode<'a>, NodeType) -> bool,
+    mut predicate: impl FnMut(VNode<'a>, NodeType) -> bool,
 ) -> Option<VNode<'a>> {
     let mut found = None;
     VNode::for_each_with_type_at(base, &mut |node, node_type| {
-        if found.is_none() && is_it(node, node_type) {
+        if found.is_none() && predicate(node, node_type) {
             found = Some(node);
         }
     });
     found
 }
 
-/// The name that starts at `start` among the ESTree nodes made of `base`.
+/// The name node that starts at `start`, among the ESTree nodes made from `base`.
 fn name_at(base: Node<'_>, start: u32) -> Option<VNode<'_>> {
     find(base, |node, node_type| {
         matches!(
@@ -71,14 +128,9 @@ fn name_at(base: Node<'_>, start: u32) -> Option<VNode<'_>> {
     })
 }
 
-/// What the ESTree has where the expression `e` is.
+/// The ESTree node for the expression `e`.
 fn expression<'a>(e: crate::ast::Expr<'a>) -> Option<VNode<'a>> {
-    let base = match e.kind() {
-        ExprKind::Fn(func) => Node::Func(func),
-        ExprKind::Class(class) => Node::Class(class),
-        _ => Node::Expr(e),
-    };
-    find(base, |_, _| true)
+    find(normalize(Node::Expr(e)), |_, _| true)
 }
 
 /// ESLint's `scope.block`.
@@ -119,130 +171,1963 @@ fn identifier<'a>(reference: Reference<'a>) -> Option<VNode<'a>> {
     }
 }
 
-pub(super) fn write<'a>(
-    file: &'a File<'a>,
-    offsets: &Utf16OffsetTable,
-    nodes: &[VNode<'a>],
-    out: &mut Vec<u8>,
-) {
-    let ids: FxHashMap<VNode<'a>, u32> = nodes.iter().copied().zip(0..).collect();
-    let id = |node: Option<VNode<'a>>| node.and_then(|it| ids.get(&it)).copied().unwrap_or(NONE);
-    let header = out.len();
-    out.resize(header + HEADER * 4, 0);
+/// The source of a variable's name.
+#[derive(Copy, Clone)]
+enum Name {
+    /// The `name` of this node, or its `value` if it's a `Literal`.
+    Node(u32),
+    Arguments,
+    /// A non-empty list of its UTF-16 code units.
+    Units(u32),
+    /// The key at this index of the configured globals.
+    Configured(u32),
+    /// A list with the name's start and end in the text.
+    Text(u32),
+}
 
-    // By `Symbol::key`: the index of the variable.
-    let mut index_of = vec![NONE; file.symbol_key_limit()];
-    let (mut variables, mut definitions) = (Vec::new(), Vec::new());
-    let scopes = file.scopes();
-    let scope_count = scopes.len();
-    for scope in scopes {
-        wire::words(
-            out,
-            &[
-                scope.kind() as u32 | u32::from(scope.is_strict()) << 8,
-                id(block(scope)),
-                scope.parent().map_or(NONE, |it| it.id().0),
-                scope.variable_scope().id().0,
-                (variables.len() / 2) as u32,
-            ],
-        );
-        for symbol in scope.symbols() {
-            if let Some(index) = index_of.get_mut(symbol.key()) {
-                *index = (variables.len() / 2) as u32;
+impl Name {
+    fn word(self) -> u32 {
+        match self {
+            Name::Node(id) => id << 2,
+            Name::Arguments => 1,
+            Name::Units(list) => list << 2 | 1,
+            Name::Configured(index) => index << 2 | 2,
+            Name::Text(list) => list << 2 | 3,
+        }
+    }
+}
+
+struct ScopeRecord {
+    /// [`ScopeKind`], and flags from [`IS_STRICT`] on.
+    kind: u32,
+    block: u32,
+    upper: Option<u32>,
+    variable_scope: u32,
+    /// The last scope inside it, or itself.
+    last: u32,
+    /// The first variable it declares. Its variables end where the next scope's start.
+    first_variable: u32,
+}
+
+impl ScopeRecord {
+    fn is(&self, kind: ScopeKind) -> bool {
+        self.kind & 255 == kind as u32
+    }
+
+    fn is_strict(&self) -> bool {
+        self.kind & IS_STRICT != 0
+    }
+}
+
+struct VariableRecord<'t> {
+    name: Name,
+    text: &'t [u8],
+    scope: u32,
+    flags: u32,
+    /// Its definitions are `first_definition..end_definition`, without those whose name isn't in the tree.
+    first_definition: u32,
+    end_definition: u32,
+    /// The settings ESLint puts on it, if it's a global.
+    settings: u32,
+    /// A list of the start offsets of the `/* global */` comments that list it.
+    comments: u32,
+}
+
+struct DefinitionRecord {
+    kind: u32,
+    name: u32,
+    node: u32,
+    parent: u32,
+    index: u32,
+    flags: u32,
+    /// The `VariableDeclaration`'s `kind`, numbered from 1 in the order `var`, `let`, `const`, `using`, `await using`.
+    /// 0 for `null`.
+    declaration_kind: u32,
+}
+
+#[derive(Copy, Clone)]
+struct ReferenceRecord<'t> {
+    identifier: u32,
+    /// The node at which the scope manager creates it. That's the identifier, except for JSX's implicit use of `React`.
+    created_at: u32,
+    flags: u32,
+    unwrap_jsdoc_casts: u32,
+    variable: u32,
+    from: u32,
+    /// typescript-eslint's `maybeImplicitGlobal.node`.
+    assigning: u32,
+    name: &'t [u8],
+}
+
+/// The numbered ESTree.
+struct Tree<'t, 'a> {
+    nodes: &'t [VNode<'a>],
+    types: &'t [u8],
+    parents: &'t [u32],
+    /// The last node inside each node, or the node itself.
+    last: Vec<u32>,
+}
+
+/// The node types that assign to a name without declaring it.
+const ASSIGNING_TYPES: &[NodeType] = &[
+    NodeType::AssignmentExpression,
+    NodeType::ForInStatement,
+    NodeType::ForOfStatement,
+];
+
+const FUNCTION_TYPES: &[NodeType] = &[
+    NodeType::FunctionDeclaration,
+    NodeType::FunctionExpression,
+    NodeType::ArrowFunctionExpression,
+    NodeType::TSDeclareFunction,
+    NodeType::TSEmptyBodyFunctionExpression,
+    NodeType::TSFunctionType,
+    NodeType::TSConstructorType,
+    NodeType::TSCallSignatureDeclaration,
+    NodeType::TSConstructSignatureDeclaration,
+    NodeType::TSMethodSignature,
+];
+
+impl<'t, 'a> Tree<'t, 'a> {
+    fn new(numbered: &'t Numbered<'a>) -> Self {
+        let parents = &numbered.parents[..];
+        let mut last: Vec<u32> = (0..parents.len() as u32).collect();
+        for id in (1..parents.len()).rev() {
+            let parent = parents[id] as usize;
+            last[parent] = last[parent].max(last[id]);
+        }
+        Tree {
+            nodes: &numbered.nodes,
+            types: &numbered.types,
+            parents,
+            last,
+        }
+    }
+
+    fn node_type(&self, id: u32) -> Option<NodeType> {
+        NodeType::ALL
+            .get(usize::from(*self.types.get(id as usize)?))
+            .copied()
+    }
+
+    fn is(&self, id: u32, node_type: NodeType) -> bool {
+        self.node_type(id) == Some(node_type)
+    }
+
+    /// [`NONE`] for the `Program`.
+    fn parent(&self, id: u32) -> u32 {
+        match id {
+            0 => NONE,
+            _ => self.parents.get(id as usize).copied().unwrap_or(NONE),
+        }
+    }
+
+    fn last(&self, id: u32) -> u32 {
+        self.last.get(id as usize).copied().unwrap_or(NONE)
+    }
+
+    /// The node that follows `id` and everything inside it.
+    fn after(&self, id: u32) -> u32 {
+        self.last(id).wrapping_add(1)
+    }
+
+    /// `id` or its closest ancestor whose type is in `types`.
+    fn closest(&self, id: u32, types: &[NodeType]) -> u32 {
+        let mut found = id;
+        while let Some(node_type) = self.node_type(found) {
+            if types.contains(&node_type) {
+                return found;
             }
-            let flags = (u32::from(symbol.is_type_variable()) * IS_TYPE)
-                | (u32::from(symbol.is_value_variable()) * IS_VALUE)
-                | (u32::from(symbol.is_marked_used()) * IS_USED)
-                | (u32::from(symbol.is_marked_exported()) * IS_EXPORTED)
-                | (u32::from(symbol.is_implicit_arguments()) * IS_ARGUMENTS);
-            variables.extend_from_slice(&[(definitions.len() / 2) as u32, flags]);
-            for declaration in symbol.declarations() {
-                if let Some(kind) = declaration.kind() {
-                    definitions.extend_from_slice(&[id(name_of(declaration)), kind as u32]);
+            found = self.parent(found);
+        }
+        NONE
+    }
+
+    fn field(&self, id: u32, field: Field) -> Value<'a> {
+        self.nodes
+            .get(id as usize)
+            .map_or(Value::Undefined, |it| it.field(field))
+    }
+
+    fn has_node(&self, id: u32, field: Field) -> bool {
+        matches!(self.field(id, field), Value::Node(_))
+    }
+
+    /// `nodes[id][field].indexOf(nodes[item])`
+    fn index_in(&self, id: u32, field: Field, item: u32) -> u32 {
+        match (self.field(id, field), self.nodes.get(item as usize)) {
+            (Value::Nodes(list), Some(&item)) => list.index_of(item).map_or(NONE, |it| it as u32),
+            _ => NONE,
+        }
+    }
+
+    /// The first `JSXOpeningElement` or `JSXFragment` after `id`, or `id` if there is none.
+    fn first_jsx_after(&self, id: u32) -> u32 {
+        let (element, fragment) = (
+            NodeType::JSXOpeningElement as u8,
+            NodeType::JSXFragment as u8,
+        );
+        (self.types.iter().zip(0..))
+            .skip(id as usize + 1)
+            .find(|it| *it.0 == element || *it.0 == fragment)
+            .map_or(id, |it| it.1)
+    }
+
+    /// The members such as `a[b]` that a pattern or a `for-in` or `for-of` loop assigns to. Both scope managers visit
+    /// `b` first. typescript-eslint's `PatternVisitor` treats `a[b]!` and `a[b] as T` the same way, because it looks
+    /// through the wrappers around the member.
+    fn computed_members_in_patterns(&self) -> Vec<u32> {
+        let member = NodeType::MemberExpression as u8;
+        (self.types.iter().zip(0..))
+            .filter(|it| *it.0 == member)
+            .map(|it| it.1)
+            .filter(|&member| {
+                let (mut target, mut parent) = (member, self.parent(member));
+                while matches!(
+                    self.node_type(parent),
+                    Some(
+                        NodeType::TSNonNullExpression
+                            | NodeType::TSAsExpression
+                            | NodeType::TSSatisfiesExpression
+                            | NodeType::TSTypeAssertion
+                    )
+                ) {
+                    (target, parent) = (parent, self.parent(parent));
+                }
+                let is_target = match self.node_type(parent) {
+                    Some(NodeType::ArrayPattern | NodeType::RestElement) => true,
+                    Some(
+                        NodeType::AssignmentPattern
+                        | NodeType::ForInStatement
+                        | NodeType::ForOfStatement,
+                    ) => self.is_field(parent, Field::Left, target),
+                    Some(NodeType::Property) => {
+                        self.is(self.parent(parent), NodeType::ObjectPattern)
+                            && self.is_field(parent, Field::Value, target)
+                    }
+                    _ => false,
+                };
+                is_target && matches!(self.field(member, Field::Computed), Value::Bool(true))
+            })
+            .collect()
+    }
+
+    fn is_field(&self, id: u32, field: Field, item: u32) -> bool {
+        matches!(
+            (self.field(id, field), self.nodes.get(item as usize)),
+            (Value::Node(node), Some(&item)) if node == item
+        )
+    }
+
+    /// `eslint-scope`'s `reference.partial`: `identifier` doesn't end up with `unwrap_jsdoc_casts` itself, only with
+    /// something extracted from it.
+    fn is_partial_write(&self, identifier: u32, unwrap_jsdoc_casts: u32) -> bool {
+        let (identifier_parent, writer) =
+            (self.parent(identifier), self.parent(unwrap_jsdoc_casts));
+        match self.node_type(writer) {
+            // A default value is written to the whole left side.
+            Some(NodeType::AssignmentPattern)
+                if self.is_field(writer, Field::Right, unwrap_jsdoc_casts) =>
+            {
+                identifier_parent != writer
+            }
+            Some(NodeType::ForInStatement | NodeType::ForOfStatement)
+                if self.is_field(writer, Field::Right, unwrap_jsdoc_casts) =>
+            {
+                true
+            }
+            _ => matches!(
+                self.node_type(identifier_parent),
+                Some(
+                    NodeType::Property
+                        | NodeType::ArrayPattern
+                        | NodeType::RestElement
+                        | NodeType::AssignmentPattern
+                )
+            ),
+        }
+    }
+
+    /// Fills in `node`, `parent`, `index` and the flags of a definition from its kind and its name.
+    fn complete(&self, definition: &mut DefinitionRecord, is_espree: bool) {
+        let name = definition.name;
+        let name_parent = self.parent(name);
+        let is = |kind: DeclarationKind| definition.kind == kind as u32;
+        let (node, parent) = if is(DeclarationKind::Variable) {
+            let declarator = self.closest(name, &[NodeType::VariableDeclarator]);
+            (declarator, self.parent(declarator))
+        } else if is(DeclarationKind::Parameter) {
+            (self.closest(name, FUNCTION_TYPES), NONE)
+        } else if is(DeclarationKind::CatchClause) {
+            (self.closest(name, &[NodeType::CatchClause]), NONE)
+        } else if is(DeclarationKind::ImportBinding) {
+            match self.is(name_parent, NodeType::TSImportEqualsDeclaration) {
+                true => (name_parent, name_parent),
+                false => (name_parent, self.parent(name_parent)),
+            }
+        } else if is(DeclarationKind::TsModuleName) {
+            (
+                self.closest(name_parent, &[NodeType::TSModuleDeclaration]),
+                NONE,
+            )
+        } else {
+            (name_parent, NONE)
+        };
+        let is_parameter = is(DeclarationKind::Parameter);
+        if is_espree && is(DeclarationKind::Variable) {
+            definition.index = self.index_in(parent, Field::Declarations, node);
+            definition.declaration_kind = match self.field(parent, Field::Kind) {
+                Value::Str(b"var") => 1,
+                Value::Str(b"let") => 2,
+                Value::Str(b"const") => 3,
+                Value::Str(b"using") => 4,
+                Value::Str(b"await using") => 5,
+                _ => 0,
+            };
+        }
+        if is_parameter {
+            if is_espree {
+                let mut parameter = name;
+                while parameter != NONE && self.parent(parameter) != node {
+                    parameter = self.parent(parameter);
+                }
+                definition.index = self.index_in(node, Field::Params, parameter);
+            }
+            if self.is(name_parent, NodeType::RestElement)
+                && self.is_field(name_parent, Field::Argument, name)
+            {
+                definition.flags |= IS_REST;
+            }
+        }
+        definition.node = node;
+        definition.parent = parent;
+    }
+}
+
+// ───────────── typescript-eslint's order ─────────────
+
+/// From `first` to `last`, both included. Empty if `first` is after `last`.
+#[derive(Copy, Clone)]
+struct Run {
+    first: u32,
+    last: u32,
+}
+
+/// Items in source order, each attached to a node, that can be reordered.
+struct Order {
+    node_of: Vec<u32>,
+    /// The items sorted by node.
+    sorted: Vec<u32>,
+    /// Each item's position in `order`.
+    order_position: Vec<u32>,
+    order: Vec<u32>,
+    has_moved: bool,
+}
+
+/// Returns the indices of `keys`, sorted by key. A key is a node number or [`NONE`]. The sort is stable. It's a
+/// counting sort, so there are no comparisons and the code is small: a standard library sort costs several KB per type
+/// and closure.
+fn order_by_node(keys: &[u32], node_count: usize) -> Vec<u32> {
+    let mut order: Vec<u32> = (0..keys.len() as u32).collect();
+    // A few keys aren't worth a pass over the nodes.
+    if keys.len() <= 8 {
+        for end in 1..order.len() {
+            let mut at = end;
+            while at > 0 && keys[order[at - 1] as usize] > keys[order[at] as usize] {
+                order.swap(at - 1, at);
+                at -= 1;
+            }
+        }
+        return order;
+    }
+    let place_of = |key: u32| (key as usize).min(node_count);
+    let mut starts = vec![0u32; node_count + 2];
+    for &key in keys {
+        starts[place_of(key) + 1] += 1;
+    }
+    for bucket in 0..=node_count {
+        starts[bucket + 1] += starts[bucket];
+    }
+    for (&key, index) in keys.iter().zip(0..) {
+        let start = &mut starts[place_of(key)];
+        order[*start as usize] = index;
+        *start += 1;
+    }
+    order
+}
+
+impl Order {
+    fn new(node_of: Vec<u32>, node_count: usize) -> Order {
+        let order: Vec<u32> = (0..node_of.len() as u32).collect();
+        let sorted = order_by_node(&node_of, node_count);
+        Order {
+            node_of,
+            sorted,
+            order_position: order.clone(),
+            order,
+            has_moved: false,
+        }
+    }
+
+    /// The index of the first item in `sorted` whose node isn't before `id`.
+    fn lower_bound(&self, id: u32) -> usize {
+        self.sorted
+            .partition_point(|&it| self.node_of[it as usize] < id)
+    }
+
+    /// The positions of the items at the nodes in `runs`, if those positions are contiguous.
+    fn positions(&self, runs: &[Run]) -> Option<Run> {
+        let (mut first, mut last, mut found) = (u32::MAX, 0, 0);
+        for run in runs.iter().filter(|it| it.first <= it.last) {
+            let stop = self.lower_bound(run.last.saturating_add(1));
+            for &it in &self.sorted[self.lower_bound(run.first).min(stop)..stop] {
+                let at = self.order_position[it as usize];
+                first = first.min(at);
+                last = last.max(at);
+                found += 1;
+            }
+        }
+        (found > 0 && last - first == found - 1).then_some(Run { first, last })
+    }
+
+    /// Moves the items at positions `before` behind the items at positions `after`, which directly follow them.
+    fn exchange(&mut self, before: Option<Run>, after: Option<Run>) {
+        let (Some(before), Some(after)) = (before, after) else {
+            return;
+        };
+        if before.last + 1 != after.first {
+            return;
+        }
+        self.order[before.first as usize..=after.last as usize]
+            .rotate_left((after.first - before.first) as usize);
+        for at in before.first..=after.last {
+            self.order_position[self.order[at as usize] as usize] = at;
+        }
+        self.has_moved = true;
+    }
+}
+
+/// Puts references and scopes in the order typescript-eslint's scope manager visits them. It visits a type annotation
+/// after the value, type arguments after the arguments, the type parameters of a function after its parameters, and
+/// decorators last.
+struct TypeScriptOrder<'o, 't, 'a> {
+    tree: &'o Tree<'t, 'a>,
+    orders: [&'o mut Order; 2],
+}
+
+impl TypeScriptOrder<'_, '_, '_> {
+    /// Moves the items at the nodes `before` after the items at the nodes `after`.
+    fn exchange(&mut self, before: &[Run], after: &[Run]) {
+        for order in &mut self.orders {
+            let (before, after) = (order.positions(before), order.positions(after));
+            order.exchange(before, after);
+        }
+    }
+
+    /// Moves the nodes from `first` through `middle` after the rest up to `last`.
+    fn swap(&mut self, first: u32, middle: u32, last: u32) {
+        let before = Run {
+            first,
+            last: middle,
+        };
+        let after = Run {
+            first: middle.wrapping_add(1),
+            last,
+        };
+        self.exchange(&[before], &[after]);
+    }
+
+    /// The end of the last decorator that `id` starts with, or `id` if it has none.
+    fn decorators_of(&self, id: u32) -> u32 {
+        let mut end = id;
+        while end < self.tree.last(id) && self.tree.is(end + 1, NodeType::Decorator) {
+            end = self.tree.last(end + 1);
+        }
+        end
+    }
+
+    /// The type annotation of the pattern `id`, which is its last child.
+    fn annotation_of(&self, id: u32) -> Option<u32> {
+        let (tree, mut child) = (self.tree, id.wrapping_add(1));
+        if child > tree.last(id) {
+            return None;
+        }
+        while tree.last(child) < tree.last(id) {
+            child = tree.after(child);
+        }
+        tree.is(child, NodeType::TSTypeAnnotation).then_some(child)
+    }
+
+    /// `is_of_method`: a method's parameter decorators come before all the parameters.
+    fn parameter(&mut self, id: u32, is_of_method: bool) {
+        let (tree, decorators) = (self.tree, self.decorators_of(id));
+        if tree.is(id, NodeType::TSParameterProperty) {
+            self.parameter(decorators + 1, is_of_method);
+        } else if tree.is(id, NodeType::AssignmentPattern) {
+            let left = decorators + 1;
+            if let Some(annotation) = self.annotation_of(left) {
+                self.swap(annotation, tree.last(left), tree.last(id));
+            }
+        }
+        if !is_of_method {
+            self.swap(id + 1, decorators, tree.last(id));
+        }
+    }
+
+    fn function(&mut self, id: u32) {
+        let tree = self.tree;
+        let mut child = match tree.has_node(id, Field::Id) {
+            true => tree.after(id + 1),
+            false => id + 1,
+        };
+        let type_parameters = tree
+            .is(child, NodeType::TSTypeParameterDeclaration)
+            .then_some(child);
+        if type_parameters.is_some() {
+            child = tree.after(child);
+        }
+        let mut end = child - 1;
+        let is_of_method = matches!(
+            tree.node_type(tree.parent(id)),
+            Some(NodeType::MethodDefinition | NodeType::TSAbstractMethodDefinition)
+        );
+        let parameters = match tree.field(id, Field::Params) {
+            Value::Nodes(list) => list.len(),
+            _ => 0,
+        };
+        // The parameters so far, without their decorators.
+        let mut undecorated = Vec::new();
+        for _ in 0..parameters {
+            self.parameter(child, is_of_method);
+            if is_of_method {
+                let decorators = self.decorators_of(child);
+                let decorated = Run {
+                    first: child + 1,
+                    last: decorators,
+                };
+                self.exchange(&undecorated, &[decorated]);
+                undecorated.push(Run {
+                    first: decorators + 1,
+                    last: tree.last(child),
+                });
+            }
+            end = tree.last(child);
+            child = end.wrapping_add(1);
+        }
+        if tree.has_node(id, Field::ReturnType) {
+            end = tree.last(child);
+        }
+        if let Some(type_parameters) = type_parameters {
+            self.swap(type_parameters, tree.last(type_parameters), end);
+        }
+    }
+
+    fn class(&mut self, id: u32) {
+        let tree = self.tree;
+        if !tree.has_node(id, Field::TypeParameters) || !tree.has_node(id, Field::SuperClass) {
+            return;
+        }
+        let mut child = self.decorators_of(id) + 1;
+        if tree.has_node(id, Field::Id) {
+            child = tree.after(child);
+        }
+        self.swap(child, tree.last(child), tree.last(tree.after(child)));
+    }
+
+    fn member(&mut self, id: u32) {
+        let (tree, decorators) = (self.tree, self.decorators_of(id));
+        let key = decorators + 1;
+        let annotation = tree.after(key);
+        let has_annotation =
+            tree.last(key) < tree.last(id) && tree.is(annotation, NodeType::TSTypeAnnotation);
+        if !has_annotation {
+            return self.swap(id + 1, decorators, tree.last(id));
+        }
+        self.swap(annotation, tree.last(annotation), tree.last(id));
+        let decorated = Run {
+            first: id + 1,
+            last: decorators,
+        };
+        let key = Run {
+            first: key,
+            last: tree.last(key),
+        };
+        let value = Run {
+            first: tree.after(annotation),
+            last: tree.last(id),
+        };
+        self.exchange(&[decorated], &[key, value]);
+    }
+
+    fn run(&mut self) {
+        let tree = self.tree;
+        for id in 0..tree.types.len() as u32 {
+            let Some(node_type) = tree.node_type(id).filter(|_| tree.last(id) != id) else {
+                continue;
+            };
+            match node_type {
+                NodeType::VariableDeclarator => {
+                    if let Some(annotation) = self.annotation_of(id + 1) {
+                        self.swap(annotation, tree.last(id + 1), tree.last(id));
+                    }
+                }
+                NodeType::FunctionDeclaration
+                | NodeType::FunctionExpression
+                | NodeType::ArrowFunctionExpression
+                | NodeType::TSDeclareFunction
+                | NodeType::TSEmptyBodyFunctionExpression => self.function(id),
+                NodeType::ClassDeclaration | NodeType::ClassExpression => self.class(id),
+                NodeType::PropertyDefinition
+                | NodeType::AccessorProperty
+                | NodeType::TSAbstractPropertyDefinition
+                | NodeType::TSAbstractAccessorProperty
+                | NodeType::MethodDefinition
+                | NodeType::TSAbstractMethodDefinition => self.member(id),
+                NodeType::CallExpression
+                | NodeType::NewExpression
+                | NodeType::TaggedTemplateExpression => {
+                    let arguments = tree.after(id + 1);
+                    if arguments <= tree.last(id)
+                        && tree.is(arguments, NodeType::TSTypeParameterInstantiation)
+                    {
+                        self.swap(arguments, tree.last(arguments), tree.last(id));
+                    }
+                }
+                // The type comes last, or first if the expression is an assignment target.
+                NodeType::TSTypeAssertion | NodeType::TSAsExpression => {
+                    let parent = tree.parent(id);
+                    let is_target = parent.wrapping_add(1) == id
+                        && (tree.is(parent, NodeType::AssignmentExpression)
+                            || tree.is(parent, NodeType::UpdateExpression));
+                    let first = Run {
+                        first: id + 1,
+                        last: tree.last(id + 1),
+                    };
+                    let second = Run {
+                        first: tree.after(id + 1),
+                        last: tree.last(id),
+                    };
+                    let (expression, annotation) = match node_type {
+                        NodeType::TSAsExpression => (first, second),
+                        _ => (second, first),
+                    };
+                    match is_target {
+                        true => self.exchange(&[expression], &[annotation]),
+                        false => self.exchange(&[annotation], &[expression]),
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// ───────────── lists ─────────────
+
+/// Groups `values` by the key at the same index, which is below `count` or [`NONE`]. Appends a list for
+/// each key, with its values in their order, and returns the offsets of the lists.
+fn group(keys: &[u32], values: &[u32], count: usize, lists: &mut Vec<u32>) -> Vec<u32> {
+    let mut lengths = vec![0u32; count];
+    for &key in keys.iter().filter(|&&it| it != NONE) {
+        lengths[key as usize] += 1;
+    }
+    let mut offsets = vec![0u32; count];
+    // Where the next value of each key goes.
+    let mut next = vec![0u32; count];
+    for (key, &length) in lengths.iter().enumerate().filter(|it| *it.1 > 0) {
+        offsets[key] = lists.len() as u32;
+        next[key] = lists.len() as u32 + 1;
+        lists.push(length);
+        lists.resize(lists.len() + length as usize, 0);
+    }
+    for (&key, &value) in keys.iter().zip(values).filter(|it| *it.0 != NONE) {
+        lists[next[key as usize] as usize] = value;
+        next[key as usize] += 1;
+    }
+    offsets
+}
+// ───────────── the message ─────────────
+
+/// A file's scope data while it's being built.
+struct Builder<'t, 'a> {
+    tree: Tree<'t, 'a>,
+    /// The scopes follow `eslint-scope`. Otherwise they follow typescript-eslint.
+    is_espree: bool,
+    is_oxlint: bool,
+    scopes: Vec<ScopeRecord>,
+    /// How many of `variables` the file declares.
+    declared: u32,
+    variables: Vec<VariableRecord<'t>>,
+    definitions: Vec<DefinitionRecord>,
+    references: Vec<ReferenceRecord<'t>>,
+    /// For each global variable that's referenced but not declared: a reference to it, and its flags.
+    referenced_globals: Vec<(u32, u32)>,
+    /// Keyed by a class scope's index: the second variable for the class name.
+    inner_class_names: FxHashMap<u32, u32>,
+    /// For each scope: the list of the variables in `scope.taints`.
+    taints: Vec<u32>,
+    lists: Vec<u32>,
+}
+
+/// typescript-eslint's `scope.isStrict` in a file that isn't a module. `known` caches the results by scope id, so each
+/// scope is examined once.
+fn is_strict_for_oxlint(scope: Scope, known: &mut Vec<Option<bool>>) -> bool {
+    let mut unresolved = Vec::new();
+    let mut is_strict = false;
+    for it in scope.chain() {
+        let id = it.id().0 as usize;
+        if let Some(Some(found)) = known.get(id) {
+            is_strict = *found;
+            break;
+        }
+        unresolved.push(id);
+        let is_typescript_scope = matches!(
+            it.kind(),
+            ScopeKind::ConditionalType
+                | ScopeKind::FunctionType
+                | ScopeKind::MappedType
+                | ScopeKind::TsEnum
+                | ScopeKind::TsModule
+                | ScopeKind::Type
+        );
+        if is_typescript_scope || crate::utils::oxlint::makes_strict(it) {
+            is_strict = true;
+            break;
+        }
+    }
+    for id in unresolved {
+        if known.len() <= id {
+            known.resize(id + 1, None);
+        }
+        known[id] = Some(is_strict);
+    }
+    is_strict
+}
+
+/// True if `scope` is the top level of a CommonJS file under oxlint. oxlint treats it as a function, so it gets an
+/// `arguments` variable. A `var arguments` is that same variable.
+fn has_file_level_arguments<'a>(file: &'a File<'a>, scope: Scope<'a>) -> bool {
+    scope.kind() == ScopeKind::Module
+        && file.language().is_oxlint
+        && crate::utils::oxlint::source_type(file) == SourceType::CommonJs
+        && !scope.symbols().any(|it| it.name().bytes() == b"arguments")
+}
+
+impl<'t, 'a> Builder<'t, 'a> {
+    /// Collects the scopes, variables, definitions and references from [`crate::semantic`].
+    fn collect(&mut self, file: &'a File<'a>) {
+        let ids: FxHashMap<VNode<'a>, u32> = self.tree.nodes.iter().copied().zip(0..).collect();
+        let id =
+            |node: Option<VNode<'a>>| node.and_then(|it| ids.get(&it)).copied().unwrap_or(NONE);
+
+        // Indexed by `Symbol::key`: the variable's index.
+        let mut index_of = vec![NONE; file.symbol_key_limit()];
+        // With an oxlint config, [`crate::semantic`] builds a module's scopes for every file, and `Scope::is_strict`
+        // treats the file as a module. A plugin has to see what oxlint shows it: a script's top level is in the global
+        // scope, and a CommonJS file's top level is in a function scope, which has `arguments`.
+        let oxlint_source_type =
+            (file.language().is_oxlint).then(|| crate::utils::oxlint::source_type(file));
+        let is_not_module = oxlint_source_type.is_some_and(|it| it != SourceType::Module);
+        let (is_script, is_commonjs) = (
+            oxlint_source_type == Some(SourceType::Script),
+            oxlint_source_type == Some(SourceType::CommonJs),
+        );
+        // The module scope is the second scope, and a script doesn't have it.
+        let scope_index = |scope: Scope| scope.id().0 - u32::from(is_script && scope.id().0 > 0);
+        let mut file_arguments = NONE;
+        let mut known_strict = Vec::new();
+        for scope in file.scopes() {
+            let is_top = scope.kind() == ScopeKind::Module;
+            let index = match is_script && is_top {
+                true => 0,
+                false => self.scopes.len() as u32,
+            };
+            let is_strict = match is_not_module {
+                // The directive is in the function.
+                true if is_commonjs && scope.kind() == ScopeKind::Global => false,
+                true => is_strict_for_oxlint(scope, &mut known_strict),
+                false => scope.is_strict(),
+            };
+            let kind = match is_commonjs && is_top {
+                true => ScopeKind::Function,
+                false => scope.kind(),
+            };
+            if !(is_script && is_top) {
+                self.scopes.push(ScopeRecord {
+                    kind: kind as u32 | (u32::from(is_strict) * IS_STRICT),
+                    block: id(block(scope)),
+                    upper: scope.parent().map(scope_index),
+                    variable_scope: scope_index(scope.variable_scope()),
+                    last: index,
+                    first_variable: self.variables.len() as u32,
+                });
+            }
+            if has_file_level_arguments(file, scope) {
+                file_arguments = self.variables.len() as u32;
+                let first_definition = self.definitions.len() as u32;
+                self.variables.push(VariableRecord {
+                    name: Name::Arguments,
+                    text: b"arguments",
+                    scope: index,
+                    flags: IS_VALUE | IS_ARGUMENTS,
+                    first_definition,
+                    end_definition: first_definition,
+                    settings: 0,
+                    comments: 0,
+                });
+            }
+            for symbol in scope.symbols() {
+                if let Some(index) = index_of.get_mut(symbol.key()) {
+                    *index = self.variables.len() as u32;
+                }
+                let flags = (u32::from(symbol.is_type_variable()) * IS_TYPE)
+                    | (u32::from(symbol.is_value_variable()) * IS_VALUE)
+                    | (u32::from(symbol.is_marked_used()) * IS_USED)
+                    | (u32::from(symbol.is_marked_exported()) * IS_EXPORTED)
+                    | (u32::from(symbol.is_implicit_arguments()) * IS_ARGUMENTS);
+                let first_definition = self.definitions.len() as u32;
+                for declaration in symbol.declarations() {
+                    if let Some(kind) = declaration.kind() {
+                        self.definitions.push(DefinitionRecord {
+                            kind: kind as u32,
+                            name: id(name_of(declaration)),
+                            node: NONE,
+                            parent: NONE,
+                            index: NONE,
+                            flags: 0,
+                            declaration_kind: 0,
+                        });
+                    }
+                }
+                let first_name = self.definitions.get(first_definition as usize);
+                self.variables.push(VariableRecord {
+                    name: match symbol.is_implicit_arguments() {
+                        true => Name::Arguments,
+                        false => Name::Node(first_name.map_or(NONE, |it| it.name)),
+                    },
+                    text: symbol.name().bytes(),
+                    scope: index,
+                    flags,
+                    first_definition,
+                    end_definition: self.definitions.len() as u32,
+                    settings: 0,
+                    comments: 0,
+                });
+            }
+        }
+        self.declared = self.variables.len() as u32;
+        for index in (1..self.scopes.len()).rev() {
+            if let ScopeRecord {
+                last,
+                upper: Some(upper),
+                ..
+            } = self.scopes[index]
+            {
+                let upper = &mut self.scopes[upper as usize];
+                upper.last = upper.last.max(last);
+            }
+        }
+
+        // The references still to be added, sorted by `created_at`.
+        let mut late = VecDeque::from(self.references_to_const());
+        let mut is_first_to_const = true;
+        let mut seen = FxHashSet::default();
+        for reference in file.references_with_names_of_patterns_first() {
+            // A rule can't see a reference whose identifier isn't in the tree.
+            let identifier = id(identifier(reference));
+            if identifier == NONE {
+                continue;
+            }
+            while let Some(it) = late.pop_front_if(|it| it.created_at < identifier) {
+                self.add_late(it, &mut is_first_to_const);
+            }
+            // oxlint matches globals by name. See `add_oxlint_globals`.
+            let global = match self.is_oxlint {
+                true => None,
+                false => reference.global(),
+            };
+            if let Some(global) = global
+                && seen.insert(reference.name().atom())
+            {
+                let flags = (u32::from(global.is_type) * IS_TYPE)
+                    | (u32::from(global.is_value) * IS_VALUE)
+                    | (u32::from(global.is_exported) * (IS_USED | IS_EXPORTED))
+                    | (u32::from(global.is_writable) * IS_WRITABLE)
+                    | (u32::from(global.is_in_lib) * IS_IN_LIB)
+                    | (u32::from(!global.is_only_in_lib) * IS_CONFIGURED);
+                self.referenced_globals
+                    .push((self.references.len() as u32, flags));
+            }
+            let unwrap_jsdoc_casts = id(reference.write_expr().and_then(expression));
+            let is_partial = self.is_espree
+                && reference.flags().contains(ReferenceFlags::WRITE)
+                && self.tree.is_partial_write(identifier, unwrap_jsdoc_casts);
+            let from = scope_index(reference.scope());
+            let (assigning, implicit_global) =
+                self.maybe_implicit_global(identifier, reference.flags(), from);
+            let record = ReferenceRecord {
+                identifier,
+                created_at: match reference.is_jsx_pragma() {
+                    true => self.tree.first_jsx_after(identifier),
+                    false => identifier,
+                },
+                flags: u32::from(reference.flags().bits())
+                    | (u32::from(global.is_some()) * TO_GLOBAL)
+                    | (u32::from(is_partial) * IS_PARTIAL)
+                    | implicit_global,
+                unwrap_jsdoc_casts,
+                variable: match reference.symbol() {
+                    Some(it) => index_of.get(it.key()).copied().unwrap_or(NONE),
+                    // In a function it has a symbol.
+                    None if reference.name().bytes() == b"arguments" => file_arguments,
+                    None => NONE,
+                },
+                from,
+                assigning,
+                name: reference.name().bytes(),
+            };
+            match record.created_at == identifier {
+                true => self.references.push(record),
+                false => {
+                    late.insert(
+                        late.partition_point(|it| it.created_at < record.created_at),
+                        record,
+                    );
+                }
+            }
+        }
+        for it in late {
+            self.add_late(it, &mut is_first_to_const);
+        }
+    }
+
+    /// typescript-eslint's `reference.maybeImplicitGlobal`. Returns its `node`, or else the flag to add. It's an object
+    /// where a plain assignment outside strict code can create a variable, and `null` for other plain writes and for
+    /// references that can refer to a type.
+    fn maybe_implicit_global(
+        &self,
+        identifier: u32,
+        flags: ReferenceFlags,
+        from: u32,
+    ) -> (u32, u32) {
+        if self.is_espree {
+            return (NONE, 0);
+        }
+        if flags.contains(ReferenceFlags::TYPE) {
+            return (NONE, HAS_NULL_IMPLICIT_GLOBAL);
+        }
+        if !flags.contains(ReferenceFlags::WRITE) || flags.contains(ReferenceFlags::READ) {
+            return (NONE, 0);
+        }
+        if flags.contains(ReferenceFlags::INIT) || self.scopes[from as usize].is_strict() {
+            return (NONE, HAS_NULL_IMPLICIT_GLOBAL);
+        }
+        (self.tree.closest(identifier, ASSIGNING_TYPES), 0)
+    }
+
+    /// In typescript-eslint, the `const` in `x as const` is a reference to a type named `const`, which it defines along
+    /// with the libraries.
+    fn references_to_const(&self) -> Vec<ReferenceRecord<'t>> {
+        let mut found = Vec::new();
+        if self.is_espree {
+            return found;
+        }
+        // Keyed by block: the innermost scope.
+        let mut by_block: Option<FxHashMap<u32, u32>> = None;
+        let reference = NodeType::TSTypeReference as u8;
+        for (_, id) in (self.tree.types.iter().zip(0..)).filter(|it| *it.0 == reference) {
+            let identifier = id + 1;
+            let is_const = self.tree.is(identifier, NodeType::Identifier)
+                && (self.tree.nodes.get(identifier as usize))
+                    .is_some_and(|it| it.file().slice(it.span()) == b"const");
+            if !is_const {
+                continue;
+            }
+            let by_block = by_block
+                .get_or_insert_with(|| self.scopes.iter().map(|it| it.block).zip(0..).collect());
+            let mut node = id;
+            while node != NONE && !by_block.contains_key(&node) {
+                node = self.tree.parent(node);
+            }
+            found.push(ReferenceRecord {
+                identifier,
+                created_at: identifier,
+                flags: u32::from((ReferenceFlags::READ | ReferenceFlags::TYPE).bits())
+                    | TO_GLOBAL
+                    | HAS_NULL_IMPLICIT_GLOBAL,
+                unwrap_jsdoc_casts: NONE,
+                variable: NONE,
+                from: by_block.get(&node).copied().unwrap_or(0),
+                assigning: NONE,
+                name: b"const",
+            });
+        }
+        found
+    }
+
+    fn add_late(&mut self, reference: ReferenceRecord<'t>, is_first_to_const: &mut bool) {
+        let is_to_const = reference.flags & TO_GLOBAL != 0;
+        if is_to_const && std::mem::take(is_first_to_const) {
+            let flags = IS_TYPE | IS_IN_LIB;
+            self.referenced_globals
+                .push((self.references.len() as u32, flags));
+        }
+        self.references.push(reference);
+    }
+
+    /// Puts the references in the order the scope manager creates them. Returns `scopeManager.scopes` in its order.
+    fn order_as_visited(&mut self) -> Vec<u32> {
+        let members = self.tree.computed_members_in_patterns();
+        if self.is_espree && members.is_empty() {
+            return (0..self.scopes.len() as u32).collect();
+        }
+        let node_count = self.tree.nodes.len();
+        let created_at = self.references.iter().map(|it| it.created_at).collect();
+        let mut references = Order::new(created_at, node_count);
+        let mut scopes = Order::new(self.scopes.iter().map(|it| it.block).collect(), node_count);
+        let mut order = TypeScriptOrder {
+            tree: &self.tree,
+            orders: [&mut references, &mut scopes],
+        };
+        for id in members {
+            order.swap(id + 1, self.tree.last(id + 1), self.tree.last(id));
+        }
+        if !self.is_espree {
+            order.run();
+        }
+        if references.has_moved {
+            let moved = references.order.iter();
+            self.references = moved.map(|&it| self.references[it as usize]).collect();
+            for (reference, _) in &mut self.referenced_globals {
+                *reference = references.order_position[*reference as usize];
+            }
+        }
+        scopes.order
+    }
+
+    /// The variables below this index are the ones the file declares.
+    fn declared_end(&self) -> u32 {
+        self.declared + self.inner_class_names.len() as u32
+    }
+
+    fn contains(&self, scope: u32, inner: u32) -> bool {
+        scope <= inner && inner <= self.scopes[scope as usize].last
+    }
+
+    /// A class declaration has a second variable for its name, in its own scope. Inside the class, the name refers to
+    /// that one.
+    fn add_inner_class_names(&mut self) {
+        // Keyed by a class declaration's `id`: its scope.
+        let scope_of_name: FxHashMap<u32, u32> = (self.scopes.iter().zip(0..))
+            .filter(|(scope, _)| {
+                scope.is(ScopeKind::Class) && self.tree.is(scope.block, NodeType::ClassDeclaration)
+            })
+            .filter(|(scope, _)| self.tree.has_node(scope.block, Field::Id))
+            .map(|(scope, index)| (self.class_name(scope.block), index))
+            .collect();
+        if scope_of_name.is_empty() {
+            return;
+        }
+        // Keyed by the variable outside the class: the scopes of the classes that declare it.
+        let mut outer: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        for variable in 0..self.declared {
+            let record = &self.variables[variable as usize];
+            let (text, definitions) = (record.text, record.first_definition..record.end_definition);
+            for definition in definitions {
+                let DefinitionRecord { kind, name, .. } = self.definitions[definition as usize];
+                let Some(&scope) = scope_of_name.get(&name) else {
+                    continue;
+                };
+                if kind != DeclarationKind::ClassName as u32 {
+                    continue;
+                }
+                let first_definition = self.definitions.len() as u32;
+                self.definitions.push(DefinitionRecord {
+                    kind,
+                    name,
+                    node: NONE,
+                    parent: NONE,
+                    index: NONE,
+                    flags: 0,
+                    declaration_kind: 0,
+                });
+                self.inner_class_names
+                    .insert(scope, self.variables.len() as u32);
+                self.variables.push(VariableRecord {
+                    name: Name::Node(name),
+                    text,
+                    scope,
+                    flags: IS_TYPE | IS_VALUE,
+                    first_definition,
+                    end_definition: first_definition + 1,
+                    settings: 0,
+                    comments: 0,
+                });
+                outer.entry(variable).or_default().push(scope);
+            }
+        }
+        for at in 0..self.references.len() {
+            let ReferenceRecord { variable, from, .. } = self.references[at];
+            let scope = (outer.get(&variable).into_iter().flatten().rev())
+                .find(|&&scope| self.contains(scope, from));
+            if let Some(inner) = scope.and_then(|it| self.inner_class_names.get(it)) {
+                self.references[at].variable = *inner;
+            }
+        }
+    }
+
+    /// The `id` of the class `block`, which comes after its decorators.
+    fn class_name(&self, block: u32) -> u32 {
+        let mut id = block + 1;
+        while self.tree.is(id, NodeType::Decorator) {
+            id = self.tree.after(id);
+        }
+        id
+    }
+
+    fn complete_definitions(&mut self) {
+        for variable in &self.variables {
+            let lacks_parent =
+                self.is_espree && self.scopes[variable.scope as usize].is(ScopeKind::Class);
+            for at in variable.first_definition..variable.end_definition {
+                let definition = &mut self.definitions[at as usize];
+                if definition.name == NONE {
+                    continue;
+                }
+                self.tree.complete(definition, self.is_espree);
+                if lacks_parent && definition.kind == DeclarationKind::ClassName as u32 {
+                    definition.flags |= LACKS_PARENT;
                 }
             }
         }
     }
-    wire::words(out, &[0, NONE, NONE, NONE, (variables.len() / 2) as u32]);
-    variables.extend_from_slice(&[(definitions.len() / 2) as u32, 0]);
-    wire::words(out, &variables);
-    wire::words(out, &definitions);
 
-    let mut globals = Vec::new();
-    let mut seen = FxHashSet::default();
-    let mut reference_count = 0;
-    for reference in file.references_as_visited() {
-        // What is not in the tree is not there for a rule either.
-        let identifier = id(identifier(reference));
-        if identifier == NONE {
-            continue;
-        }
-        let index = reference_count;
-        reference_count += 1;
-        let symbol = reference.symbol();
-        let global = reference.global();
-        if let Some(global) = global
-            && seen.insert(reference.name().atom())
+    /// The definitions of `variable` whose names are in the tree.
+    fn definitions_of(&self, variable: &VariableRecord) -> impl Iterator<Item = u32> {
+        (variable.first_definition..variable.end_definition)
+            .filter(|&it| self.definitions[it as usize].name != NONE)
+    }
+
+    /// Puts `scope.variables` of a scope other than the global one into `variables`.
+    fn variables_of(&self, scope: u32, variables: &mut Vec<u32>) {
+        let record = &self.scopes[scope as usize];
+        let end =
+            (self.scopes.get(scope as usize + 1)).map_or(self.declared, |it| it.first_variable);
+        let inner = self.inner_class_names.get(&scope).copied();
+        variables.clear();
+        variables.extend(inner.into_iter().chain(record.first_variable..end));
+        // A function has its `arguments` before anything is declared in it, and oxlint treats a CommonJS file as a
+        // function.
+        let is_arguments = |it: &u32| self.variables[*it as usize].text == b"arguments";
+        if self.is_oxlint
+            && record.block == 0
+            && let Some(at) = variables.iter().position(is_arguments)
         {
-            let flags = (u32::from(global.is_type) * IS_TYPE)
-                | (u32::from(global.is_value) * IS_VALUE)
-                | (u32::from(global.is_exported) * (IS_USED | IS_EXPORTED))
-                | (u32::from(global.is_writable) * IS_WRITABLE)
-                | (u32::from(global.is_in_lib) * IS_IN_LIB)
-                | (u32::from(!global.is_only_in_lib) * IS_CONFIGURED);
-            globals.extend_from_slice(&[index, flags]);
+            variables[..=at].rotate_right(1);
         }
-        wire::words(
-            out,
-            &[
-                identifier,
-                u32::from(reference.flags().bits()) | (u32::from(global.is_some()) * TO_GLOBAL),
-                id(reference.write_expr().and_then(expression)),
-                symbol
-                    .and_then(|it| index_of.get(it.key()))
-                    .copied()
-                    .unwrap_or(NONE),
-                reference.scope().id().0,
-            ],
-        );
-    }
-    wire::words(out, &globals);
-
-    let in_comments = file.globals_in_comments();
-    for global in in_comments {
-        let name = global.comments.first().map_or(Span::new(0, 0), |it| {
-            file.name_in_global_comment(*it, &global.name)
+        // typescript-eslint visits a function's type parameters after its parameters.
+        let has_type_parameters = !self.is_espree
+            && record.is(ScopeKind::Function)
+            && self.tree.has_node(record.block, Field::TypeParameters);
+        if !has_type_parameters {
+            return;
+        }
+        let type_parameters = self.type_parameters_of(record.block);
+        sort::sort_by_cached_key(variables, |&it| {
+            let variable = &self.variables[it as usize];
+            let first = self.definitions.get(variable.first_definition as usize);
+            let is = |kind: DeclarationKind| first.is_some_and(|it| it.kind == kind as u32);
+            let declared_at = self.definitions_of(variable).next();
+            if variable.flags & IS_ARGUMENTS != 0 {
+                0
+            } else if is(DeclarationKind::Parameter) {
+                1
+            } else if is(DeclarationKind::Type)
+                && declared_at.is_some_and(|it| {
+                    self.tree.parent(self.definitions[it as usize].node) == type_parameters
+                })
+            {
+                2
+            } else {
+                3
+            }
         });
-        let setting = match global.setting {
-            Global::Readonly => 0,
-            Global::Writable => 1,
-            Global::Off => 2,
-        };
-        wire::words(
-            out,
-            &[
-                offsets.to_utf16(name.start),
-                offsets.to_utf16(name.end),
-                setting,
-                global.comments.len() as u32,
-            ],
-        );
-        for comment in &global.comments {
-            wire::words(out, &[offsets.to_utf16(comment.start)]);
+    }
+
+    /// The `typeParameters` of the function `block`, which come after its `id`.
+    fn type_parameters_of(&self, block: u32) -> u32 {
+        match self.tree.has_node(block, Field::Id) {
+            true => self.tree.after(block + 1),
+            false => block + 1,
+        }
+    }
+}
+
+/// The settings ESLint puts on a global-scope variable.
+struct GlobalSetting {
+    variable: u32,
+    bits: u32,
+    /// A list of the start offsets of the `/* global */` comments that list it.
+    comments: u32,
+}
+
+/// ESLint's `configGlobals`.
+#[derive(Debug)]
+pub(super) struct ConfiguredGlobals {
+    /// In key order.
+    list: Vec<(Box<[u8]>, Global)>,
+    index_of: FxHashMap<Box<[u8]>, usize>,
+    /// For each: [`IS_IN_LIB`] with [`IS_TYPE`] and [`IS_VALUE`] if a TypeScript library defines it too.
+    lib_flags: Vec<u32>,
+}
+
+impl ConfiguredGlobals {
+    /// `libs` is what TypeScript's libraries define: the name, whether it's a type, whether it's a value.
+    pub(super) fn new<'n>(
+        list: Vec<(Box<[u8]>, Global)>,
+        libs: impl Iterator<Item = (&'n [u8], bool, bool)>,
+    ) -> ConfiguredGlobals {
+        let index_of: FxHashMap<Box<[u8]>, usize> =
+            list.iter().map(|it| it.0.clone()).zip(0..).collect();
+        let mut lib_flags = vec![0; list.len()];
+        for (name, is_type, is_value) in libs {
+            if let Some(&index) = index_of.get(name) {
+                lib_flags[index] =
+                    IS_IN_LIB | (u32::from(is_type) * IS_TYPE) | (u32::from(is_value) * IS_VALUE);
+            }
+        }
+        ConfiguredGlobals {
+            list,
+            index_of,
+            lib_flags,
         }
     }
 
-    let counts: [u32; HEADER] = [
-        scope_count as u32,
-        (variables.len() / 2 - 1) as u32,
-        (definitions.len() / 2) as u32,
-        reference_count,
-        (globals.len() / 2) as u32,
-        in_comments.len() as u32,
-    ];
-    for (i, count) in counts.iter().enumerate() {
-        out[header + i * 4..header + i * 4 + 4].copy_from_slice(&count.to_le_bytes());
+    pub(super) fn iter(&self) -> impl Iterator<Item = &(Box<[u8]>, Global)> {
+        self.list.iter()
     }
+
+    fn index_of(&self, name: &[u8]) -> Option<usize> {
+        self.index_of.get(name).copied()
+    }
+}
+
+/// Maps each global variable's name to a number.
+struct GlobalNames<'t> {
+    configured: &'t ConfiguredGlobals,
+    /// Indexed by a configured global's index.
+    by_configured_index: Vec<u32>,
+    others: FxHashMap<&'t [u8], u32>,
+}
+
+impl<'t> GlobalNames<'t> {
+    /// The number for `name`. A name that isn't configured starts with [`NONE`].
+    fn slot(&mut self, name: &'t [u8]) -> &mut u32 {
+        match self.configured.index_of(name) {
+            Some(index) => &mut self.by_configured_index[index],
+            None => self.others.entry(name).or_insert(NONE),
+        }
+    }
+
+    fn get(&self, name: &[u8]) -> Option<u32> {
+        match self.configured.index_of(name) {
+            Some(index) => Some(self.by_configured_index[index]),
+            None => self.others.get(name).copied(),
+        }
+    }
+}
+
+fn setting_bits(setting: Global) -> u32 {
+    match setting {
+        Global::Readonly => 0,
+        Global::Writable => 1,
+        Global::Off => 2,
+    }
+}
+
+impl<'t, 'a> Builder<'t, 'a> {
+    /// ESLint's `addDeclaredGlobals`. Adds the globals that the file doesn't declare to `variables`, the global scope's
+    /// variables. These are the TypeScript library globals that the file refers to, the config's globals and those from
+    /// `/* global */` comments. Resolves the references to them.
+    fn add_globals(
+        &mut self,
+        file: &'a File<'a>,
+        offsets: &Utf16OffsetTable,
+        configured: &'t ConfiguredGlobals,
+        variables: &mut Vec<u32>,
+    ) {
+        if self.is_oxlint {
+            return self.add_oxlint_globals(configured, variables);
+        }
+        // Each name's variable so far. Configured names are found by index, so a file only hashes the names that it
+        // mentions.
+        let mut named = GlobalNames {
+            configured,
+            by_configured_index: vec![NONE; configured.list.len()],
+            others: FxHashMap::default(),
+        };
+        for &variable in variables.iter() {
+            *named.slot(self.variables[variable as usize].text) = variable;
+        }
+        // The flags of the referenced globals, found the same way.
+        let mut flags_of = GlobalNames {
+            configured,
+            by_configured_index: vec![0; configured.list.len()],
+            others: FxHashMap::default(),
+        };
+        for &(reference, flags) in &self.referenced_globals {
+            *flags_of.slot(self.references[reference as usize].name) = flags;
+        }
+        let mut comment_of = vec![None; configured.list.len()];
+        for comment in file.globals_in_comments() {
+            if let Some(index) = configured.index_of(&comment.name) {
+                comment_of[index] = Some(comment);
+            }
+        }
+
+        let end_definition = self.definitions.len() as u32;
+        let all = &mut self.variables;
+        let mut define = |slot: &mut u32, text: &'t [u8], name: Name, flags: u32| {
+            if *slot == NONE {
+                *slot = all.len() as u32;
+                variables.push(*slot);
+                all.push(VariableRecord {
+                    name,
+                    text,
+                    scope: 0,
+                    flags,
+                    first_definition: end_definition,
+                    end_definition,
+                    settings: 0,
+                    comments: 0,
+                });
+            }
+            *slot
+        };
+
+        let mut settings = Vec::with_capacity(configured.list.len());
+        for &(reference, flags) in &self.referenced_globals {
+            if flags & IS_CONFIGURED == 0 {
+                let ReferenceRecord {
+                    identifier, name, ..
+                } = self.references[reference as usize];
+                settings.push(GlobalSetting {
+                    variable: define(named.slot(name), name, Name::Node(identifier), flags),
+                    bits: setting_bits(Global::Readonly),
+                    comments: 0,
+                });
+            }
+        }
+        let lists = &mut self.lists;
+        let starts_of = |comments: &[Span]| -> Vec<u32> {
+            comments
+                .iter()
+                .map(|it| offsets.to_utf16(it.start))
+                .collect()
+        };
+        for (index, (name, implicit)) in configured.list.iter().enumerate() {
+            let comment = comment_of[index];
+            let setting = comment.map_or(*implicit, |it| it.setting);
+            if setting == Global::Off {
+                continue;
+            }
+            let (slot, flags) = (
+                &mut named.by_configured_index[index],
+                flags_of.by_configured_index[index] | configured.lib_flags[index],
+            );
+            settings.push(GlobalSetting {
+                variable: define(slot, name, Name::Configured(index as u32), flags),
+                bits: setting_bits(*implicit)
+                    | IS_LISTED
+                    | (u32::from(setting == Global::Writable) * IS_WRITEABLE)
+                    | (u32::from(comment.is_some()) * IS_EXPLICIT),
+                comments: comment.map_or(0, |it| push_list(lists, &starts_of(&it.comments))),
+            });
+        }
+        // ESLint 8 counts the variables that `/* eslint-env */` comments define as configured globals.
+        for (name, implicit) in file.globals_of_environments_in_comments() {
+            let comment = file.global_in_comments(name);
+            let setting = comment.map_or(implicit, |it| it.setting);
+            if configured.index_of(name).is_some() || setting == Global::Off {
+                continue;
+            }
+            let units: Vec<u32> = (bun_core::strings::wtf8_to_utf16(name).iter())
+                .map(|&it| u32::from(it))
+                .collect();
+            let units_name = Name::Units(push_list(lists, &units));
+            let flags = flags_of.get(name).unwrap_or(0);
+            settings.push(GlobalSetting {
+                variable: define(named.slot(name), name, units_name, flags),
+                bits: setting_bits(implicit)
+                    | IS_LISTED
+                    | (u32::from(setting == Global::Writable) * IS_WRITEABLE)
+                    | (u32::from(comment.is_some()) * IS_EXPLICIT),
+                comments: comment.map_or(0, |it| push_list(lists, &starts_of(&it.comments))),
+            });
+        }
+        for comment in file.globals_in_comments() {
+            let is_configured = configured.index_of(&comment.name).is_some()
+                || (file.global_of_environment_in_comments(&comment.name)).is_some();
+            if is_configured || comment.setting == Global::Off {
+                continue;
+            }
+            let span = comment.comments.first().map_or(Span::new(0, 0), |it| {
+                file.name_in_global_comment(*it, &comment.name)
+            });
+            let comments = push_list(lists, &starts_of(&comment.comments));
+            let text = [offsets.to_utf16(span.start), offsets.to_utf16(span.end)];
+            let name = Name::Text(push_list(lists, &text));
+            let flags = flags_of.get(&comment.name).unwrap_or(0);
+            settings.push(GlobalSetting {
+                variable: define(named.slot(&comment.name), &comment.name, name, flags),
+                bits: SETTING_UNDEFINED
+                    | IS_LISTED
+                    | IS_EXPLICIT
+                    | (u32::from(comment.setting == Global::Writable) * IS_WRITEABLE),
+                comments,
+            });
+        }
+
+        for reference in &mut self.references {
+            if reference.variable == NONE && reference.flags & TO_GLOBAL != 0 {
+                reference.variable = named.get(reference.name).unwrap_or(NONE);
+            }
+        }
+        for it in settings {
+            let variable = &mut self.variables[it.variable as usize];
+            variable.settings = it.bits | HAS_SETTING;
+            variable.comments = it.comments;
+        }
+    }
+
+    /// oxlint's `addGlobals`. typescript-eslint has no libraries there, so the only thing it defines by itself is
+    /// `const`, before the file's declarations. oxlint defines the entries of `configured`, and comments don't change
+    /// them. Then it resolves what's left over in the global scope by name only, so a type reference can resolve to a
+    /// value.
+    fn add_oxlint_globals(&mut self, configured: &'t ConfiguredGlobals, variables: &mut Vec<u32>) {
+        let mut named = GlobalNames {
+            configured,
+            by_configured_index: vec![NONE; configured.list.len()],
+            others: FxHashMap::default(),
+        };
+        for &variable in variables.iter() {
+            *named.slot(self.variables[variable as usize].text) = variable;
+        }
+        let end_definition = self.definitions.len() as u32;
+        let global = |name: Name, text: &'t [u8], flags: u32| VariableRecord {
+            name,
+            text,
+            scope: 0,
+            flags,
+            first_definition: end_definition,
+            end_definition,
+            settings: 0,
+            comments: 0,
+        };
+
+        let units = b"const".map(u32::from);
+        let name = Name::Units(push_list(&mut self.lists, &units));
+        let for_const = self.variables.len() as u32;
+        let mut record = global(name, b"const", IS_TYPE | IS_IN_LIB);
+        record.settings = setting_bits(Global::Readonly) | HAS_SETTING;
+        self.variables.push(record);
+        variables.insert(0, for_const);
+        *named.slot(b"const") = for_const;
+
+        for (index, (name, setting)) in configured.list.iter().enumerate() {
+            if *setting == Global::Off {
+                continue;
+            }
+            let slot = &mut named.by_configured_index[index];
+            if *slot == NONE {
+                *slot = self.variables.len() as u32;
+                variables.push(*slot);
+                self.variables
+                    .push(global(Name::Configured(index as u32), name, 0));
+            }
+            self.variables[*slot as usize].settings = setting_bits(*setting)
+                | IS_LISTED
+                | HAS_SETTING
+                | (u32::from(*setting == Global::Writable) * IS_WRITEABLE);
+        }
+
+        for reference in &mut self.references {
+            if reference.variable == NONE
+                && let Some(variable) = named.get(reference.name).filter(|&it| it != NONE)
+            {
+                reference.variable = variable;
+                reference.flags |= TO_GLOBAL;
+            }
+        }
+    }
+
+    /// typescript-eslint's `variable.isTypeVariable` or `isValueVariable` for a variable without definitions.
+    fn accepts(&self, variable: u32, flag: u32) -> bool {
+        let flags = self.variables[variable as usize].flags;
+        flags & IS_IN_LIB == 0 || flags & flag != 0
+    }
+
+    /// Every variable's `variable.references`.
+    fn references_by_variable(&mut self) -> Vec<u32> {
+        // A reference that only resolves to a declared variable by name isn't in that variable's references. With
+        // oxlint it is.
+        let declared_end = match self.is_oxlint {
+            true => 0,
+            false => self.declared_end(),
+        };
+        let keys: Vec<u32> = (self.references.iter())
+            .map(
+                |it| match it.flags & TO_GLOBAL != 0 && it.variable < declared_end {
+                    true => NONE,
+                    false => it.variable,
+                },
+            )
+            .collect();
+        let mut values: Vec<u32> = (0..keys.len() as u32).collect();
+        // A scope resolves its references when it ends, in the order it received them. It receives an inner scope's
+        // references when that scope ends. JSX's implicit use of `React` goes straight to the scope that declares
+        // `React`, so it gets there before the references of the scopes that are still open.
+        let for_jsx: Vec<(ReferenceRecord, u32)> = (self.references.iter().copied().zip(0..))
+            .filter(|(it, _)| it.created_at != it.identifier)
+            .collect();
+        // For each scope: the last reference created before it ends.
+        let mut last_in = vec![0; self.scopes.len() * usize::from(!for_jsx.is_empty())];
+        if !for_jsx.is_empty() {
+            for (reference, index) in self.references.iter().zip(0..) {
+                last_in[reference.from as usize] = index;
+            }
+            for index in (1..self.scopes.len()).rev() {
+                if let Some(upper) = self.scopes[index].upper {
+                    last_in[upper as usize] = last_in[upper as usize].max(last_in[index]);
+                }
+            }
+        }
+        for (for_jsx, index) in for_jsx {
+            let home = for_jsx.from;
+            let time_of = |it: u32| {
+                let reference = &self.references[it as usize];
+                if reference.variable != for_jsx.variable {
+                    return 0;
+                }
+                let mut scope = reference.from;
+                while let Some(upper) = self.scopes[scope as usize].upper.filter(|_| scope != home)
+                {
+                    if upper == home {
+                        // A scope that contains the JSX ends later, whether or not it has another reference.
+                        let block = self.scopes[scope as usize].block;
+                        let is_open = (block..=self.tree.last(block)).contains(&for_jsx.created_at);
+                        let last = last_in[scope as usize].max(index * u32::from(is_open));
+                        return 2 * last + 1;
+                    }
+                    scope = upper;
+                }
+                2 * it
+            };
+            sort::sort_indices(&mut values, &mut |a, b| time_of(a).cmp(&time_of(b)));
+        }
+        if !self.is_espree {
+            // typescript-eslint resolves a reference if the libraries allow that use of the name. `Promise` is only a
+            // type in the first library that has it. ESLint resolves the rest afterwards. oxlint has no libraries.
+            let (first, rest): (Vec<u32>, Vec<u32>) = values.iter().partition(|&&it| {
+                let reference = &self.references[it as usize];
+                let is = |flag: ReferenceFlags| reference.flags & u32::from(flag.bits()) != 0;
+                let is_known_to_libraries = || {
+                    reference.variable == NONE
+                        || is(ReferenceFlags::TYPE) && self.accepts(reference.variable, IS_TYPE)
+                        || is(ReferenceFlags::VALUE) && self.accepts(reference.variable, IS_VALUE)
+                };
+                reference.flags & TO_GLOBAL == 0 || !self.is_oxlint && is_known_to_libraries()
+            });
+            values = [first, rest].concat();
+        }
+        let keys: Vec<u32> = values.iter().map(|&it| keys[it as usize]).collect();
+        group(&keys, &values, self.variables.len(), &mut self.lists)
+    }
+
+    /// Every scope's `scope.through`.
+    fn through(&mut self) -> Vec<u32> {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        // The references that leave a `with` statement, where a name's meaning can't be known.
+        let mut tainted = Vec::new();
+        for (reference, index) in self.references.iter().zip(0..) {
+            let is_to_global = reference.flags & TO_GLOBAL != 0;
+            // The scope where it resolves. It passes through every scope from its own up to that one.
+            let home = match is_to_global {
+                true => None,
+                false => self
+                    .variables
+                    .get(reference.variable as usize)
+                    .map(|it| it.scope),
+            };
+            let mut next = Some(reference.from);
+            while let Some(scope) =
+                next.filter(|&it| home.is_none_or(|home| !self.contains(it, home)))
+            {
+                if scope != 0 || !is_to_global {
+                    keys.push(scope);
+                    values.push(index);
+                }
+                if self.scopes[scope as usize].is(ScopeKind::With) && tainted.last() != Some(&index)
+                {
+                    tainted.push(index);
+                }
+                next = self.scopes[scope as usize].upper;
+            }
+        }
+        // `eslint-scope` adds a variable to `taints` when it resolves the first such reference to it.
+        let (mut homes, mut tainted_variables) = (Vec::new(), Vec::new());
+        for index in tainted {
+            let reference = &mut self.references[index as usize];
+            reference.flags |= IS_TAINTED;
+            if reference.flags & TO_GLOBAL == 0
+                && let Some(variable) = self.variables.get_mut(reference.variable as usize)
+                && variable.flags & IS_TAINTED_VARIABLE == 0
+            {
+                variable.flags |= IS_TAINTED_VARIABLE;
+                homes.push(variable.scope);
+                tainted_variables.push(reference.variable);
+            }
+        }
+        let scope_count = self.scopes.len();
+        self.taints = group(&homes, &tainted_variables, scope_count, &mut self.lists);
+        group(&keys, &values, scope_count, &mut self.lists)
+    }
+
+    /// The variables that sloppy-mode assignments create. Each is a list of pairs: the identifier that's assigned to
+    /// and the assigning node. `through` is the global scope's `through`.
+    fn implicit_globals(&mut self, through: u32) -> ImplicitGlobals {
+        let length = self.lists[through as usize] as usize;
+        let through = self.lists[through as usize + 1..][..length].to_vec();
+        let retained = self.implicit_globals_among(through.into_iter());
+        // `eslint-scope` also creates one for a global from the config. ESLint removes it from `globalScope.implicit`
+        // again, but `getDeclaredVariables()` still finds it.
+        // typescript-eslint doesn't create one for a name that the file declares in the global scope.
+        let declared_end = match self.is_oxlint {
+            true => self.declared_end(),
+            false => 0,
+        };
+        let to_globals = (0..self.references.len() as u32)
+            .filter(|&it| {
+                let reference = &self.references[it as usize];
+                reference.flags & TO_GLOBAL != 0 && reference.variable >= declared_end
+            })
+            .collect::<Vec<u32>>();
+        let removed = self.implicit_globals_among(to_globals.into_iter());
+        ImplicitGlobals {
+            retained_count: retained.len() as u32,
+            lists: retained.into_iter().chain(removed).collect(),
+        }
+    }
+
+    fn implicit_globals_among(&mut self, references: impl Iterator<Item = u32>) -> Vec<u32> {
+        let mut by_name: FxHashMap<&[u8], usize> = FxHashMap::default();
+        let mut variables: Vec<Vec<u32>> = Vec::new();
+        for reference in references.map(|it| &self.references[it as usize]) {
+            let only_writes = reference.flags & 3 == u32::from(ReferenceFlags::WRITE.bits());
+            let is_init = reference.flags & u32::from(ReferenceFlags::INIT.bits()) != 0;
+            if !only_writes || is_init || self.scopes[reference.from as usize].is_strict() {
+                continue;
+            }
+            let at = *by_name.entry(reference.name).or_insert_with(|| {
+                variables.push(Vec::new());
+                variables.len() - 1
+            });
+            variables[at].extend_from_slice(&[
+                reference.identifier,
+                self.tree.closest(reference.identifier, ASSIGNING_TYPES),
+            ]);
+        }
+        (variables.iter())
+            .map(|it| push_list(&mut self.lists, it))
+            .collect()
+    }
+}
+
+/// See [`Builder::implicit_globals`].
+struct ImplicitGlobals {
+    lists: Vec<u32>,
+    /// How many of them are in `globalScope.implicit`. They come first.
+    retained_count: u32,
+}
+
+impl Builder<'_, '_> {
+    /// `variable.stack`: every reference that `eslint-scope` itself resolved comes from the function that declares the
+    /// variable. ESLint resolves the references to the globals that it adds, and doesn't touch `stack`.
+    fn set_stack(&mut self) {
+        for variable in &mut self.variables {
+            variable.flags |= IS_STACK;
+        }
+        let function_of = |scope: u32| self.scopes[scope as usize].variable_scope;
+        for reference in self
+            .references
+            .iter()
+            .filter(|it| it.flags & TO_GLOBAL == 0)
+        {
+            if let Some(variable) = self.variables.get_mut(reference.variable as usize)
+                && function_of(reference.from) != function_of(variable.scope)
+            {
+                variable.flags &= !IS_STACK;
+            }
+        }
+    }
+
+    /// Sets [`HAS_THIS`] and [`HAS_ARGUMENTS`].
+    fn find_this_and_arguments(&mut self) {
+        // Keyed by block: the innermost scope that `this` can belong to.
+        let mut by_block: FxHashMap<u32, usize> = FxHashMap::default();
+        for (index, scope) in self.scopes.iter_mut().enumerate() {
+            if scope.variable_scope as usize == index {
+                by_block.insert(scope.block, index);
+            }
+            if scope.is(ScopeKind::Function)
+                && !self.tree.is(scope.block, NodeType::ArrowFunctionExpression)
+            {
+                scope.kind |= HAS_ARGUMENTS;
+            }
+        }
+        let this = NodeType::ThisExpression as u8;
+        for (_, id) in (self.tree.types.iter().zip(0..)).filter(|it| *it.0 == this) {
+            let mut node = id;
+            while node != NONE {
+                if let Some(&scope) = by_block.get(&node) {
+                    self.scopes[scope].kind |= HAS_THIS;
+                    break;
+                }
+                node = self.tree.parent(node);
+            }
+        }
+    }
+
+    fn shape_of(&self, variable: &VariableRecord) -> u32 {
+        let has = |flag: u32| variable.flags & flag != 0;
+        let is_lib = !self.is_espree && has(IS_IN_LIB);
+        (u32::from(variable.settings & HAS_SETTING != 0 && !is_lib) * SHAPE_GLOBAL)
+            | (u32::from(is_lib) * SHAPE_LIB)
+            | (u32::from(self.is_espree && has(IS_USED)) * SHAPE_USED)
+            | (u32::from(has(IS_EXPORTED)) * SHAPE_EXPORTED)
+    }
+
+    /// Builds a map from `keys`, which are nodes, and the values at the same indices. The nodes are ordered by first
+    /// occurrence.
+    fn map_of(&mut self, keys: &[u32], values: &[u32]) -> u32 {
+        let mut lists_by_node = group(keys, values, self.tree.types.len(), &mut self.lists);
+        let mut pairs = Vec::new();
+        for &node in keys.iter().filter(|&&it| it != NONE) {
+            let list = std::mem::take(&mut lists_by_node[node as usize]);
+            if list != 0 {
+                pairs.extend_from_slice(&[node, list]);
+            }
+        }
+        push_list(&mut self.lists, &pairs)
+    }
+
+    /// Maps a scope's block to the scopes that have it, in the order of `listed`.
+    fn node_to_scope(&mut self, listed: &[u32]) -> u32 {
+        let blocks: Vec<u32> = (listed.iter())
+            .map(|&it| self.scopes[it as usize].block)
+            .collect();
+        self.map_of(&blocks, listed)
+    }
+
+    /// Maps a definition's `node` and `parent` to the variables that have such a definition.
+    fn declared_variables(&mut self, listed: &[u32], variables: &[u32], implicit: &[u32]) -> u32 {
+        // The name, `node`, `parent` and variable of every definition. `eslint-scope` adds a variable to a node's list
+        // when it reaches a definition.
+        let mut definitions = Vec::new();
+        for &scope in listed {
+            let at = variables[scope as usize] as usize;
+            for &variable in &self.lists[at + 1..][..self.lists[at] as usize] {
+                for definition in self.definitions_of(&self.variables[variable as usize]) {
+                    let it = &self.definitions[definition as usize];
+                    definitions.push((it.name, it.node, it.parent, variable));
+                }
+            }
+        }
+        let node_count = self.tree.nodes.len();
+        let by_name = |items: &mut [(u32, u32, u32, u32)]| {
+            let names: Vec<u32> = items.iter().map(|it| it.0).collect();
+            let sorted: Vec<_> = (order_by_node(&names, node_count).iter())
+                .map(|&it| items[it as usize])
+                .collect();
+            items.copy_from_slice(&sorted);
+        };
+        by_name(&mut definitions);
+        // It creates the implicit globals last, in assignment order.
+        let first_implicit = definitions.len();
+        for (&pairs, variable) in implicit.iter().zip(self.variables.len() as u32..) {
+            let at = pairs as usize;
+            let pairs = self.lists[at + 1..][..self.lists[at] as usize]
+                .as_chunks::<2>()
+                .0;
+            definitions.extend(
+                pairs
+                    .iter()
+                    .map(|&[name, node]| (name, node, NONE, variable)),
+            );
+        }
+        by_name(&mut definitions[first_implicit..]);
+
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        let mut seen = FxHashSet::default();
+        for (_, node, parent, variable) in definitions {
+            for node in [node, parent] {
+                if node != NONE && seen.insert((node, variable)) {
+                    keys.push(node);
+                    values.push(variable);
+                }
+            }
+        }
+        self.map_of(&keys, &values)
+    }
+}
+
+/// Appends the message. `configured` is ESLint's `configGlobals`, in key order.
+pub(super) fn write<'t, 'a>(
+    file: &'a File<'a>,
+    offsets: &Utf16OffsetTable,
+    numbered: &'t Numbered<'a>,
+    configured: &'t ConfiguredGlobals,
+    out: &mut Vec<u8>,
+) {
+    // oxlint's own rules see oxc's scopes.
+    let _scopes = file.with_eslint_scopes();
+    let mut builder = Builder {
+        tree: Tree::new(numbered),
+        is_espree: Dialect::of(file) == Dialect::Espree,
+        is_oxlint: file.language().is_oxlint,
+        scopes: Vec::new(),
+        declared: 0,
+        variables: Vec::new(),
+        definitions: Vec::new(),
+        references: Vec::new(),
+        referenced_globals: Vec::new(),
+        inner_class_names: FxHashMap::default(),
+        taints: Vec::new(),
+        lists: vec![0],
+    };
+    builder.collect(file);
+    let listed = builder.order_as_visited();
+    builder.add_inner_class_names();
+    builder.complete_definitions();
+
+    let end_of_global = builder
+        .scopes
+        .get(1)
+        .map_or(builder.declared, |it| it.first_variable);
+    let mut global_variables: Vec<u32> = (0..end_of_global).collect();
+    builder.add_globals(file, offsets, configured, &mut global_variables);
+    builder.set_stack();
+    if builder.is_espree {
+        builder.find_this_and_arguments();
+    }
+
+    let uppers: Vec<u32> = (listed.iter())
+        .map(|&it| builder.scopes[it as usize].upper.unwrap_or(NONE))
+        .collect();
+    let scope_count = builder.scopes.len();
+    let child_scopes = group(&uppers, &listed, scope_count, &mut builder.lists);
+    let from: Vec<u32> = builder.references.iter().map(|it| it.from).collect();
+    let indices: Vec<u32> = (0..from.len() as u32).collect();
+    let references_by_scope = group(&from, &indices, scope_count, &mut builder.lists);
+    let references_by_variable = builder.references_by_variable();
+    let through = builder.through();
+    let implicit = builder.implicit_globals(through.first().copied().unwrap_or(0));
+
+    // The list being built.
+    let mut list = global_variables;
+    let variables_by_scope: Vec<u32> = (0..scope_count as u32)
+        .map(|scope| {
+            if scope != 0 {
+                builder.variables_of(scope, &mut list);
+            }
+            push_list(&mut builder.lists, &list)
+        })
+        .collect();
+    let node_to_scope = builder.node_to_scope(&listed);
+    let declared_variables =
+        builder.declared_variables(&listed, &variables_by_scope, &implicit.lists);
+    let listed = push_list(&mut builder.lists, &listed);
+
+    let mut words = Vec::with_capacity(
+        9 * scope_count
+            + 8 * builder.variables.len()
+            + 7 * builder.definitions.len()
+            + 6 * builder.references.len()
+            + implicit.lists.len(),
+    );
+    for (scope, at) in builder.scopes.iter().zip(0..) {
+        words.extend_from_slice(&[
+            scope.kind,
+            scope.block,
+            scope.upper.unwrap_or(NONE),
+            scope.variable_scope,
+            builder.taints[at],
+            child_scopes[at],
+            variables_by_scope[at],
+            references_by_scope[at],
+            through[at],
+        ]);
+    }
+    for (variable, &references) in builder.variables.iter().zip(&references_by_variable) {
+        list.clear();
+        list.extend(builder.definitions_of(variable));
+        let definitions = push_list(&mut builder.lists, &list);
+        // A quoted name isn't an identifier.
+        list.retain_mut(|it| {
+            *it = builder.definitions[*it as usize].name;
+            !builder.tree.is(*it, NodeType::Literal)
+        });
+        let identifiers = push_list(&mut builder.lists, &list);
+        words.extend_from_slice(&[
+            variable.name.word(),
+            variable.scope,
+            variable.flags,
+            definitions,
+            references,
+            identifiers,
+            variable.settings | builder.shape_of(variable) << 8,
+            variable.comments,
+        ]);
+    }
+    for it in &builder.definitions {
+        words.extend_from_slice(&[
+            it.kind,
+            it.name,
+            it.node,
+            it.parent,
+            it.index,
+            it.flags,
+            it.declaration_kind,
+        ]);
+    }
+    for it in &builder.references {
+        words.extend_from_slice(&[
+            it.identifier,
+            it.flags,
+            it.unwrap_jsdoc_casts,
+            it.variable,
+            it.from,
+            it.assigning,
+        ]);
+    }
+    words.extend_from_slice(&implicit.lists);
+
+    let header: [u32; HEADER] = [
+        scope_count as u32,
+        builder.declared,
+        builder.variables.len() as u32,
+        builder.definitions.len() as u32,
+        builder.references.len() as u32,
+        implicit.lists.len() as u32,
+        builder.lists.len() as u32,
+        listed,
+        node_to_scope,
+        declared_variables,
+        implicit.retained_count,
+    ];
+    wire::words(out, &header);
+    wire::words(out, &words);
+    wire::words(out, &builder.lists);
 }
 
 /// Sets ESLint's `variable.eslintUsed` for the variables at `indices`, which are sorted.
@@ -251,9 +2136,19 @@ pub(super) fn mark_used<'a>(file: &'a File<'a>, indices: impl Iterator<Item = u3
     if indices.peek().is_none() {
         return;
     }
-    for (index, symbol) in file.scopes().flat_map(Scope::symbols).enumerate() {
-        if indices.next_if_eq(&(index as u32)).is_some() {
-            symbol.mark_used();
+    let _scopes = file.with_eslint_scopes();
+    let mut index = 0u32;
+    for scope in file.scopes() {
+        // It's counted, but it isn't a symbol.
+        if has_file_level_arguments(file, scope) {
+            let _ = indices.next_if_eq(&index);
+            index += 1;
+        }
+        for symbol in scope.symbols() {
+            if indices.next_if_eq(&index).is_some() {
+                symbol.mark_used();
+            }
+            index += 1;
         }
     }
 }

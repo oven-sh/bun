@@ -27,8 +27,10 @@ impl NoUnsafeNegation {
             return;
         }
         let operator = bin_op_text(op);
-        let report = cx.report(left, UNEXPECTED).data("operator", operator);
-        // oxlint has a fix, and writes the comparison anew.
+        let report = cx.report(left, UNEXPECTED).data("operator", operator).hint_with(|| {
+            Some(format!("!a {operator} b means (!a) {operator} b. Did you mean !(a {operator} b)?"))
+        });
+        // oxlint has a fix, which reprints the whole comparison.
         if cx.language().is_oxlint {
             report.fix(|fixer| {
                 let file = fixer.file();
@@ -56,7 +58,8 @@ impl NoUnsafeNegation {
 impl Rule for NoUnsafeNegation {
     const META: Meta = Meta::eslint("no-unsafe-negation", Kind::Problem)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On =
         On::new().binaries(&[BinOp::In, BinOp::Instanceof, BinOp::Lt, BinOp::Gt, BinOp::Ge, BinOp::Le]);
     no_state!();

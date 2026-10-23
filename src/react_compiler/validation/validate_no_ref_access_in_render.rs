@@ -100,6 +100,8 @@ impl Eq for RefAccessRefType {}
 #[derive(Debug, Clone)]
 struct RefFnType {
     read_ref_effect: bool,
+    /// Where the first error in the function is, and whether that is about an update.
+    access: Option<(SourceLocation, bool)>,
     return_type: Rc<RefAccessType>,
 }
 
@@ -432,6 +434,7 @@ fn join_ref_access_ref_types(
                 (None, other) | (other, None) => other.clone(),
                 (Some(a_fn), Some(b_fn)) => Some(RefFnType {
                     read_ref_effect: a_fn.read_ref_effect || b_fn.read_ref_effect,
+                    access: a_fn.access.or(b_fn.access),
                     return_type: if Rc::ptr_eq(&a_fn.return_type, &b_fn.return_type) {
                         Rc::clone(&a_fn.return_type)
                     } else {
@@ -764,6 +767,32 @@ fn ref_access_error(loc: Option<SourceLocation>, message: &'static str) -> Compi
     })
 }
 
+const UPDATE: &str = "Cannot update ref during render";
+
+/// `access`: [`RefFnType::access`] of the function. A linter can say where that is.
+#[cold]
+#[inline(never)]
+fn function_accesses_ref(
+    loc: Option<SourceLocation>,
+    access: Option<(SourceLocation, bool)>,
+) -> CompilerDiagnostic {
+    let error = ref_access_error(loc, "This function accesses a ref value");
+    match access {
+        Some((access, is_update)) => error.with_detail(CompilerDiagnosticDetail::Error {
+            loc: Some(access),
+            message: Some(
+                match is_update {
+                    true => "The ref is updated here",
+                    false => "The ref is accessed here",
+                }
+                .to_string(),
+            ),
+            identifier_name: None,
+        }),
+        None => error,
+    }
+}
+
 #[cold]
 #[inline(never)]
 fn ref_access_error_with_init_hint(loc: Option<SourceLocation>) -> CompilerDiagnostic {
@@ -844,10 +873,7 @@ fn validate_no_ref_update(
         Some(View::Ref(_)) => loc,
         _ => return,
     };
-    errors.push(ref_access_error(
-        error_loc,
-        "Cannot update ref during render",
-    ));
+    errors.push(ref_access_error(error_loc, UPDATE));
 }
 
 fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env) {
@@ -1061,6 +1087,15 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
+                        let mut details = inner_errors.iter().flat_map(|it| &it.details);
+                        let access = details.find_map(|it| match it {
+                            CompilerDiagnosticDetail::Error {
+                                loc: Some(loc),
+                                message,
+                                ..
+                            } => Some((*loc, message.as_deref() == Some(UPDATE))),
+                            _ => None,
+                        });
                         let (return_type, read_ref_effect) = if inner_errors.is_empty() {
                             (result, false)
                         } else {
@@ -1080,6 +1115,7 @@ fn validate_no_ref_access_in_render_impl(
                                     value: None,
                                     fn_type: Some(RefFnType {
                                         read_ref_effect,
+                                        access,
                                         return_type: Rc::new(return_type),
                                     }),
                                 },
@@ -1102,10 +1138,7 @@ fn validate_no_ref_access_in_render_impl(
                             return_type = (*fn_ty.return_type).clone();
                             if fn_ty.read_ref_effect {
                                 did_error = true;
-                                errors.push(ref_access_error(
-                                    callee.loc,
-                                    "This function accesses a ref value",
-                                ));
+                                errors.push(function_accesses_ref(callee.loc, fn_ty.access));
                             }
                         }
 

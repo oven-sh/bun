@@ -167,8 +167,10 @@ describe("FileSink", () => {
   }
 });
 
+import { spawn, type SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import type { Readable } from "node:stream";
 import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
@@ -598,7 +600,7 @@ it("start() with a path/fd getter that closes the writer throws instead of crash
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
+it("writing after end() fails during flush does not crash", async () => {
   const dir = tmpdirSync();
   const target = join(dir, "ro.txt");
   fs.writeFileSync(target, "");
@@ -1421,7 +1423,7 @@ it.skipIf(isWindows)("throws on invalid writer options instead of crashing", asy
     if (fileSinkInternals.liveCount() <= baseline) break;
     await Bun.sleep(10);
   }
-  // Each early return in get_writer must release the sink's +1 ref; a missing
+  // Each early return in Blob::writer must release the sink's +1 ref; a missing
   // deref leaks one native FileSink per failed call.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
@@ -1451,45 +1453,223 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 // spot, because the reader has hung up, used to return a second, already rejected promise: a script awaiting the
 // first one caught the error and still died of an unhandled rejection.
 //
-// The child blocks in a synchronous read of stdin between its two writes, so no event-loop turn can tell the sink
-// about the hang-up first: the second write() is the one that finds out, with the first still pending.
-it.skipIf(isWindows)("a write() that fails while another is pending rejects the pending promise once", async () => {
+// The hang-up and the second write() share one tick, so no event-loop turn can tell the sink about the hang-up
+// first: the second write() is the one that finds out, with the first still pending.
+it.skipIf(!isPosix)("a write() that fails while another is pending rejects the pending promise once", async () => {
+  const [readFd, writeFd] = createSocketPair();
+  let readFdOpen = true;
+  const sink = Bun.file(writeFd).writer();
+  try {
+    // Nothing drains `readFd`, so the socket buffers fill up.
+    const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
+    expect(Bun.peek.status(first)).toBe("pending");
+    fs.closeSync(readFd);
+    readFdOpen = false;
+    const second = sink.write("tail");
+    expect(second).toBe(first);
+    await expect(first).rejects.toMatchObject({ code: "EPIPE" });
+  } finally {
+    await Promise.resolve(sink.end()).catch(() => {});
+    fs.closeSync(writeFd);
+    if (readFdOpen) fs.closeSync(readFd);
+  }
+});
+
+describe.concurrent("start() on an open writer", () => {
+  // `closed()` checks that every handle to a file in `dir` has been closed. Windows won't rename
+  // a directory while a file inside it is open, and on Linux it scans /proc/self/fd.
+  const prelude = `
+    const fs = require("node:fs");
+    const { join } = require("node:path");
+    const dir = join(process.argv[1], "files");
+    fs.mkdirSync(dir);
+    function openFiles() {
+      if (process.platform !== "linux") return 0;
+      return fs.readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          const path = fs.readlinkSync("/proc/self/fd/" + fd);
+          return path.includes(dir) || path.endsWith("/ptmx");
+        } catch {
+          return false;
+        }
+      }).length;
+    }
+    async function closed() {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        try {
+          fs.renameSync(dir, dir + ".closed");
+          break;
+        } catch (e) {
+          if (e.code !== "EPERM" || Date.now() > deadline) return "rename: " + e.code;
+          await Bun.sleep(1);
+        }
+      }
+      while (openFiles() > 0 && Date.now() < deadline) await Bun.sleep(1);
+      return openFiles() === 0 ? "all" : "open: " + openFiles();
+    }
+    function read(path) {
+      return fs.readFileSync(path, "utf8");
+    }
+  `;
+
+  async function run(script: string) {
+    using dir = tempDir("filesink-restart", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script, String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  it("start({ path }) writes to the new path and closes the old file", async () => {
+    const result = await run(`
+      const initial = join(dir, "initial.txt");
+      const target = join(dir, "target.txt");
+      const writer = Bun.file(initial).writer();
+      writer.start({ path: target });
+      writer.write("short");
+      await writer.end();
+      const out = { target: read(target), initial: read(initial) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ target: "short", initial: "", closed: "all" });
+  });
+
+  // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
+    const result = await run(`
+      const target = join(dir, "target.txt");
+      const writer = Bun.file("/dev/ptmx").writer();
+      writer.start({ path: target });
+      writer.write("short");
+      const buffered = read(target);
+      await writer.end();
+      const out = { buffered, target: read(target) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ buffered: "", target: "short", closed: "all" });
+  });
+
+  it.skipIf(!isLinux).each([
+    ["open", `const path = join(dir, "missing", "target.txt");`],
+    [
+      "epoll_ctl",
+      // A FIFO with a reader opens for writing, but cannot take over the TTY's poll.
+      `const path = join(dir, "fifo");
+      Bun.spawnSync(["mkfifo", path]);
+      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);`,
+    ],
+  ])("a TTY writer still writes synchronously after start({ path }) fails in %s", async (syscall, setup) => {
+    const result = await run(`
+      ${setup}
+      const writer = Bun.file("/dev/ptmx").writer();
+      let failed;
+      try {
+        writer.start({ path });
+      } catch (e) {
+        failed = e.syscall;
+      }
+      writer.write("short");
+      const buffered = writer.flush();
+      await writer.end();
+      if (typeof reader === "number") fs.closeSync(reader);
+      console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
+    `);
+    expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
+  });
+
+  it("start({ path }) settles a queued write and flushes it to the new path", async () => {
+    // On Windows the first chunk is in flight and the second waits in the writer's queue.
+    const result = await run(`
+      const a = join(dir, "a.txt");
+      const b = join(dir, "b.txt");
+      const writer = Bun.file(a).writer();
+      writer.write("first");
+      const queued = writer.write("second");
+      writer.start({ path: b });
+      const settled = typeof (await queued) === "number";
+      writer.write("third");
+      await writer.end();
+      const deadline = Date.now() + 10_000;
+      while (read(a) + read(b) !== "firstsecondthird" && Date.now() < deadline) await Bun.sleep(1);
+      const out = { settled, combined: read(a) + read(b), bEndsWithQueued: read(b).endsWith("secondthird") };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ settled: true, combined: "firstsecondthird", bEndsWithQueued: true, closed: "all" });
+  });
+
+  it.skipIf(!isWindows)("start({ path }) while a pipe write is in flight throws EBUSY and keeps the pipe", async () => {
+    using dir = tempDir("filesink-restart-pipe", {});
+    const script = `
+      const writer = Bun.file(3).writer();
+      writer.write("x");
+      let code = null;
+      try {
+        writer.start({ path: ${JSON.stringify(join(String(dir), "target.txt"))} });
+      } catch (e) {
+        code = e.code;
+      }
+      writer.write("y");
+      await writer.end();
+      console.log(JSON.stringify({ code }));
+    `;
+    const options: SpawnOptions = { stdio: ["ignore", "pipe", "pipe", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
+    const child = spawn(bunExe(), ["-e", script], options);
+    let stdout = "";
+    let stderr = "";
+    let pipe = "";
+    child.stdout!.on("data", d => (stdout += d));
+    child.stderr!.on("data", d => (stderr += d));
+    (child.stdio[3] as Readable).on("data", d => (pipe += d));
+    const { promise: closed, resolve, reject } = Promise.withResolvers<number | null>();
+    child.on("close", resolve);
+    child.on("error", reject);
+    const exitCode = await closed;
+    expect({ stdout: stdout.trim(), stderr, pipe, exitCode }).toEqual({
+      stdout: '{"code":"EBUSY"}',
+      stderr: "",
+      pipe: "xy",
+      exitCode: 0,
+    });
+  });
+});
+
+it("a writer's FileSink class can't be constructed from JS", async () => {
+  using dir = tempDir("filesink-constructor", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-const fs = require("node:fs");
-process.on("unhandledRejection", e => {
-  console.error("unhandledRejection " + e?.code);
-});
-const sink = Bun.stdout.writer();
-const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
-fs.readSync(0, Buffer.alloc(1));
-const second = sink.write("tail");
-try {
-  await first;
-  console.error("resolved");
-} catch (e) {
-  console.error("caught " + e.code + ", same promise: " + (second === first));
+const writer = Bun.file("out.txt").writer();
+const FileSink = writer.constructor;
+for (const make of [() => new FileSink(), () => FileSink(), () => Reflect.construct(FileSink, [], class {})]) {
+  try {
+    make().write("x");
+    console.log("returned");
+  } catch (e) {
+    console.log(e.code);
+  }
 }
+writer.write("written");
+await writer.end();
+console.log(await Bun.file("out.txt").text());
 `,
     ],
     env: bunEnv,
-    stdin: "pipe",
+    cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
-
-  // Take one chunk, close the read end while most of the first write is still pending, and only then let the
-  // child make its second write.
-  const reader = proc.stdout.getReader();
-  await reader.read();
-  await reader.cancel();
-  proc.stdin.write("x");
-  await proc.stdin.end();
-
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("caught EPIPE, same promise: true\n");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: ["ERR_ILLEGAL_CONSTRUCTOR", "ERR_ILLEGAL_CONSTRUCTOR", "ERR_ILLEGAL_CONSTRUCTOR", "written"],
+    stderr: "",
+    exitCode: 0,
+  });
 });

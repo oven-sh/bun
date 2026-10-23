@@ -13,10 +13,10 @@ const DEPRECATED_WITHOUT_DESCRIPTION: Message = Message::new("", "Deprecated.");
 /// The description of a `@deprecated` tag.
 type Deprecation<'a> = Option<&'a [u8]>;
 
-/// What `checkSpecifiers` reports.
+/// A report from `checkSpecifiers`.
 enum Found<'a> {
     Deprecated(Deprecation<'a>),
-    /// `reportErrors`: of which module, and `source.value`.
+    /// `reportErrors`: the module that has the errors, and `source.value`.
     Errors(ExportMap<'a>, Name<'a>),
 }
 
@@ -25,15 +25,21 @@ pub struct State<'a> {
     deprecated: FxHashMap<Name<'a>, Deprecation<'a>>,
     namespaces: FxHashMap<Name<'a>, ExportMap<'a>>,
     found: Vec<(Span, Found<'a>)>,
-    /// Whether the first reference to a name in a scope resolves to a variable of the module. Made when asked for.
+    /// True if the first reference to a name in a scope resolves to a module-level variable. Built lazily.
     first_references: Option<FxHashMap<(Scope<'a>, Name<'a>), bool>>,
 }
 
 impl Rule for NoDeprecated {
-    const META: Meta = Meta::plugin(Plugin::Import, "no-deprecated", Kind::Suggestion).needs_modules();
-    /// Whatever is an `Identifier` of ESTree, or has one that is not a node here.
+    const META: Meta =
+        Meta::plugin(Plugin::Import, "no-deprecated", Kind::Suggestion).needs_modules();
+    /// Everything that's an ESTree `Identifier`, or contains one that isn't a node here.
     const ON: On = On::new()
-        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::ImportMeta, ExprTag::NewTarget])
+        .exprs(&[
+            ExprTag::Ident,
+            ExprTag::Dot,
+            ExprTag::ImportMeta,
+            ExprTag::NewTarget,
+        ])
         .stmts(&[
             StmtTag::Interface,
             StmtTag::TypeAlias,
@@ -86,8 +92,8 @@ impl Rule for NoDeprecated {
         let node = Node::Expr(e);
         match e.kind() {
             ExprKind::Ident(name) => {
-                // The `b` of `a[b]` is a property, that of `import(b)` is in an import.
-                let is_passed_over = || match e.parent() {
+                // The `b` in `a[b]` is a property, and the one in `import(b)` is inside an import.
+                let is_skipped = || match e.parent() {
                     Node::Expr(parent) => match parent.kind() {
                         ExprKind::Index { index, .. } => index == e,
                         ExprKind::ImportCall { .. } => true,
@@ -95,7 +101,8 @@ impl Rule for NoDeprecated {
                     },
                     _ => false,
                 };
-                if cx.state.deprecated.contains_key(&name) && !e.is_jsx_tag_name() && !is_passed_over() {
+                if cx.state.deprecated.contains_key(&name) && !e.is_jsx_tag_name() && !is_skipped()
+                {
                     check_identifier(name, e.span(), node, cx);
                 }
             }
@@ -106,19 +113,26 @@ impl Rule for NoDeprecated {
                     && cx.state.namespaces.contains_key(&object)
                     && !e.is_jsx_tag_name()
                 {
-                    let around = |it: &Expr<'a>| match it.parent() {
+                    let parent_member = |it: &Expr<'a>| match it.parent() {
                         Node::Expr(parent) if !it.is_chain_root() => Some(parent),
                         _ => None,
                     };
-                    let mut properties = std::iter::successors(Some(e), around).map_while(|it| match it.kind() {
-                        ExprKind::Dot { name, .. } => Some(name),
-                        _ => None,
-                    });
+                    let mut properties =
+                        std::iter::successors(Some(e), parent_member).map_while(|it| {
+                            match it.kind() {
+                                ExprKind::Dot { name, .. } => Some(name),
+                                _ => None,
+                            }
+                        });
                     check_member_expression(object, node, &mut properties, cx);
                 }
             }
             ExprKind::ImportMeta | ExprKind::NewTarget => {
-                let name = if e.tag() == ExprTag::ImportMeta { "meta" } else { "target" };
+                let name = if e.tag() == ExprTag::ImportMeta {
+                    "meta"
+                } else {
+                    "target"
+                };
                 if let Some((_, property)) = e.meta_property_spans() {
                     check_identifier(cx.file().name_of(name), property, node, cx);
                 }
@@ -133,12 +147,16 @@ impl Rule for NoDeprecated {
             StmtKind::Interface(it) => check_ident(Some(it.name()), node, cx),
             StmtKind::TypeAlias(it) => check_ident(Some(it.name()), node, cx),
             StmtKind::Enum(it) => check_ident(Some(it.name()), node, cx),
-            // The `B` of `namespace A.B` is no statement of its own.
-            StmtKind::Module(it) => std::iter::successors(Some(it), |it| it.nested()).for_each(|it| match it.name() {
-                ModuleName::Ident(name) => check_ident(Some(name), node, cx),
-                ModuleName::Global => check_identifier(cx.file().name_of("global"), it.name_span(), node, cx),
-                ModuleName::String(_) => {}
-            }),
+            // The `B` in `namespace A.B` isn't a statement by itself.
+            StmtKind::Module(it) => {
+                std::iter::successors(Some(it), |it| it.nested()).for_each(|it| match it.name() {
+                    ModuleName::Ident(name) => check_ident(Some(name), node, cx),
+                    ModuleName::Global => {
+                        check_identifier(cx.file().name_of("global"), it.name_span(), node, cx)
+                    }
+                    ModuleName::String(_) => {}
+                })
+            }
             StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Labeled { .. } => {
                 check_ident(stmt.label(), node, cx);
             }
@@ -161,7 +179,7 @@ impl Rule for NoDeprecated {
         match ty.kind() {
             TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } => {
                 let mut parts = name.parts();
-                // `extends a.b` of an interface and `implements a.b` are member expressions.
+                // An interface's `extends a.b` and a class's `implements a.b` are member expressions.
                 if name.len() > 1
                     && ty.tag() == TypeTag::Ref
                     && estree_type_name(node) != "TSTypeReference"
@@ -174,7 +192,7 @@ impl Rule for NoDeprecated {
                 for part in parts {
                     check_ident(Some(part), node, cx);
                 }
-                // In `import("a", { with: { b: "c" } })` they are the properties of an object.
+                // In `import("a", { with: { b: "c" } })` they're an object's properties.
                 for attribute in ty.import_attributes().iter().flat_map(|it| it.entries()) {
                     check_key(attribute.key(), node, cx);
                 }
@@ -237,7 +255,9 @@ impl Rule for NoDeprecated {
             match found {
                 Found::Deprecated(deprecation) => report(at, deprecation, cx),
                 Found::Errors(imports, source) => {
-                    cx.report(at, PARSE_ERRORS).data("source", source).data("errors", imports.errors_text());
+                    cx.report(at, PARSE_ERRORS)
+                        .data("source", source)
+                        .data("errors", imports.errors_text());
                 }
             }
         }
@@ -250,11 +270,13 @@ impl<'a> State<'a> {
             return;
         };
         if let Some(deprecation) = self.maps.module_deprecation(imports) {
-            self.found.push((import.span(), Found::Deprecated(deprecation)));
+            self.found
+                .push((import.span(), Found::Deprecated(deprecation)));
         }
         if imports.has_errors() {
             let source = import.spec_span().unwrap_or_else(|| import.span());
-            self.found.push((source, Found::Errors(imports, import.spec())));
+            self.found
+                .push((source, Found::Errors(imports, import.spec())));
             return;
         }
         if let Some(local) = import.default() {
@@ -266,14 +288,25 @@ impl<'a> State<'a> {
             self.namespaces.insert(local.name(), imports);
         }
         for specifier in import.named() {
-            // A name in quotes has no `name`.
+            // A quoted name has no `name`.
             if !specifier.imported().is_string() {
-                self.check_specifier(imports, specifier.imported().bytes(), specifier.local(), specifier.span());
+                self.check_specifier(
+                    imports,
+                    specifier.imported().bytes(),
+                    specifier.local(),
+                    specifier.span(),
+                );
             }
         }
     }
 
-    fn check_specifier(&mut self, imports: ExportMap<'a>, imported: &[u8], local: Ident<'a>, at: Span) {
+    fn check_specifier(
+        &mut self,
+        imports: ExportMap<'a>,
+        imported: &[u8],
+        local: Ident<'a>,
+        at: Span,
+    ) {
         let Got::Meta(exported) = self.maps.get_export(imports, imported) else {
             return;
         };
@@ -288,21 +321,24 @@ impl<'a> State<'a> {
 
     /// upstream's `declaredScope(context, name, node) === 'module'`
     fn is_declared_in_module(&mut self, name: Name<'a>, node: Node<'a>) -> bool {
-        let State { deprecated, namespaces, first_references, .. } = self;
+        let State {
+            deprecated,
+            namespaces,
+            first_references,
+            ..
+        } = self;
         let first_references = first_references.get_or_insert_with(|| {
             let mut first_references = FxHashMap::default();
             for reference in node.file().references_as_visited() {
                 let name = reference.name();
-                // ESLint has the name of a class declaration once more, in the scope of the class.
-                let is_name_of_class = |it: Scope<'a>| match it.node() {
-                    Node::Class(class) => class.name().is_some_and(|it| it.name() == name),
-                    _ => false,
-                };
                 if deprecated.contains_key(&name) || namespaces.contains_key(&name) {
-                    first_references.entry((reference.scope(), name)).or_insert_with(|| {
-                        reference.symbol().is_some_and(|it| it.scope().kind() == ScopeKind::Module)
-                            && !reference.scope().chain().any(is_name_of_class)
-                    });
+                    first_references
+                        .entry((reference.scope(), name))
+                        .or_insert_with(|| {
+                            reference
+                                .variable()
+                                .is_some_and(|it| it.scope().kind() == ScopeKind::Module)
+                        });
                 }
             }
             first_references
@@ -319,7 +355,8 @@ fn report<'a>(at: Span, deprecation: Deprecation<'a>, cx: &Cx<'a, NoDeprecated>)
     };
 }
 
-/// upstream's `Identifier`, for one in `parent` that is neither the property of a member expression nor in an import.
+/// upstream's `Identifier` listener, for an identifier in `parent` that's neither a member expression's property nor
+/// inside an import.
 fn check_identifier<'a>(name: Name<'a>, at: Span, parent: Node<'a>, cx: &mut Cx<'a, NoDeprecated>) {
     if let Some(&deprecation) = cx.state.deprecated.get(&name)
         && cx.state.is_declared_in_module(name, parent)
@@ -346,8 +383,8 @@ fn check_key<'a>(key: Option<Key<'a>>, parent: Node<'a>, cx: &mut Cx<'a, NoDepre
     }
 }
 
-/// upstream's `MemberExpression`. `properties`: that of `node`, whose object is `object`, then those of the member
-/// expressions around it.
+/// upstream's `MemberExpression` listener. `properties`: the property of `node`, whose object is `object`, then those
+/// of the enclosing member expressions.
 fn check_member_expression<'a>(
     object: Name<'a>,
     node: Node<'a>,
@@ -361,8 +398,11 @@ fn check_member_expression<'a>(
         return;
     }
     for property in properties {
-        // The `name` of a `PrivateIdentifier` is without the `#`.
-        let name = property.bytes().strip_prefix(b"#").unwrap_or_else(|| property.bytes());
+        // A `PrivateIdentifier`'s `name` doesn't include the `#`.
+        let name = property
+            .bytes()
+            .strip_prefix(b"#")
+            .unwrap_or_else(|| property.bytes());
         let Got::Meta(metadata) = cx.state.maps.get_export(namespace, name) else {
             return;
         };

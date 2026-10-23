@@ -1,21 +1,21 @@
 //! Scans a file into tokens and comments.
 //!
-//! JavaScript cannot be split into tokens without knowing the syntax: a `/` divides or starts a
-//! regular expression, `>>` shifts or closes two lists of type arguments, `<` compares or opens a
-//! JSX element, `if` is a keyword or the name of a property. The parser has decided all of that, so
-//! [`Marks`] first collects, in one pass over some vectors of the HIR, the few positions where the
-//! text alone does not tell. The scan itself is one pass over the text, which looks at the marks
-//! only where it meets such a character or word. Templates and the inside of JSX elements need no
-//! marks: a stack of [`Frame`]s follows their nesting.
+//! JavaScript can't be tokenized without knowing the syntax: a `/` divides or starts a regular expression, `>>` shifts
+//! or closes two type argument lists, `<` compares or opens a JSX element, `if` is a keyword or a property name. The
+//! parser has already decided all of that, so [`Marks`] first collects, in one pass over a few HIR vectors, the few
+//! positions where the text is ambiguous. The scan itself is one pass over the text, and it consults the marks only at
+//! such a character or word. Templates and the inside of JSX elements don't need marks, because a stack of [`Frame`]s
+//! tracks their nesting.
 //!
-//! The result is what the parser that ESLint uses for the file produces: see [`Dialect`].
+//! The result matches what ESLint's parser for the file produces. See [`Dialect`].
 //!
-//! [`comments`] has only the comments, which is all that many files are asked for, without a scan:
-//! the parser lists them.
+//! [`comments`] returns only the comments, which is all many files need. It doesn't scan, because the parser lists
+//! them.
 
 use super::{RawToken, TokenKind, skip_trivia, skip_trivia_back};
 use crate::ast::File;
 use crate::language::{Parser, SourceType};
+use bun_core::strings::{ScannerStops, ScannerStopsBuffer};
 use bun_core::{lexer, strings};
 use bun_sema::atom::known;
 use bun_sema::hir::{
@@ -23,28 +23,30 @@ use bun_sema::hir::{
     TypeNodeKind,
 };
 
-/// The two parsers agree on where every token is. They disagree on the type of some words.
+/// The parsers agree on where every token is. They disagree on the type of some words.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Dialect {
-    /// JavaScript files, unless the configuration says `@typescript-eslint/parser`: espree, ESLint's
-    /// default parser.
-    /// - `static`, `let` and `yield` are a `Keyword` wherever they are, even as the name of a
-    ///   property. Up to ES5 only `static` is.
+    /// JavaScript files, unless the config selects `@typescript-eslint/parser`: espree, ESLint's default parser.
+    /// - `static`, `let` and `yield` are a `Keyword` everywhere, even as a property name. Up to ES5 only `static` is.
     /// - Every name in a JSX tag is a `JSXIdentifier`.
-    /// - Unless the file is a module, `<!--` starts a comment, and so does `-->` at the start of a
-    ///   line.
+    /// - Unless the file is a module, `<!--` starts a comment, and so does `-->` at the start of a line.
     Espree { is_es5: bool },
     /// All other files: typescript-estree.
-    /// - `implements`, `interface`, `let`, `package`, `private`, `protected`, `public`, `static`
-    ///   and `yield` are a `Keyword` where they act as one and an `Identifier` where they are a name.
-    /// - In a JSX tag `this` is a `Keyword`, and both names of `a:b` are an `Identifier`.
-    /// - Anywhere inside a JSX element, the `a` and the `b` of the expression `a.b` are a
-    ///   `JSXIdentifier`.
-    /// - A `#!` with nothing after it on its line is not a comment.
+    /// - `implements`, `interface`, `let`, `package`, `private`, `protected`, `public`, `static` and `yield` are a
+    ///   `Keyword` where they act as one and an `Identifier` where they're a name.
+    /// - In a JSX tag `this` is a `Keyword`, and both names in `a:b` are an `Identifier`.
+    /// - Anywhere inside a JSX element, the `a` and `b` of the expression `a.b` are a `JSXIdentifier`.
+    /// - A `#!` with nothing after it on its line isn't a comment.
     TypeScript,
+    /// Every file linted with an oxlint config, whatever its language: what oxlint passes to a plugin.
+    /// - `static`, `let` and `yield` are a `Keyword` everywhere, as in espree.
+    /// - `implements`, `interface`, `package`, `private`, `protected` and `public` are a `Keyword` where they act as
+    ///   one, as in typescript-estree.
+    /// - Every name in a JSX tag is a `JSXIdentifier`, except that a `this` at the start of a tag is a `Keyword`.
+    Oxc,
 }
 
-/// Positions in ascending order, which are asked for in ascending order.
+/// Ascending positions that are also queried in ascending order.
 #[derive(Default)]
 struct Positions {
     list: Vec<u32>,
@@ -75,28 +77,27 @@ impl Positions {
     }
 }
 
-/// What the text does not tell.
+/// Positions where the text alone is ambiguous.
 #[derive(Default)]
 struct Marks {
-    /// The regular expressions: the start and the end.
+    /// The start and end of each regular expression.
     regexes: Vec<(u32, u32)>,
     next_regex: usize,
     /// The `<` of each JSX element and fragment.
     elements: Positions,
-    /// The operators `<<`, `>>`, `>>>`, `>=`, `<<=`, `>>=` and `>>>=`. Any other `<` or `>` that is
-    /// followed by one of these characters is a token of its own.
+    /// The operators `<<`, `>>`, `>>>`, `>=`, `<<=`, `>>=` and `>>>=`. Any other `<` or `>` followed by one of these
+    /// characters is its own token.
     shifts: Positions,
-    /// The reserved words that are a name: of a property, of a member, in an import or an export.
-    /// Those after a `.` are not listed.
+    /// Reserved words used as a name: of a property or member, or in an import or export. Those after a `.` aren't
+    /// listed.
     names: Positions,
-    /// [`Dialect::TypeScript`]: the words that are reserved in strict mode only, where they are a
-    /// keyword.
+    /// [`Dialect::TypeScript`]: words that are reserved only in strict mode, where they act as a keyword.
     keywords: Positions,
-    /// [`Dialect::TypeScript`], in a file with JSX: the `a` and the `b` of each `a.b`.
+    /// [`Dialect::TypeScript`], in a file with JSX: the `a` and `b` of each `a.b`.
     accesses: Positions,
 }
 
-/// The start of the operator after an operand that ends at `at`, not counting its parentheses.
+/// Returns the start of the operator after an operand that ends at `at`, skipping the operand's closing parentheses.
 fn operator_after(text: &[u8], mut at: u32) -> u32 {
     loop {
         at = skip_trivia(text, at);
@@ -108,13 +109,13 @@ fn operator_after(text: &[u8], mut at: u32) -> u32 {
 }
 
 impl Marks {
-    fn new(file: &File, dialect: Dialect) -> Marks {
+    fn new(file: &File, stops: ScannerStops, dialect: Dialect) -> Marks {
         let (hir, text) = (&file.hir, file.text());
-        let is_typescript = dialect == Dialect::TypeScript;
-        let marks_accesses = is_typescript && !hir.jsx.is_empty();
+        let is_typescript = !matches!(dialect, Dialect::Espree { .. });
+        let marks_accesses = dialect == Dialect::TypeScript && !hir.jsx.is_empty();
         let mut marks = Marks::default();
         let end_of = |e: hir::ExprId| hir.exprs.get(e.idx()).map_or(0, |e| e.end);
-        for e in hir.exprs {
+        for (e, id) in hir.exprs.iter().zip(0..) {
             match e.kind {
                 ExprKind::Regex => marks.regexes.push((e.pos, e.end)),
                 ExprKind::Jsx(_) => marks.elements.push(e.pos),
@@ -130,8 +131,8 @@ impl Marks {
                 } => marks.shifts.push(operator_after(text, end_of(operand))),
                 ExprKind::AsConst(_) => marks.as_const(text, e),
                 ExprKind::Yield { .. } if is_typescript => marks.keywords.push(e.pos),
-                ExprKind::Dot { obj, name_pos, .. } if marks_accesses => {
-                    marks.accesses.push(name_pos);
+                ExprKind::Dot { obj, .. } if marks_accesses => {
+                    marks.accesses.push(hir.name_pos(hir::ExprId(id)));
                     if let Some(obj) = hir.exprs.get(obj.idx())
                         && matches!(obj.kind, ExprKind::Ident(_))
                         && text.get(skip_trivia(text, obj.end) as usize) != Some(&b')')
@@ -144,29 +145,29 @@ impl Marks {
         }
         for prop in hir.props {
             if prop.name_kind == NameKind::Identifier && matches!(prop.key, PropKey::Name(_)) {
-                marks.name(text, prop.pos);
+                marks.name(text, stops, prop.pos);
             }
         }
         for member in hir.members {
             use MemberKind::{Getter, Method, Property, Setter, StaticBlock};
             if matches!(member.kind, Property | Method | Getter | Setter) {
-                marks.name(text, member.name_pos);
+                marks.name(text, stops, member.name_pos);
             } else if member.kind == StaticBlock && is_typescript {
                 marks.keywords.push(member.start);
             }
         }
         for prop in hir.pat_props {
-            marks.name(text, prop.key_pos);
+            marks.name(text, stops, prop.key_pos);
         }
         for member in hir.enum_members {
-            marks.name(text, member.pos);
+            marks.name(text, stops, member.pos);
         }
         for spec in hir.import_specs {
-            marks.name(text, spec.imported_pos);
+            marks.name(text, stops, spec.imported_pos);
         }
         for spec in hir.export_specs {
-            marks.name(text, spec.local_pos);
-            marks.name(text, spec.pos);
+            marks.name(text, stops, spec.local_pos);
+            marks.name(text, stops, spec.pos);
         }
         for stmt in hir.stmts {
             if let StmtKind::ExportStar {
@@ -174,11 +175,11 @@ impl Marks {
             } = stmt.kind
                 && alias.is_some()
             {
-                marks.name(text, alias_pos);
+                marks.name(text, stops, alias_pos);
             }
         }
         if is_typescript {
-            marks.names_of_typescript(file);
+            marks.typescript_names(file, stops);
             marks.strict_mode_keywords(file);
         }
         if marks_accesses {
@@ -199,22 +200,22 @@ impl Marks {
         marks
     }
 
-    /// Marks the name at `at` if it is a reserved word.
+    /// Marks the name at `at` if it's a reserved word.
     #[inline]
-    fn name(&mut self, text: &[u8], at: u32) {
-        let chunk = Chunk::at(text, at as usize);
-        let word = Word::of_chunk(chunk, chunk.count(identifier_parts));
+    fn name(&mut self, text: &[u8], stops: ScannerStops, at: u32) {
+        let len = stops.after_name.run(at as usize) as usize;
+        let word = Word::from_chunk(Chunk::at(text, at as usize), len);
         if !matches!(word, Word::Name | Word::Strict | Word::StrictAndEspree) {
             self.names.push(at);
         }
     }
 
-    /// `A.B` in a type is not an expression, with two exceptions.
+    /// `A.B` in a type isn't an expression, with two exceptions.
     fn accesses_in_types(&mut self, file: &File) {
         let hir = &file.hir;
         let names =
             |names: hir::Span<hir::NameId>| hir.names.get(names.range()).unwrap_or_default().iter();
-        // The operand of `typeof a.b` is an expression in the HIR only.
+        // Only the HIR treats the operand of `typeof a.b` as an expression.
         let mut operands = Vec::new();
         for ty in hir.types {
             if let TypeNodeKind::Typeof { name, .. } = ty.kind {
@@ -227,16 +228,16 @@ impl Marks {
                 .list
                 .retain(|at| operands.binary_search(at).is_err());
         }
-        // What a class implements and what an interface extends is an expression for TypeScript.
-        let of_classes = hir
+        // TypeScript parses a class's `implements` and an interface's `extends` entries as expressions.
+        let class_heritage = hir
             .classes
             .iter()
             .flat_map(|it| [it.implements, it.other_implements]);
-        let of_interfaces = hir
+        let interface_heritage = hir
             .interfaces
             .iter()
             .flat_map(|it| [it.extends, it.other_heritage]);
-        for list in of_classes.chain(of_interfaces) {
+        for list in class_heritage.chain(interface_heritage) {
             for &ty in hir.ids.get(list.range()).unwrap_or_default() {
                 if let Some(TypeNodeKind::Ref { name, .. }) =
                     hir.types.get(ty as usize).map(|ty| ty.kind)
@@ -250,7 +251,7 @@ impl Marks {
         }
     }
 
-    fn names_of_typescript(&mut self, file: &File) {
+    fn typescript_names(&mut self, file: &File, stops: ScannerStops) {
         let (hir, text) = (&file.hir, file.text());
         for elem in hir.tuple_elems {
             if elem.name.is_some() {
@@ -259,7 +260,7 @@ impl Marks {
                 } else {
                     elem.start
                 };
-                self.name(text, start);
+                self.name(text, stops, start);
             }
         }
         for pat in hir.pats {
@@ -276,8 +277,7 @@ impl Marks {
         }
     }
 
-    /// The `const` of `a as const` and `<const>a` is the name of a type. That of a JSDoc cast is in
-    /// a comment.
+    /// The `const` in `a as const` and `<const>a` is a type name. A JSDoc cast's `const` is in a comment.
     fn as_const(&mut self, text: &[u8], e: &hir::Expr) {
         for at in [skip_trivia(text, e.pos + 1), e.end.saturating_sub(5)] {
             if text
@@ -330,7 +330,7 @@ impl Marks {
         }
     }
 
-    /// The end of the regular expression that starts at `at`.
+    /// Returns the end of the regular expression that starts at `at`.
     #[inline]
     fn regex_end(&mut self, at: usize) -> Option<usize> {
         while let Some(&(start, end)) = self.regexes.get(self.next_regex) {
@@ -343,87 +343,25 @@ impl Marks {
     }
 }
 
-const ONES: u64 = 0x0101_0101_0101_0101;
-const HIGH_BITS: u64 = ONES * 0x80;
-
-/// For 8 bytes that are all below 0x80: the high bit of each that is `byte`.
-#[inline]
-const fn equal_to(bytes: u64, byte: u8) -> u64 {
-    !((bytes ^ (ONES * byte as u64)) + ONES * 0x7F)
-}
-
-/// The same for each that is in `first..=last`.
-#[inline]
-const fn between(bytes: u64, first: u8, last: u8) -> u64 {
-    (bytes + ONES * (0x80 - first as u64)) & !(bytes + ONES * (0x7F - last as u64))
-}
-
-/// The ASCII characters that continue an identifier.
-#[inline]
-const fn identifier_parts(bytes: u64) -> u64 {
-    between(bytes | (ONES * 0x20), b'a', b'z')
-        | between(bytes, b'0', b'9')
-        | equal_to(bytes, b'_')
-        | equal_to(bytes, b'$')
-}
-
-/// The whitespace of ASCII, and the control characters, which are in no token.
-#[inline]
-const fn blanks(bytes: u64) -> u64 {
-    !(bytes + ONES * (0x7F - b' ' as u64))
-}
-
-/// For any 8 bytes: the high bit of the first that is `byte`, and possibly of some after it.
-#[inline]
-const fn first_equal_to(bytes: u64, byte: u8) -> u64 {
-    let difference = bytes ^ (ONES * byte as u64);
-    difference.wrapping_sub(ONES) & !difference
-}
-
-/// The position of the first byte of `text` from `at` that is one of `stops`, or the end of `text`.
+/// Returns the position of the first byte at or after `at` that's in `stops`, or the end of `text`.
 #[inline]
 fn find(text: &[u8], at: usize, stops: &[u8]) -> usize {
     let rest = text.get(at..).unwrap_or_default();
     strings::index_of_any(rest, stops).map_or(text.len(), |found| at + found)
 }
 
-/// Where the line ends that `from` is in.
+/// Returns the end of the line that contains `from`.
 fn find_line_end(text: &[u8], from: usize) -> usize {
     let rest = text.get(from..).unwrap_or_default();
     strings::find_js_line_break(rest).map_or(text.len(), |found| from + found.0)
 }
 
-/// `find` for what is likely within a few bytes, as the end of a string is: too near for the call
-/// of a vectorized search to pay off.
-#[inline]
-fn find_nearby<const N: usize>(text: &[u8], mut at: usize, stops: [u8; N]) -> usize {
-    let first = |bytes: u64| {
-        let found = stops
-            .iter()
-            .fold(0, |found, &stop| found | first_equal_to(bytes, stop));
-        (found & HIGH_BITS).trailing_zeros() / 8
-    };
-    for _ in 0..2 {
-        let chunk = Chunk::at(text, at);
-        let (low, high) = (first(chunk.0), first(chunk.1));
-        let plain = (low + if low == 8 { high } else { 0 }) as usize;
-        at += plain;
-        if plain < Chunk::LEN || at >= text.len() {
-            return at.min(text.len());
-        }
-    }
-    find(text, at, &stops)
-}
-
-/// 16 bytes of the text, to classify at once: a loop over the bytes of a word or of an indentation
-/// ends in a branch that the processor cannot predict.
+/// 16 bytes of the text, for comparing a whole word in one step.
 #[derive(Copy, Clone)]
 struct Chunk(u64, u64);
 
 impl Chunk {
-    const LEN: usize = 16;
-
-    /// The bytes from `at`. Zeros after the end of the text.
+    /// Loads the bytes at `at`, zero-padded past the end of the text.
     #[inline]
     fn at(text: &[u8], at: usize) -> Chunk {
         match text.get(at..).and_then(|rest| rest.first_chunk::<16>()) {
@@ -442,31 +380,19 @@ impl Chunk {
         let bytes = u128::from_le_bytes(bytes);
         Chunk(bytes as u64, (bytes >> 64) as u64)
     }
-
-    /// How many bytes from the start are of a class of ASCII characters. `class` gets 8 bytes with
-    /// their high bits cleared and sets the high bit of each that is of the class.
-    #[inline]
-    fn count(self, class: impl Fn(u64) -> u64) -> usize {
-        let others = |bytes: u64| !(class(bytes & !HIGH_BITS) & !bytes) & HIGH_BITS;
-        let (first, second) = (
-            others(self.0).trailing_zeros() / 8,
-            others(self.1).trailing_zeros() / 8,
-        );
-        (first + if first == 8 { second } else { 0 }) as usize
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Word {
     Name,
     Reserved,
-    /// Not reserved up to ES5.
+    /// Not reserved in ES5 and earlier.
     ReservedSinceEs6,
-    /// Reserved, but not a keyword of JavaScript.
+    /// Reserved, but not a JavaScript keyword.
     Enum,
     Null,
     Boolean,
-    /// Reserved in strict mode, and what espree always takes for a keyword.
+    /// Reserved in strict mode. espree always treats it as a keyword.
     StrictAndEspree,
     /// Reserved in strict mode.
     Strict,
@@ -521,13 +447,13 @@ impl Word {
         (b"yield", Word::StrictAndEspree),
     ];
 
-    /// No two of `ALL` have the same.
+    /// A perfect hash: no two words in `ALL` collide.
     #[inline]
     const fn hash(first: u8, second: u8, len: usize) -> usize {
         (first as usize * 11 + second as usize * 123 + len) % 128
     }
 
-    /// By `hash`: the bytes of the word as two little-endian numbers, and what it is.
+    /// Indexed by `hash`: the word's bytes as two little-endian numbers, and its kind.
     const BY_HASH: [(u64, u64, Word); 128] = {
         let mut table = [(0, 0, Word::Name); 128];
         let mut i = 0;
@@ -548,9 +474,9 @@ impl Word {
         table
     };
 
-    /// What the first `len` bytes of `chunk` are.
+    /// Classifies the first `len` bytes of `chunk`.
     #[inline]
-    fn of_chunk(chunk: Chunk, len: usize) -> Word {
+    fn from_chunk(chunk: Chunk, len: usize) -> Word {
         if !(2..=10).contains(&len) {
             return Word::Name;
         }
@@ -573,12 +499,12 @@ impl Word {
     }
 
     #[inline]
-    fn of(word: &[u8]) -> Word {
-        Word::of_chunk(Chunk::at(word, 0), word.len())
+    fn from_bytes(word: &[u8]) -> Word {
+        Word::from_chunk(Chunk::at(word, 0), word.len())
     }
 }
 
-/// What the scanner is in the middle of, and returns to.
+/// The context the scanner is currently in, and returns to afterwards.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Mode {
     Code,
@@ -596,46 +522,49 @@ enum FrameKind {
     Substitution,
     /// After a `{` in a JSX tag or among JSX children. The `}` returns there.
     Container(Mode),
-    /// In a JSX element, which is in that.
+    /// Inside a JSX element. The mode is the one around the element.
     Element(Mode),
-    /// After the `<` of the type arguments of a JSX tag. The `>` returns to the tag.
+    /// After the `<` of a JSX tag's type arguments. The `>` returns to the tag.
     TypeArguments,
 }
 
 struct Frame {
     kind: FrameKind,
-    /// `Scanner::braces` and `Scanner::angles` outside of it.
+    /// The values of `Scanner::braces` and `Scanner::angles` outside this frame.
     braces: u32,
     angles: u32,
 }
 
 struct Scanner<'a> {
     text: &'a [u8],
+    /// Computed from `text`.
+    stops: ScannerStops<'a>,
     at: usize,
     tokens: Vec<RawToken>,
     comments: Vec<RawToken>,
     marks: Marks,
     dialect: Dialect,
-    /// `<!--` and `-->` start a comment.
+    /// True if `<!--` and `-->` start a comment.
     has_html_comments: bool,
     frames: Vec<Frame>,
-    /// The `{` that are open in the innermost frame.
+    /// Number of open `{` in the innermost frame.
     braces: u32,
-    /// The `<` that are open in the innermost frame, if that is `TypeArguments`.
+    /// Number of open `<` in the innermost frame, if it's `TypeArguments`.
     angles: u32,
-    /// The JSX elements that are open.
+    /// Number of open JSX elements.
     elements: u32,
 }
 
-/// The tokens and the comments of `file`.
+/// Returns `file`'s tokens and comments.
 pub(super) fn scan<'a>(file: &'a File<'a>) -> (Vec<RawToken>, Vec<RawToken>) {
-    let dialect = Dialect::of(file);
-    let capacity = file.text().len() / 5 + 1;
-    let scanner = Scanner::run(file, dialect, Marks::new(file, dialect), capacity);
+    let dialect = Dialect::for_file(file);
+    let mut stops = ScannerStopsBuffer::default();
+    let stops = stops.find(file.text());
+    let scanner = Scanner::run(file, stops, dialect, Marks::new(file, stops, dialect));
     (scanner.tokens, scanner.comments)
 }
 
-/// The comments of `file`. `None`: they cannot be told without the tokens.
+/// Returns `file`'s comments, or `None` if finding them takes a token scan.
 pub(super) fn comments<'a>(file: &'a File<'a>) -> Option<Vec<RawToken>> {
     let text = file.text();
     if has_html_comments(file)
@@ -648,7 +577,7 @@ pub(super) fn comments<'a>(file: &'a File<'a>) -> Option<Vec<RawToken>> {
     let start = start_of_code(file);
     if text[start..].starts_with(b"#!") {
         let end = find_line_end(text, start + 2);
-        if end > start + 2 || Dialect::of(file) != Dialect::TypeScript {
+        if end > start + 2 || Dialect::for_file(file) != Dialect::TypeScript {
             comments.push(RawToken {
                 start: start as u32,
                 end: end as u32,
@@ -656,38 +585,43 @@ pub(super) fn comments<'a>(file: &'a File<'a>) -> Option<Vec<RawToken>> {
             });
         }
     }
-    comments.extend(listed.iter().map(|&(start, end)| RawToken {
-        start,
-        end,
-        kind: match text.get(start as usize + 1) {
-            Some(b'*') => TokenKind::Block,
-            _ => TokenKind::Line,
+    comments.extend(listed.iter().map(
+        |&hir::Comment {
+             pos: start, end, ..
+         }| RawToken {
+            start,
+            end,
+            kind: match text.get(start as usize + 1) {
+                Some(b'*') => TokenKind::Block,
+                _ => TokenKind::Line,
+            },
         },
-    }));
+    ));
     Some(comments)
 }
 
-/// After the byte order mark, which ESLint takes off before it looks for a `#!`.
+/// Skips the byte order mark, which ESLint strips before it looks for a `#!`.
 fn start_of_code(file: &File) -> usize {
     if file.has_bom() { 3 } else { 0 }
 }
 
-/// Whether the tokens of `file` are those of espree.
-pub(super) fn is_espree(file: &File) -> bool {
-    Dialect::of(file) != Dialect::TypeScript
+/// True if escape sequences in `file`'s names are decoded, as espree and oxlint do.
+pub(super) fn decodes_names(file: &File) -> bool {
+    Dialect::for_file(file) != Dialect::TypeScript
 }
 
 fn has_html_comments<'a>(file: &'a File<'a>) -> bool {
     match file.language().is_oxlint {
-        // oxc has them in TypeScript too.
+        // oxc allows them in TypeScript too.
         true => crate::utils::oxlint::source_type(file) != SourceType::Module,
-        false => Dialect::of(file) != Dialect::TypeScript && !file.is_module(),
+        false => Dialect::for_file(file) != Dialect::TypeScript && !file.is_module(),
     }
 }
 
 impl Dialect {
-    fn of(file: &File) -> Dialect {
+    fn for_file(file: &File) -> Dialect {
         match file.is_javascript() && file.language().parser != Parser::TypeScript {
+            _ if file.language().is_oxlint => Dialect::Oxc,
             true => Dialect::Espree {
                 is_es5: file.language().ecma_version <= 5,
             },
@@ -697,12 +631,18 @@ impl Dialect {
 }
 
 impl<'a> Scanner<'a> {
-    fn run(file: &'a File<'a>, dialect: Dialect, marks: Marks, capacity: usize) -> Self {
+    fn run<'f: 'a>(
+        file: &'f File<'f>,
+        stops: ScannerStops<'a>,
+        dialect: Dialect,
+        marks: Marks,
+    ) -> Self {
         let text = file.text();
         let mut scanner = Scanner {
             text,
+            stops,
             at: 0,
-            tokens: Vec::with_capacity(capacity),
+            tokens: Vec::with_capacity(text.len() / 5 + 1),
             comments: Vec::new(),
             marks,
             dialect,
@@ -732,7 +672,7 @@ impl<'a> Scanner<'a> {
         scanner
     }
 
-    /// Adds the token from `start` to `end`, and continues there.
+    /// Adds the token from `start` to `end` and moves to `end`.
     #[inline]
     fn token(&mut self, kind: TokenKind, start: usize, end: usize) {
         let end = end.min(self.text.len());
@@ -744,7 +684,7 @@ impl<'a> Scanner<'a> {
         self.at = end;
     }
 
-    /// Adds the punctuator of `len` bytes at the current position.
+    /// Adds a `len`-byte punctuator at the current position.
     #[inline]
     fn punctuator(&mut self, len: usize) {
         self.token(TokenKind::Punctuator, self.at, self.at + len);
@@ -770,7 +710,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// At a `}` in code. Returns what it returns to, if that is not code.
+    /// Handles a `}` in code. Returns the mode to switch back to, unless that's code.
     #[inline]
     fn close_brace(&mut self) -> Option<Mode> {
         if self.braces > 0 {
@@ -796,7 +736,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// At the `<` of a JSX element that is in `outer`.
+    /// Handles the `<` of a JSX element inside `outer`.
     fn open_element(&mut self, outer: Mode) -> Mode {
         self.punctuator(1);
         self.enter(FrameKind::Element(outer));
@@ -804,7 +744,7 @@ impl<'a> Scanner<'a> {
         Mode::OpeningTag
     }
 
-    /// At a `>` in code that is a token of its own. Returns what it returns to, if that is not code.
+    /// Handles a `>` in code that's its own token. Returns the mode to switch back to, unless that's code.
     #[inline]
     fn close_angle(&mut self) -> Option<Mode> {
         self.punctuator(1);
@@ -818,22 +758,17 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    /// Tokens of JavaScript and TypeScript, until something else starts or continues.
+    /// Scans JavaScript and TypeScript tokens until another mode starts or resumes.
     fn code(&mut self) -> Mode {
         let text = self.text;
         loop {
             let mut at = self.at;
-            // Whether a token is followed by no blank, by one, or by more is mostly predictable.
+            // The branch predictor mostly guesses right whether zero, one or more whitespace bytes follow a token.
             if self.byte(at) <= b' ' {
                 at += 1;
-                if self.byte(at) <= b' ' {
-                    loop {
-                        let blank = Chunk::at(text, at).count(blanks);
-                        at += blank;
-                        if blank < Chunk::LEN || at >= text.len() {
-                            break;
-                        }
-                    }
+                // ASCII whitespace, plus control characters, which aren't part of any token.
+                while text.get(at).is_some_and(|&byte| byte <= b' ') {
+                    at = self.stops.after_blanks.next(at + 1);
                 }
             }
             let Some(&first) = text.get(at) else {
@@ -939,7 +874,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// At `--`: whether a `>` follows and no token precedes on the line.
+    /// At `--`: true if a `>` follows and no token precedes it on the line.
     #[cold]
     fn is_html_close_comment(&self) -> bool {
         let Some(last) = self.tokens.last() else {
@@ -955,7 +890,7 @@ impl<'a> Scanner<'a> {
         false
     }
 
-    /// At a character that is not ASCII: whitespace, or the start of an identifier.
+    /// Handles a non-ASCII character: whitespace or the start of an identifier.
     #[cold]
     fn non_ascii(&mut self) {
         let (c, size) = lexer::char_and_size(self.text, self.at);
@@ -966,7 +901,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// Whether the last token is a `.` or a `?.`.
+    /// True if the last token is a `.` or a `?.`.
     #[inline]
     fn is_after_dot(&self) -> bool {
         self.tokens.last().is_some_and(|last| {
@@ -976,26 +911,18 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    /// An identifier or a keyword.
+    /// Scans an identifier or a keyword.
     #[inline(always)]
     fn word(&mut self) {
         let (text, start) = (self.text, self.at);
-        let chunk = Chunk::at(text, start);
-        let mut end = start + chunk.count(identifier_parts);
-        while end - start >= Chunk::LEN {
-            let parts = Chunk::at(text, end).count(identifier_parts);
-            end += parts;
-            if parts < Chunk::LEN {
-                break;
-            }
-        }
+        let end = self.stops.after_name.next(start);
         if matches!(text.get(end), Some(b'\\' | 0x80..)) && self.unusual_word(end) {
             return;
         }
         let mut kind = TokenKind::Identifier;
-        let word = Word::of_chunk(chunk, end - start);
+        let word = Word::from_chunk(Chunk::at(text, start), end - start);
         if word != Word::Name {
-            kind = self.kind_of_word(word);
+            kind = self.word_kind(word);
         }
         if kind == TokenKind::Identifier && self.elements > 0 && self.marks.accesses.has(start) {
             kind = TokenKind::JsxIdentifier;
@@ -1003,8 +930,8 @@ impl<'a> Scanner<'a> {
         self.token(kind, start, end);
     }
 
-    /// The type of the word at the current position.
-    fn kind_of_word(&mut self, word: Word) -> TokenKind {
+    /// Returns the token type of the word at the current position.
+    fn word_kind(&mut self, word: Word) -> TokenKind {
         let kind = match (word, self.dialect) {
             (Word::Name, _) => return TokenKind::Identifier,
             (Word::StrictAndEspree, Dialect::Espree { is_es5 }) => {
@@ -1019,7 +946,9 @@ impl<'a> Scanner<'a> {
             | (Word::ReservedSinceEs6, Dialect::Espree { is_es5: true }) => {
                 return TokenKind::Identifier;
             }
-            (Word::Strict | Word::StrictAndEspree, Dialect::TypeScript) => {
+            (Word::StrictAndEspree, Dialect::Oxc) => return TokenKind::Keyword,
+            (Word::Strict, Dialect::Oxc)
+            | (Word::Strict | Word::StrictAndEspree, Dialect::TypeScript) => {
                 let is_keyword = self.marks.keywords.has(self.at);
                 return if is_keyword {
                     TokenKind::Keyword
@@ -1037,9 +966,9 @@ impl<'a> Scanner<'a> {
         kind
     }
 
-    /// An identifier with an escape sequence or a character that is not ASCII at `ascii_end`. With
-    /// an escape sequence a reserved word can only be a name. False, and nothing is done, if what is
-    /// there is not part of the word, as whitespace that is not ASCII.
+    /// Scans an identifier that has an escape sequence or a non-ASCII character at `ascii_end`. A reserved word with an
+    /// escape sequence can only be a name. Returns false and does nothing if that character isn't part of the word,
+    /// like non-ASCII whitespace.
     #[cold]
     fn unusual_word(&mut self, ascii_end: usize) -> bool {
         let (text, start) = (self.text, self.at);
@@ -1052,9 +981,7 @@ impl<'a> Scanner<'a> {
             return false;
         }
         let mut kind = TokenKind::Identifier;
-        if let Dialect::Espree { .. } = self.dialect
-            && strings::contains_char(&text[start..end], b'\\')
-        {
+        if self.dialect != Dialect::TypeScript && strings::contains_char(&text[start..end], b'\\') {
             let (mut word, mut len, mut at) = ([0u8; 8], 0, start);
             while at < end && len < word.len() {
                 let (c, size) = match text[at] {
@@ -1066,7 +993,7 @@ impl<'a> Scanner<'a> {
             }
             let is_es5 = self.dialect == Dialect::Espree { is_es5: true };
             if at == end
-                && Word::of(&word[..len]) == Word::StrictAndEspree
+                && Word::from_bytes(&word[..len]) == Word::StrictAndEspree
                 && (!is_es5 || word[0] == b's')
             {
                 kind = TokenKind::Keyword;
@@ -1124,11 +1051,26 @@ impl<'a> Scanner<'a> {
         self.token(TokenKind::Numeric, start, end);
     }
 
+    /// `find`, for `stops` that are all in `ScannerStops::in_string`.
+    #[inline]
+    fn find_in_string<const N: usize>(&self, mut at: usize, stops: [u8; N]) -> usize {
+        loop {
+            at = self.stops.in_string.next(at);
+            match self.text.get(at) {
+                None => return self.text.len(),
+                Some(byte) if stops.contains(byte) => return at,
+                // Every byte of non-ASCII text is a stop, so fall back to `find`.
+                Some(0x80..) => return find(self.text, at, &stops),
+                Some(_) => at += 1,
+            }
+        }
+    }
+
     fn string(&mut self, quote: u8) {
         let (text, start) = (self.text, self.at);
         let mut end = start + 1;
         loop {
-            end = find_nearby(text, end, [quote, b'\\', b'\n', b'\r']);
+            end = self.find_in_string(end, [quote, b'\\', b'\n', b'\r']);
             match text.get(end) {
                 Some(b'\\') => {
                     end += if text[end + 1..].starts_with(b"\r\n") {
@@ -1147,13 +1089,12 @@ impl<'a> Scanner<'a> {
         self.token(TokenKind::String, start, end);
     }
 
-    /// From a `` ` ``, or from the `}` that ends a substitution, to the next `${` or the closing
-    /// `` ` ``.
+    /// Scans from a `` ` ``, or from the `}` that ends a substitution, to the next `${` or the closing `` ` ``.
     fn template(&mut self) {
-        let (text, start) = (self.text, self.at);
+        let start = self.at;
         let mut end = start + 1;
         loop {
-            end = find(text, end, b"`\\$") + 1;
+            end = self.find_in_string(end, *b"`\\$") + 1;
             match self.byte(end - 1) {
                 b'\\' => end += 1,
                 b'$' if self.byte(end) == b'{' => {
@@ -1177,7 +1118,7 @@ impl<'a> Scanner<'a> {
         self.at = end;
     }
 
-    /// From `//` or `#!` to the end of the line.
+    /// Scans from `//` or `#!` to the end of the line.
     fn line_comment(&mut self, kind: TokenKind) {
         self.comment(kind, find_line_end(self.text, self.at + 2));
     }
@@ -1188,7 +1129,7 @@ impl<'a> Scanner<'a> {
         self.comment(TokenKind::Block, self.at + 2 + len);
     }
 
-    /// Past whitespace and comments.
+    /// Skips whitespace and comments.
     fn trivia(&mut self) {
         loop {
             match self.byte(self.at) {
@@ -1207,8 +1148,8 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// The tokens of a JSX tag after its `<` or `</`, up to its `>` or to something in it that is
-    /// not scanned like a tag.
+    /// Scans a JSX tag's tokens after its `<` or `</`, up to its `>` or to something inside it that isn't scanned like
+    /// a tag.
     fn tag(&mut self, is_closing: bool) -> Mode {
         let mut is_after_slash = false;
         loop {
@@ -1223,7 +1164,7 @@ impl<'a> Scanner<'a> {
                     if !is_closing && !is_after_slash {
                         return Mode::Children;
                     }
-                    // Only an unfinished element leaves other frames above its own.
+                    // Only an unfinished element leaves other frames on top of its own.
                     while let Some(frame) = self.frames.last() {
                         let kind = frame.kind;
                         self.leave();
@@ -1250,7 +1191,7 @@ impl<'a> Scanner<'a> {
                     self.token(
                         TokenKind::JsxText,
                         at,
-                        find_nearby(self.text, at + 1, [first]) + 1,
+                        self.find_in_string(at + 1, [first]) + 1,
                     );
                 }
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80.. => self.jsx_name(),
@@ -1260,12 +1201,20 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// A name in a JSX tag, which can contain `-`.
+    /// Scans a name in a JSX tag, which can contain `-`.
     fn jsx_name(&mut self) {
         let (text, start) = (self.text, self.at);
         let mut end = start;
         loop {
-            end = lexer::scan_identifier_parts(text, end);
+            let part = end;
+            end = lexer::scan_identifier_parts(text, part);
+            // Only oxc accepts an escape in such a name, and once its lexer is past a `-`, an escape ends the name.
+            if part > start
+                && let Some(escape) = strings::index_of_char_usize(&text[part..end], b'\\')
+            {
+                end = part + escape;
+                break;
+            }
             if self.byte(end) != b'-' {
                 break;
             }
@@ -1275,30 +1224,34 @@ impl<'a> Scanner<'a> {
             self.at += 1;
             return;
         }
-        let mut kind = TokenKind::JsxIdentifier;
-        if self.dialect == Dialect::TypeScript {
-            let is_colon = |at: usize| self.byte(at) == b':';
-            let is_after_colon = self
-                .tokens
-                .last()
-                .is_some_and(|last| is_colon(last.start as usize));
-            if is_after_colon || is_colon(skip_trivia(text, end as u32) as usize) {
-                kind = TokenKind::Identifier;
-            } else if &text[start..end] == b"this" && !self.is_after_dot() && self.is_tag_name() {
-                kind = TokenKind::Keyword;
+        let is_colon = |at: usize| self.byte(at) == b':';
+        let is_after_colon = || {
+            let last = self.tokens.last();
+            last.is_some_and(|last| is_colon(last.start as usize))
+        };
+        let kind = match self.dialect {
+            Dialect::Espree { .. } => TokenKind::JsxIdentifier,
+            Dialect::TypeScript
+                if is_after_colon() || is_colon(skip_trivia(text, end as u32) as usize) =>
+            {
+                TokenKind::Identifier
             }
-        }
+            _ if &text[start..end] == b"this" && !self.is_after_dot() && self.is_tag_name() => {
+                TokenKind::Keyword
+            }
+            _ => TokenKind::JsxIdentifier,
+        };
         self.token(kind, start, end);
     }
 
-    /// Whether the last token is the `<` or the `/` that the name of a tag follows.
+    /// True if the last token is the `<` or `/` that precedes a tag name.
     fn is_tag_name(&self) -> bool {
         self.tokens
             .last()
             .is_some_and(|last| matches!(self.byte(last.start as usize), b'<' | b'/'))
     }
 
-    /// The text between JSX tags, up to and including the `{` or the `<` that ends it.
+    /// Scans the text between JSX tags, up to and including the `{` or `<` that ends it.
     fn children(&mut self) -> Mode {
         let (text, start) = (self.text, self.at);
         let end = find(text, start, b"{<");

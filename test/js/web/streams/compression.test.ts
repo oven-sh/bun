@@ -721,7 +721,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(head).toStartWith("HTTP/1.1 200");
     expect(head.toLowerCase()).toContain("transfer-encoding: chunked");
     const body: Buffer[] = [];
-    for (let i = headEnd + 4; ; ) {
+    for (let i = headEnd + 4; ;) {
       const sizeEnd = raw.indexOf("\r\n", i);
       const size = parseInt(raw.subarray(i, sizeEnd).toString(), 16);
       if (sizeEnd < 0 || Number.isNaN(size)) throw new Error(`malformed chunk framing at offset ${i}`);

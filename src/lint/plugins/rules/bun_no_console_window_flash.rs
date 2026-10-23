@@ -2,14 +2,14 @@ use crate::bun::{LaunchOptions, can_launch, launches};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Require `windowsHide` for a child process that does not share a stream with its parent.
+/// Require `windowsHide` for a child process that doesn't share a stream with its parent.
 ///
-/// See `windowsHide` and `stdio` in the documentation of `child_process.spawn()` of Node.js and of `Bun.spawn()`.
+/// See `windowsHide` and `stdio` in the documentation of Node.js's `child_process.spawn()` and of `Bun.spawn()`.
 pub struct NoConsoleWindowFlash;
 
 const CONSOLE_WINDOW: Message = Message::new(
     "consoleWindow",
-    "On Windows a console window opens for this process and closes again. Set `windowsHide: true`.",
+    "On Windows, this process briefly opens a console window. Set `windowsHide: true`.",
 );
 
 impl Rule for NoConsoleWindowFlash {
@@ -32,7 +32,7 @@ impl Rule for NoConsoleWindowFlash {
         for (call, starter) in launches(cx.file()) {
             let options = LaunchOptions::of(call, starter);
             let is_unknown = matches!(options, LaunchOptions::Unknown);
-            if !is_unknown && !options.has("windowsHide") && !options.shares_a_stream() {
+            if !is_unknown && !options.has("windowsHide") && !options.inherits_a_stream() {
                 cx.report(call.callee(), CONSOLE_WINDOW);
             }
         }

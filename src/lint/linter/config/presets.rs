@@ -1,13 +1,13 @@
-//! The configurations that ESLint and typescript-eslint publish, by name, for a project that does
-//! not have them installed.
-
-#[path = "presets_data.rs"]
-mod data;
+//! The configs that ESLint and typescript-eslint publish, by name, for a project that doesn't have them installed.
+//!
+//! `generate-presets.mjs` writes them to `presets.txt`, from @eslint/js 10.0.1 and @typescript-eslint/eslint-plugin
+//! 8.71.1. Each line is `name<tab>JSON`. The JSON is an array of config objects, where a string is replaced by the
+//! objects of the config with that name.
 
 use crate::options::Json;
 use bun_core::strings;
 
-/// `recommendedTypeChecked` as `recommended-type-checked`.
+/// Converts `recommendedTypeChecked` to `recommended-type-checked`.
 fn kebab_case(name: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(name.len() + 4);
     for &byte in name {
@@ -19,7 +19,7 @@ fn kebab_case(name: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The name in the table for what a configuration calls `name`.
+/// The table's name for the config that a config file calls `name`.
 fn canonical(name: &[u8]) -> Option<Vec<u8>> {
     let name = name.strip_prefix(b"plugin:").unwrap_or(name);
     if let Some(rest) = name.strip_prefix(b"eslint:") {
@@ -36,21 +36,31 @@ fn canonical(name: &[u8]) -> Option<Vec<u8>> {
     Some([plugin, &kebab_case(&name[slash + 1..])].concat())
 }
 
-/// The objects of the configuration called `name`:
+/// The objects of the config named `name`:
 /// - `eslint:recommended`, `eslint:all`, also as `js/recommended`, `@eslint/js/recommended`
 /// - `typescript-eslint/recommended`, `/recommended-type-checked`, `/strict`, `/stylistic`, `/all`,
 ///   `/base`, `/eslint-recommended`, `/disable-type-checked`, .., also as `@typescript-eslint/..`,
 ///   `plugin:@typescript-eslint/..`, `tseslint/recommendedTypeChecked`
 pub(super) fn find(name: &[u8]) -> Option<Vec<Json>> {
-    let name = canonical(name)?;
-    let text = strings::replace_owned(data::PRESETS.as_bytes(), b"\"@/", b"\"@typescript-eslint/");
-    let all = crate::json::parse(&text)?;
     let mut objects = Vec::new();
-    for object in all.get(&name)?.as_array()? {
-        match object {
-            Json::String(other) => objects.extend(all.get(other)?.as_array()?.iter().cloned()),
-            object => objects.push(object.clone()),
+    for object in parse(&canonical(name)?)? {
+        match &object {
+            Json::String(other) => objects.extend(parse(other)?),
+            _ => objects.push(object),
         }
     }
     Some(objects)
+}
+
+/// The line of `presets.txt` for `name`. Release builds embed the file compressed and inflate it on first use.
+fn parse(name: &[u8]) -> Option<Vec<Json>> {
+    let lines = bun_zstd::embed_compressed!(
+        "src/lint/linter/config/presets.txt",
+        include_bytes!("presets.txt")
+    );
+    let json = strings::split(lines, b"\n")
+        .filter_map(|line| strings::split_once_char(line, b'\t'))
+        .find(|it| it.0 == name)?
+        .1;
+    crate::json::parse(json)?.into_array()
 }

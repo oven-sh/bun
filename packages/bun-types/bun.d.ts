@@ -16,15 +16,13 @@
 declare module "bun" {
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
-    | NodeJS.TypedArray<TArrayBuffer>
-    | DataView<TArrayBuffer>;
+    NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray<ArrayBufferLike> | DataView<ArrayBufferLike> | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
-    | ReadableStreamDefaultReadValueResult<T>
-    | ReadableStreamDefaultReadDoneResult;
+    ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
@@ -2886,10 +2884,7 @@ declare module "bun" {
    * @param data The data to hash.
    * @param seed The seed to use.
    */
-  const hash: ((
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number | bigint,
-  ) => number | bigint) &
+  const hash: ((data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number | bigint) => bigint) &
     Hash;
 
   interface Hash {
@@ -3252,10 +3247,11 @@ declare module "bun" {
      *
      * @default "esm"
      */
-    format?: /**
-     * ECMAScript Module format
-     */
-    | "esm"
+    format?:
+      /**
+       * ECMAScript Module format
+       */
+      | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -5026,7 +5022,8 @@ declare module "bun" {
        * Replaces the built-in hostname check, as in `fetch()` and `tls.connect()`.
        * Any truthy return value rejects the server, including the Promise of an
        * `async` function.
-       * Through an HTTPS proxy it runs for the target's certificate only.
+       * Through an HTTPS proxy it runs for the target's certificate only. The
+       * proxy's certificate goes to `proxy.tls.checkServerIdentity`.
        * With `rejectUnauthorized: false` it still runs when the certificate
        * chain verified, but its result is not enforced.
        * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
@@ -5041,7 +5038,7 @@ declare module "bun" {
     /**
      * Headers to send to the server
      */
-    headers?: import("node:http").OutgoingHttpHeaders;
+    headers?: import("node:http").OutgoingHttpHeaders | Headers | [string, string][];
   };
 
   type WebSocketOptionsProxy = {
@@ -5049,7 +5046,7 @@ declare module "bun" {
      * HTTP proxy to use for the WebSocket connection.
      *
      * Can be a string URL, a URL instance, or an object with `url` and
-     * optional `headers`.
+     * optional `headers` and `tls`.
      *
      * @example
      * ```ts
@@ -5087,6 +5084,29 @@ declare module "bun" {
            * Supports plain objects or Headers class instances.
            */
           headers?: import("node:http").OutgoingHttpHeaders | Headers;
+          /**
+           * TLS options for the connection to an `https://` proxy.
+           *
+           * If set, even to `{}` or `true`, the proxy uses only these options and the
+           * target uses only the top-level `tls` option. Otherwise `tls`
+           * applies to both connections.
+           *
+           * `serverName` and `checkServerIdentity` are the exception: the
+           * top-level ones never apply to the proxy, only the ones given here.
+           * By default the proxy's certificate is checked against the hostname
+           * in the proxy URL.
+           *
+           * @example
+           * ```ts
+           * const ws = new WebSocket("wss://example.com", {
+           *   proxy: {
+           *     url: "https://proxy.internal:8443",
+           *     tls: { ca: Bun.file("./proxy-ca.pem") }
+           *   }
+           * });
+           * ```
+           */
+          tls?: WebSocketOptionsTLS["tls"] | boolean;
         };
   };
 
@@ -5117,9 +5137,19 @@ declare module "bun" {
 
   interface WebSocketEventMap {
     close: CloseEvent;
-    error: Event;
-    message: MessageEvent;
+    error: ErrorEvent;
+    message: globalThis.MessageEvent;
     open: Event;
+    /**
+     * Fired when a Ping frame is received. Bun has already replied with a Pong.
+     * `data` is the payload, typed according to `binaryType`. Not available in browsers.
+     */
+    ping: globalThis.MessageEvent;
+    /**
+     * Fired when a Pong frame is received. `data` is the payload, typed according
+     * to `binaryType`. Not available in browsers.
+     */
+    pong: globalThis.MessageEvent;
   }
 
   /**
@@ -5161,10 +5191,7 @@ declare module "bun" {
      * The current state of the connection
      */
     readonly readyState:
-      | typeof WebSocket.CONNECTING
-      | typeof WebSocket.OPEN
-      | typeof WebSocket.CLOSING
-      | typeof WebSocket.CLOSED;
+      typeof WebSocket.CONNECTING | typeof WebSocket.OPEN | typeof WebSocket.CLOSING | typeof WebSocket.CLOSED;
 
     /**
      * The number of bytes of data that have been queued using send() but not yet transmitted to the network
@@ -5182,9 +5209,10 @@ declare module "bun" {
     readonly extensions: string;
 
     /**
-     * The type of binary data being received.
+     * The type of `data` for binary `message`, `ping` and `pong` events: `Buffer`
+     * (`"nodebuffer"`, the default), `ArrayBuffer` or `Blob`.
      */
-    binaryType: "arraybuffer" | "nodebuffer";
+    binaryType: "arraybuffer" | "blob" | "nodebuffer";
 
     /**
      * Event handler for open event
@@ -5194,15 +5222,20 @@ declare module "bun" {
     /**
      * Event handler for message event
      */
-    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+    onmessage: ((this: WebSocket, ev: globalThis.MessageEvent) => any) | null;
 
     /**
-     * Event handler for error event
+     * Event handler for error event. Fires when the connection fails, followed by a
+     * `close` event with code `1006`. `ev.message` describes the failure. `ev.error` is
+     * an `Error` that may have a `code`, such as `"ECONNREFUSED"`, `"ENOTFOUND"`,
+     * `"SELF_SIGNED_CERT_IN_CHAIN"` or `"WS_ERR_INVALID_UTF8"`.
      */
-    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
-     * Event handler for close event
+     * Event handler for close event. Fires once the connection closes. `code` and
+     * `reason` come from the server's Close frame (`1005` if the frame had no code).
+     * `code` is `1006` if the connection ended without a Close frame.
      */
     onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
 
@@ -5210,12 +5243,15 @@ declare module "bun" {
      * Transmits data to the server
      * @param data The data to send to the server
      */
-    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+    send(data: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
-     * Closes the WebSocket connection
+     * Starts the closing handshake. Sends a Close frame and sets `readyState` to `CLOSING`.
+     * The `close` event fires once the server replies with its own Close frame and closes
+     * the connection. If the server hasn't done so after 30 seconds, Bun closes the connection.
      * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
      * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
+     * If omitted, the Close frame has no code or reason.
      * @param reason A human-readable string explaining why the connection is closing. Throws a
      * `SyntaxError` if longer than 123 bytes of UTF-8
      */
@@ -5225,13 +5261,13 @@ declare module "bun" {
      * Sends a ping frame to the server
      * @param data Optional data to include in the ping frame
      */
-    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    ping(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Sends a pong frame to the server
      * @param data Optional data to include in the pong frame
      */
-    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    pong(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Immediately terminates the connection
@@ -5341,12 +5377,12 @@ declare module "bun" {
      * Byte offset into the file where the mapping starts.
      * @default 0
      */
-    offset?: number;
+    offset?: number | bigint;
     /**
      * Maximum number of bytes to map. Clamped to the file size
      * (minus `offset`). Defaults to mapping the rest of the file.
      */
-    size?: number;
+    size?: number | bigint;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -5366,7 +5402,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null`; it is garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
+  function mmap(path: string, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
   /**
    * Write to stdout
@@ -5414,11 +5450,12 @@ declare module "bun" {
    */
   function color(
     input: ColorInput,
-    outputFormat?: /**
-     * True color ANSI color string, for use in terminals
-     * @example \x1b[38;2;100;200;200m
-     */
-    | "ansi"
+    outputFormat?:
+      /**
+       * True color ANSI color string, for use in terminals
+       * @example \x1b[38;2;100;200;200m
+       */
+      | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -5824,6 +5861,11 @@ declare module "bun" {
    */
   abstract class CryptoHashInterface<T> {
     /**
+     * The number of bytes the hash produces
+     */
+    readonly byteLength: number;
+
+    /**
      * Update the hash with data
      *
      * @param data Data to add to the hash
@@ -6157,7 +6199,7 @@ declare module "bun" {
      *
      * A value of `1` uses minimum memory but is slow and reduces compression ratio.
      *
-     * A value of `9` uses maximum memory for optimal speed. The default is `8`.
+     * A value of `9` uses maximum memory for optimal speed. The default is `8`. Any other value throws.
      */
     memLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     /**
@@ -6173,35 +6215,15 @@ declare module "bun" {
      * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
-      | -9
-      | -10
-      | -11
-      | -12
-      | -13
-      | -14
-      | -15
-      | 9
-      | 10
-      | 11
-      | 12
-      | 13
-      | 14
-      | 15
-      | 25
-      | 26
-      | 27
-      | 28
-      | 29
-      | 30
-      | 31;
+      -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
     /**
-     * Tunes the compression algorithm.
+     * Tunes the compression algorithm. One of these `constants` of `node:zlib`; any other value throws.
      *
-     * - `Z_DEFAULT_STRATEGY`: For normal data **(Default)**
-     * - `Z_FILTERED`: For data produced by a filter or predictor
-     * - `Z_HUFFMAN_ONLY`: Force Huffman encoding only (no string match)
-     * - `Z_RLE`: Limit match distances to one (run-length encoding)
-     * - `Z_FIXED` prevents the use of dynamic Huffman codes
+     * - `Z_DEFAULT_STRATEGY` (`0`): For normal data **(Default)**
+     * - `Z_FILTERED` (`1`): For data produced by a filter or predictor
+     * - `Z_HUFFMAN_ONLY` (`2`): Force Huffman encoding only (no string match)
+     * - `Z_RLE` (`3`): Limit match distances to one (run-length encoding)
+     * - `Z_FIXED` (`4`): Prevents the use of dynamic Huffman codes
      *
      * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
      *
@@ -8044,11 +8066,17 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
        * data. Reading begins only when you access the `stdout` or `stderr`
@@ -8149,15 +8177,15 @@ declare module "bun" {
       /**
        * User CPU time used by the process, in microseconds.
        */
-      user: number;
+      user: bigint;
       /**
        * System CPU time used by the process, in microseconds.
        */
-      system: number;
+      system: bigint;
       /**
        * Total CPU time used by the process, in microseconds.
        */
-      total: number;
+      total: bigint;
     };
     /**
      * The maximum resident set size (in bytes) used by the process during its lifetime.
@@ -9152,6 +9180,21 @@ declare module "bun" {
     [Symbol.dispose](): void;
   }
 
+  /** Options for the {@link FileSystemRouter} constructor. */
+  interface FileSystemRouterOptions {
+    /**
+     * The root directory containing the files to route
+     */
+    dir: string;
+    style: "nextjs";
+
+    /** The base path to use when routing */
+    assetPrefix?: string;
+    origin?: string;
+    /** Limit the pages to those with particular file extensions. */
+    fileExtensions?: string[];
+  }
+
   /**
    * Resolve routes against a directory of files using Next.js-style (`pages`
    * directory) conventions.
@@ -9174,29 +9217,19 @@ declare module "bun" {
      * @param options.dir The root directory containing the files to route
      * @param options.style The style of router to use (only "nextjs" is supported)
      */
-    constructor(options: {
-      /**
-       * The root directory containing the files to route
-       */
-      dir: string;
-      style: "nextjs";
-
-      /** The base path to use when routing */
-      assetPrefix?: string;
-      origin?: string;
-      /** Limit the pages to those with particular file extensions. */
-      fileExtensions?: string[];
-    });
+    constructor(options: FileSystemRouterOptions);
 
     // todo: URL
     match(input: string | Request | Response): MatchedRoute | null;
 
-    readonly assetPrefix: string;
-    readonly origin: string;
-    readonly style: string;
+    /** The `assetPrefix` option, or `null` if it was absent or empty */
+    readonly assetPrefix: string | null;
+    /** The `origin` option, or `null` if it was absent or empty */
+    readonly origin: string | null;
+    readonly style: "nextjs";
     readonly routes: Record<string, string>;
 
-    reload(): void;
+    reload(): this;
   }
 
   interface MatchedRoute {
@@ -9223,6 +9256,8 @@ declare module "bun" {
     readonly name: string;
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
+    /** @deprecated Use {@link src} */
+    readonly scriptSrc: string;
   }
 
   /**
@@ -9250,7 +9285,7 @@ declare module "bun" {
    *
    * Like `readline()`, but without the IO.
    */
-  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
+  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number | bigint): number;
 
   interface GlobScanOptions {
     /**
@@ -9314,10 +9349,14 @@ declare module "bun" {
    *     in the brackets.
    * - `{a,b}`
    *     Match one of the patterns contained in the braces.
-   *     The sub-patterns can use any of the other wildcards.
-   *     Braces may be nested up to 10 levels deep.
+   *     The sub-patterns can use any of the other wildcards, and braces can nest.
+   * - `{1..3}`, `{a..e}`, `{01..10}`, `{1..9..2}`
+   *     Matches any number or letter in the range. A third value is the step.
+   * - `?(a|b)`, `*(a|b)`, `+(a|b)`, `@(a|b)`, `!(a|b)`
+   *     Matches zero or one, zero or more, one or more, exactly one, or none
+   *     of the patterns. Parentheses without one of these prefixes are literal.
    * - `!`
-   *     Negates the result when at the start of the pattern.
+   *     Negates the result when at the start of the pattern, unless a "(" follows.
    *     Multiple "!" characters negate the pattern multiple times.
    * - `\`
    *     Escapes any of the special characters listed here.
@@ -9437,6 +9476,8 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * A lower limit also lowers how much a compressed PNG chunk, such as an
+       * ICC profile, may inflate to before the image is refused.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;
@@ -10670,6 +10711,8 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+    /** Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name */
+    unresolved?: string[];
     bin?: string | Record<string, string>;
     binDir?: string;
   };
@@ -10682,6 +10725,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    hasInstallScript?: true;
     bundled?: true;
   };
 

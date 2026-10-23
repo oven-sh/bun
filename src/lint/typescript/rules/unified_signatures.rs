@@ -41,7 +41,7 @@ enum Unify<'a> {
     },
 }
 
-/// What upstream's `getOverloadKey` is made of. Signatures with the same key are overloads.
+/// The parts of upstream's `getOverloadKey`. Signatures with the same key are overloads.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 struct OverloadKey<'a> {
     is_computed: bool,
@@ -57,7 +57,7 @@ enum OverloadInfo<'a> {
     Call,
     PrivateIdentifier(Name<'a>),
     Identifier(Name<'a>),
-    /// A literal, as it is written.
+    /// A literal's source text.
     Raw(&'a [u8]),
     /// Any other expression in brackets. Upstream has the same key for all of them.
     Expression,
@@ -72,7 +72,7 @@ struct Overload<'a> {
     signature: Func<'a>,
 }
 
-/// A signature, with what is asked about it for each of the other overloads.
+/// A signature, with the facts that are needed each time it's compared with another overload.
 struct Signature<'a> {
     func: Func<'a>,
     parameters: SmallVec<[Param<'a>; 8]>,
@@ -82,12 +82,17 @@ struct Signature<'a> {
     block_comment: Option<&'a [u8]>,
 }
 
-/// The names of the type parameters of the class or the interface that the overloads are in.
+/// The type parameter names of the class or interface that contains the overloads.
 struct OuterTypeParameters<'a>(FxHashSet<Name<'a>>);
 
 impl<'a> OuterTypeParameters<'a> {
     fn new(list: Option<List<'a, TypeParam<'a>>>) -> Self {
-        OuterTypeParameters(list.into_iter().flatten().map(|it| it.name().name()).collect())
+        OuterTypeParameters(
+            list.into_iter()
+                .flatten()
+                .map(|it| it.name().name())
+                .collect(),
+        )
     }
 
     fn has(&self, name: Name<'a>) -> bool {
@@ -100,9 +105,12 @@ fn get_overload_info<'a>(key: Key<'a>, file: &File<'a>) -> OverloadInfo<'a> {
     match key.kind() {
         KeyKind::Private(name) => OverloadInfo::PrivateIdentifier(name),
         KeyKind::Ident(name) => OverloadInfo::Identifier(name),
-        KeyKind::String(_) | KeyKind::Number(_) | KeyKind::ComputedNumber(_) | KeyKind::ComputedString(_) => {
+        KeyKind::String(_)
+        | KeyKind::Number(_)
+        | KeyKind::ComputedNumber(_)
+        | KeyKind::ComputedString(_) => {
             match file.slice(key.inner_span(file)) {
-                // A template is not a literal.
+                // A template isn't a literal.
                 [b'`', ..] => OverloadInfo::Expression,
                 raw => OverloadInfo::Raw(raw),
             }
@@ -121,7 +129,7 @@ fn get_overload_info<'a>(key: Key<'a>, file: &File<'a>) -> OverloadInfo<'a> {
     }
 }
 
-/// A method without a body, or a signature, that is not an accessor.
+/// A method without a body, or a signature. Accessors are excluded.
 fn overload_of_member(member: Member<'_>) -> Option<Overload<'_>> {
     let signature = member.func().filter(|it| !it.has_body())?;
     let file = member.file();
@@ -206,8 +214,8 @@ fn parameter_span(parameter: Param<'_>) -> Span {
     }
 }
 
-/// typescript-eslint's `getParameterTypeAnnotation`. The annotation of `a: T = 1` belongs to the
-/// `a`, not to the `AssignmentPattern` that the parameter is.
+/// typescript-eslint's `getParameterTypeAnnotation`. The annotation of `a: T = 1` belongs to the `a`, not to the
+/// parameter's `AssignmentPattern`.
 fn get_parameter_type_annotation(parameter: Param<'_>) -> Option<TypeNode<'_>> {
     match parameter.default() {
         Some(_) => None,
@@ -215,7 +223,7 @@ fn get_parameter_type_annotation(parameter: Param<'_>) -> Option<TypeNode<'_>> {
     }
 }
 
-/// `parameter.optional`, which is likewise that of the `AssignmentPattern`.
+/// `parameter.optional`, which is likewise read from the `AssignmentPattern`.
 fn is_optional(parameter: Param<'_>) -> bool {
     parameter.is_optional() && parameter.default().is_none()
 }
@@ -229,13 +237,16 @@ fn get_static_parameter_name(parameter: Param<'_>) -> Option<Name<'_>> {
 
 fn is_this_param(parameter: Option<&Param<'_>>) -> bool {
     parameter.is_some_and(|it| {
-        parameter_type(*it) == ParameterType::Identifier && it.pat().as_ident().is_some_and(|name| name.is("this"))
+        parameter_type(*it) == ParameterType::Identifier
+            && it.pat().as_ident().is_some_and(|name| name.is("this"))
     })
 }
 
 fn is_this_void_param(parameter: Option<&Param<'_>>) -> bool {
     is_this_param(parameter)
-        && parameter.and_then(|it| it.ty()).is_some_and(|ty| ty.is_keyword(Keyword::Void))
+        && parameter
+            .and_then(|it| it.ty())
+            .is_some_and(|ty| ty.is_keyword(Keyword::Void))
 }
 
 fn types_are_equal<'a>(a: Option<TypeNode<'a>>, b: Option<TypeNode<'a>>) -> bool {
@@ -253,7 +264,10 @@ fn parameters_have_equal_sigils<'a>(a: Param<'a>, b: Param<'a>) -> bool {
 
 fn parameters_are_equal<'a>(a: Param<'a>, b: Param<'a>) -> bool {
     parameters_have_equal_sigils(a, b)
-        && types_are_equal(get_parameter_type_annotation(a), get_parameter_type_annotation(b))
+        && types_are_equal(
+            get_parameter_type_annotation(a),
+            get_parameter_type_annotation(b),
+        )
 }
 
 /// True for optional/rest parameters.
@@ -265,12 +279,17 @@ fn type_parameters_are_equal<'a>(a: TypeParam<'a>, b: TypeParam<'a>) -> bool {
     a.name().name() == b.name().name() && types_are_equal(a.constraint(), b.constraint())
 }
 
-/// Whether `ty` is one of `outer`, or an array of it, or `keyof` or `readonly` of it, and so on.
+/// True if `ty` is one of `outer`, or an array, `keyof` or `readonly` of it, and so on.
 fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: &OuterTypeParameters<'a>) -> bool {
     loop {
         ty = match ty.kind() {
-            TypeKind::Ref { name, .. } => return name.as_ident().is_some_and(|name| outer.has(name.name())),
-            TypeKind::Array(inner) | TypeKind::Keyof(inner) | TypeKind::Readonly(inner) | TypeKind::Unique(inner) => inner,
+            TypeKind::Ref { name, .. } => {
+                return name.as_ident().is_some_and(|name| outer.has(name.name()));
+            }
+            TypeKind::Array(inner)
+            | TypeKind::Keyof(inner)
+            | TypeKind::Readonly(inner)
+            | TypeKind::Unique(inner) => inner,
             TypeKind::Mapped(mapped) => match mapped.ty() {
                 Some(inner) => inner,
                 None => return false,
@@ -281,7 +300,10 @@ fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: &OuterTypeParam
 }
 
 /// True if any of the outer type parameters are used in a signature.
-fn signature_uses_type_parameter<'a>(parameters: &[Param<'a>], outer: &OuterTypeParameters<'a>) -> bool {
+fn signature_uses_type_parameter<'a>(
+    parameters: &[Param<'a>],
+    outer: &OuterTypeParameters<'a>,
+) -> bool {
     !outer.0.is_empty()
         && parameters
             .iter()
@@ -289,10 +311,12 @@ fn signature_uses_type_parameter<'a>(parameters: &[Param<'a>], outer: &OuterType
             .any(|ty| type_contains_type_parameter(ty, outer))
 }
 
-/// The last block comment before the declaration of `signature`.
+/// The last block comment before `signature`'s declaration.
 fn get_block_comment_for_node(signature: Func<'_>) -> Option<&[u8]> {
     let mut comments = signature.file().comments_before(signature.owner());
-    comments.rfind(|comment| comment.kind() == TokenKind::Block).map(Token::comment_value)
+    comments
+        .rfind(|comment| comment.kind() == TokenKind::Block)
+        .map(Token::comment_value)
 }
 
 /// Detect no difference, i.e. `a(x: number, y: string)` and `a(x: number, y: string)`,
@@ -346,11 +370,18 @@ fn signatures_differ_by_optional_or_rest_parameter<'a>(
     // If one is has 2+ parameters more than the other, they must all be optional/rest.
     // Differ by optional parameters: f() and f(x), f() and f(x, ?y, ...z)
     // Not allowed: f() and f(x, y)
-    if !longer.iter().skip(min_length + 1).all(|it| parameter_may_be_missing(*it)) {
+    if !longer
+        .iter()
+        .skip(min_length + 1)
+        .all(|it| parameter_may_be_missing(*it))
+    {
         return None;
     }
     let have_equal_types = |(a, b): (&Param<'a>, &Param<'a>)| {
-        types_are_equal(get_parameter_type_annotation(*a), get_parameter_type_annotation(*b))
+        types_are_equal(
+            get_parameter_type_annotation(*a),
+            get_parameter_type_annotation(*b),
+        )
     };
     if !sig1.iter().zip(sig2).all(have_equal_types) {
         return None;
@@ -370,7 +401,7 @@ struct UnionMembers<'a> {
 }
 
 impl<'a> UnionMembers<'a> {
-    /// Adds the members of `ty` that are not written in it already.
+    /// Adds the members of `ty` whose text isn't in the list yet.
     fn add(&mut self, ty: TypeNode<'a>) {
         let mut stack: SmallVec<[TypeNode<'a>; 8]> = smallvec::smallvec![ty];
         while let Some(ty) = stack.pop() {
@@ -419,11 +450,11 @@ fn get_unified_type_text<'a>(type0: Option<TypeNode<'a>>, type1: Option<TypeNode
     text
 }
 
-/// `other`: where the other overload is. With only 2 overloads there is no need to say which it is.
+/// `other` is the other overload's location. With only 2 overloads there's no need to say which one it is.
 fn failure_string_start(file: &File<'_>, other: Option<Span>) -> String {
     match other {
         None => "These overloads can be combined into one signature".to_owned(),
-        // oxlint does not say which it is.
+        // oxlint doesn't say which one it is.
         Some(_) if file.language().is_oxlint => {
             "This overload can be combined with another overload into one signature".to_owned()
         }
@@ -462,12 +493,27 @@ impl UnifiedSignatures {
             return None;
         }
         match a.parameters.len() == b.parameters.len() {
-            true => signatures_have_same_amount_of_parameters(a.func, b.func, &a.parameters, &b.parameters),
-            false => signatures_differ_by_optional_or_rest_parameter(a.func, b.func, &a.parameters, &b.parameters),
+            true => signatures_have_same_amount_of_parameters(
+                a.func,
+                b.func,
+                &a.parameters,
+                &b.parameters,
+            ),
+            false => signatures_differ_by_optional_or_rest_parameter(
+                a.func,
+                b.func,
+                &a.parameters,
+                &b.parameters,
+            ),
         }
     }
 
-    fn check_overloads<'a>(&self, overloads: &[Func<'a>], outer: &OuterTypeParameters<'a>, cx: &Cx<'a, Self>) {
+    fn check_overloads<'a>(
+        &self,
+        overloads: &[Func<'a>],
+        outer: &OuterTypeParameters<'a>,
+        cx: &Cx<'a, Self>,
+    ) {
         let only2 = overloads.len() == 2;
         let start = |other: Span| failure_string_start(cx, (!only2).then_some(other));
         let signatures: SmallVec<[Signature<'a>; 4]> = (overloads.iter())
@@ -476,7 +522,10 @@ impl UnifiedSignatures {
                 Signature {
                     func,
                     uses_type_parameter: signature_uses_type_parameter(&parameters, outer),
-                    block_comment: self.ignore_overloads_with_different_jsdoc.then(|| get_block_comment_for_node(func)).flatten(),
+                    block_comment: self
+                        .ignore_overloads_with_different_jsdoc
+                        .then(|| get_block_comment_for_node(func))
+                        .flatten(),
                     parameters,
                 }
             })
@@ -506,7 +555,9 @@ impl UnifiedSignatures {
                     cx.report(parameter_span(p1), SINGLE_PARAMETER_DIFFERENCE)
                         .data("failureStringStart", start(parameter_span(p0)))
                         .data("types", types)
-                        .labels_with(|labels| labels.push(parameter_span(p0), "with this overload parameter"));
+                        .labels_with(|labels| {
+                            labels.push(parameter_span(p0), "with this overload parameter")
+                        });
                 }
                 Some(Unify::ExtraParameter {
                     extra_parameter,
@@ -519,8 +570,13 @@ impl UnifiedSignatures {
                     cx.report(parameter_span(extra_parameter), message)
                         .data("failureStringStart", start(other_signature.estree_span()))
                         .labels_with(|labels| {
-                            if let Some(anchor_parameter) = other_signature.params_with_this().last() {
-                                labels.push(parameter_span(anchor_parameter), "matching overload ends here");
+                            if let Some(anchor_parameter) =
+                                other_signature.params_with_this().last()
+                            {
+                                labels.push(
+                                    parameter_span(anchor_parameter),
+                                    "matching overload ends here",
+                                );
                             }
                         });
                 }
@@ -530,14 +586,16 @@ impl UnifiedSignatures {
                 }) => {
                     cx.report(signature1.estree_span(), ALL_PARAMETERS_ARE_SAME)
                         .data("failureStringStart", start(signature0.estree_span()))
-                        .labels_with(|labels| labels.push(signature0.estree_span(), "with this overload signature"));
+                        .labels_with(|labels| {
+                            labels.push(signature0.estree_span(), "with this overload signature")
+                        });
                 }
             }
         }
     }
 
-    /// `overloads`: what is directly in a file, a namespace, a class declaration, an interface or
-    /// a type literal. `outer`: the type parameters of the class or the interface.
+    /// `overloads` are the overloads directly in a file, a namespace, a class declaration, an interface or a type
+    /// literal. `outer` is the type parameters of the class or interface.
     fn check_scope<'a>(
         &self,
         overloads: impl Iterator<Item = Overload<'a>>,
@@ -545,32 +603,47 @@ impl UnifiedSignatures {
         cx: &Cx<'a, Self>,
     ) {
         let overloads: SmallVec<[Overload<'a>; 16]> = overloads.collect();
-        let has_same_key_as_earlier =
-            |(i, it): (usize, &Overload<'a>)| overloads[..i].iter().any(|earlier| earlier.key == it.key);
+        let has_same_key_as_earlier = |(i, it): (usize, &Overload<'a>)| {
+            overloads[..i].iter().any(|earlier| earlier.key == it.key)
+        };
         if !overloads.spilled() && !overloads.iter().enumerate().any(has_same_key_as_earlier) {
             return;
         }
         let mut by_key: FxHashMap<OverloadKey<'a>, SmallVec<[Func<'a>; 4]>> = FxHashMap::default();
         for overload in &overloads {
-            by_key.entry(overload.key).or_default().push(overload.signature);
+            by_key
+                .entry(overload.key)
+                .or_default()
+                .push(overload.signature);
         }
         let outer = OuterTypeParameters::new(outer);
-        for signatures in by_key.values().filter(|it| it.len() > 1) {
+        let several = by_key.values().filter(|it| it.len() > 1);
+        for signatures in
+            utils::sort::collect_sorted_by_key(several, |it| it.first().map(|it| it.span().start))
+        {
             self.check_overloads(signatures, &outer, cx);
         }
     }
 }
 
 impl Rule for UnifiedSignatures {
-    const META: Meta = Meta::typescript("unified-signatures", Kind::Suggestion).presets(Presets::STRICT).reports_on_exit();
-    const ON: On = On::new().classes().stmts(&[StmtTag::Interface, StmtTag::Module]).types(&[TypeTag::Object]).finish();
+    const META: Meta = Meta::typescript("unified-signatures", Kind::Suggestion)
+        .presets(Presets::STRICT)
+        .reports_on_exit();
+    const ON: On = On::new()
+        .classes()
+        .stmts(&[StmtTag::Interface, StmtTag::Module])
+        .types(&[TypeTag::Object])
+        .finish();
     no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         UnifiedSignatures {
-            ignore_differently_named_parameters: options.bool_or("ignoreDifferentlyNamedParameters", false),
-            ignore_overloads_with_different_jsdoc: options.bool_or("ignoreOverloadsWithDifferentJSDoc", false),
+            ignore_differently_named_parameters: options
+                .bool_or("ignoreDifferentlyNamedParameters", false),
+            ignore_overloads_with_different_jsdoc: options
+                .bool_or("ignoreOverloadsWithDifferentJSDoc", false),
         }
     }
 
@@ -588,7 +661,15 @@ impl Rule for UnifiedSignatures {
                 self.check_scope(overloads, Some(interface.type_params()), cx);
             }
             StmtKind::Module(module) => {
-                self.check_scope(module.innermost().body().iter().filter_map(overload_of_statement), None, cx);
+                self.check_scope(
+                    module
+                        .innermost()
+                        .body()
+                        .iter()
+                        .filter_map(overload_of_statement),
+                    None,
+                    cx,
+                );
             }
             _ => {}
         }
@@ -601,6 +682,10 @@ impl Rule for UnifiedSignatures {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        self.check_scope(cx.file().body().iter().filter_map(overload_of_statement), None, cx);
+        self.check_scope(
+            cx.file().body().iter().filter_map(overload_of_statement),
+            None,
+            cx,
+        );
     }
 }

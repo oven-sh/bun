@@ -1,7 +1,7 @@
-//! `resolve` of eslint-module-utils: the file that a file means by a name, for the resolvers of
+//! `resolve` from eslint-module-utils: resolves a specifier from a file with the resolvers in
 //! `settings["import/resolver"]`.
 
-use crate::import_settings::is_of_package;
+use crate::import_settings::is_package_or_file_in_it;
 use bun_core::strings;
 use bun_lint::modules::{Lookup, Modules};
 use bun_lint::paths;
@@ -10,24 +10,24 @@ use bun_lint::utils::node::is_builtin_module;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// Those of eslint-import-resolver-node.
+/// eslint-import-resolver-node's default extensions.
 const EXTENSIONS: [&[u8]; 4] = [b".mjs", b".js", b".json", b".node"];
 
-/// The resolvers of a file.
+/// A file's resolvers.
 pub(crate) struct Resolvers<'s> {
-    /// The `Map` of `resolverReducer`: by the name as it is written.
+    /// `resolverReducer`'s `Map`, keyed by the name as written in the settings.
     map: SmallVec<[(&'s [u8], Lookup<'s>); 2]>,
     /// `settings["import/core-modules"]`: an array or a string.
     core_modules: Option<&'s Json>,
 }
 
-/// What `resolve` returns.
+/// The return value of `resolve`.
 pub(crate) enum Resolved {
     /// `undefined`
     Nothing,
-    /// `null`: a module of Node.js.
+    /// `null`: a Node.js builtin module.
     Builtin,
-    /// Separated by `/`. Absolute, unless it is in one of the `paths` that is not.
+    /// Uses `/` as the separator. Absolute, unless it was found through a relative entry of `paths`.
     File(Vec<u8>),
 }
 
@@ -46,7 +46,7 @@ impl Resolved {
     }
 }
 
-/// `[].concat(value)`. `None` for what is no string.
+/// `[].concat(value)`. Yields `None` for an element that isn't a string.
 fn concat(value: &Json) -> impl Iterator<Item = Option<&[u8]>> {
     let items = match value {
         Json::Array(items) => items.as_slice(),
@@ -55,7 +55,7 @@ fn concat(value: &Json) -> impl Iterator<Item = Option<&[u8]>> {
     items.iter().map(Json::as_str)
 }
 
-/// `opts` of eslint-import-resolver-node, as `resolve` reads them.
+/// eslint-import-resolver-node's `opts`, interpreted the way `resolve` reads them.
 fn opts(config: Option<&Json>) -> Lookup<'_> {
     let option = |name: &[u8]| config.and_then(|it| it.get(name));
     let extensions: SmallVec<[&[u8]; 4]> = match option(b"extensions") {
@@ -80,7 +80,7 @@ fn opts(config: Option<&Json>) -> Lookup<'_> {
         Some(directories) => concat(directories).collect(),
         None => Some(SmallVec::from_slice(&[&b"node_modules"[..]])),
     };
-    // `path.join` throws at what is no string, before anything is looked at: no package is found.
+    // `path.join` throws on a value that isn't a string before any lookup happens, so no package is found.
     let (roots, module_directories) = roots.zip(directories).unwrap_or_default();
     Lookup::NodeWith {
         extensions,
@@ -89,9 +89,10 @@ fn opts(config: Option<&Json>) -> Lookup<'_> {
     }
 }
 
-/// `requireResolver`, with its configuration. `None`: it is not known here.
+/// `requireResolver`, combined with the resolver's config. `None` for an unsupported resolver.
 fn require_resolver<'s>(name: &[u8], config: Option<&'s Json>) -> Option<Lookup<'s>> {
-    let is = |short: &[u8], package: &[u8]| name == short || is_of_package(name, package);
+    let is =
+        |short: &[u8], package: &[u8]| name == short || is_package_or_file_in_it(name, package);
     if is(b"node", b"eslint-import-resolver-node") {
         Some(opts(config))
     } else if is(b"typescript", b"eslint-import-resolver-typescript") {
@@ -119,7 +120,7 @@ impl<'s> Resolvers<'s> {
         Some(())
     }
 
-    /// `resolverReducer`. `None`: it throws, or a name is not known here.
+    /// `resolverReducer`. `None` if it throws or a resolver isn't supported.
     fn resolver_reducer(&mut self, resolvers: &'s Json) -> Option<()> {
         let mut pending: SmallVec<[std::slice::Iter<'s, Json>; 2]> = SmallVec::new();
         pending.push(std::slice::from_ref(resolvers).iter());
@@ -143,8 +144,7 @@ impl<'s> Resolvers<'s> {
         Some(())
     }
 
-    /// `None`: nothing can be said about what a name means: a resolver is not known here, or
-    /// `resolve` throws.
+    /// `None` if specifiers can't be resolved, because a resolver isn't supported or `resolve` throws.
     pub(crate) fn of(settings: &'s Json) -> Option<Resolvers<'s>> {
         // `new Set(..)`
         let core_modules = match settings.get(b"import/core-modules") {
@@ -157,7 +157,7 @@ impl<'s> Resolvers<'s> {
             core_modules,
         };
         match (settings.get(b"import/resolver")).filter(|it| it.is_truthy()) {
-            Some(written) => resolvers.resolver_reducer(written)?,
+            Some(configured) => resolvers.resolver_reducer(configured)?,
             // "backward compatibility"
             None => resolvers.set(b"node", settings.get(b"import/resolve"))?,
         }
@@ -168,7 +168,7 @@ impl<'s> Resolvers<'s> {
     fn is_core_module(&self, specifier: &[u8]) -> bool {
         match self.core_modules {
             Some(Json::Array(items)) => items.iter().any(|it| it.as_str() == Some(specifier)),
-            // The code points of a string.
+            // `new Set(string)` holds the string's code points.
             Some(Json::String(points)) => {
                 let lead = specifier.first().copied().unwrap_or_default();
                 usize::from(strings::wtf8_byte_sequence_length(lead)) == specifier.len()
@@ -189,7 +189,7 @@ impl<'s> Resolvers<'s> {
         if self.is_core_module(specifier) {
             return Resolved::Builtin;
         }
-        // Each resolver begins with `isCoreModule`.
+        // Each resolver starts with an `isCoreModule` check.
         if !self.map.is_empty() && is_builtin_module(specifier) {
             return Resolved::Builtin;
         }
@@ -199,7 +199,7 @@ impl<'s> Resolvers<'s> {
         } else {
             Cow::Owned(paths::resolve(modules.cwd(), from))
         };
-        // For `path.resolve` and `path.join` of POSIX a `\` is a part of a name.
+        // POSIX `path.resolve` and `path.join` treat `\` as part of a name.
         let is_posix = paths::Style::of(&from) == paths::Style::Posix;
         if is_posix && strings::contains_char(specifier, b'\\') {
             return Resolved::Nothing;

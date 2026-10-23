@@ -5,8 +5,8 @@ use bun_lint_eslint::rules::no_magic_numbers::Checker;
 pub struct NoMagicNumbers(Checker);
 
 impl Rule for NoMagicNumbers {
-    const META: Meta =
-        Meta::typescript("no-magic-numbers", Kind::Suggestion).extends_base_rule("no-magic-numbers");
+    const META: Meta = Meta::typescript("no-magic-numbers", Kind::Suggestion)
+        .extends_base_rule("no-magic-numbers");
     const ON: On = Checker::ON;
     no_state!();
 
@@ -14,8 +14,8 @@ impl Rule for NoMagicNumbers {
         NoMagicNumbers(Checker::new(options, true))
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        self.0.narrow()
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        self.0.narrow(file)
     }
 
     #[inline]

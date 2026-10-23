@@ -24,7 +24,7 @@ pub struct PreferNullishCoalescing {
     ignore_conditional_tests: bool,
     ignore_if_statements: bool,
     ignore_mixed_logical_expressions: bool,
-    /// What `ignorePrimitives` says, as the flags of the types to ignore.
+    /// `ignorePrimitives`, as the flags of the types to ignore.
     ignorable_flags: TypeFlags,
     ignore_ternary_tests: bool,
 }
@@ -78,8 +78,7 @@ fn is_null_literal_or_undefined_identifier(node: Expr) -> bool {
     is_null_literal(node) || is_undefined_identifier(node)
 }
 
-/// The operator and the operands of a `BinaryExpression`, which a `LogicalExpression` and a
-/// `SequenceExpression` are not.
+/// The operator and operands of a `BinaryExpression`. A `LogicalExpression` or a `SequenceExpression` isn't one.
 fn as_binary_expression(node: Expr<'_>) -> Option<(BinOp, Expr<'_>, Expr<'_>)> {
     match node.kind() {
         ExprKind::Binary {
@@ -98,23 +97,49 @@ fn is_built_in_boolean_call(node: Node) -> bool {
     let ExprKind::Call(call) = expression.kind() else {
         return false;
     };
+    // tsgolint doesn't treat a parenthesized callee as an identifier.
     call.callee().is_ident("Boolean")
+        && !(call.callee().is_parenthesized() && expression.file().language().is_oxlint)
         && !call.args().is_empty()
-        && find_variable(node.scope(), "Boolean").is_none()
+        // tsgolint requires every declaration of the callee's symbol to be in a declaration file.
+        && match expression.file().language().is_oxlint {
+            true => call.callee().ts_symbol().is_none_or(|symbol| {
+                symbol.declarations().all(|it| it.get_source_file().is_declaration_file())
+            }),
+            false => find_variable(node.scope(), "Boolean").is_none(),
+        }
+}
+
+/// typescript-go's `IsLogicalExpression`: a `&&`, `||` or `??` behind any number of `!`.
+fn is_logical_expression(mut node: Expr) -> bool {
+    while let ExprKind::Unary {
+        op: UnOp::Not,
+        operand,
+    } = node.kind()
+    {
+        node = operand;
+    }
+    matches!(
+        node.binary_op(),
+        Some(BinOp::And | BinOp::Or | BinOp::Nullish)
+    )
 }
 
 fn is_boolean_constructor_context(mut node: Expr) -> bool {
+    let is_oxlint = node.file().language().is_oxlint;
     loop {
         let parent = node.parent();
         let Node::Expr(expression) = parent else {
             return false;
         };
-        let is_passed_on = match expression.kind() {
+        let defers_to_parent = match expression.kind() {
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,
                 ..
             } => true,
             ExprKind::Cond { yes, no, .. } => yes == node || no == node,
+            // tsgolint calls `ast.IsLogicalExpression` on the parent, which looks through `!`.
+            ExprKind::Unary { op: UnOp::Not, .. } => is_oxlint && is_logical_expression(expression),
             ExprKind::Binary {
                 op: BinOp::Comma,
                 right,
@@ -122,15 +147,15 @@ fn is_boolean_constructor_context(mut node: Expr) -> bool {
             } => right == node && is_sequence_root(expression),
             _ => false,
         };
-        if !is_passed_on {
+        if !defers_to_parent {
             return is_built_in_boolean_call(parent);
         }
         node = expression;
     }
 }
 
-/// Whether [`is_conditional_test`] and [`is_boolean_constructor_context`] say of `at` what they say of `parent`.
-fn is_passed_on<'a>(at: Node<'a>, parent: Node<'a>) -> bool {
+/// True if [`is_conditional_test`] and [`is_boolean_constructor_context`] return the same for `at` as for `parent`.
+fn defers_to_parent<'a>(at: Node<'a>, parent: Node<'a>) -> bool {
     let (Node::Expr(at), Node::Expr(parent)) = (at, parent) else {
         return false;
     };
@@ -144,23 +169,24 @@ fn is_passed_on<'a>(at: Node<'a>, parent: Node<'a>) -> bool {
     }
 }
 
-/// `ask(node)`, where `ask` is one of these two. It is asked about the outermost expression that `node` is passed on to: to
-/// walk up from each link of `a || a || ..` takes quadratic time.
+/// Returns `ask(node)`, where `ask` is one of those two functions. It calls `ask` on the outermost expression that has
+/// the same answer and caches the result, because walking up from each link of `a || a || ..` takes quadratic time.
 fn ask_outermost<'a>(
     node: Expr<'a>,
     known: &mut AncestorMemo<'a, bool>,
     ask: fn(Expr<'a>) -> bool,
 ) -> bool {
     let decide = |at: Node<'a>, parent: Node<'a>| match at {
-        _ if is_passed_on(at, parent) => None,
+        Node::Expr(at) if at.with_jsdoc_cast() != at => Some(false),
+        _ if defers_to_parent(at, parent) => None,
         Node::Expr(at) => Some(ask(at)),
         _ => Some(false),
     };
     known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
-/// [`is_mixed_logical_expression`]. It is the same for all the `||` that are operands of each other, so it is found out for the
-/// outermost of them.
+/// Cached [`is_mixed_logical_expression`]. The answer is the same for every `||` in a chain of nested `||` operands, so
+/// it's computed once, for the outermost one.
 fn is_in_mixed_logical_expression<'a>(
     (node, left, right): (Expr<'a>, Expr<'a>, Expr<'a>),
     known: &mut AncestorMemo<'a, bool>,
@@ -169,7 +195,7 @@ fn is_in_mixed_logical_expression<'a>(
         return is_mixed_logical_expression(node, left, right);
     }
     let decide = |at: Node<'a>, parent: Node<'a>| match (at, parent) {
-        (_, Node::Expr(parent)) if is_logical_or_operator(parent) => None,
+        (Node::Expr(at), Node::Expr(parent)) if at.with_jsdoc_cast() == at && is_logical_or_operator(parent) => None,
         (Node::Expr(at), _) => match at.kind() {
             ExprKind::Binary { left, right, .. } => {
                 Some(is_mixed_logical_expression(at, left, right))
@@ -181,7 +207,7 @@ fn is_in_mixed_logical_expression<'a>(
     known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
-/// What is known from the walks up from other nodes.
+/// Cached results of walking up from earlier nodes.
 #[derive(Default)]
 pub struct Walks<'a> {
     /// [`is_conditional_test`]
@@ -192,12 +218,17 @@ pub struct Walks<'a> {
     mixed: AncestorMemo<'a, bool>,
 }
 
-/// `left`, `right`: the operands of `node`, which is an `a || b` or an `a ||= b`.
+/// `left` and `right` are the operands of `node`, which is an `a || b` or an `a ||= b`.
 fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> bool {
     let mut seen = FxHashSet::default();
     let mut queue: Vec<Expr<'a>> = Vec::new();
-    queue.extend(node.parent().as_expr());
-    queue.extend([left, right]);
+    let parent_of = |it: Expr<'a>| it.parent().as_expr().filter(|_| it.with_jsdoc_cast() == it);
+    // In tsgolint the parent of an `a ||= b` operand is a `ParenthesizedExpression`, which isn't a logical expression,
+    // so tsgolint only searches below the `||=`.
+    if is_logical_or_operator(node) || !node.file().language().is_oxlint {
+        queue.extend(parent_of(node));
+    }
+    queue.extend([left.with_jsdoc_cast(), right.with_jsdoc_cast()]);
     let mut next = 0;
     while let Some(&current) = queue.get(next) {
         next += 1;
@@ -206,14 +237,14 @@ fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'
         }
         match current.kind() {
             ExprKind::Binary { op: BinOp::And, .. } => return true,
-            // The pieces of the node, to catch `a || b || c && d`.
+            // Also search the operands, to catch `a || b || c && d`.
             ExprKind::Binary {
                 op: BinOp::Or,
                 left,
                 right,
             } => {
-                queue.extend(current.parent().as_expr());
-                queue.extend([left, right]);
+                queue.extend(parent_of(current));
+                queue.extend([left.with_jsdoc_cast(), right.with_jsdoc_cast()]);
             }
             _ => {}
         }
@@ -221,11 +252,15 @@ fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'
     false
 }
 
-/// Whether two nodes access the same members in the same order, whatever is optional: `a.b.c`,
-/// `a?.b.c`, `a.b?.c`, `(a?.b).c` and `(a.b)?.c` are similar.
+/// True if two nodes access the same members in the same order, ignoring optional chaining: `a.b.c`, `a?.b.c`,
+/// `a.b?.c`, `(a?.b).c` and `(a.b)?.c` are similar.
 fn are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
+    if a.file().language().is_oxlint {
+        return tsgolint_are_nodes_similar_member_access(a, b);
+    }
     let is_private = |name: Ident<'a>| name.bytes().starts_with(b"#");
     loop {
+        (a, b) = (a.with_jsdoc_cast(), b.with_jsdoc_cast());
         (a, b) = match (a.kind(), b.kind()) {
             (
                 ExprKind::Dot { obj: a, name, .. },
@@ -265,7 +300,116 @@ fn are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool
     }
 }
 
-/// `test`: of a conditional expression or an `if` statement.
+/// tsgolint's `getPropertyNameFromAccess`: the name of `a.b`, `a.#b`, `a['b']` and ``a[`b`]``. Empty for anything else.
+fn tsgolint_get_property_name_from_access(node: Expr<'_>) -> &[u8] {
+    match node.kind() {
+        ExprKind::Dot { name, .. } => name.bytes(),
+        ExprKind::Index { index, .. } if !index.is_parenthesized() => match index.kind() {
+            ExprKind::String(value) => value.bytes(),
+            ExprKind::Template(template) => match template.as_static() {
+                Some(value) => value.bytes(),
+                None => b"",
+            },
+            _ => b"",
+        },
+        _ => b"",
+    }
+}
+
+/// tsgolint's `isNodeEqual` for two nodes, not counting the parentheses around them. Inside them, a parenthesized node
+/// never equals anything, and neither do two `a.#b`, two `true` or two `a!`. `a?.b` equals `a.b`, and `a.b` doesn't
+/// equal `a[b]`.
+fn tsgolint_is_node_equal<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
+    loop {
+        (a, b) = match (a.kind(), b.kind()) {
+            (ExprKind::This, ExprKind::This) | (ExprKind::Null, ExprKind::Null) => return true,
+            (ExprKind::Ident(a), ExprKind::Ident(b))
+            | (ExprKind::String(a), ExprKind::String(b))
+            | (ExprKind::BigInt(a), ExprKind::BigInt(b)) => return a == b,
+            (ExprKind::Number(a), ExprKind::Number(b)) => return a == b,
+            (ExprKind::Template(a), ExprKind::Template(b)) => {
+                return matches!((a.as_static(), b.as_static()), (Some(a), Some(b)) if a == b);
+            }
+            (
+                ExprKind::Dot { obj: a, name, .. },
+                ExprKind::Dot {
+                    obj: b,
+                    name: other,
+                    ..
+                },
+            ) => {
+                if name.bytes().starts_with(b"#") || name.name() != other.name() {
+                    return false;
+                }
+                (a, b)
+            }
+            (
+                ExprKind::Index { obj: a, index, .. },
+                ExprKind::Index {
+                    obj: b,
+                    index: other,
+                    ..
+                },
+            ) => {
+                if index.is_parenthesized()
+                    || other.is_parenthesized()
+                    || !tsgolint_is_node_equal(index, other)
+                {
+                    return false;
+                }
+                (a, b)
+            }
+            _ => return false,
+        };
+        if a.is_parenthesized() || b.is_parenthesized() {
+            return false;
+        }
+    }
+}
+
+/// tsgolint's `areNodesSimilarMemberAccess`. It strips one `!` from each node, compares accesses by name, and compares
+/// those without a name with [`tsgolint_is_node_equal`].
+fn tsgolint_are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
+    loop {
+        (a, b) = (a.with_jsdoc_cast(), b.with_jsdoc_cast());
+        for node in [&mut a, &mut b] {
+            if let ExprKind::NonNull(operand) = node.kind() {
+                // Stripping one `!` from `a!!` or `(a)!` leaves a node that never equals anything.
+                if node.non_null_count() > 1 || operand.is_parenthesized() {
+                    return false;
+                }
+                *node = operand;
+            }
+        }
+        let (
+            ExprKind::Dot { obj: a_object, .. } | ExprKind::Index { obj: a_object, .. },
+            ExprKind::Dot { obj: b_object, .. } | ExprKind::Index { obj: b_object, .. },
+        ) = (a.kind(), b.kind())
+        else {
+            return tsgolint_is_node_equal(a, b);
+        };
+        let (a_name, b_name) = (
+            tsgolint_get_property_name_from_access(a),
+            tsgolint_get_property_name_from_access(b),
+        );
+        let is_same_property = match (a.kind(), b.kind()) {
+            _ if !a_name.is_empty() && !b_name.is_empty() => a_name == b_name,
+            (ExprKind::Index { index: a_index, .. }, ExprKind::Index { index: b_index, .. }) => {
+                !a_index.is_parenthesized()
+                    && !b_index.is_parenthesized()
+                    && tsgolint_is_node_equal(a_index, b_index)
+            }
+            (ExprKind::Dot { .. }, ExprKind::Dot { .. }) => a_name == b_name,
+            _ => false,
+        };
+        if !is_same_property {
+            return false;
+        }
+        (a, b) = (a_object, b_object);
+    }
+}
+
+/// `test` is the test of a conditional expression or an `if` statement.
 fn get_operator_and_nodes_inside_test_expression(
     test: Expr<'_>,
 ) -> (Nodes<'_>, Option<NullishCheckOperator>) {
@@ -283,6 +427,12 @@ fn get_operator_and_nodes_inside_test_expression(
             left,
             right,
         } => {
+            // tsgolint doesn't treat a parenthesized operand as a comparison.
+            if (left.is_parenthesized() || right.is_parenthesized())
+                && test.file().language().is_oxlint
+            {
+                return (Nodes::new(), None);
+            }
             let (Some(left), Some(right)) =
                 (as_binary_expression(left), as_binary_expression(right))
             else {
@@ -332,7 +482,7 @@ fn get_operator_and_nodes_inside_test_expression(
     }
 }
 
-/// Each comment as it is written, followed by `separator`.
+/// Each comment's source text, followed by `separator`.
 fn format_comments(comments: Tokens, separator: u8) -> Vec<u8> {
     let mut out = Vec::new();
     for comment in comments {
@@ -343,10 +493,16 @@ fn format_comments(comments: Tokens, separator: u8) -> Vec<u8> {
 }
 
 impl PreferNullishCoalescing {
-    /// Whether a type that is tested for truthiness is eligible for conversion to a check for
-    /// nullishness.
+    /// True if a type that's tested for truthiness can be converted to a nullishness check.
     fn is_type_eligible_for_prefer_nullish(&self, ty: Type) -> bool {
-        if !is_nullable_type(ty) || ty.is_unresolved() {
+        // tsgolint doesn't treat `void` as nullable.
+        let is_nullable = match ty.file().language().is_oxlint {
+            true => get_type_flags(ty).intersects(
+                TypeFlags::ANY | TypeFlags::UNKNOWN | TypeFlags::NULL | TypeFlags::UNDEFINED,
+            ),
+            false => is_nullable_type(ty),
+        };
+        if !is_nullable || ty.is_unresolved() {
             return false;
         }
         if self.ignorable_flags.is_empty() {
@@ -363,11 +519,11 @@ impl PreferNullishCoalescing {
         })
     }
 
-    /// Whether a construct that uses the truthiness of `test_node` is eligible for conversion:
-    /// whether it is in a permitted place, and whether the type of what is tested is eligible.
+    /// True if a construct that uses the truthiness of `test_node` can be converted: it's in a permitted position and
+    /// the tested type is eligible.
     ///
-    /// `node`: the `a || b`, `a ||= b` or `a ? a : b` to be converted. `None` for an `if` statement,
-    /// which is in no place that matters.
+    /// `node` is the `a || b`, `a ||= b` or `a ? a : b` to convert, or `None` for an `if` statement, whose position
+    /// never matters.
     fn is_truthiness_check_eligible_for_prefer_nullish<'a>(
         &self,
         node: Option<Expr<'a>>,
@@ -383,6 +539,8 @@ impl PreferNullishCoalescing {
             let is_argument = || {
                 matches!(node.kind(), ExprKind::Cond { .. })
                     && matches!(node.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Call(_)))
+                    // In tsgolint the parent of a parenthesized node isn't the call.
+                    && !(node.is_parenthesized() && node.file().language().is_oxlint)
             };
             if self.ignore_boolean_coercion
                 && ask_outermost(
@@ -398,7 +556,7 @@ impl PreferNullishCoalescing {
         self.is_type_eligible_for_prefer_nullish(test_node.ty())
     }
 
-    /// `left`, `right`: the operands of `node`.
+    /// `left` and `right` are `node`'s operands.
     fn check_and_fix_with_prefer_nullish_over_or<'a>(
         &self,
         cx: &mut Cx<'a, Self>,
@@ -422,12 +580,12 @@ impl PreferNullishCoalescing {
             .data("equals", equals)
             .suggest_with(SUGGEST_NULLISH, &[("equals", equals.as_bytes())], |fixer| {
                 let mut fixes = Vec::new();
-                // For tsgolint parentheses are nodes.
+                // Parentheses are nodes in tsgolint.
                 let is_oxlint = fixer.file().language().is_oxlint;
                 let is_in_logical_or = node.parent().as_expr().is_some_and(is_logical_or_operator)
                     && !(is_oxlint && node.is_parenthesized());
                 if is_in_logical_or {
-                    // `&&` and `??` cannot be mixed without parentheses.
+                    // `&&` and `??` can't be mixed without parentheses.
                     fixes.push(match left.kind() {
                         ExprKind::Binary {
                             op: BinOp::And | BinOp::Or | BinOp::Nullish,
@@ -441,10 +599,10 @@ impl PreferNullishCoalescing {
                     });
                     fixes.push(fixer.insert_after(right, ")"));
                 }
-                // tsgolint also puts an operand into parentheses that is a logical expression.
-                for (it, is_looked_at) in [(left, !is_in_logical_or), (right, true)] {
+                // tsgolint also parenthesizes an operand that's a logical expression.
+                for (it, is_checked) in [(left, !is_in_logical_or), (right, true)] {
                     if is_oxlint
-                        && is_looked_at
+                        && is_checked
                         && equals.is_empty()
                         && !it.is_parenthesized()
                         && matches!(it.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish))
@@ -457,10 +615,10 @@ impl PreferNullishCoalescing {
             });
     }
 
-    /// The left operand of the `??` that can replace a conditional expression or an `if` statement.
-    /// `None` if none can.
+    /// Returns the left operand of the `??` that can replace a conditional expression or an `if` statement, or `None`
+    /// if there's no such replacement.
     ///
-    /// `node`: as for `is_truthiness_check_eligible_for_prefer_nullish`. `test`: its test.
+    /// `node` is as in `is_truthiness_check_eligible_for_prefer_nullish`, and `test` is its test.
     fn get_nullish_coalescing_left_node<'a>(
         &self,
         node: Option<Expr<'a>>,
@@ -494,7 +652,7 @@ impl PreferNullishCoalescing {
             } else if is_undefined_identifier(test_node) {
                 has_undefined_check = true;
             } else if are_nodes_similar_member_access(test_node, non_nullish_node) {
-                // The first has at least the optional chaining operators that the others need:
+                // The first one has at least the optional chaining operators the others need:
                 // `a?.b?.c !== undefined && a.b.c !== null ? a.b.c : 'foo'`.
                 nullish_coalescing_left_node.get_or_insert(test_node);
             } else {
@@ -504,7 +662,7 @@ impl PreferNullishCoalescing {
         let nullish_coalescing_left_node = nullish_coalescing_left_node?;
 
         let is_fixable = if has_undefined_check == has_null_check {
-            // Both are checked for, or neither.
+            // Both are checked, or neither.
             has_undefined_check
         } else if matches!(
             operator,
@@ -512,10 +670,10 @@ impl PreferNullishCoalescing {
         ) {
             true
         } else {
-            // For an `if`, tsgolint asks for the type of what is assigned to: the type that it is declared with.
+            // For an `if`, tsgolint uses the type of the assignment target at the assignment.
             let is_assigned_to = node.is_none() && test.file().language().is_oxlint;
-            let declared = non_nullish_node.ts_symbol().filter(|_| is_assigned_to).map(|it| it.get_type());
-            let flags = get_type_flags(declared.unwrap_or_else(|| nullish_coalescing_left_node.ty()));
+            let checked_node = if is_assigned_to { non_nullish_node } else { nullish_coalescing_left_node };
+            let flags = get_type_flags(checked_node.ty());
             if flags.intersects(TypeFlags::ANY | TypeFlags::UNKNOWN) {
                 false
             } else if has_undefined_check && !flags.intersects(TypeFlags::NULL) {
@@ -635,7 +793,8 @@ impl PreferNullishCoalescing {
                 } else {
                     b' '
                 };
-                // tsgolint keeps what is written from the first comment before it on, and nothing of what is after it.
+                // tsgolint keeps the source text from the first comment before the assignment on, and drops everything
+                // after it.
                 let is_oxlint = file.language().is_oxlint;
                 let mut text = match file.comments_before(assignment_expression).next().filter(|_| is_oxlint) {
                     Some(first) => file.slice(Span::before(first.start(), assignment_expression.span())).to_vec(),

@@ -6,7 +6,7 @@ use bun_lint::prelude::*;
 pub struct ValidExpect<const RUNNER: u8 = { jest::JEST }>(ValidExpectConfig);
 
 impl<const RUNNER: u8> Rule for ValidExpect<RUNNER> {
-    const META: Meta = jest::meta(RUNNER, "valid-expect", Kind::Problem).has_suggestions();
+    const META: Meta = jest::meta(RUNNER, "valid-expect", Kind::Problem).has_suggestions().hints();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

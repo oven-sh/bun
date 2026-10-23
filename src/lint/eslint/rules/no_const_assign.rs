@@ -7,7 +7,7 @@ pub struct NoConstAssign;
 const CONST: Message = Message::new("const", "'{{name}}' is constant.");
 
 impl Rule for NoConstAssign {
-    const META: Meta = Meta::eslint("no-const-assign", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-const-assign", Kind::Problem).recommended().hints();
     const ON: On = On::new().symbols();
     type State<'a> = ();
 
@@ -31,9 +31,16 @@ impl Rule for NoConstAssign {
                 continue;
             }
             for reference in get_modifying_references(symbol.references()) {
-                // oxlint points at the declaration.
-                let place = if cx.language().is_oxlint { pat.span() } else { reference.span() };
-                cx.report(place, CONST).data("name", reference.name()).labels_with(|labels| {
+                // oxlint reports at the declaration.
+                let report_span = if cx.language().is_oxlint { pat.span() } else { reference.span() };
+                let report = cx.report(report_span, CONST).data("name", reference.name()).hint_with(|| {
+                    let line = cx.line_of(pat.span().start);
+                    Some(match decl.var_kind() {
+                        VarKind::Const => format!("It is declared with const on line {line}. Use let if it has to change."),
+                        _ => format!("It is declared with using on line {line}, so it cannot change."),
+                    })
+                });
+                report.labels_with(|labels| {
                     let name = bstr::BStr::new(reference.name().bytes());
                     labels.push(reference.span(), format!("{name} is re-assigned here."));
                 });

@@ -11,15 +11,15 @@ fn is_prohibited_identifier(name: &[u8]) -> bool {
     PROHIBITED.iter().any(|it| it.as_bytes() == name)
 }
 
-/// Something in the file declares what the identifier refers to.
+/// True if something in the file declares what the identifier refers to.
 fn is_shadowed(identifier: Expr) -> bool {
     identifier.reference().is_some_and(|it| it.symbol().is_some())
 }
 
-/// `object`, which is in `call`, is `this` in the global scope, `window` or `globalThis`.
+/// True if `object`, which is in `call`, is `this` in the global scope, `window` or `globalThis`.
 fn is_global_this_reference_or_global_window<'a>(call: Expr<'a>, object: Expr<'a>) -> bool {
     match object.kind() {
-        // oxc has one scope for a file, whatever it takes it for.
+        // oxc has a single top-level scope per file, whether it's a script or a module.
         ExprKind::This if call.file().language().is_oxlint => {
             matches!(Node::Expr(call).scope().kind(), ScopeKind::Global | ScopeKind::Module)
         }
@@ -36,7 +36,7 @@ fn is_global_this_reference_or_global_window<'a>(call: Expr<'a>, object: Expr<'a
 impl Rule for NoAlert {
     const META: Meta = Meta::eslint("no-alert", Kind::Suggestion);
     const ON: On = On::new().calls_named(&PROHIBITED);
-    /// Those of [`PROHIBITED`] that the file mentions.
+    /// The names in [`PROHIBITED`] that the file mentions.
     type State<'a> = [Option<Name<'a>>; 3];
 
     fn new(_: &Options) -> Self {
@@ -66,12 +66,12 @@ impl Rule for NoAlert {
         if name.is_some() && !cx.state.contains(&name) {
             return;
         }
-        // oxlint points at what is called.
-        let place = if cx.language().is_oxlint { callee.span() } else { e.span() };
+        // oxlint reports at the callee.
+        let report_span = if cx.language().is_oxlint { callee.span() } else { e.span() };
         match callee.kind() {
             ExprKind::Ident(name) => {
                 if !is_shadowed(callee) {
-                    cx.report(place, UNEXPECTED).data("name", name);
+                    cx.report(report_span, UNEXPECTED).data("name", name);
                 }
             }
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
@@ -79,7 +79,7 @@ impl Rule for NoAlert {
                     && is_prohibited_identifier(&name)
                     && is_global_this_reference_or_global_window(e, obj)
                 {
-                    cx.report(place, UNEXPECTED).data("name", name);
+                    cx.report(report_span, UNEXPECTED).data("name", name);
                 }
             }
             _ => {}

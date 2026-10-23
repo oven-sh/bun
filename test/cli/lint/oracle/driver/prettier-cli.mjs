@@ -1,10 +1,10 @@
-// Runs the command line of real Prettier and `bun format` on generated projects, and compares the files afterwards, the exit
+// Runs the command line of real Prettier and `bun fmt` on generated projects, and compares the files afterwards, the exit
 // code, and what `--check` and `--list-different` print.
 //
-//   bun prettier-cli.mjs --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="bun format" [--only=substring] [--verbose]
+//   bun prettier-cli.mjs --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="bun fmt" [--only=substring] [--verbose]
 //
-// `bun format` writes unless told otherwise, so Prettier is given `--write` where the case has neither `--check` nor `-l`, and
-// what the two print then is not compared. Only JavaScript, TypeScript and JSON are compared: `bun format` leaves the rest alone.
+// `bun fmt` writes unless told otherwise, so Prettier is given `--write` where the case has neither `--check` nor `-l`, and
+// what the two print then is not compared. Only JavaScript, TypeScript and JSON are compared: `bun fmt` leaves the rest alone.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,7 +13,7 @@ import { cases } from "./prettier-cli-cases.mjs";
 const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const deps = path.resolve(flag("deps"));
 const scratch = path.resolve(flag("scratch"));
-const bin = (flag("bin") ?? "bun format").split(" ");
+const bin = (flag("bin") ?? "bun fmt").split(" ");
 const only = flag("only");
 const verbose = process.argv.includes("--verbose");
 const prettier = path.join(deps, "node_modules/prettier/bin/prettier.cjs");
@@ -55,7 +55,7 @@ const normalize = text =>
     // A file in another language.
     .filter(line => !/^(\[warn\] )?\S+\.html$/.test(line))
     .join("\n")
-    .replace("Run Prettier with --write to fix.", "Run bun format to fix.");
+    .replace("Run Prettier with --write to fix.", "Run bun fmt to fix.");
 
 let passed = 0;
 const failed = [];
@@ -84,7 +84,7 @@ for (const test of cases) {
   } else {
     failed.push(test.name);
     console.log(`FAIL ${test.name}: prettier ${test.args.join(" ")}\n${problems.join("\n")}`);
-    console.log(`--- stderr of Prettier\n${expected.stderr}\n--- stderr of bun format\n${actual.stderr}\n`);
+    console.log(`--- stderr of Prettier\n${expected.stderr}\n--- stderr of bun fmt\n${actual.stderr}\n`);
   }
 }
 console.log(`${passed} passed, ${failed.length} failed`);

@@ -6,7 +6,8 @@ pub struct NoDupeClassMembers;
 
 impl Rule for NoDupeClassMembers {
     const META: Meta = Meta::typescript("no-dupe-class-members", Kind::Problem)
-        .extends_base_rule("no-dupe-class-members");
+        .extends_base_rule("no-dupe-class-members")
+        .hints();
     const ON: On = On::new().classes();
     type State<'a> = Seen<'a>;
 
@@ -20,7 +21,7 @@ impl Rule for NoDupeClassMembers {
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let mut seen = std::mem::take(&mut cx.state);
-        // oxlint, where this is ESLint's rule, looks at the names in brackets as ESLint does.
+        // In oxlint this is ESLint's rule, so it treats computed names the way ESLint does.
         check(class, !cx.language().is_oxlint, &mut seen, cx);
         cx.state = seen;
     }

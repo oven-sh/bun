@@ -1,7 +1,6 @@
-//! `JSON.parse` as V8 implements it, for its error messages: ESLint quotes them in what it reports
-//! about an `/* eslint .. */` comment that it cannot read.
+//! `JSON.parse` as V8 implements it. ESLint quotes V8's error messages when it can't read an `/* eslint .. */` comment, and
+//! rules ported from JavaScript read `package.json` and other files with it. Like V8, it has no limit on nesting.
 
-use crate::json::RoomToNest;
 use crate::options::Json;
 
 /// `kMaxContextCharacters`
@@ -27,7 +26,13 @@ enum Token {
 struct Parser<'t> {
     text: &'t [u16],
     at: usize,
-    room: RoomToNest,
+}
+
+/// A container whose end the parser hasn't reached yet.
+enum Open {
+    Array(Vec<Json>),
+    /// With the name of the property whose value comes next.
+    Object(Vec<(Vec<u8>, Json)>, Vec<u8>),
 }
 
 type Parsed<T> = Result<T, Vec<u8>>;
@@ -72,7 +77,7 @@ impl Parser<'_> {
         }
     }
 
-    /// `message` with ` at position P (line L column C)`.
+    /// `message` followed by ` at position P (line L column C)`.
     fn error_at(&self, message: &str) -> Vec<u8> {
         let at = self.at.min(self.text.len());
         let (mut line, mut line_start, mut i) = (1, 0, 0);
@@ -93,7 +98,7 @@ impl Parser<'_> {
         .into_bytes()
     }
 
-    /// `ReportUnexpectedToken` without a message of its own.
+    /// `ReportUnexpectedToken` called without a custom message.
     fn unexpected(&self) -> Vec<u8> {
         match self.peek() {
             Token::Eos => return b"Unexpected end of JSON input".to_vec(),
@@ -197,16 +202,28 @@ impl Parser<'_> {
                 self.at += 1;
             }
         }
-        let written: String = self.text[start..self.at]
+        let number_text: String = self.text[start..self.at]
             .iter()
             .map(|&c| c as u8 as char)
             .collect();
-        Ok(Json::Number(written.parse().unwrap_or(f64::NAN)))
+        Ok(Json::Number(number_text.parse().unwrap_or(f64::NAN)))
     }
 
-    /// After the opening quote.
+    /// Starts after the opening quote.
     fn string(&mut self) -> Parsed<Vec<u8>> {
-        let mut units = Vec::new();
+        let start = self.at;
+        let is_plain = |c: u16| c >= 0x20 && c != 0x22 && c != 0x5C;
+        while self.current().is_some_and(is_plain) {
+            self.at += 1;
+        }
+        let plain = &self.text[start..self.at];
+        if self.current() == Some(0x22) {
+            self.at += 1;
+            let mut out = Vec::with_capacity(plain.len());
+            bun_core::strings::to_utf8_append_to_list(&mut out, plain);
+            return Ok(out);
+        }
+        let mut units = plain.to_vec();
         loop {
             let Some(c) = self.current() else {
                 return Err(self.error_at("Unterminated string in JSON"));
@@ -257,78 +274,92 @@ impl Parser<'_> {
         }
     }
 
+    /// Starts after a property name's opening quote. Reads the name and the colon after it.
+    fn property_name(&mut self) -> Parsed<Vec<u8>> {
+        let name = self.string()?;
+        self.expect_next(Token::Colon, "Expected ':' after property name in JSON")?;
+        Ok(name)
+    }
+
+    /// Like V8's `ParseJsonValue`, this keeps the enclosing containers in a list, so nesting uses heap instead of
+    /// stack.
     fn value(&mut self) -> Parsed<Json> {
-        if !self.room.has_more() {
-            return Err(b"Maximum call stack size exceeded".to_vec());
-        }
-        self.skip_whitespace();
-        match self.peek() {
-            Token::String => {
-                self.at += 1;
-                self.string().map(Json::String)
-            }
-            Token::Number => self.number(),
-            Token::True => self.literal(b"true", Json::Bool(true)),
-            Token::False => self.literal(b"false", Json::Bool(false)),
-            Token::Null => self.literal(b"null", Json::Null),
-            Token::LBrace => {
-                self.at += 1;
-                let mut entries: Vec<(Vec<u8>, Json)> = Vec::new();
-                if self.check(Token::RBrace) {
-                    return Ok(Json::Object(entries));
+        let mut open: Vec<Open> = Vec::new();
+        loop {
+            self.skip_whitespace();
+            let mut value = match self.peek() {
+                Token::String => {
+                    self.at += 1;
+                    Json::String(self.string()?)
                 }
-                self.expect_next(Token::String, "Expected property name or '}' in JSON")?;
-                loop {
-                    let key = self.string()?;
-                    self.expect_next(Token::Colon, "Expected ':' after property name in JSON")?;
-                    let value = self.value()?;
-                    match entries.iter_mut().find(|it| it.0 == key) {
-                        Some(entry) => entry.1 = value,
-                        None => entries.push((key, value)),
+                Token::Number => self.number()?,
+                Token::True => self.literal(b"true", Json::Bool(true))?,
+                Token::False => self.literal(b"false", Json::Bool(false))?,
+                Token::Null => self.literal(b"null", Json::Null)?,
+                Token::LBrace => {
+                    self.at += 1;
+                    if !self.check(Token::RBrace) {
+                        self.expect_next(Token::String, "Expected property name or '}' in JSON")?;
+                        let name = self.property_name()?;
+                        open.push(Open::Object(Vec::new(), name));
+                        continue;
                     }
-                    if !self.check(Token::Comma) {
-                        break;
+                    Json::Object(Vec::new())
+                }
+                Token::LBrack => {
+                    self.at += 1;
+                    if !self.check(Token::RBrack) {
+                        open.push(Open::Array(Vec::new()));
+                        continue;
                     }
-                    self.expect_next(
-                        Token::String,
-                        "Expected double-quoted property name in JSON",
-                    )?;
+                    Json::Array(Vec::new())
                 }
-                self.expect_next(
-                    Token::RBrace,
-                    "Expected ',' or '}' after property value in JSON",
-                )?;
-                Ok(Json::Object(entries))
-            }
-            Token::LBrack => {
-                self.at += 1;
-                let mut items = Vec::new();
-                if self.check(Token::RBrack) {
-                    return Ok(Json::Array(items));
-                }
-                loop {
-                    items.push(self.value()?);
-                    if !self.check(Token::Comma) {
-                        break;
+                Token::Colon
+                | Token::Comma
+                | Token::Illegal
+                | Token::RBrace
+                | Token::RBrack
+                | Token::Eos => return Err(self.unexpected()),
+            };
+            // `value` goes into the innermost open container. If that closes it, the container is the next `value`.
+            loop {
+                match open.last_mut() {
+                    None => return Ok(value),
+                    Some(Open::Array(items)) => {
+                        items.push(value);
+                        if self.check(Token::Comma) {
+                            break;
+                        }
+                        self.expect_next(
+                            Token::RBrack,
+                            "Expected ',' or ']' after array element in JSON",
+                        )?;
+                        value = Json::Array(std::mem::take(items));
+                    }
+                    Some(Open::Object(entries, name)) => {
+                        entries.push((std::mem::take(name), value));
+                        if self.check(Token::Comma) {
+                            self.expect_next(
+                                Token::String,
+                                "Expected double-quoted property name in JSON",
+                            )?;
+                            *name = self.property_name()?;
+                            break;
+                        }
+                        self.expect_next(
+                            Token::RBrace,
+                            "Expected ',' or '}' after property value in JSON",
+                        )?;
+                        value = Json::object(std::mem::take(entries));
                     }
                 }
-                self.expect_next(
-                    Token::RBrack,
-                    "Expected ',' or ']' after array element in JSON",
-                )?;
-                Ok(Json::Array(items))
+                open.pop();
             }
-            Token::Colon
-            | Token::Comma
-            | Token::Illegal
-            | Token::RBrace
-            | Token::RBrack
-            | Token::Eos => Err(self.unexpected()),
         }
     }
 }
 
-/// `Err`: the message of the `SyntaxError`.
+/// `Err` holds the `SyntaxError`'s message.
 pub fn parse(text: &[u8]) -> Result<Json, Vec<u8>> {
     let mut units: Vec<u16> = Vec::with_capacity(text.len());
     for chunk in text.utf8_chunks() {
@@ -340,7 +371,6 @@ pub fn parse(text: &[u8]) -> Result<Json, Vec<u8>> {
     let mut parser = Parser {
         text: &units,
         at: 0,
-        room: RoomToNest::new(),
     };
     let value = parser.value()?;
     match parser.check(Token::Eos) {

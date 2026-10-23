@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::oxlint::goes_by_the_name;
+use bun_lint::utils::oxlint::checks_name_only;
 use bun_lint_oxlint::ast_util::get_inner_expression;
 use std::borrow::Cow;
 
@@ -22,16 +22,26 @@ const UPPER: Message = Message::new(
     "upper",
     "A function with a name starting with an uppercase letter should only be used as a constructor.",
 );
-const LOWER: Message = Message::new("lower", "A constructor name should not start with a lowercase letter.");
+const LOWER: Message = Message::new(
+    "lower",
+    "A constructor name should not start with a lowercase letter.",
+);
 
 const CAPS_ALLOWED: [&str; 11] = [
-    "Array", "Boolean", "Date", "Error", "Function", "Number", "Object", "RegExp", "String", "Symbol", "BigInt",
+    "Array", "Boolean", "Date", "Error", "Function", "Number", "Object", "RegExp", "String",
+    "Symbol", "BigInt",
 ];
 const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];
-/// Before ESLint 10 the exceptions are the keys of an object, which has these too: `new constructor()`. The others do
-/// not start with a letter.
+/// Before ESLint 10 the exceptions are the keys of an object, which also has these inherited keys: `new constructor()`.
+/// The other inherited keys don't start with a letter.
 const KEYS_OF_EVERY_OBJECT: [&str; 7] = [
-    "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "toString", "valueOf",
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "toString",
+    "valueOf",
 ];
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -41,7 +51,7 @@ enum Cap {
     Upper,
 }
 
-/// ESLint's `getCap`, of the first character of `name`.
+/// ESLint's `getCap`, applied to the first character of `name`.
 fn get_cap(name: &[u8]) -> Cap {
     match name.first() {
         Some(b'a'..=b'z') => return Cap::Lower,
@@ -49,7 +59,9 @@ fn get_cap(name: &[u8]) -> Cap {
         Some(0x80..) => {}
         _ => return Cap::NonAlpha,
     }
-    let end = strings::wtf8_codepoints(name).nth(1).map_or(name.len(), |next| next.0);
+    let end = strings::wtf8_codepoints(name)
+        .nth(1)
+        .map_or(name.len(), |next| next.0);
     let first = name.get(..end).unwrap_or_default();
     let lower = text::to_lower_case(first);
     if lower == text::to_upper_case(first) {
@@ -61,7 +73,7 @@ fn get_cap(name: &[u8]) -> Cap {
     }
 }
 
-/// ESLint's `extractNameFromExpression`. `None` where that is empty.
+/// ESLint's `extractNameFromExpression`. `None` where that returns an empty string.
 fn extract_name(callee: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     let name = match callee.kind() {
         ExprKind::Ident(name) => Cow::Borrowed(name.bytes()),
@@ -76,7 +88,9 @@ fn is_global_built_in(e: Expr, name: &[u8]) -> bool {
         ExprKind::Ident(it) => it.bytes() == name && ast_utils::is_global_reference(e),
         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
             ast_utils::get_static_property_name(e).is_some_and(|it| *it == *name)
-                && obj.as_ident().is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES))
+                && obj
+                    .as_ident()
+                    .is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES))
                 && ast_utils::is_global_reference(obj)
         }
         _ => false,
@@ -86,8 +100,15 @@ fn is_global_built_in(e: Expr, name: &[u8]) -> bool {
 impl Exceptions {
     fn new(options: Object, names: &str, pattern: &str) -> Exceptions {
         Exceptions {
-            names: options.strings(names).into_iter().map(|it| it.as_bytes().to_vec()).collect(),
-            pattern: options.str(pattern).filter(|it| !it.is_empty()).and_then(|it| Regex::new(it, "u").ok()),
+            names: options
+                .strings(names)
+                .into_iter()
+                .map(|it| it.as_bytes().to_vec())
+                .collect(),
+            pattern: options
+                .str(pattern)
+                .filter(|it| !it.is_empty())
+                .and_then(|it| Regex::new(it, "u").ok()),
         }
     }
 
@@ -103,18 +124,24 @@ impl NewCap {
         let is_before_10 = callee.file().language().eslint_major < 10;
         if exceptions.has(name)
             || exceptions.has(source)
-            || exceptions.pattern.as_ref().is_some_and(|it| it.test(source))
-            || (is_before_10 && KEYS_OF_EVERY_OBJECT.iter().any(|it| it.as_bytes() == name || it.as_bytes() == source))
+            || exceptions
+                .pattern
+                .as_ref()
+                .is_some_and(|it| it.test(source))
+            || (is_before_10
+                && KEYS_OF_EVERY_OBJECT
+                    .iter()
+                    .any(|it| it.as_bytes() == name || it.as_bytes() == source))
         {
             return true;
         }
         match callee.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                let is_date = || match goes_by_the_name(callee.file().language()) {
+                let is_date = || match checks_name_only(callee.file().language()) {
                     true => obj.is_ident("Date"),
                     false => is_global_built_in(obj, b"Date"),
                 };
-                // Before ESLint 10 `properties` has no say about `a.UTC()`.
+                // Before ESLint 10, `properties` doesn't affect `a.UTC()`.
                 match name == b"UTC" {
                     true => is_date() || (self.skips_properties && !is_before_10),
                     false => self.skips_properties,
@@ -132,7 +159,7 @@ impl NewCap {
             && get_cap(&name) == Cap::Lower
             && !self.is_cap_allowed(&self.new_is_cap_exceptions, callee, &name)
         {
-            report(callee, LOWER, cx);
+            report(e, callee, LOWER, cx);
         }
     }
 
@@ -144,30 +171,32 @@ impl NewCap {
             && get_cap(&name) == Cap::Upper
             && !self.is_cap_allowed(&self.cap_is_new_exceptions, callee, &name)
             && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name)
-                && (goes_by_the_name(cx.language()) || is_global_built_in(callee, &name)))
+                && (checks_name_only(cx.language()) || is_global_built_in(callee, &name)))
         {
-            report(callee, UPPER, cx);
+            report(e, callee, UPPER, cx);
         }
     }
 }
 
-/// The callee. oxlint finds a name in what only concerns types: `(A as any)()`, `A!()`.
+/// Returns the callee. oxlint also finds a name inside type-only wrappers: `(A as any)()`, `A!()`.
 fn callee_of(call: Call<'_>) -> Expr<'_> {
     let callee = call.callee();
     match callee.file().language().is_oxlint {
-        true => Some(get_inner_expression(callee)).filter(|it| it.tag() == ExprTag::Ident).unwrap_or(callee),
+        true => Some(get_inner_expression(callee))
+            .filter(|it| it.tag() == ExprTag::Ident)
+            .unwrap_or(callee),
         false => callee,
     }
 }
 
-/// At the property, or at the callee.
-fn report<'a>(callee: Expr<'a>, message: Message, cx: &Cx<'a, NewCap>) {
+/// Reports the call `e` at the property, or otherwise at the callee.
+fn report<'a>(e: Expr<'a>, callee: Expr<'a>, message: Message, cx: &Cx<'a, NewCap>) {
     let at = match callee.kind() {
         ExprKind::Dot { name, .. } => name.span(),
         ExprKind::Index { index, .. } => index.span(),
         _ => callee.span(),
     };
-    cx.report(at, message);
+    cx.report(at, message).called_with(e);
 }
 
 impl Rule for NewCap {
@@ -180,8 +209,16 @@ impl Rule for NewCap {
         NewCap {
             new_is_cap: options.bool_or("newIsCap", true),
             cap_is_new: options.bool_or("capIsNew", true),
-            new_is_cap_exceptions: Exceptions::new(options, "newIsCapExceptions", "newIsCapExceptionPattern"),
-            cap_is_new_exceptions: Exceptions::new(options, "capIsNewExceptions", "capIsNewExceptionPattern"),
+            new_is_cap_exceptions: Exceptions::new(
+                options,
+                "newIsCapExceptions",
+                "newIsCapExceptionPattern",
+            ),
+            cap_is_new_exceptions: Exceptions::new(
+                options,
+                "capIsNewExceptions",
+                "capIsNewExceptionPattern",
+            ),
             skips_properties: !options.bool_or("properties", true),
         }
     }
@@ -199,13 +236,19 @@ impl Rule for NewCap {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let tag = e.tag();
-        // The first byte of a name as it is written is nearly always that of the name.
+        // The first byte of a name's source text is nearly always the first byte of the name.
         if let Some(callee) = e.callee()
-            && let Some(start) = callee.member_name_start().or_else(|| callee.as_ident().map(|_| callee.span().start))
+            && let Some(start) = callee
+                .member_name_start()
+                .or_else(|| callee.as_ident().map(|_| callee.span().start))
             && let Some(first) = cx.text().get(start as usize)
             && first.is_ascii()
             && *first != b'\\'
-            && !(if tag == ExprTag::New { first.is_ascii_lowercase() } else { first.is_ascii_uppercase() })
+            && !(if tag == ExprTag::New {
+                first.is_ascii_lowercase()
+            } else {
+                first.is_ascii_uppercase()
+            })
         {
             return;
         }

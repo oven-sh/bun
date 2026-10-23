@@ -1,9 +1,10 @@
-//! HTML in the templates of JavaScript: Prettier's `language-js/embed/html.js`.
+//! HTML in JavaScript templates: Prettier's `language-js/embed/html.js`.
 //!
-//! The text that is formatted has a placeholder in the place of every substitution. Its document is captured, and
-//! written once more with the substitutions in the place of the placeholders.
+//! The formatted text has a placeholder instead of each substitution. Its document is captured and then written again
+//! with the substitutions in place of the placeholders.
 
 use super::Parser;
+use super::ast::{Flags, Kind, Tree};
 use super::js::write_string;
 use super::map_strings::{MapString, write_mapped};
 pub(crate) use super::utilities::is_placeholder_in_js;
@@ -18,23 +19,23 @@ use crate::text;
 use bun_core::strings;
 use smallvec::SmallVec;
 
-const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
+pub(crate) const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
 const PLACEHOLDER_END: &[u8] = b"_IN_JS";
 
-/// `isAngularComponentTemplate`: `` @Component({ template: `..` }) ``. `parent`: of the template.
+/// `isAngularComponentTemplate`: `` @Component({ template: `..` }) ``. `parent` is the template's parent.
 fn is_angular_component_template(parent: AstNodes<'_>) -> bool {
     crate::css::embed::is_angular_component_property(parent, b"template")
 }
 
-/// `` html`..` ``. `e`: a template, `parent`: of it.
+/// `` html`..` ``. `e` is a template and `parent` is its parent.
 fn has_html_tag<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
     matches!(parent, AstNodes::TaggedTemplateExpression(tagged)
         if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
             if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(_)) && call.callee().text() == b"html"))
 }
 
-/// Whether the text of the template `e` can be written as HTML. Of the comments that say so, this knows the one right
-/// before the template.
+/// True if the template `e` might be formatted as HTML. Of the comments that mark a template as HTML, this only
+/// recognizes one right before the template.
 pub(crate) fn can_be_html(e: Expr<'_>) -> bool {
     let mut before = e
         .file()
@@ -51,7 +52,7 @@ pub(crate) fn can_be_html(e: Expr<'_>) -> bool {
         || before.ends_with(b"/* HTML */")
 }
 
-/// The parser for the text of the template `e`, if `embed` takes it for HTML.
+/// Returns the parser for the text of the template `e`, if `embed` treats it as HTML.
 fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Option<Parser> {
     if !f.options().embedded_html
         || !matches!(
@@ -71,7 +72,7 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
     } else {
         return None;
     };
-    // These come first.
+    // CSS and GraphQL take precedence.
     let is_in_another_language =
         crate::css::embed::is_embed_css(e) || crate::graphql::embed::is_embed_graphql(e, f);
     (!is_in_another_language
@@ -79,8 +80,8 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
     .then_some(parser)
 }
 
-/// The text of `template`, with placeholders. `counter`: what tells them from those of a template that this one is in
-/// the text of.
+/// Returns the text of `template` with placeholders. `counter` distinguishes them from the placeholders of an outer
+/// template whose text contains this one.
 fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
     let mut text = Vec::new();
     for index in 0..template.quasi_count() {
@@ -97,7 +98,7 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
                 .map_or(&[][..], |cooked| cooked.bytes()),
         );
     }
-    // Half of a surrogate pair, which an escape can stand for, is U+FFFD once what Prettier prints is written as UTF-8.
+    // An escape can produce a lone surrogate, which becomes U+FFFD once Prettier's output is written as UTF-8.
     let mut from = 0;
     while let Some(at) = strings::index_of_char_pos(&text, 0xED, from) {
         if text.get(at + 1).is_some_and(|&byte| byte >= 0xA0)
@@ -113,8 +114,8 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
     }
 }
 
-/// The line break between the backticks and the text. `None`: there is none.
-fn line_around(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
+/// Returns the line break between the backticks and the text, or `None` if there's none.
+fn surrounding_line(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
     if options.html_whitespace_sensitivity == HtmlWhitespaceSensitivity::Ignore {
         return Some(LineMode::Hard);
     }
@@ -123,10 +124,12 @@ fn line_around(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
     .then_some(LineMode::SoftOrSpace)
 }
 
-/// How many `indent`s are around the line that `e` starts on, if the file is indented the way it is going to be.
+/// Returns the number of `indent`s around the line that `e` starts on, assuming the file is already indented the way
+/// it's going to be.
 fn indent_level_in_source<'a>(e: Expr<'a>, options: &FormatOptions, f: &Formatter<'a>) -> u32 {
     let start = e.span().start;
-    // The templates of a file that is one long line come one after the other: nothing of it is searched twice.
+    // A file that's one long line has its templates visited in order, so resume from the last search instead of
+    // rescanning the line.
     let (known_at, known) = f.context().line_start.get();
     let from = if known_at <= start { known_at } else { 0 };
     let text = e.file().text();
@@ -152,7 +155,7 @@ fn indent_level_in_source<'a>(e: Expr<'a>, options: &FormatOptions, f: &Formatte
     columns / indent_width
 }
 
-/// What the label of the document of a template says.
+/// The label on a template's document.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Label {
     /// `{ embed: true }`
@@ -161,8 +164,8 @@ pub(crate) enum Label {
     EmbedWithoutHug,
 }
 
-/// The label of the document of `e`, if that is a template, with or without a tag, that is written as HTML and is more
-/// than ` `` `.
+/// Returns the label on `e`'s document if `e` is a template, tagged or not, that's formatted as HTML and isn't just
+/// ` `` `.
 pub(crate) fn label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<Label> {
     let quasi = match e.kind() {
         ExprKind::TaggedTemplate(call) => call.template(),
@@ -173,7 +176,7 @@ pub(crate) fn label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<Label> {
     };
     let parser = parser_of(quasi, template, f).filter(|_| !is_blank(template))?;
     let text = text_with_placeholders(template, f.options().html_template_depth);
-    super::can_be_parsed(&text, parser).then(|| match line_around(&text, f.options()) {
+    super::can_be_parsed(&text, parser).then(|| match surrounding_line(&text, f.options()) {
         Some(_) => Label::Embed,
         None => Label::EmbedWithoutHug,
     })
@@ -181,11 +184,11 @@ pub(crate) fn label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<Label> {
 
 /// The callback of the `mapDoc` in `printEmbedHtmlLike`.
 struct Substitutions<'e> {
-    /// The documents of the substitutions.
+    /// The substitutions' documents.
     expressions: &'e [Interned],
     /// `_`, the counter and the end of a placeholder.
     placeholder_end: Vec<u8>,
-    /// `__embeddedInHtml`: the end tag of a script would end the script that the template is in.
+    /// `__embeddedInHtml`: a script's end tag would end the script that contains the template.
     is_in_html: bool,
 }
 
@@ -201,7 +204,7 @@ fn starts_with_end_of_script(text: &[u8]) -> bool {
 }
 
 impl Substitutions<'_> {
-    /// Where the first placeholder in `text` starts and ends, and its number.
+    /// Returns the start, the end and the number of the first placeholder in `text`.
     fn find_placeholder(&self, text: &[u8]) -> Option<(usize, usize, usize)> {
         let mut from = 0;
         while let Some(start) = text::index_of_from(text, PLACEHOLDER_START, from) {
@@ -284,13 +287,22 @@ impl MapString for Substitutions<'_> {
     }
 }
 
-/// Whether `document`, which is what has become of `text`, has all that is in `text` and nothing else: the check that a
-/// file gets before it is written. For oxfmt also no substitution twice: `<${a}>` gets the end tag `</${a}>` from
-/// Prettier, which is another program: no file is written with that. oxfmt leaves such a template as it is.
-fn keeps_content(
+/// True if an element of `tree` with a substitution in its name has no end tag. Prettier would add one: it turns
+/// `<${a}>b` into `<${a}>b</${a}>`, which evaluates `a` twice. Such a template is left as it is.
+pub(super) fn would_repeat_substitution(tree: &Tree<'_>) -> bool {
+    tree.nodes.iter().any(|node| {
+        node.kind == Kind::Element
+            && !(node.flags).intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
+            && node.name.len() > PLACEHOLDER_START.len()
+            && strings::contains(&node.name.to_ascii_uppercase(), PLACEHOLDER_START)
+    })
+}
+
+/// True if `document`, the result of formatting `text`, still has the same number of substitutions. If not, oxfmt
+/// leaves the template as it is.
+fn keeps_substitution_count(
     text: &[u8],
     document: Interned,
-    parser: Parser,
     options: &FormatOptions,
     f: &Formatter<'_>,
 ) -> bool {
@@ -309,15 +321,12 @@ fn keeps_content(
         &mut printed,
     )
     .is_ok()
-        && super::verify::has_same_content(text, &printed, parser)
-        // Those of the HTML are Prettier's for either tool.
-        && (!f.options().flavor.is_oxfmt()
-            || strings::split(text, PLACEHOLDER_START).count()
-                == strings::split(&printed, PLACEHOLDER_START).count())
+        && strings::split(text, PLACEHOLDER_START).count()
+            == strings::split(&printed, PLACEHOLDER_START).count()
 }
 
-/// Writes the template `e` as HTML, if that is what Prettier takes it for: `printEmbedHtmlLike`. Returns whether it
-/// has. If the text cannot be parsed, or something of it would be lost, it has not.
+/// Writes the template `e` as HTML if Prettier treats it as HTML: `printEmbedHtmlLike`. Returns true if it did, and
+/// false if the text can't be parsed.
 pub(crate) fn write_template<'a>(
     e: Expr<'a>,
     template: Template<'a>,
@@ -348,26 +357,27 @@ pub(crate) fn write_template<'a>(
         cursor_offset: None,
         ..super::options_of_host(f.options(), parser)
     };
-    let line = line_around(&text, &options);
-    // Where the lines start is up to the printer. What is printed by itself (JSON, YAML, ..) has to be told how much room
-    // there is: as much as there is if the file has been formatted before.
+    let line = surrounding_line(&text, &options);
+    // The printer decides where the lines start. But languages that are printed separately (JSON, YAML, ..) need to
+    // know the available width up front, so assume the indentation the file would have if it had been formatted before.
     let indent_level = indent_level_in_source(e, &options, f) + u32::from(line.is_some());
     let slot = f.start_capture();
-    // The code in the text is written with the options of the formatter.
-    let context = JsFormatContext::without_file(&text, options.clone(), &[]);
-    // Of the name of the file, no more than this is asked.
+    // The code in the text is written with the formatter's options.
+    let context = JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
+    // This is all that's ever checked about the file name.
     let path = options.is_in_html_file.then_some(&b".html"[..]);
-    let written = f.write_embedded(context, &text, |f| {
+    let write_result = f.write_embedded(context, &text, |f| {
         super::write_document(&text, parser, path, &options, true, Some(indent_level), f)
     });
     let document = f.end_capture(slot);
-    let Ok(top_level_count) = written else {
+    let Ok(top_level_count) = write_result else {
         return false;
     };
-    if !keeps_content(&text, document, parser, &options, f) {
+    // Both tools format the HTML with Prettier's options.
+    if f.options().flavor.is_oxfmt() && !keeps_substitution_count(&text, document, &options, f) {
         return false;
     }
-    // In the order of the source, whatever the order of the placeholders: that of the comments.
+    // Written in source order, whatever the order of the placeholders, because comments are consumed in that order.
     let expressions: SmallVec<[Interned; 8]> = (0..template.quasi_count().saturating_sub(1))
         .map(|index| {
             f.capture(&format_with(|f| {

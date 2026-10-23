@@ -1,39 +1,44 @@
-//! `[lint]` and `[format]` of bunfig.toml. A key is the default of the flag of the same name: `maxWarnings` of
-//! `--max-warnings`, `semi = false` of `--no-semi`. A section becomes the same `Options` as a command line does, by the
-//! same `Options::set`, and the command line is laid over it. So what a key takes is what its flag takes: the kind of
-//! value is read from the table of flags, and a value is refused by what refuses it after the flag.
+//! Reads `[lint]` and `[fmt]` from bunfig.toml. A key sets the default for the flag with the same name: `maxWarnings`
+//! for `--max-warnings`, `semi = false` for `--no-semi`. A section is turned into the same `Options` as a command line,
+//! through the same `Options::set`, and the command line is applied on top of it. So a key takes exactly what its flag
+//! takes: the value's type comes from the flag table, and the code that rejects a bad value for the flag rejects it
+//! here.
 //!
-//! Bun's reader of bunfig.toml finds and parses the file. What it calls with the file is here.
+//! A few keys can express more than a flag can: the tables and `overrides` in `[lint]`, and in `[fmt]` both `overrides`
+//! and the options of the features that a flag only turns on ([`FEATURES`]).
+//!
+//! Bun's bunfig.toml loader finds and parses the file, then calls into this module.
 
 use crate::args::{Param, UsageError, error};
+use crate::cli::Wildcard;
 use crate::format::Format;
 use bun_ast::expr::Data;
 use bun_ast::{Expr, Loc};
 use bun_clap::Values;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::linter::Step;
+use bun_lint::linter::config::glob_error;
+use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_lint::utils::text::number_to_string;
 
-/// What is wrong with a section, and where in the file.
-pub struct Refusal {
+/// An error in a section, and its location in the file.
+pub struct BunfigError {
     pub at: Loc,
     pub message: Vec<u8>,
 }
 
-/// [`lint`] or [`format`]: what a bunfig.toml says to the command. `Ok(None)`: nothing.
-pub type Read<T> = fn(&Expr) -> Result<Option<T>, Refusal>;
-
-fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
-    Err(Refusal {
+fn reject<T>(at: Loc, parts: &[&[u8]]) -> Result<T, BunfigError> {
+    Err(BunfigError {
         at,
         message: parts.concat(),
     })
 }
 
-fn expected<T>(what: &str, value: &Expr) -> Result<T, Refusal> {
+fn expected<T>(what: &str, value: &Expr) -> Result<T, BunfigError> {
     let received = value.data.tag_name().as_bytes();
-    refuse(
+    reject(
         value.loc,
         &[b"expected ", what.as_bytes(), b" but received ", received],
     )
@@ -42,19 +47,21 @@ fn expected<T>(what: &str, value: &Expr) -> Result<T, Refusal> {
 /// `Options::set`
 type Set<'s> = dyn FnMut(&'static [u8], Option<&[u8]>, bool) -> Result<(), UsageError> + 's;
 
-/// Every flag of a command is in one of the four lists, by its long name.
+/// Each of a command's flags is in one of the four lists, by its long name.
 struct Table {
     section: &'static str,
     params: &'static [Param],
     /// The flags that describe the project. The key is the name in camelCase.
     flags: &'static [&'static [u8]],
-    /// The same, with a key that is called otherwise, or that is read by hand.
+    /// Same, but the key has a different name or is parsed by hand.
     renamed: &'static [(&'static [u8], &'static [u8])],
-    /// The flags that say what one run does. A file that rewrites code without a word, or that prints something else than
-    /// the report, is a trap: the key is refused with the name of the flag.
+    /// Keys that have no flag.
+    without_flag: &'static [&'static [u8]],
+    /// The flags that say what a single run does. A config file that silently rewrites code, or makes the command print
+    /// something other than the report, is a trap, so the key is rejected with a message that mentions the flag.
     actions: &'static [&'static [u8]],
-    /// The flags that have no key: parts of a configuration file, which bunfig.toml is not one more of, what has no
-    /// effect, and the lines of the help that are the opposite of a flag.
+    /// The flags that have no key: ones that duplicate parts of a linter config file (bunfig.toml isn't meant to be
+    /// another one), ones that have no effect, and the `--no-..` help entries that negate another flag.
     others: &'static [&'static [u8]],
 }
 
@@ -106,7 +113,7 @@ impl Table {
         true
     }
 
-    /// The flag with the long name `name`, which there is.
+    /// The flag with the long name `name`, which must exist.
     const fn param(&self, name: &[u8]) -> &'static Param {
         let mut at = 0;
         while at < self.params.len() {
@@ -117,7 +124,7 @@ impl Table {
             }
             at += 1;
         }
-        panic!("A key of bunfig.toml is for a flag that does not exist.")
+        panic!("A bunfig.toml key maps to a flag that doesn't exist.")
     }
 
     const fn only_has_flags(&self) -> bool {
@@ -135,62 +142,76 @@ impl Table {
     }
 
     fn keys(&self) -> impl Iterator<Item = Vec<u8>> {
-        let renamed = self.renamed.iter().map(|it| it.0.to_vec());
-        renamed.chain(self.flags.iter().map(|flag| key_of(flag)))
+        let renamed = self.renamed.iter().map(|it| it.0);
+        let explicit_keys = renamed.chain(self.without_flag.iter().copied());
+        (explicit_keys.map(<[u8]>::to_vec)).chain(self.flags.iter().map(|flag| key_of(flag)))
     }
 
-    /// The flag that `key` is the default of.
-    fn param_of(&self, key: &[u8], at: Loc) -> Result<&'static Param, Refusal> {
+    /// The flag that `key` sets the default for.
+    fn param_of(&self, key: &[u8], at: Loc) -> Result<&'static Param, BunfigError> {
         let renamed = self.renamed.iter().find(|it| it.0 == key).map(|it| it.1);
         let flag = renamed.or_else(|| self.flags.iter().copied().find(|flag| key_of(flag) == key));
         let param = flag.and_then(|flag| self.params.iter().find(|it| it.names.long == Some(flag)));
         if let Some(param) = param {
             return Ok(param);
         }
-        if let Some(flag) = self.actions.iter().find(|flag| key_of(flag) == key) {
-            return refuse(
+        let positive = |flag: &&'static [u8]| flag.strip_prefix(b"no-").unwrap_or(flag);
+        if let Some(flag) = (self.actions.iter()).find(|flag| key_of(positive(flag)) == key) {
+            return reject(
                 at,
                 &[
                     b"\"",
                     key,
-                    b"\" cannot be set in bunfig.toml, it says what one run does. Pass --",
+                    b"\" cannot be set in bunfig.toml\n  Use --",
                     flag,
                     b" on the command line",
                 ],
             );
         }
         let section = self.section.as_bytes();
-        let closest = self
-            .keys()
-            .min_by_key(|it| strings::edit_distance(key.iter().copied(), &it[..]))
-            .unwrap_or_default();
-        refuse(
-            at,
-            &[
-                b"unknown key \"",
-                key,
-                b"\" in [",
-                section,
-                b"]. Did you mean \"",
-                &closest,
-                b"\"?",
-            ],
-        )
+        match self.renamed.iter().find(|it| key_of(it.1) == key) {
+            Some((meant, _)) => reject(at, &[&not_a_key(key, section, Some(meant))]),
+            None => unknown_key(key, at, section, self.keys()),
+        }
     }
 
-    /// Takes in `key = value`, as the flag.
-    fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
-        give(self.param_of(&key.name, key.at)?, value, set)
+    /// Applies `key = value` as if it were the flag.
+    fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), BunfigError> {
+        apply_value(self.param_of(&key.name, key.at)?, value, set)
     }
 }
 
-fn at(value: &Expr) -> impl Fn(UsageError) -> Refusal {
+/// Error message for `key`, which isn't a key of the `section` table. `meant` is the key to suggest, if any.
+fn not_a_key(key: &[u8], section: &[u8], meant: Option<&[u8]>) -> Vec<u8> {
+    let mut message = [b"Unknown key \"", key, b"\" in [", section, b"]"].concat();
+    if let Some(meant) = meant {
+        message.extend_from_slice(&[b"\n  Did you mean \"", meant, b"\"?"].concat());
+    }
+    message
+}
+
+/// Rejects `key`, which isn't one of `keys` (all the keys of the `section` table), and suggests the closest one.
+fn unknown_key<T>(
+    key: &[u8],
+    at: Loc,
+    section: &[u8],
+    keys: impl Iterator<Item = Vec<u8>>,
+) -> Result<T, BunfigError> {
+    let closest = keys
+        .map(|it| (strings::edit_distance(key.iter().copied(), &it[..]), it))
+        .min_by_key(|it| it.0)
+        .filter(|it| it.0 <= key.len().max(3) / 3);
+    let closest = closest.as_ref().map(|it| &it.1[..]);
+    reject(at, &[&not_a_key(key, section, closest)])
+}
+
+fn at(value: &Expr) -> impl Fn(UsageError) -> BunfigError {
     let at = value.loc;
-    move |UsageError(message)| Refusal { at, message }
+    move |UsageError(message)| BunfigError { at, message }
 }
 
-/// Takes in `value` as what the flag `param` is given.
-fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
+/// Applies `value` as the value of the flag `param`.
+fn apply_value(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), BunfigError> {
     let name = param.names.long.unwrap_or_default();
     match (param.takes_value, &value.data) {
         (Values::None, Data::EBoolean(it)) => set(name, None, it.value).map_err(at(value)),
@@ -205,13 +226,13 @@ fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusa
     }
 }
 
-/// What is written after the flag `param` for `value`. A flag takes a number if the help calls what it takes `<n>`.
-/// `what`: what is expected where it is a string that is taken.
-fn text_of(param: &Param, value: &Expr, what: &str) -> Result<Vec<u8>, Refusal> {
-    match (bun_lint::json::from_parsed(value), param.id.value) {
-        (Some(Json::Number(number)), b"n") => Ok(number_to_string(number)),
+/// The text you'd write after the flag `param` to pass `value`. A flag takes a number if the help shows its value as
+/// `<n>`. `what` is the expected type to mention in the error when the flag takes a string.
+fn text_of(param: &Param, value: &Expr, what: &str) -> Result<Vec<u8>, BunfigError> {
+    match (&mut bun_lint::json::from_parsed(value), param.id.value) {
+        (Some(Json::Number(number)), b"n") => Ok(number_to_string(*number)),
         (_, b"n") => expected("number", value),
-        (Some(Json::String(text)), _) => Ok(text),
+        (Some(Json::String(text)), _) => Ok(std::mem::take(text)),
         _ => expected(what, value),
     }
 }
@@ -222,22 +243,20 @@ struct Key {
 }
 
 /// The keys of the table `section`, with their values.
-fn entries(section: &Expr) -> Result<Vec<(Key, &Expr)>, Refusal> {
+fn entries(section: &Expr) -> Result<Vec<(Key, &Expr)>, BunfigError> {
     let Data::EObject(table) = &section.data else {
         return expected("object", section);
     };
     let entries = table.properties.iter().filter_map(|it| {
         let (key, value) = (it.key.as_ref()?, it.value.as_ref()?);
-        let Some(Json::String(name)) = bun_lint::json::from_parsed(key) else {
-            return None;
-        };
+        let name = bun_lint::json::from_parsed(key)?.into_string()?;
         Some((Key { name, at: key.loc }, value))
     });
     Ok(entries.collect())
 }
 
 const FORMAT: Table = Table {
-    section: "format",
+    section: "fmt",
     params: crate::fmt::cli::PARAMS,
     flags: &[
         b"disable-nested-config",
@@ -251,7 +270,7 @@ const FORMAT: Table = Table {
         b"threads",
         b"allow-unsupported",
         b"flavor",
-        // The options of Prettier: a key is what the option is called in a `.prettierrc`.
+        // Prettier's options. Each key is the option's name in a `.prettierrc`.
         b"print-width",
         b"tab-width",
         b"use-tabs",
@@ -275,29 +294,44 @@ const FORMAT: Table = Table {
         b"insert-pragma",
         b"experimental-ternaries",
         b"experimental-operator-position",
+        // Features beyond Prettier's options. The first five also take a table, see `FEATURES`.
+        b"sort-imports",
+        b"sort-tailwindcss",
+        b"sort-package-json",
+        b"jsdoc",
+        b"svelte",
+        b"insert-final-newline",
     ],
     renamed: &[
         (b"config", b"config"),
         (b"ignorePatterns", b"ignore-pattern"),
     ],
+    without_flag: &[b"overrides"],
     actions: &[
         b"check",
         b"list-different",
         b"write",
         b"stdin-filepath",
+        b"staged",
+        b"changed",
         b"find-config-path",
         b"range-start",
         b"range-end",
         b"cursor-offset",
         b"init",
+        b"doctor",
+        b"format",
         b"migrate",
         b"list-files",
-        b"verify",
+        b"debug-check",
         b"timing",
         b"color",
         b"cwd",
         b"version",
         b"help",
+        b"all",
+        b"help-all",
+        b"no-script",
     ],
     others: &[
         b"no-config",
@@ -305,6 +339,10 @@ const FORMAT: Table = Table {
         b"no-semi",
         b"no-bracket-spacing",
         b"no-error-on-unmatched-pattern",
+        b"no-insert-final-newline",
+        b"no-svelte",
+        b"no-color",
+        b"script",
         b"parser",
         b"plugin",
         b"jsx-bracket-same-line",
@@ -319,38 +357,327 @@ const FORMAT: Table = Table {
 const _: () = assert!(FORMAT.only_has_flags());
 const _: () = assert!(
     FORMAT.has_every_flag(),
-    "A flag of `bun format` is in none of the lists of `FORMAT`. If it describes the project it is a key of `[format]` in \
-     bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
+    "A `bun fmt` flag isn't in any of `FORMAT`'s lists. If it describes the project, it's a `[fmt]` key in bunfig.toml: \
+     add it to `flags`, docs/runtime/bunfig.mdx and the test. If it says what a single run does, add it to `actions`."
 );
 
-/// What `[format]` of `file` says.
-pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
-    let Some(section) = file.get(b"format") else {
+/// Value type of an option in a [`Feature`] table.
+#[derive(Copy, Clone)]
+enum ValueType {
+    Boolean,
+    String,
+    Strings,
+    /// An array with mixed items. The code that consumes it validates the items.
+    Array,
+}
+
+impl ValueType {
+    fn check(self, value: &Expr) -> Result<(), BunfigError> {
+        match (self, &value.data) {
+            (ValueType::Boolean, Data::EBoolean(_))
+            | (ValueType::String, Data::EString(_))
+            | (ValueType::Array, Data::EArray(_)) => Ok(()),
+            (ValueType::Strings, Data::EArray(items)) => (items.slice().iter())
+                .find(|it| !it.is_string())
+                .map_or(Ok(()), |it| expected("string", it)),
+            (ValueType::Boolean, _) => expected("boolean", value),
+            (ValueType::String, _) => expected("string", value),
+            (ValueType::Strings | ValueType::Array, _) => expected("array", value),
+        }
+    }
+}
+
+/// How a feature's table is stored in `Options::format`.
+#[derive(Copy, Clone)]
+enum As {
+    /// As one JSON value. The function validates it.
+    Json(fn(&[u8]) -> Result<(), Vec<u8>>),
+    /// As one entry per option.
+    Parts,
+}
+
+fn check_sort_imports(json: &[u8]) -> Result<(), Vec<u8>> {
+    let mut sort = bun_format::sort_imports::Settings::default();
+    sort.set(b"sortImports", json);
+    sort.compile().map(|_| ())
+}
+
+/// A `[fmt]` key that takes `true`, `false`, or a table of options.
+struct Feature {
+    flag: &'static [u8],
+    /// Its name in `Options::format`.
+    name: &'static [u8],
+    table: As,
+    /// Each option is stored as `<name>.<key>`.
+    options: &'static [(&'static [u8], ValueType)],
+}
+
+const FEATURES: [Feature; 5] = [
+    Feature {
+        flag: b"sort-imports",
+        name: b"sortImports",
+        table: As::Json(check_sort_imports),
+        options: &[
+            (b"sortImports.groups", ValueType::Array),
+            (b"sortImports.customGroups", ValueType::Array),
+            (b"sortImports.internalPattern", ValueType::Strings),
+            (b"sortImports.newlinesBetween", ValueType::Boolean),
+            (b"sortImports.order", ValueType::String),
+            (b"sortImports.ignoreCase", ValueType::Boolean),
+            (b"sortImports.sortSideEffects", ValueType::Boolean),
+            (b"sortImports.partitionByComment", ValueType::Boolean),
+            (b"sortImports.partitionByNewline", ValueType::Boolean),
+        ],
+    },
+    Feature {
+        flag: b"sort-tailwindcss",
+        name: b"sortTailwindcss",
+        table: As::Json(|_| Ok(())),
+        options: &[
+            (b"sortTailwindcss.stylesheet", ValueType::String),
+            (b"sortTailwindcss.config", ValueType::String),
+            (b"sortTailwindcss.functions", ValueType::Strings),
+            (b"sortTailwindcss.attributes", ValueType::Strings),
+            (b"sortTailwindcss.preserveWhitespace", ValueType::Boolean),
+            (b"sortTailwindcss.preserveDuplicates", ValueType::Boolean),
+        ],
+    },
+    Feature {
+        flag: b"sort-package-json",
+        name: b"sortPackageJson",
+        table: As::Parts,
+        options: &[(b"sortPackageJson.sortScripts", ValueType::Boolean)],
+    },
+    Feature {
+        flag: b"jsdoc",
+        name: b"jsdoc",
+        table: As::Parts,
+        options: &[
+            (b"jsdoc.capitalizeDescriptions", ValueType::Boolean),
+            (b"jsdoc.commentLineStrategy", ValueType::String),
+            (b"jsdoc.separateTagGroups", ValueType::Boolean),
+            (b"jsdoc.separateReturnsFromParam", ValueType::Boolean),
+            (b"jsdoc.bracketSpacing", ValueType::Boolean),
+            (b"jsdoc.descriptionWithDot", ValueType::Boolean),
+            (b"jsdoc.addDefaultToDescription", ValueType::Boolean),
+            (b"jsdoc.preferCodeFences", ValueType::Boolean),
+            (b"jsdoc.lineWrappingStyle", ValueType::String),
+            (b"jsdoc.descriptionTag", ValueType::Boolean),
+            (b"jsdoc.keepUnparsableExampleIndent", ValueType::Boolean),
+        ],
+    },
+    Feature {
+        flag: b"svelte",
+        name: b"svelte",
+        table: As::Parts,
+        options: &[
+            (b"svelte.sortOrder", ValueType::String),
+            (b"svelte.allowShorthand", ValueType::Boolean),
+            (b"svelte.indentScriptAndStyle", ValueType::Boolean),
+        ],
+    },
+];
+
+impl Feature {
+    /// Strips the `<name>.` prefix from an entry of [`Feature::options`].
+    fn key_of(&self, name: &'static [u8]) -> &'static [u8] {
+        name.get(self.name.len() + 1..).unwrap_or_default()
+    }
+
+    /// Applies the `value` that `[fmt]` has for this feature.
+    fn set(&self, value: &Expr, options: &mut crate::fmt::cli::Options) -> Result<(), BunfigError> {
+        let table = match &value.data {
+            Data::EBoolean(it) => {
+                return options.set(self.flag, None, it.value).map_err(at(value));
+            }
+            Data::EObject(_) => entries(value)?,
+            _ => return expected("boolean or object", value),
+        };
+        let mut parts = Vec::new();
+        for (key, value) in table {
+            let mut known = self.options.iter();
+            let Some(&(name, value_type)) = known.find(|it| self.key_of(it.0) == key.name) else {
+                let keys = self.options.iter().map(|it| self.key_of(it.0).to_vec());
+                return unknown_key(&key.name, key.at, &[b"fmt.", self.name].concat(), keys);
+            };
+            value_type.check(value)?;
+            if matches!(self.table, As::Json(_)) {
+                continue;
+            }
+            let text = match &mut json_of(value)? {
+                Json::String(text) => std::mem::take(text),
+                other => {
+                    let mut text = Vec::new();
+                    write_json(&mut text, other);
+                    text
+                }
+            };
+            if bun_format::FormatOptions::default()
+                .set(name, &text)
+                .is_err()
+            {
+                let hint: &[u8] = match name {
+                    b"svelte.sortOrder" => {
+                        b"\n  Use \"none\", or all four parts in the order you want: \"options-scripts-markup-styles\""
+                    }
+                    _ => b"",
+                };
+                return reject(
+                    value.loc,
+                    &[b"Invalid ", name, b" value: ", &text, b".", hint],
+                );
+            }
+            parts.push((name, text));
+        }
+        let mut whole = Vec::new();
+        match self.table {
+            As::Json(check) => {
+                write_json(&mut whole, &json_of(value)?);
+                let at = value.loc;
+                check(&whole).map_err(|message| BunfigError { at, message })?;
+            }
+            As::Parts => whole.extend_from_slice(b"true"),
+        }
+        options.format.push((self.name, whole));
+        options.format.extend(parts);
+        Ok(())
+    }
+}
+
+/// Parses `file`'s `[fmt]` section.
+pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, BunfigError> {
+    if let Some(section) = file.get(b"format") {
+        return reject(
+            section.loc,
+            &[b"Unknown section [format]\n  Did you mean [fmt]?"],
+        );
+    }
+    let Some(section) = file.get(b"fmt") else {
         return Ok(None);
     };
     let mut options = crate::fmt::cli::Options::default();
     for (key, value) in entries(&section)? {
-        // `--no-config` is the opposite of a flag that takes a value.
+        // `--no-config` negates a flag that takes a value.
         if key.name == b"config" && matches!(value.data, Data::EBoolean(it) if !it.value) {
             options.config_lookup = false;
             continue;
         }
-        FORMAT.set(&key, value, &mut |flag, value, is_on| {
-            options.set(flag, value, is_on)?;
-            // With the flag, a wrong value comes out at the first file.
-            match options.format.last().filter(|it| key.name == it.0) {
-                Some((name, value))
-                    if bun_format::FormatOptions::default()
-                        .set(name, value)
-                        .is_err() =>
-                {
-                    error(&[b"Invalid ", *name, b" value: ", &value[..], b"."])
-                }
-                _ => Ok(()),
-            }
-        })?;
+        if key.name == b"overrides" {
+            options.overrides = overrides(value)?;
+            continue;
+        }
+        set_in_format(&key, value, &mut options)?;
     }
     Ok(Some(options))
+}
+
+/// Applies `key = value` from `[fmt]` or from the `options` of an override.
+fn set_in_format(
+    key: &Key,
+    value: &Expr,
+    options: &mut crate::fmt::cli::Options,
+) -> Result<(), BunfigError> {
+    if let Some(feature) = FEATURES.iter().find(|it| it.name == key.name) {
+        return feature.set(value, options);
+    }
+    FORMAT.set(key, value, &mut |flag, value, is_on| {
+        options.set(flag, value, is_on)?;
+        // The flag only reports an invalid value once the first file is formatted. Here it's checked right away.
+        let given = options.format.last().filter(|_| value.is_some());
+        match given.filter(|it| key.name == it.0) {
+            Some((name, value))
+                if bun_format::FormatOptions::default()
+                    .set(name, value)
+                    .is_err() =>
+            {
+                error(&[b"Invalid ", *name, b" value: ", &value[..], b"."])
+            }
+            _ => Ok(()),
+        }
+    })
+}
+
+/// Parses one glob or an array of globs.
+fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
+    let all: Vec<Vec<u8>> = match &mut json_of(value)? {
+        Json::String(one) => vec![std::mem::take(one)],
+        Json::Array(all) => {
+            ValueType::Strings.check(value)?;
+            all.drain(..).filter_map(Json::into_string).collect()
+        }
+        _ => return expected("string or array", value),
+    };
+    match all.iter().find_map(|it| glob_error(it)) {
+        Some(pattern_error) => reject(value.loc, &[&pattern_error]),
+        None => Ok(all),
+    }
+}
+
+/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output.
+fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, BunfigError> {
+    let items = tables_of(value, b"fmt")?;
+    // `parser` only makes sense for some files, so it's allowed here and not at the top level.
+    let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
+    let options_of = |table: &Expr| {
+        let mut options = crate::fmt::cli::Options::default();
+        for (key, value) in entries(table)? {
+            if key.name == b"parser" {
+                let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
+                apply_value(FORMAT.param(b"parser"), value, set)?;
+                continue;
+            }
+            let mut keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
+            if !keys.any(|it| it == key.name) {
+                let keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
+                let keys = keys.chain([b"parser".to_vec()]);
+                return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys);
+            }
+            set_in_format(&key, value, &mut options)?;
+        }
+        Ok(options.format)
+    };
+    let one = |item: &Expr| {
+        let mut it = crate::fmt::cli::Override::default();
+        for (key, value) in entries(item)? {
+            match &key.name[..] {
+                b"files" => it.files = patterns(value)?,
+                b"excludeFiles" => it.excluded = patterns(value)?,
+                b"options" => it.format = options_of(value)?,
+                _ => {
+                    let keys = [&b"files"[..], b"excludeFiles", b"options"];
+                    let keys = keys.iter().map(|it| it.to_vec());
+                    return unknown_key(&key.name, key.at, b"fmt.overrides", keys);
+                }
+            }
+        }
+        needs_files(item, &it.files)?;
+        Ok(it)
+    };
+    items.iter().map(one).collect()
+}
+
+/// The tables in `value`, which is the `overrides` array of `section`.
+fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], BunfigError> {
+    match &value.data {
+        Data::EArray(items) => Ok(items.slice()),
+        Data::EObject(_) => reject(
+            value.loc,
+            &[
+                b"\"overrides\" is an array of tables\n  Write [[",
+                section,
+                b".overrides]], with two brackets",
+            ],
+        ),
+        _ => expected("array", value),
+    }
+}
+
+/// Rejects `item`, an entry of `overrides`, if it has no `files` to say what it applies to.
+fn needs_files(item: &Expr, files: &[Vec<u8>]) -> Result<(), BunfigError> {
+    match files.is_empty() {
+        true => reject(item.loc, &[b"an override needs \"files\""]),
+        false => Ok(()),
+    }
 }
 
 const LINT: Table = Table {
@@ -380,6 +707,7 @@ const LINT: Table = Table {
         b"allow-unsupported",
         b"type-aware",
         b"infer-globals",
+        b"tsconfig",
         b"project",
         b"type-check",
         b"disable-nested-config",
@@ -394,6 +722,7 @@ const LINT: Table = Table {
             b"report-unused-disable-directives",
         ),
         (b"reportUnusedDisableDirectives", UNUSED_SEVERITY),
+        (b"plugins", b"plugin"),
         (b"rules", b"rule"),
         (b"globals", b"global"),
         (b"parserOptions", b"parser-options"),
@@ -401,6 +730,7 @@ const LINT: Table = Table {
         (b"categories", b"warn"),
         (b"categories", b"deny"),
     ],
+    without_flag: &[b"settings", b"overrides"],
     actions: &[
         b"fix",
         b"fix-dry-run",
@@ -409,8 +739,12 @@ const LINT: Table = Table {
         b"init",
         b"stdin",
         b"stdin-filename",
+        b"staged",
+        b"changed",
         b"print-config",
+        b"doctor",
         b"rules",
+        b"explain",
         b"list-files",
         b"env-info",
         b"stats",
@@ -425,6 +759,8 @@ const LINT: Table = Table {
         b"cwd",
         b"version",
         b"help",
+        b"help-all",
+        b"no-script",
     ],
     others: &[
         b"no-config-lookup",
@@ -436,8 +772,9 @@ const LINT: Table = Table {
         b"no-type-aware",
         b"no-infer-globals",
         b"no-native-plugin-rules",
+        b"no-eslintrc",
+        b"script",
         b"parser",
-        b"plugin",
         b"eslintrc",
         b"env",
         b"rulesdir",
@@ -473,42 +810,298 @@ const NATIVE_PLUGIN_RULES: &[u8] = b"native-plugin-rules";
 const _: () = assert!(LINT.only_has_flags());
 const _: () = assert!(
     LINT.has_every_flag(),
-    "A flag of `bun lint` is in none of the lists of `LINT`. If it describes the project it is a key of `[lint]` in \
-     bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
+    "A `bun lint` flag isn't in any of `LINT`'s lists. If it describes the project, it's a `[lint]` key in bunfig.toml: \
+     add it to `flags`, docs/runtime/bunfig.mdx and the test. If it says what a single run does, add it to `actions`."
 );
 
-/// `off`, `warn` or `error`, or the number for it.
-fn severity_of(table: &[u8], value: &Expr) -> Result<Severity, Refusal> {
-    let text = match bun_lint::json::from_parsed(value) {
-        Some(Json::String(text)) => text,
-        Some(Json::Number(number)) => number_to_string(number),
-        _ => return expected("string", value),
-    };
-    crate::cli::severity(table, &text).map_err(at(value))
+/// Parses `off`, `warn`, `error`, or the matching number. `subject` is the rule or category name, for the error
+/// message.
+fn severity_of(subject: &[u8], value: &Expr) -> Result<Severity, BunfigError> {
+    let setting_json = json_of(value)?;
+    let severity = bun_lint::linter::severity_of(&setting_json);
+    severity.map_or_else(
+        || {
+            reject(
+                value.loc,
+                &[&crate::native::invalid_severity(subject, &setting_json)],
+            )
+        },
+        Ok,
+    )
 }
 
-fn json_of(value: &Expr) -> Result<Json, Refusal> {
+/// Byte offset of a value in bunfig.toml, and of the values nested in it.
+#[derive(Clone, Debug, Default)]
+pub struct ValueOffsets {
+    pub at: usize,
+    pub items: Vec<ValueOffsets>,
+    /// Each key, the key's offset, and its value.
+    pub entries: Vec<(Vec<u8>, usize, ValueOffsets)>,
+}
+
+impl ValueOffsets {
+    fn from_value(value: &Expr) -> ValueOffsets {
+        let mut tree = ValueOffsets {
+            at: value.loc.start.max(0) as usize,
+            ..ValueOffsets::default()
+        };
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            return tree;
+        }
+        match &value.data {
+            Data::EArray(items) => {
+                tree.items = items.slice().iter().map(ValueOffsets::from_value).collect()
+            }
+            Data::EObject(_) => {
+                let entries = entries(value).unwrap_or_default().into_iter();
+                let entries = entries.map(|(key, value)| {
+                    (
+                        key.name,
+                        key.at.start.max(0) as usize,
+                        ValueOffsets::from_value(value),
+                    )
+                });
+                tree.entries = entries.collect();
+            }
+            _ => {}
+        }
+        tree
+    }
+
+    /// Returns the offset of the value at `path`, or of the deepest value that exists along it. With `is_about_key`,
+    /// returns the offset of the last key instead.
+    pub(crate) fn find(&self, path: &[Step], is_about_key: bool) -> usize {
+        let (mut current, mut at) = (self, self.at);
+        for (depth, step) in path.iter().enumerate() {
+            let next = match step {
+                Step::Index(index) => current.items.get(*index).map(|it| (it.at, it)),
+                Step::Key(key) => {
+                    let mut entries = current.entries.iter();
+                    entries.find(|it| it.0 == *key).map(|it| (it.1, &it.2))
+                }
+            };
+            let Some((key_at, next)) = next else {
+                break;
+            };
+            let is_last = depth + 1 == path.len();
+            (current, at) = (
+                next,
+                if is_last && is_about_key {
+                    key_at
+                } else {
+                    next.at
+                },
+            );
+        }
+        at
+    }
+}
+
+/// One entry of `plugins` in `[lint]`.
+#[derive(Clone, Debug)]
+pub struct BunfigPlugin {
+    /// `name`: the prefix for its rules, if it differs from the plugin's own name.
+    pub alias: Option<Vec<u8>>,
+    pub at: usize,
+}
+
+/// Parses `plugins`. An entry is a path or the name of a package, or `{ name = "..", specifier = ".." }`, as in
+/// oxlint's `jsPlugins`.
+fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<BunfigPlugin>), BunfigError> {
+    let Data::EArray(items) = &value.data else {
+        return expected("array", value);
+    };
+    let (mut specifiers, mut plugin_entries) = (Vec::new(), Vec::new());
+    for item in items.slice() {
+        let text = |value: &Expr| match json_of(value)?.as_str() {
+            Some(text) => Ok(text.to_vec()),
+            None => expected("string", value),
+        };
+        let (mut specifier, mut alias) = (None, None);
+        match &item.data {
+            Data::EObject(_) => {
+                for (key, value) in entries(item)? {
+                    match &key.name[..] {
+                        b"specifier" => specifier = Some(text(value)?),
+                        b"name" => {
+                            let name = text(value)?;
+                            if name.is_empty() {
+                                return reject(value.loc, &[b"A plugin's name can't be empty"]);
+                            }
+                            alias = Some(name);
+                        }
+                        _ => {
+                            let known = [b"name".to_vec(), b"specifier".to_vec()];
+                            return unknown_key(
+                                &key.name,
+                                key.at,
+                                b"lint.plugins",
+                                known.into_iter(),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => specifier = Some(text(item)?),
+        }
+        let Some(specifier) = specifier else {
+            return reject(
+                item.loc,
+                &[b"A plugin needs a specifier\n  A path, or the name of a package"],
+            );
+        };
+        specifiers.push(specifier);
+        plugin_entries.push(BunfigPlugin {
+            alias,
+            at: item.loc.start.max(0) as usize,
+        });
+    }
+    Ok((specifiers, plugin_entries))
+}
+
+/// One entry of `[lint.rules]` or of an override's `rules`.
+#[derive(Clone, Debug)]
+pub struct BunfigRule {
+    pub key_at: usize,
+    /// `None` if `--rule` has overridden this entry.
+    pub setting: Option<Json>,
+    pub offsets: ValueOffsets,
+}
+
+fn json_of(value: &Expr) -> Result<Json, BunfigError> {
     let json = bun_lint::json::from_parsed(value);
-    json.map_or_else(|| refuse(value.loc, &[b"it is nested too deep"]), Ok)
+    json.map_or_else(
+        || reject(value.loc, &[b"this value is nested too deeply"]),
+        Ok,
+    )
 }
 
-/// What `[lint]` of `file` says, and `[format]`, which is for the rule that holds a file against what `bun format` prints.
-pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
-    let mut options = crate::cli::Options {
-        of_bun_format: format(file)?.map(Box::new),
-        ..Default::default()
+/// The return type of [`rules`]: the individual rules, each one's location, and the wildcards.
+type Rules = (Vec<(Vec<u8>, Json)>, Vec<BunfigRule>, Vec<Wildcard>);
+
+/// Parses `[lint.rules]` or an override's `rules`, and records where each entry is. This doesn't go through `--rule`,
+/// because that flag parses levn, which can't express every string.
+fn rules(table: &Expr) -> Result<Rules, BunfigError> {
+    let (mut rules, mut rule_entries, mut wildcards) = (Vec::new(), Vec::new(), Vec::new());
+    for (rule, setting) in entries(table)? {
+        let first = match &setting.data {
+            Data::EArray(items) => items.slice().first().unwrap_or(setting),
+            _ => setting,
+        };
+        let key_at = rule.at.start.max(0) as usize;
+        if Wildcard::plugin_of(&rule.name).is_some() {
+            if bun_lint::linter::severity_of(&json_of(first)?) != Some(Severity::Off) {
+                return reject(first.loc, &[&Wildcard::must_be_off(&rule.name)]);
+            }
+            wildcards.push(Wildcard {
+                id: rule.name,
+                key_at: Some(key_at),
+            });
+            continue;
+        }
+        severity_of(&rule.name, first)?;
+        let setting_value = json_of(setting)?;
+        rule_entries.push(BunfigRule {
+            key_at,
+            setting: Some(setting_value.clone()),
+            offsets: ValueOffsets::from_value(setting),
+        });
+        rules.push((rule.name, setting_value));
+    }
+    Ok((rules, rule_entries, wildcards))
+}
+
+/// Parses `[[lint.overrides]]`.
+fn lint_overrides(value: &Expr) -> Result<Vec<crate::cli::Override>, BunfigError> {
+    let items = tables_of(value, b"lint")?;
+    let one = |item: &Expr| {
+        let mut it = crate::cli::Override::default();
+        for (key, value) in entries(item)? {
+            match &key.name[..] {
+                b"files" => it.files = patterns(value)?,
+                b"excludeFiles" => it.excluded = patterns(value)?,
+                b"rules" => (it.rules, it.rule_locations, it.wildcards) = rules(value)?,
+                b"globals" => it.globals = globals(value)?,
+                b"settings" => it.settings = settings(value)?,
+                _ => {
+                    let keys = [
+                        &b"files"[..],
+                        b"excludeFiles",
+                        b"rules",
+                        b"globals",
+                        b"settings",
+                    ];
+                    let keys = keys.iter().map(|it| it.to_vec());
+                    return unknown_key(&key.name, key.at, b"lint.overrides", keys);
+                }
+            }
+        }
+        needs_files(item, &it.files)?;
+        Ok(it)
     };
+    items.iter().map(one).collect()
+}
+
+/// Parses `[lint.globals]` or an override's `globals`. As in ESLint, a boolean says whether the global is writable.
+fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, BunfigError> {
+    let one = |(name, value): (Key, &Expr)| {
+        let kind: &[u8] = match &bun_lint::json::from_parsed(value) {
+            Some(Json::Bool(true)) => b"writable",
+            Some(Json::Bool(false)) => b"readonly",
+            Some(Json::String(it)) if it == b"writable" => b"writable",
+            Some(Json::String(it)) if it == b"readonly" => b"readonly",
+            Some(Json::String(it)) if it == b"off" => b"off",
+            _ => {
+                let mut message = Vec::new();
+                write_json(&mut message, &json_of(value)?);
+                message.extend_from_slice(b" is not a valid value for the global ");
+                message.extend_from_slice(&name.name);
+                message.extend_from_slice(b"\n  Expected \"readonly\", \"writable\", or \"off\"");
+                return reject(value.loc, &[&message]);
+            }
+        };
+        Ok((name.name, Json::String(kind.to_vec())))
+    };
+    entries(table)?.into_iter().map(one).collect()
+}
+
+/// Parses `[lint.settings]` or an override's `settings`.
+fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, BunfigError> {
+    let one = |(name, value): (Key, &Expr)| Ok((name.name, json_of(value)?));
+    entries(table)?.into_iter().map(one).collect()
+}
+
+/// Parses `file`'s `[lint]` section.
+pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, BunfigError> {
+    let mut options = crate::cli::Options::default();
     let Some(section) = file.get(b"lint") else {
-        return Ok(options.of_bun_format.is_some().then_some(options));
+        return Ok(None);
     };
     for (key, value) in entries(&section)? {
         let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
         match &key.name[..] {
-            // One key for two flags, as in `linterOptions` of ESLint.
+            // One key for two flags, as in ESLint's `linterOptions`.
             b"reportUnusedDisableDirectives" if !matches!(value.data, Data::EBoolean(_)) => {
-                give(LINT.param(UNUSED_SEVERITY), value, set)?;
+                let severity = severity_of(&key.name, value)?;
+                options.report_unused_disable_directives_severity = Some(severity);
             }
-            // With the flag, a wrong name comes out when the report is printed.
+            b"reportUnusedInlineConfigs" => {
+                options.report_unused_inline_configs = Some(severity_of(&key.name, value)?);
+            }
+            b"maxWarnings" => match json_of(value)? {
+                Json::Number(count) if count.fract() == 0.0 => options.max_warnings = count as i64,
+                Json::Number(_) => {
+                    return reject(value.loc, &[b"maxWarnings must be a whole number"]);
+                }
+                _ => return expected("number", value),
+            },
+            b"fixType" => LINT.set(&key, value, set).map_err(|mut failure| {
+                if failure.message == crate::cli::INVALID_FIX_TYPE {
+                    failure.message = b"Unknown fix type\n  Expected \"directive\", \"problem\", \"suggestion\", or \"layout\"".to_vec();
+                }
+                failure
+            })?,
+            // With the flag, an unknown name is only reported when the report is printed.
             b"format" => {
                 LINT.set(&key, value, set)?;
                 let name = options.format.as_deref().unwrap_or_default();
@@ -516,14 +1109,14 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     .iter()
                     .all(|it| Format::by_name(name, *it).is_none())
                 {
-                    return refuse(value.loc, &[&Format::is_missing(name)]);
+                    return reject(value.loc, &[&Format::unknown_format_error(name)]);
                 }
             }
             b"nativePluginRules" => {
                 let text = match &value.data {
                     Data::EBoolean(it) if it.value => b"true".to_vec(),
                     Data::EBoolean(_) => b"false".to_vec(),
-                    // With a comma at the end it is a list, whatever is in it.
+                    // A trailing comma makes it a list, whatever it contains.
                     Data::EArray(items) => {
                         let names = items.slice().iter();
                         let names =
@@ -538,34 +1131,18 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                 };
                 set(NATIVE_PLUGIN_RULES, Some(&text), true).map_err(at(value))?;
             }
-            b"globals" => {
-                for (name, value) in entries(value)? {
-                    let is_writable = match bun_lint::json::from_parsed(value) {
-                        Some(Json::Bool(is_writable)) => is_writable,
-                        Some(Json::String(it)) if it == b"writable" => true,
-                        Some(Json::String(it)) if it == b"readonly" => false,
-                        _ => return expected("\"readonly\" or \"writable\"", value),
-                    };
-                    let suffix: &[u8] = if is_writable { b":true" } else { b"" };
-                    set(
-                        &b"global"[..],
-                        Some(&[&name.name[..], suffix].concat()),
-                        true,
-                    )
-                    .map_err(at(value))?;
-                }
-            }
-            // oxlint goes through `-A`, `-W` and `-D` in their order, and `all` is about every other one.
+            b"globals" => options.globals = globals(value)?,
+            // oxlint applies `-A`, `-W` and `-D` in order, and `all` covers every other category, so it goes first.
             b"categories" => {
                 let mut categories = entries(value)?;
                 bun_lint::utils::sort::sort_by_key(&mut categories, |it| it.0.name != b"all");
                 for (name, value) in categories {
-                    let is_known = crate::configs::CATEGORIES.contains(&&name.name[..])
-                        || matches!(&name.name[..], b"all" | b"nursery");
-                    if !is_known {
-                        return refuse(name.at, &[b"unknown category \"", &name.name, b"\""]);
+                    if !crate::configs::is_category(&name.name) {
+                        let known = crate::configs::CATEGORIES.iter().copied();
+                        let known = known.chain([&b"nursery"[..], b"all"]).map(<[u8]>::to_vec);
+                        return unknown_key(&name.name, name.at, b"lint.categories", known);
                     }
-                    let flag: &[u8] = match severity_of(b"categories", value)? {
+                    let flag: &[u8] = match severity_of(&name.name, value)? {
                         Severity::Off => b"allow",
                         Severity::Warn => b"warn",
                         Severity::Error => b"deny",
@@ -573,17 +1150,12 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     set(flag, Some(&name.name), true).map_err(at(value))?;
                 }
             }
-            // The flags read levn, which has no way to write every string. The values go in behind that.
+            b"plugins" => (options.plugin, options.bunfig_plugins) = plugins(value)?,
             b"rules" => {
-                for (rule, setting) in entries(value)? {
-                    let first = match &setting.data {
-                        Data::EArray(items) => items.slice().first().unwrap_or(setting),
-                        _ => setting,
-                    };
-                    severity_of(b"rules", first)?;
-                    options.add_rules(vec![(rule.name, json_of(setting)?)]);
-                }
+                (options.rule, options.bunfig_rules, options.wildcards) = rules(value)?;
             }
+            b"settings" => options.settings = settings(value)?,
+            b"overrides" => options.overrides = lint_overrides(value)?,
             b"parserOptions" => {
                 for (name, value) in entries(value)? {
                     options.add_parser_options(vec![(name.name, json_of(value)?)]);
@@ -592,7 +1164,6 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
             _ => LINT.set(&key, value, set)?,
         }
     }
-    // A flag that only ESLint or only oxlint has tells whom a command line was written for. A key was written for Bun.
-    options.forget_whose_flags_it_has();
+    options.clear_tool_specific_flags();
     Ok(Some(options))
 }

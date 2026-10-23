@@ -1,5 +1,5 @@
-//! The part of the standard library that [`get_static_value`](super::get_static_value) knows:
-//! what exists, and what may be called.
+//! The part of the standard library that [`get_static_value`](super::get_static_value) knows: what exists, and what it
+//! may call.
 
 use super::static_value::{Eval, PropertyKey, StaticSymbol, StaticValue, Stop};
 use bun_core::strings;
@@ -9,41 +9,44 @@ use std::f64::consts;
 pub(super) enum Member {
     /// A function in upstream's `callAllowed`.
     Call,
-    /// A function in upstream's `callPassThrough`: a call has the value of its first argument.
+    /// A function in upstream's `callPassThrough`: a call returns its first argument.
     PassThrough,
-    /// Any other function. A call of it has no static value.
+    /// Any other function. Calling it has no static value.
     Function,
-    /// An object that is not a function.
+    /// An object that isn't a function.
     Namespace,
-    /// The `prototype` of a constructor.
+    /// A constructor's `prototype`.
     Prototype,
-    /// The same function as the member of that owner and name.
-    Alias(&'static str, &'static str),
+    /// The same function as the member with that owner and name.
+    Alias(&'static (&'static str, &'static str)),
     /// A number.
     Constant(f64),
     /// A well-known symbol.
     Symbol,
-    /// An accessor property that is not in upstream's `getterAllowed`.
+    /// An accessor property that isn't in upstream's `getterAllowed`.
     Getter,
-    /// It exists, with a value that is not represented here.
+    /// It exists, but its value isn't represented here.
     Opaque,
 }
 
 struct Entry {
-    /// `""` for a global variable.
-    owner: &'static str,
-    name: &'static str,
-    /// `owner.name`
+    /// `owner.name`. A global variable's owner is `""`.
     path: &'static str,
+    owner_len: u8,
     member: Member,
+}
+
+impl Entry {
+    fn name(&self) -> &'static str {
+        &self.path[usize::from(self.owner_len) + 1..]
+    }
 }
 
 macro_rules! entries {
     ($($owner:literal { $($member:expr => $($name:ident)+;)+ })+) => {
         &[$($($(Entry {
-            owner: $owner,
-            name: stringify!($name),
             path: concat!($owner, ".", stringify!($name)),
+            owner_len: $owner.len() as u8,
             member: {
                 use Member::*;
                 $member
@@ -52,8 +55,8 @@ macro_rules! entries {
     };
 }
 
-/// The global variables in upstream's `builtinNames`, but for `undefined`, `NaN` and `Infinity`,
-/// and all the properties of those that are looked into.
+/// The global variables in upstream's `builtinNames`, except `undefined`, `NaN` and `Infinity`, and all the properties
+/// of the ones whose properties can be read.
 static ENTRIES: &[Entry] = entries! {
     "" {
         Call => BigInt Boolean Date decodeURI decodeURIComponent encodeURI encodeURIComponent escape isFinite isNaN
@@ -125,8 +128,8 @@ static ENTRIES: &[Entry] = entries! {
     }
     "Number" {
         Call => isFinite isNaN;
-        Alias("", "parseFloat") => parseFloat;
-        Alias("", "parseInt") => parseInt;
+        Alias(&("", "parseFloat")) => parseFloat;
+        Alias(&("", "parseInt")) => parseInt;
         Function => isInteger isSafeInteger;
         Constant(f64::EPSILON) => EPSILON;
         Constant(9_007_199_254_740_991.0) => MAX_SAFE_INTEGER;
@@ -150,7 +153,7 @@ static ENTRIES: &[Entry] = entries! {
         Prototype => prototype;
     }
     "Object.prototype" {
-        Alias("", "isPrototypeOf") => isPrototypeOf;
+        Alias(&("", "isPrototypeOf")) => isPrototypeOf;
         Function => __defineGetter__ __defineSetter__ __lookupGetter__ __lookupSetter__ hasOwnProperty propertyIsEnumerable
             toLocaleString toString valueOf;
         Getter => __proto__;
@@ -179,7 +182,7 @@ static ENTRIES: &[Entry] = entries! {
     }
     "Set.prototype" {
         Call => entries has values;
-        Alias("Set.prototype", "values") => keys;
+        Alias(&("Set.prototype", "values")) => keys;
         Function => add clear delete difference forEach intersection isDisjointFrom isSubsetOf isSupersetOf symmetricDifference
             union;
         Getter => size;
@@ -191,8 +194,8 @@ static ENTRIES: &[Entry] = entries! {
     "String.prototype" {
         Call => at charAt charCodeAt codePointAt concat endsWith includes indexOf lastIndexOf normalize padEnd padStart slice
             startsWith substr substring toLowerCase toString toUpperCase trim trimEnd trimStart;
-        Alias("String.prototype", "trimStart") => trimLeft;
-        Alias("String.prototype", "trimEnd") => trimRight;
+        Alias(&("String.prototype", "trimStart")) => trimLeft;
+        Alias(&("String.prototype", "trimEnd")) => trimRight;
         Function => anchor big blink bold fixed fontcolor fontsize isWellFormed italics link localeCompare match matchAll
             repeat replace replaceAll search small split strike sub sup toLocaleLowerCase toLocaleUpperCase toWellFormed
             valueOf;
@@ -210,10 +213,16 @@ static ENTRIES: &[Entry] = entries! {
 };
 
 fn find(owner: &str, name: &[u8]) -> Option<usize> {
-    (ENTRIES.iter()).position(|entry| entry.name.as_bytes() == name && entry.owner == owner)
+    ENTRIES.iter().position(|entry| {
+        let path = entry.path.as_bytes();
+        usize::from(entry.owner_len) == owner.len()
+            && path.len() == owner.len() + 1 + name.len()
+            && path.ends_with(name)
+            && path.starts_with(owner.as_bytes())
+    })
 }
 
-/// A function or an object of the standard library.
+/// A standard library function or object.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Builtin(u16);
 
@@ -228,7 +237,7 @@ impl Builtin {
         ENTRIES.get(usize::from(self.0))
     }
 
-    /// How to get at it: `"Math"`, `"Math.max"`, `"String.prototype.trim"`.
+    /// Its access path: `"Math"`, `"Math.max"`, `"String.prototype.trim"`.
     pub fn name(self) -> &'static str {
         let path = self.entry().map_or("", |entry| entry.path);
         path.strip_prefix('.').unwrap_or(path)
@@ -239,8 +248,7 @@ impl Builtin {
         !matches!(self.member(), Member::Namespace | Member::Prototype)
     }
 
-    /// `Array.prototype` and the like. They are of the kind that they are the prototype of: an
-    /// array, a string, ..
+    /// `Array.prototype` and the like. Each is itself a value of the kind it's the prototype of: an array, a string, ..
     pub(super) fn is_prototype(self) -> bool {
         self.member() == Member::Prototype
     }
@@ -250,7 +258,7 @@ impl Builtin {
     }
 }
 
-/// The value of the global variable `name`, if it is in upstream's `builtinNames`.
+/// The global variable `name`'s value, if it's in upstream's `builtinNames`.
 pub(super) fn global_value(name: &[u8]) -> Option<StaticValue<'static>> {
     match name {
         b"undefined" => Some(StaticValue::Undefined),
@@ -268,16 +276,16 @@ fn value_of(at: usize) -> Eval<StaticValue<'static>> {
         | Member::Function
         | Member::Namespace
         | Member::Prototype => Ok(StaticValue::Builtin(Builtin(at as u16))),
-        Member::Alias(owner, name) => value_of(find(owner, name.as_bytes()).ok_or(Stop::Abort)?),
+        Member::Alias(&(owner, name)) => value_of(find(owner, name.as_bytes()).ok_or(Stop::Abort)?),
         Member::Constant(value) => Ok(StaticValue::Number(value)),
-        Member::Symbol => Ok(StaticValue::Symbol(StaticSymbol::WellKnown(entry.name))),
+        Member::Symbol => Ok(StaticValue::Symbol(StaticSymbol::WellKnown(entry.name()))),
         Member::Getter => Err(Stop::NotStatic),
         Member::Opaque => Err(Stop::Abort),
     }
 }
 
-/// The property `name` of an object whose own properties do not include it, whose prototype is
-/// `constructor.prototype`, and the prototype of that `Object.prototype`.
+/// The property `name` of an object that has no own property with that name, whose prototype is
+/// `constructor.prototype`, whose prototype in turn is `Object.prototype`.
 fn inherited(
     constructor: &'static str,
     prototype: &'static str,
@@ -292,7 +300,7 @@ fn inherited(
     }
 }
 
-/// `object[key]`, where upstream allows it: a getter that is not in `getterAllowed` is not run.
+/// `object[key]`, where upstream allows it. A getter that isn't in `getterAllowed` isn't run.
 pub(super) fn get_member<'a>(
     object: &StaticValue<'a>,
     key: &PropertyKey<'a>,
@@ -309,7 +317,7 @@ pub(super) fn get_member<'a>(
                 }
                 (StaticValue::Wrapper(primitive), _) => get_member(primitive, key),
                 (_, StaticSymbol::Registered(_)) => Ok(StaticValue::Undefined),
-                // The prototypes and the constructors have properties that are named by these.
+                // The prototypes and constructors have properties keyed by these.
                 (_, StaticSymbol::WellKnown(_)) => Err(Stop::Abort),
             };
         }
@@ -320,7 +328,7 @@ pub(super) fn get_member<'a>(
         | StaticValue::Null
         | StaticValue::Hole
         | StaticValue::Iterator(..) => Err(Stop::Abort),
-        // On an object it is seen to be a getter.
+        // On a wrapper object, upstream sees that it's a getter.
         StaticValue::Wrapper(primitive)
             if name == b"description" && primitive.as_symbol().is_some() =>
         {
@@ -395,10 +403,10 @@ pub(super) fn get_member<'a>(
             }
             if name == b"name" && builtin.is_callable() {
                 return Ok(StaticValue::string(
-                    builtin.entry().map_or("", |entry| entry.name).as_bytes(),
+                    builtin.entry().map_or("", Entry::name).as_bytes(),
                 ));
             }
-            // Only constructors have one.
+            // Only constructors have a `prototype`.
             let is_constructor = path != "Proxy"
                 && !strings::contains_char(path.as_bytes(), b'.')
                 && path.starts_with(|c: char| c.is_ascii_uppercase());
@@ -408,14 +416,14 @@ pub(super) fn get_member<'a>(
             if builtin.member() == Member::Prototype {
                 let constructor = path.strip_suffix(".prototype").unwrap_or(path);
                 return match name {
-                    // An array and a string, which are empty.
+                    // `Array.prototype` is an empty array and `String.prototype` is an empty string.
                     b"length" if matches!(constructor, "Array" | "String") => {
                         Ok(StaticValue::Number(0.0))
                     }
                     _ => inherited(constructor, "Object.prototype", name),
                 };
             }
-            // Whether all the properties of this one are listed.
+            // True if all of this builtin's properties are listed.
             let is_known = !is_constructor
                 || builtin.member() != Member::Function
                 || matches!(
@@ -454,7 +462,7 @@ pub(super) fn set_property<'a>(
     key: PropertyKey<'a>,
     value: StaticValue<'a>,
 ) -> Eval<()> {
-    // It sets the prototype, to an object or to `null`.
+    // This sets the prototype, to an object or to `null`.
     if key.as_str() == Some(b"__proto__") {
         return if value.is_object() || value == StaticValue::Null {
             Err(Stop::Abort)
@@ -466,7 +474,7 @@ pub(super) fn set_property<'a>(
         property.1 = value;
         return Ok(());
     }
-    // Indices come first, in ascending order, then strings, then symbols, in the order they are added.
+    // Indices come first in ascending order, then strings, then symbols, each in insertion order.
     let rank = |key: &PropertyKey| match (key.as_index(), key) {
         (Some(index), _) => (0, index),
         (None, PropertyKey::String(_)) => (1, 0),

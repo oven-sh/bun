@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // `slice::sort*` is compiled once for each type and closure that it is called with, several KB each: the 41 sorts of
-// `bun format` were 228 KB of its 3.1 MB. `bun_collections::index_sort` sorts a list of indices with one function that
+// `bun fmt` were 228 KB of its 3.1 MB. `bun_collections::index_sort` sorts a list of indices with one function that
 // is compiled once (`crate::sort` in src/format), at the cost of a call for each comparison.
 //
 //   items.sort() / items.sort_unstable()      → index_sort::sort_slice(&mut items)

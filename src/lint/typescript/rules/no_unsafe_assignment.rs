@@ -7,6 +7,7 @@ use bun_lint::types::utils::{
     is_type_unknown_type, is_unsafe_assignment,
 };
 use bun_lint::types::{NameOf, TsSymbol, Type};
+use bun_lint::utils::oxlint::is_visited_as_pattern;
 use bun_lint::utils::ts_utils::get_this_expression;
 use bun_lint::utils::{Target, TargetElement, TargetKind};
 use rustc_hash::FxHashMap;
@@ -59,8 +60,8 @@ fn in_backticks(ty: Type) -> Vec<u8> {
     [&b"`"[..], &ty.to_text()[..], b"`"].concat()
 }
 
-/// The range of an element of an `ArrayPattern`, or of the `value` of a `Property` of an
-/// `ObjectPattern`: with the default value.
+/// The range of an `ArrayPattern`'s element, or of the `value` of an `ObjectPattern`'s `Property`, including the
+/// default value.
 fn span_of_value(element: &TargetElement) -> Span {
     match element.node {
         Node::PatProp(it) => Span::new(it.value().span().start, it.span().end),
@@ -69,8 +70,7 @@ fn span_of_value(element: &TargetElement) -> Span {
     }
 }
 
-/// What `String(key.value)` is for a key in brackets that is a literal and neither a string nor a
-/// number.
+/// `String(key.value)` for a bracketed key that's a literal but neither a string nor a number.
 fn name_of_keyword(key: Expr) -> Option<&'static [u8]> {
     match key.kind() {
         ExprKind::True => Some(b"true"),
@@ -80,30 +80,30 @@ fn name_of_keyword(key: Expr) -> Option<&'static [u8]> {
     }
 }
 
-/// `services.getTypeAtLocation(node.key)`, where `name` is that of a key without brackets.
+/// `services.getTypeAtLocation(node.key)`, where `name` returns the type for a key without brackets.
 fn type_of_key<'a>(
     file: &'a File<'a>,
     key: Option<Key<'a>>,
     name: impl FnOnce() -> Type<'a>,
 ) -> Type<'a> {
     match key.map(Key::kind) {
-        // For tsgolint the type at a name in brackets is that of the property too.
+        // For tsgolint the type at a bracketed name is the property's type too.
         _ if file.language().is_oxlint => name(),
         Some(KeyKind::Computed(expression)) => expression.ty(),
-        // The type of the literal, of which it only matters that it is a primitive.
+        // The literal's type. All that matters is that it's a primitive.
         Some(KeyKind::ComputedString(_)) => file.type_checker().get_string_type(),
         Some(KeyKind::ComputedNumber(_)) => file.type_checker().get_number_type(),
         _ => name(),
     }
 }
 
-/// What is assigned to a part of a pattern: its type, or the property that it is the value of.
+/// What's assigned to a part of a pattern: its type, or the property it's the value of.
 enum Sender<'a> {
     Type(Type<'a>),
     Property(TsSymbol<'a>),
 }
 
-/// An element of an array pattern or the value of a property of an object pattern.
+/// An array pattern's element or the value of an object pattern's property.
 struct Destructured<'a> {
     /// [`span_of_value`]
     span: Span,
@@ -120,11 +120,11 @@ impl<'a> Destructured<'a> {
         sender: Sender<'a>,
         message: Message,
     ) -> Self {
-        // tsgolint looks at the name of a binding element, whatever its default is.
-        let is_name_alone = matches!(target, Target::Pat(pat) if pat.file().language().is_oxlint);
+        // tsgolint looks at a binding element's name, whatever its default is.
+        let uses_name_only = matches!(target, Target::Pat(pat) if pat.file().language().is_oxlint);
         Destructured {
-            span: if is_name_alone { target.span() } else { span_of_value(element) },
-            has_default: element.default.is_some() && !is_name_alone,
+            span: if uses_name_only { target.span() } else { span_of_value(element) },
+            has_default: element.default.is_some() && !uses_name_only,
             target,
             sender,
             message,
@@ -132,7 +132,7 @@ impl<'a> Destructured<'a> {
     }
 }
 
-/// tsgolint's `assignmentRelationRange`: the `=` or the `:` before what is assigned, in `whole`.
+/// tsgolint's `assignmentRelationRange`: the `=` or `:` before the assigned value, inside `whole`.
 fn relation_span(sender_node: Expr, whole: Span) -> Span {
     let file = sender_node.file();
     let sender = sender_node
@@ -145,11 +145,11 @@ fn relation_span(sender_node: Expr, whole: Span) -> Span {
     }
 }
 
-/// Where a report is shown, and where the comments that disable the rule apply to it. For oxlint these are two places.
+/// Where a report is shown, and where disable comments apply to it. For oxlint these differ.
 #[derive(Copy, Clone)]
-struct Place {
-    shown: Span,
-    of_comments: Span,
+struct ReportSpans {
+    primary: Span,
+    for_comments: Span,
 }
 
 fn check_destructure<'a>(
@@ -159,21 +159,22 @@ fn check_destructure<'a>(
     sender_type: Type<'a>,
     sender_node: Expr<'a>,
 ) {
-    // oxlint points at what is assigned.
-    let place = |span: Span| Place {
-        shown: if cx.language().is_oxlint {
+    // oxlint points at the assigned value.
+    let report_spans = |span: Span| ReportSpans {
+        primary: if cx.language().is_oxlint {
             sender_node.outer_span()
         } else {
             span
         },
-        of_comments: span,
+        for_comments: span,
     };
-    // Not by recursion: a pattern is nested as deeply as the parser allows. The last is the next.
+    // Iterative, because a pattern can be nested as deeply as the parser allows. The next part to process is at the
+    // end.
     let mut parts = Vec::new();
     check_pattern(
         cx,
         receiver_node,
-        place(receiver_span),
+        report_spans(receiver_span),
         sender_type,
         &mut parts,
     );
@@ -184,7 +185,7 @@ fn check_destructure<'a>(
         };
         // The any type comes first, to handle `[[[x]]] = [any]` and `{ x: { y: z } } = { x: any }`.
         if is_type_any_type(sender_type) {
-            cx.report(place(part.span).shown, part.message)
+            cx.report(report_spans(part.span).primary, part.message)
                 .comments_apply_at(part.span)
                 .data("sender", describe_sender(sender_type, cx))
                 .labels_with(|labels| {
@@ -197,7 +198,7 @@ fn check_destructure<'a>(
             check_pattern(
                 cx,
                 part.target,
-                place(part.target.span()),
+                report_spans(part.target.span()),
                 sender_type,
                 &mut parts,
             );
@@ -205,11 +206,11 @@ fn check_destructure<'a>(
     }
 }
 
-/// Adds the parts of `receiver_node` to `parts`, the first of them last.
+/// Adds the parts of `receiver_node` to `parts`, in reverse order.
 fn check_pattern<'a>(
     cx: &Context<'a>,
     receiver_node: Target<'a>,
-    receiver_span: Place,
+    receiver_span: ReportSpans,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
@@ -218,7 +219,7 @@ fn check_pattern<'a>(
         TargetKind::Array => {
             check_array_destructure(cx, receiver_node, receiver_span, sender_type, parts)
         }
-        TargetKind::Object => check_object_destructure(receiver_node, sender_type, parts),
+        TargetKind::Object => check_object_destructure(cx, receiver_node, sender_type, parts),
         TargetKind::Ident(_) | TargetKind::Other(_) => {}
     }
     if let Some(added) = parts.get_mut(others..) {
@@ -229,20 +230,20 @@ fn check_pattern<'a>(
 fn check_array_destructure<'a>(
     cx: &Context<'a>,
     receiver_node: Target<'a>,
-    receiver_span: Place,
+    receiver_span: ReportSpans,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
     // `const [x] = [] as any[];`
     if is_type_any_array_type(sender_type) {
-        cx.report(receiver_span.shown, UNSAFE_ARRAY_PATTERN)
-            .comments_apply_at(receiver_span.of_comments)
+        cx.report(receiver_span.primary, UNSAFE_ARRAY_PATTERN)
+            .comments_apply_at(receiver_span.for_comments)
             .data("sender", describe_sender(sender_type, cx))
             .labels_with(|labels| {
                 let ty = diagnostic_type_text(sender_type);
                 labels.first(format!("Destructured source provides type `{ty}`."));
-                labels.push(receiver_span.of_comments, "This binding receives type `any`.");
-                labels.push(receiver_span.of_comments, "");
+                labels.push(receiver_span.for_comments, "This binding receives type `any`.");
+                labels.push(receiver_span.for_comments, "");
             });
         return;
     }
@@ -252,23 +253,38 @@ fn check_array_destructure<'a>(
     // `const [x] = [1 as any];`
     let tuple_elements = sender_type.get_type_arguments();
     for (receiver_index, receiver_element) in receiver_node.elements().iter().enumerate() {
-        // A rest element is not a 1:1 assignment.
-        if let Some(target) = receiver_element.target
-            && !receiver_element.is_rest
+        // A rest element isn't a 1:1 assignment.
+        if !receiver_element.is_rest
             && let Some(sender_type) = tuple_elements.get(receiver_index)
         {
             let (sender, message) = (Sender::Type(sender_type), UNSAFE_ARRAY_PATTERN_FROM_TUPLE);
-            parts.push(Destructured::new(receiver_element, target, sender, message));
+            match (receiver_element.target, receiver_element.node) {
+                (Some(target), _) => {
+                    parts.push(Destructured::new(receiver_element, target, sender, message));
+                }
+                // tsgolint checks the `OmittedExpression` that represents a hole in an array literal.
+                (None, Node::Expr(hole)) if cx.language().is_oxlint => parts.push(Destructured {
+                    // tsgolint's range for it starts at the `,` after it and ends before the whitespace in front of
+                    // that `,`.
+                    span: Span::empty(hole.span().start),
+                    has_default: false,
+                    target: Target::Expr(hole),
+                    sender,
+                    message,
+                }),
+                (None, _) => {}
+            }
         }
     }
 }
 
 fn check_object_destructure<'a>(
+    cx: &Context<'a>,
     receiver_node: Target<'a>,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
-    // The first of each name.
+    // The first property with each name.
     let mut properties = FxHashMap::default();
     for property in sender_type.get_properties() {
         properties.entry(property.name()).or_insert(property);
@@ -282,6 +298,11 @@ fn check_object_destructure<'a>(
             continue;
         };
         let key = match key.kind() {
+            // For tsgolint a bracketed key has a name if it's a literal. A regular expression is one, a keyword isn't.
+            KeyKind::Computed(expression) if cx.language().is_oxlint => {
+                (expression.tag() == ExprTag::Regex && !expression.is_parenthesized())
+                    .then(|| expression.text())
+            }
             KeyKind::Computed(expression) => name_of_keyword(expression),
             _ => key.name().map(Name::bytes),
         };
@@ -301,7 +322,7 @@ fn check_object_destructure<'a>(
     }
 }
 
-/// What tsgolint has for what is assigned: with its parentheses, but for the value of a property.
+/// tsgolint's span for the assigned value: including its parentheses, except for a property's value.
 fn sender_span(sender_node: Expr) -> Span {
     match sender_node.parent() {
         Node::Prop(property) if !property.is_jsx_attribute() => sender_node.span(),
@@ -317,7 +338,7 @@ fn diagnostic_type_text(ty: Type) -> bstr::BString {
     }
 }
 
-/// `target`: tsgolint's `localTargetRange`, the type annotation of what is assigned to, or that itself.
+/// `target` is tsgolint's `localTargetRange`: the assignment target's type annotation, or the target itself.
 fn report_any_assignment<'a>(
     cx: &Context<'a>,
     sender_node: Expr<'a>,
@@ -337,12 +358,12 @@ fn report_any_assignment<'a>(
     } else {
         ANY_ASSIGNMENT
     };
-    // oxlint points at what is assigned, or at the `this`.
-    let place = match cx.language().is_oxlint {
-        true => any_this.map_or_else(|| sender_span(sender_node), |this| this.outer_span()),
+    // oxlint points at the assigned value, or at the `this`.
+    let report_span = match cx.language().is_oxlint {
+        true => any_this.map_or_else(|| sender_span(sender_node), |this| this.span()),
         false => reporting_node,
     };
-    cx.report(place, message)
+    cx.report(report_span, message)
         .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("sender", describe_sender(sender_type, cx))
         .labels_with(|labels| {
@@ -358,7 +379,7 @@ fn report_any_assignment<'a>(
         });
 }
 
-/// Whether it is reported. `compares`: upstream's `comparisonType !== ComparisonType.None`.
+/// Returns true if it reported. `compares` is upstream's `comparisonType !== ComparisonType.None`.
 fn check_assignment_of_type<'a>(
     cx: &Context<'a>,
     receiver_type: &dyn Fn() -> Type<'a>,
@@ -388,7 +409,7 @@ fn check_assignment_of_type<'a>(
         )
 }
 
-/// Whether it is reported.
+/// Returns true if it reported.
 fn report_unsafe_assignment<'a>(
     cx: &Context<'a>,
     receiver_type: Type<'a>,
@@ -400,12 +421,12 @@ fn report_unsafe_assignment<'a>(
     let Some(result) = is_unsafe_assignment(sender_type, receiver_type, sender_node) else {
         return false;
     };
-    let place = if cx.language().is_oxlint {
+    let report_span = if cx.language().is_oxlint {
         sender_span(sender_node)
     } else {
         reporting_node
     };
-    cx.report(place, UNSAFE_ASSIGNMENT)
+    cx.report(report_span, UNSAFE_ASSIGNMENT)
         .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("receiver", in_backticks(result.receiver))
         .data("sender", in_backticks(result.sender))
@@ -425,16 +446,18 @@ fn check_assignment<'a>(
     target: Span,
     compares: bool,
 ) -> bool {
-    // Neither `any` nor a type with type arguments.
-    if matches!(
-        sender_node.tag(),
-        ExprTag::Number
-            | ExprTag::String
-            | ExprTag::BigInt
-            | ExprTag::True
-            | ExprTag::False
-            | ExprTag::Null
-    ) {
+    // These are neither `any` nor a type with type arguments.
+    if !sender_node.has_jsdoc_cast()
+        && matches!(
+            sender_node.tag(),
+            ExprTag::Number
+                | ExprTag::String
+                | ExprTag::BigInt
+                | ExprTag::True
+                | ExprTag::False
+                | ExprTag::Null
+        )
+    {
         return false;
     }
     check_assignment_of_type(
@@ -448,8 +471,8 @@ fn check_assignment<'a>(
     )
 }
 
-/// What is done for an `AssignmentExpression`, an `AssignmentPattern` and a `VariableDeclarator`.
-/// `left_span`: the range of `left` with its type annotation.
+/// Handles an `AssignmentExpression`, an `AssignmentPattern` and a `VariableDeclarator`. `left_span` is the range of
+/// `left` including its type annotation.
 fn check_assignment_to_target<'a>(
     cx: &Context<'a>,
     left: Target<'a>,
@@ -471,9 +494,9 @@ fn check_assignment_to_target<'a>(
 }
 
 fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
-    // The properties of an object pattern are checked via assignments.
+    // An object pattern's properties are checked via assignments.
     if node.is_import_attribute()
-        || matches!(node.parent(), Node::Expr(object) if object.is_assignment_target())
+        || matches!(node.parent(), Node::Expr(object) if !cx.language().is_oxlint && object.is_assignment_target())
     {
         return;
     }
@@ -484,10 +507,10 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
         // `{ a = 1 }` is an `AssignmentPattern`.
         PropKind::Shorthand if value.tag() == ExprTag::Assign => {}
         PropKind::Init | PropKind::Shorthand => {
-            // `getContextualType(checker, key)` is the contextual type of the property if the key
-            // is an identifier, and nothing otherwise.
+            // `getContextualType(checker, key)` is the property's contextual type if the key is an identifier, and
+            // nothing otherwise.
             let receiver_type = || {
-                // tsgolint asks the same of the value first, which answers for a bare name too: `{ [a]: b }`, and not
+                // tsgolint first tries the same on the value, which also works for a bare name: `{ [a]: b }`, but not
                 // `{ [a]: b() }` or `{ [a]: (b) }`.
                 let is_bare_name = value.tag() == ExprTag::Ident && !value.is_parenthesized();
                 let contextual_type = match key.map(Key::kind) {
@@ -500,7 +523,7 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
             let target = key.map_or_else(|| node.span(), |it| it.span(file));
             check_assignment(cx, &receiver_type, value, node.span(), target, true);
         }
-        // tsgolint listens for a `PropertyAssignment` and a `ShorthandPropertyAssignment` only.
+        // tsgolint only listens for a `PropertyAssignment` and a `ShorthandPropertyAssignment`.
         PropKind::Method | PropKind::Getter | PropKind::Setter if file.language().is_oxlint => {}
         PropKind::Method | PropKind::Getter | PropKind::Setter => {
             if node.func().is_some_and(Func::has_body) {
@@ -545,18 +568,27 @@ impl NoUnsafeAssignment {
         let ExprKind::Spread(argument) = node.kind() else {
             return;
         };
-        if !matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Array && !parent.is_assignment_target())
-        {
+        let Node::Expr(parent) = node.parent() else {
+            return;
+        };
+        if parent.tag() != ExprTag::Array {
+            return;
+        }
+        let is_rest = match cx.language().is_oxlint {
+            true => is_visited_as_pattern(parent),
+            false => parent.is_assignment_target(),
+        };
+        if is_rest {
             return;
         }
         let rest_type = argument.ty();
         if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
-            let place = if cx.language().is_oxlint {
+            let report_span = if cx.language().is_oxlint {
                 argument.outer_span()
             } else {
                 node.span()
             };
-            cx.report(place, UNSAFE_ARRAY_SPREAD)
+            cx.report(report_span, UNSAFE_ARRAY_SPREAD)
                 .comments_apply_at(node)
                 .data("sender", describe_sender(rest_type, cx))
                 .labels_with(|labels| {
@@ -568,6 +600,30 @@ impl NoUnsafeAssignment {
 }
 
 impl NoUnsafeAssignment {
+    // tsgolint's listener for an `ObjectLiteralExpression` that isn't a pattern.
+    fn object<'a>(node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Object(properties) = node.kind() else {
+            return;
+        };
+        if is_visited_as_pattern(node) {
+            return;
+        }
+        for property in properties {
+            let kind = property.kind();
+            if !matches!(kind, PropKind::Init | PropKind::Shorthand) {
+                continue;
+            }
+            let Some(value) = property.value() else {
+                return;
+            };
+            // It stops at a value that's an assignment, so the properties after it aren't checked.
+            if kind == PropKind::Init && value.tag() == ExprTag::Assign {
+                return;
+            }
+            check_property(cx, property, value);
+        }
+    }
+
     // An `AssignmentPattern` in a declaration.
     fn check_param<'a>(node: Param<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(right) = node.default() {
@@ -625,7 +681,7 @@ impl NoUnsafeAssignment {
     // `VariableDeclarator[init != null]`
     fn check_declarator<'a>(node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(init) = node.init() {
-            // Without an annotation the type of the variable is inferred, thus equal.
+            // Without an annotation the variable's type is inferred, and therefore equal.
             let compares = node.ty().is_some();
             check_assignment_to_target(
                 cx,
@@ -640,7 +696,7 @@ impl NoUnsafeAssignment {
     }
 }
 
-/// What has a target and a value.
+/// A node with a target and a value.
 pub enum Assignment<'a> {
     Expr(Expr<'a>),
     Param(Param<'a>),
@@ -654,17 +710,33 @@ impl Rule for NoUnsafeAssignment {
         .requires_types();
     const ON: On = On::new()
         .members()
-        .exprs(&[ExprTag::Assign, ExprTag::Spread])
+        .exprs(&[ExprTag::Assign, ExprTag::Spread, ExprTag::Object])
         .params()
         .pats(&[PatTag::Array, PatTag::Object])
         .var_decls()
         .props()
         .finish();
-    /// They are checked at the end, the outer ones first: two of them can report at one place, and ESLint has them in that order.
+    /// They're checked at the end, outer ones first, because two of them can report at the same location and ESLint
+    /// reports them in that order.
     type State<'a> = Vec<(Span, Assignment<'a>)>;
 
     fn new(_: &Options) -> Self {
         NoUnsafeAssignment
+    }
+
+    // Only tsgolint walks an object literal's properties in order.
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().is_oxlint {
+            true => Self::ON,
+            false => On::new()
+                .members()
+                .exprs(&[ExprTag::Assign, ExprTag::Spread])
+                .params()
+                .pats(&[PatTag::Array, PatTag::Object])
+                .var_decls()
+                .props()
+                .finish(),
+        }
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
@@ -678,7 +750,8 @@ impl Rule for NoUnsafeAssignment {
         };
         if node.kind() != MemberKind::Property
             || node.is_signature()
-            || node.flags().contains(Flags::ABSTRACT)
+            // tsgolint checks every `PropertyDeclaration` that has an initializer.
+            || (node.flags().contains(Flags::ABSTRACT) && !cx.language().is_oxlint)
         {
             return;
         }
@@ -693,6 +766,7 @@ impl Rule for NoUnsafeAssignment {
         match node.tag() {
             ExprTag::Assign => cx.state.push((node.span(), Assignment::Expr(node))),
             ExprTag::Spread => Self::spread(node, cx),
+            ExprTag::Object => Self::object(node, cx),
             _ => {}
         }
     }
@@ -713,7 +787,9 @@ impl Rule for NoUnsafeAssignment {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut assignments = std::mem::take(&mut cx.state);
-        assignments.sort_by_key(|it| (it.0.start, std::cmp::Reverse(it.0.end)));
+        utils::sort::sort_by_key(&mut assignments, |it| {
+            (it.0.start, std::cmp::Reverse(it.0.end))
+        });
         for (_, assignment) in assignments {
             match assignment {
                 Assignment::Expr(node) => Self::assign(node, cx),
@@ -730,13 +806,16 @@ impl Rule for NoUnsafeAssignment {
             return;
         };
         if !node.is_jsx_attribute() {
-            check_property(cx, node, value);
+            // For tsgolint the properties are checked from their object, in `Self::object`.
+            if !cx.language().is_oxlint {
+                check_property(cx, node, value);
+            }
         } else if node.kind() != PropKind::Spread
             && value.jsx_container_span().is_some()
             && !value.is_missing()
         {
             let target = node.key().map_or_else(|| node.span(), |it| it.span(cx.file()));
-            // tsgolint asks for the contextual type of the value, and its diagnostic is at the `=`.
+            // tsgolint uses the value's contextual type, and puts its diagnostic at the `=`.
             let is_oxlint = cx.language().is_oxlint;
             let receiver_type = || {
                 let contextual_type = if is_oxlint { value.contextual_type() } else { None };

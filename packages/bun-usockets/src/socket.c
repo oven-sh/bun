@@ -273,6 +273,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             s->next = 0;
             s->flags.low_prio_state = 0;
             s->group->low_prio_count--;
+            us_internal_disable_sweep_timer(loop);
             /* Mirror the else branch: if this was the last thing keeping the
              * group linked, drop it from the loop now rather than waiting for
              * the next link/unlink to notice. */

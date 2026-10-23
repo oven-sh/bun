@@ -416,6 +416,8 @@ const kGoawayCode = Symbol("goawayCode");
 const kGoawayLastStreamID = Symbol("goawayLastStreamID");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
+// Set by destroySessionInternally().
+const kInternalDestroy = Symbol("internalDestroy");
 
 // Node's socketOnError: once a GOAWAY has been received the peer is fully
 // within its rights to drop the connection, so an ECONNRESET behind it is
@@ -3785,10 +3787,16 @@ function destroyWithInvalidSessionNT(stream) {
 // teardown by the grace, never past it.
 function scheduleSettingsAckGraceNT(session) {
   if (session[kSettingsAckGraceTimer] !== undefined) return;
-  const timer = setTimeout(destroyIfNotDestroyedNT, 250, session);
+  const timer = setTimeout(destroySessionInternally, 250, session);
   // Never keeps the event loop alive: if nothing else does, the process is exiting anyway.
   timer.unref?.();
   session[kSettingsAckGraceTimer] = timer;
+}
+// Every destroy() with no error that the session decides on itself goes through here, so destroy() can tell it from the program's.
+function destroySessionInternally(session: Http2Session) {
+  if (session.destroyed) return;
+  session[kInternalDestroy] = true;
+  session.destroy();
 }
 function destroyIfNotDestroyedNT(target) {
   if (!target.destroyed) target.destroy();
@@ -3830,7 +3838,7 @@ function emitStreamErrorNT(self, stream, error, destroy_self) {
       // A destroyed stream that IS listened keeps the delivery below -
       // node's errorEmitted de-dupes the re-emission, and grpc's status
       // codes ride exactly this deferred path.
-      if (destroy_self) self.destroy();
+      if (destroy_self) destroySessionInternally(self);
       return;
     }
     if (typeof error === "number" && self != null && self[kSessionDestroyError] != null) {
@@ -3861,7 +3869,7 @@ function emitStreamErrorNT(self, stream, error, destroy_self) {
       stream.destroy(error_instance, stream.rstCode);
     }
 
-    if (destroy_self) self.destroy();
+    if (destroy_self) destroySessionInternally(self);
   }
 }
 // Outbound guard: header values carrying code points above 0xFF (or raw CR/LF/NUL) cannot be
@@ -4152,7 +4160,7 @@ class ServerHttp2Session extends Http2Session {
             scheduleSettingsAckGraceNT(self);
           } else {
             captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-            setImmediate(destroyIfNotDestroyedNT, self);
+            setImmediate(destroySessionInternally, self);
           }
         }
       } else if (state === 5) {
@@ -4232,7 +4240,7 @@ class ServerHttp2Session extends Http2Session {
       }
       if (self.#isClosedAndIdle() && self.#pendingSettingsCallbacks.length === 0 && pingsDrained && !self.destroyed) {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-        setImmediate(destroyIfNotDestroyedNT, self);
+        setImmediate(destroySessionInternally, self);
       }
       onSettingsAck(self, settings, acked);
     },
@@ -4267,7 +4275,7 @@ class ServerHttp2Session extends Http2Session {
               // A server session has no pending-request queue.
               if (self.#isClosedAndIdle() && !self.destroyed) {
                 captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-                setImmediate(destroyIfNotDestroyedNT, self);
+                setImmediate(destroySessionInternally, self);
               }
             }
           }
@@ -4322,7 +4330,7 @@ class ServerHttp2Session extends Http2Session {
         // peer's late GOAWAY could be read - grpc-js forceShutdown sends
         // GOAWAY(NGHTTP2_CANCEL) at a client that just close()d, and on the
         // Windows agents the frame deterministically arrived first).
-        self.destroy();
+        destroySessionInternally(self);
       } else {
         // Like Node, destroy with an error but send our own goaway with
         // NGHTTP2_NO_ERROR since this side had no error.
@@ -4331,7 +4339,7 @@ class ServerHttp2Session extends Http2Session {
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self.destroy();
+      destroySessionInternally(self);
     },
     write(self: ServerHttp2Session, buffer: Buffer, transportClosed: boolean) {
       if (!self) return -1;
@@ -4372,7 +4380,7 @@ class ServerHttp2Session extends Http2Session {
     // never comes once the peer is gone — leaving the session (and the
     // server's open-connection count) alive forever.
     this.close();
-    this.destroy();
+    destroySessionInternally(this);
   }
   #onError(error: Error) {
     // Node's socketOnError reads `const session = this[kSession]` and does
@@ -4384,7 +4392,7 @@ class ServerHttp2Session extends Http2Session {
       return;
     }
     if (isEconnresetAfterGoaway(this, error)) {
-      this.destroy();
+      destroySessionInternally(this);
       return;
     }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
@@ -4395,7 +4403,7 @@ class ServerHttp2Session extends Http2Session {
       // attaches sessionOnError at accept time, so this branch only matters
       // for standalone sessions.) Anything that is not teardown noise keeps
       // Node's EventEmitter contract and surfaces when unobserved.
-      this.destroy();
+      destroySessionInternally(this);
       return;
     }
     this.destroy(error);
@@ -4704,7 +4712,7 @@ class ServerHttp2Session extends Http2Session {
         scheduleSettingsAckGraceNT(this);
       } else {
         captureHttp2PerfFrameSnapshot(this, this.#parser);
-        setImmediate(destroyIfNotDestroyedNT, this);
+        setImmediate(destroySessionInternally, this);
       }
     }
   }
@@ -4742,7 +4750,8 @@ class ServerHttp2Session extends Http2Session {
 
       const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
-      const closedAndIdle = this.#isClosedAndIdle();
+      // Only a teardown the session starts itself ends a graceful close(). A destroy() that the program calls destroys every stream.
+      const endsGracefulClose = this[kInternalDestroy] === true && this.#isClosedAndIdle();
       const unread = unreadClosedStreams(this.#parser);
       this.#closed = true;
       if (socket && (!this[kGoawaySent] || code)) {
@@ -4766,7 +4775,7 @@ class ServerHttp2Session extends Http2Session {
         // detach() flushes the corked GOAWAY, and #Handlers.write drops it once the socket has ended.
         parser.detach(!error && this.#closeCalled);
       }
-      settleUnreadClosedStreams(unread, error, closedAndIdle, !socket || socket.destroyed);
+      settleUnreadClosedStreams(unread, error, endsGracefulClose, !socket || socket.destroyed);
       this.#connected = false;
       if (socket) {
         if (error || !this.#closeCalled) {
@@ -4956,11 +4965,11 @@ function unreadClosedStreams(parser: $Bindgen.H2FrameParser | null) {
 function settleUnreadClosedStreams(
   streams: Http2Stream[],
   error: Error | null | undefined,
-  closedAndIdle: boolean,
+  endsGracefulClose: boolean,
   transportGone: boolean,
 ) {
   // A graceful close finishes without waiting for unread streams, so they stay readable.
-  if (error == null && closedAndIdle) return;
+  if (error == null && endsGracefulClose) return;
   for (const stream of streams) {
     // When the transport just went away, a stream with a reader keeps its buffered data.
     if (error == null && transportGone && stream.readableFlowing !== null) continue;
@@ -5133,7 +5142,7 @@ class ClientHttp2Session extends Http2Session {
             scheduleSettingsAckGraceNT(self);
           } else {
             captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-            setImmediate(destroyIfNotDestroyedNT, self);
+            setImmediate(destroySessionInternally, self);
           }
         }
       } else if (state === 5) {
@@ -5222,7 +5231,7 @@ class ClientHttp2Session extends Http2Session {
       }
       if (self.#isClosedAndIdle() && self.#pendingSettingsCallbacks.length === 0 && pingsDrained && !self.destroyed) {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-        setImmediate(destroyIfNotDestroyedNT, self);
+        setImmediate(destroySessionInternally, self);
       }
       onSettingsAck(self, settings, acked);
     },
@@ -5322,14 +5331,14 @@ class ClientHttp2Session extends Http2Session {
         // peer's late GOAWAY could be read - grpc-js forceShutdown sends
         // GOAWAY(NGHTTP2_CANCEL) at a client that just close()d, and on the
         // Windows agents the frame deterministically arrived first).
-        self.destroy();
+        destroySessionInternally(self);
       } else {
         self.destroy(sessionErrorFromCode(errorCode), constants.NGHTTP2_NO_ERROR);
       }
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self.destroy();
+      destroySessionInternally(self);
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {
       if (!self) return;
@@ -5411,7 +5420,7 @@ class ClientHttp2Session extends Http2Session {
       // connect completes and then lets the session finish closing.
       this.#rejectPendingRequests();
       // A 'connect' listener can open a request and then close(). That request still completes.
-      if (this.#isClosedAndIdle()) this.destroy();
+      if (this.#isClosedAndIdle()) destroySessionInternally(this);
       return;
     }
     // Requests made while the socket was still connecting were queued; submit them now.
@@ -5445,11 +5454,11 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     if (this.#closed) {
-      this.destroy();
+      destroySessionInternally(this);
       return;
     }
     if (isEconnresetAfterGoaway(this, error)) {
-      this.destroy();
+      destroySessionInternally(this);
       return;
     }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
@@ -5458,7 +5467,7 @@ class ClientHttp2Session extends Http2Session {
       // still errors any remaining streams. Anything else (handshake
       // failure, ECONNREFUSED, ...) keeps Node's EventEmitter contract and
       // surfaces when unobserved.
-      this.destroy();
+      destroySessionInternally(this);
       return;
     }
     this.destroy(error);
@@ -5786,7 +5795,7 @@ class ClientHttp2Session extends Http2Session {
       scheduleSettingsAckGraceNT(this);
     } else {
       captureHttp2PerfFrameSnapshot(this, this.#parser);
-      setImmediate(destroyIfNotDestroyedNT, this);
+      setImmediate(destroySessionInternally, this);
     }
   }
 
@@ -5851,7 +5860,8 @@ class ClientHttp2Session extends Http2Session {
         // Streams torn down by this destroy surface the same session error (node semantics).
         this[kSessionDestroyError] = error;
       }
-      const closedAndIdle = this.#isClosedAndIdle();
+      // Only a teardown the session starts itself ends a graceful close(). A destroy() that the program calls destroys every stream.
+      const endsGracefulClose = this[kInternalDestroy] === true && this.#isClosedAndIdle();
       const unread = unreadClosedStreams(this.#parser);
       this.#closed = true;
       {
@@ -5903,7 +5913,7 @@ class ClientHttp2Session extends Http2Session {
         // Flushes the corked GOAWAY, so the socket ends afterwards (see the server session's destroy).
         parser.detach(!error && this.#closeCalled);
       }
-      settleUnreadClosedStreams(unread, error, closedAndIdle, !socket || socket.destroyed);
+      settleUnreadClosedStreams(unread, error, endsGracefulClose, !socket || socket.destroyed);
       this.#connected = false;
       if (socket) {
         if (error || !this.#closeCalled) {
@@ -6253,7 +6263,7 @@ class ClientHttp2Session extends Http2Session {
       // Nothing reached the wire, so the session is still usable. Node only throws here.
       if (allocated) {
         this.#flushPendingRequests();
-        if (this.#isClosedAndIdle()) setImmediate(destroyIfNotDestroyedNT, this);
+        if (this.#isClosedAndIdle()) setImmediate(destroySessionInternally, this);
       }
       throw e;
     }
@@ -6348,7 +6358,7 @@ function sessionOnTimeout() {
   if (this.destroyed || this.closed) return;
   const server = this[kServer];
   if (!server.emit("timeout", this)) {
-    this.destroy();
+    destroySessionInternally(this);
   }
 }
 /**

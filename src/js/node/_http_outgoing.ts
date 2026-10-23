@@ -1042,7 +1042,8 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   let ret;
   if (msg.chunkedEncoding && chunk.length !== 0) {
     len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
-    if (msg[kCorked] && msg._headerSent) {
+    // After an uncork() too many the count is below zero, which in Node holds every later chunk back until end().
+    if (msg[kCorked] > 0 && msg._headerSent) {
       msg[kChunkedBuffer].push(chunk, encoding, callback);
       msg[kChunkedLength] += len;
       ret = msg[kChunkedLength] < msg[kHighWaterMark];

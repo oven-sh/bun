@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { Agent, ClientRequest, createServer, get, IncomingMessage, request, ServerResponse } from "http";
+import { createSecureServer } from "http2";
 import { createServer as createHttpsServer } from "https";
-import { AddressInfo, connect, Server } from "net";
+import { AddressInfo, connect, createServer as createNetServer, Server } from "net";
 import type { Duplex } from "stream";
 import { text } from "stream/consumers";
 import { connect as tlsConnect } from "tls";
@@ -2326,6 +2327,15 @@ describe("a chunked request body written under req.cork()", () => {
     },
   );
 
+  test("uncork() with nothing corked doesn't hold the next chunk back", async () => {
+    const echoed = await echo(async req => {
+      req.uncork();
+      await new Promise(resolve => req.write("x", resolve));
+      req.end("y");
+    }, true);
+    expect(echoed).toBe("xy");
+  });
+
   test("'drain' comes before the callbacks of the writes that a corked request or a reused socket flushes", async () => {
     const body = Buffer.alloc(64 * 1024, "a").toString();
     const corked: string[] = [];
@@ -2364,3 +2374,114 @@ describe("a chunked request body written under req.cork()", () => {
     }
   });
 });
+
+describe.each(["listen()", "emit('connection')", "allowHTTP1"] as const)(
+  "res.uncork() with nothing corked doesn't hold the next chunks back, over %s",
+  path => {
+    // `arrived` resolves when the client has the first chunk of the body.
+    type Handler = (res: ServerResponse, arrived: Promise<unknown>) => Promise<unknown>;
+    const written = (res: ServerResponse, chunk: string) => new Promise(resolve => res.write(chunk, resolve));
+
+    test.each<[string, string, Handler]>([
+      [
+        "flushHeaders(), uncork(), write()",
+        "xy",
+        async res => {
+          res.flushHeaders();
+          res.uncork();
+          await written(res, "x");
+          res.end("y");
+        },
+      ],
+      [
+        "uncork(), flushHeaders(), write()",
+        "xy",
+        async res => {
+          res.uncork();
+          res.flushHeaders();
+          await written(res, "x");
+          res.end("y");
+        },
+      ],
+      [
+        "write(), uncork(), write()",
+        "wxy",
+        async (res, arrived) => {
+          res.write("w");
+          await arrived;
+          res.uncork();
+          await written(res, "x");
+          res.end("y");
+        },
+      ],
+      [
+        "flushHeaders(), uncork(), a write() that arrives before end()",
+        "xy",
+        async (res, arrived) => {
+          res.flushHeaders();
+          res.uncork();
+          res.write("x");
+          await arrived;
+          res.end("y");
+        },
+      ],
+      [
+        "write(''), uncork(), cork(), and a write() in a later tick",
+        "xy",
+        async res => {
+          res.write("");
+          res.uncork();
+          res.cork();
+          await new Promise(resolve => setImmediate(resolve));
+          await written(res, "x");
+          res.end("y");
+        },
+      ],
+      [
+        "flushHeaders(), uncork(), then cork(), write(), write(), uncork()",
+        "abxy",
+        async (res, arrived) => {
+          res.flushHeaders();
+          res.uncork();
+          res.cork();
+          res.write("a");
+          res.write("b");
+          res.uncork();
+          await arrived;
+          await written(res, "x");
+          res.end("y");
+        },
+      ],
+    ])("%s", async (_name, body, handler) => {
+      const arrived = Promise.withResolvers<unknown>();
+      const listener = (_req: IncomingMessage, res: ServerResponse) => void handler(res, arrived.promise);
+      const server =
+        path === "allowHTTP1"
+          ? createSecureServer({ ...tlsCert, allowHTTP1: true }, listener as never)
+          : createServer(listener);
+      const front =
+        path === "emit('connection')" ? createNetServer(socket => void server.emit("connection", socket)) : server;
+      await once(front.listen(0, "127.0.0.1"), "listening");
+      const { port } = front.address() as AddressInfo;
+      const client =
+        path === "allowHTTP1"
+          ? tlsConnect({ port, host: "127.0.0.1", servername: "localhost", ca: tlsCert.cert })
+          : connect(port, "127.0.0.1");
+      try {
+        let raw = "";
+        client.on("data", chunk => {
+          raw += chunk;
+          if (/\r\n\r\n[0-9a-f]+\r\n/.test(raw)) arrived.resolve(undefined);
+        });
+        client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await once(client, "close");
+        const chunks = raw.slice(raw.indexOf("\r\n\r\n") + 4).split("\r\n");
+        expect(chunks.filter((_, index) => index % 2 === 1).join("")).toBe(body);
+      } finally {
+        client.destroy();
+        front.close();
+        if (front !== server) server.close();
+      }
+    });
+  },
+);

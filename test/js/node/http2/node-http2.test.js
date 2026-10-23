@@ -7488,14 +7488,39 @@ describe("session teardown", () => {
     async function unreadResponse() {
       const server = http2.createServer((req, res) => res.end("hello"));
       await once(server.listen(0, "127.0.0.1"), "listening");
+      const accepted = once(server, "connection");
       const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
       client.on("error", () => {});
       const req = client.request({ ":path": "/" });
       await once(req, "response");
       await roundTrip(client);
       expect({ closed: req.closed, destroyed: req.destroyed }).toEqual({ closed: true, destroyed: false });
-      return { server, client, req, sessionClosed: new Promise(resolve => client.on("close", resolve)) };
+      const sessionClosed = new Promise(resolve => client.on("close", resolve));
+      return { server, client, req, stream: req, body: "hello", peerSocket: (await accepted)[0], sessionClosed };
     }
+
+    // `read` attaches the reader. A server discards the body of a request that has none.
+    async function unreadRequest(read) {
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        read(stream);
+        stream.respond({ ":status": 200 }, { endStream: true });
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address();
+      const accepted = once(server, "stream");
+      const peerSocket = net.connect(port, "127.0.0.1");
+      const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => peerSocket });
+      client.on("error", () => {});
+      client.request({ ":path": "/", ":method": "POST" }).resume().end("unread");
+      const [stream] = await accepted;
+      await roundTrip(client);
+      expect({ closed: stream.closed, destroyed: stream.destroyed }).toEqual({ closed: true, destroyed: false });
+      const sessionClosed = new Promise(resolve => stream.session.on("close", resolve));
+      return { server, client, stream, body: "unread", peerSocket, sessionClosed };
+    }
+    const pause = stream => stream.pause();
+    const unreadStream = side => (side === "client" ? unreadResponse() : unreadRequest(pause));
 
     it.each([
       ["destroy()", undefined],
@@ -7518,21 +7543,68 @@ describe("session teardown", () => {
     });
 
     it("is destroyed by server session.destroy()", async () => {
-      const server = http2.createServer();
-      server.on("stream", stream => {
-        stream.pause();
-        stream.respond({ ":status": 200 }, { endStream: true });
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const accepted = once(server, "stream");
-      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      const { server, client, stream } = await unreadRequest(pause);
       try {
-        client.request({ ":path": "/", ":method": "POST" }).resume().end("unread");
-        const [stream] = await accepted;
-        await roundTrip(client);
-        expect({ closed: stream.closed, destroyed: stream.destroyed }).toEqual({ closed: true, destroyed: false });
         stream.session.destroy();
         expect(stream.destroyed).toBe(true);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    it.each(["client", "server"])("is destroyed by %s session.destroy() right after session.close()", async side => {
+      const { server, client, stream } = await unreadStream(side);
+      try {
+        const closed = once(stream, "close");
+        stream.session.close();
+        stream.session.destroy();
+        expect(stream.destroyed).toBe(true);
+        await closed;
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    it.each([
+      ["client", "ends", unreadResponse, socket => socket.end(), []],
+      // It read one byte and has no reader since.
+      ["server", "ends", () => unreadRequest(s => s.once("readable", () => s.read(1))), socket => socket.end(), []],
+      ...(isLinux ? [["client", "is reset", unreadResponse, socket => socket.resetAndDestroy(), ["ECONNRESET"]]] : []),
+    ])("is destroyed on the %s when the connection %s", async (_, __, setup, drop, errors) => {
+      const { server, client, stream, peerSocket, sessionClosed } = await setup();
+      try {
+        const events = [];
+        stream.on("error", err => events.push(err.code));
+        stream.on("close", () => events.push("close"));
+        drop(peerSocket);
+        await sessionClosed;
+        expect({ destroyed: stream.destroyed, events, rstCode: stream.rstCode }).toEqual({
+          destroyed: true,
+          events: [...errors, "close"],
+          rstCode: NGHTTP2_NO_ERROR,
+        });
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    // Node destroys it and drops the data.
+    it.each(["client", "server"])("stays readable for a paused %s reader when the connection ends", async side => {
+      const { server, client, stream, body, peerSocket, sessionClosed } = await unreadStream(side);
+      try {
+        stream.pause();
+        peerSocket.end();
+        await sessionClosed;
+        expect(stream.destroyed).toBe(false);
+        const events = [];
+        stream.setEncoding("utf8").on("data", chunk => events.push(chunk));
+        stream.on("end", () => events.push("end"));
+        stream.resume();
+        await once(stream, "close");
+        expect(events).toEqual([body, "end"]);
       } finally {
         client.destroy();
         server.close();

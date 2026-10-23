@@ -81,6 +81,39 @@ test.concurrent(
   timeout,
 );
 
+// Same as under ESLint 10.12.0. eslint-plugin-import-x looks for its "node" resolver in `<package directory>/node`.
+test.concurrent(
+  "`require.resolve()` in an installed plugin doesn't find the project's TypeScript files without their extension",
+  async () => {
+    const files = {
+      "node_modules/eslint-plugin-demo/package.json": `{ "name": "eslint-plugin-demo", "main": "index.js" }`,
+      "node_modules/eslint-plugin-demo/index.js": `const path = require("node:path");
+        const find = name => {
+          try {
+            return path.relative(process.cwd(), require.resolve(path.resolve(name))).replaceAll(path.sep, "/");
+          } catch (error) {
+            return error.code;
+          }
+        };
+        const all = () => ["node", "file", "file.ts", "js"].map(find).join(" ");
+        const create = context => ({ Program: node => context.report({ node, message: context.options[0] + ", " + all() }) });
+        module.exports = { found: all(), rules: { show: { meta: { schema: false }, create } } };`,
+      "node/index.ts": "export {};\n",
+      "file.ts": "export {};\n",
+      "js/index.js": "",
+      // The option is what the plugin finds while the configuration is read.
+      "eslint.config.mjs": `import demo from "eslint-plugin-demo";
+        export default [{ plugins: { demo }, rules: { "demo/show": ["error", demo.found] } }];`,
+      "a.js": "a;\n",
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+    const found = "MODULE_NOT_FOUND MODULE_NOT_FOUND file.ts js/index.js";
+    expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual([`${found}, ${found}`]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
 // Reports every identifier called `foo`, using most of the report API.
 const noFoo = `
 export default {

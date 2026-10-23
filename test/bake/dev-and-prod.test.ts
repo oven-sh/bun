@@ -397,7 +397,8 @@ devAndProductionTest("import cycles below and through a file with an ES import a
     "index.ts": `
       import above from "./above.js";
       import { readThrough } from "./through-esm.js";
-      console.log({ below: above.read(), through: readThrough() });
+      import first from "./first-mixed.js";
+      console.log({ below: above.read(), through: readThrough(), first: first.read() });
     `,
     // a.js and b.js import each other, below above.js.
     "above.js": `
@@ -418,7 +419,7 @@ devAndProductionTest("import cycles below and through a file with an ES import a
         return a;
       }
     `,
-    // through-esm.js and through-mixed.js import each other.
+    // through-esm.js and through-mixed.js import each other. The page reaches through-esm.js first.
     "through-esm.js": `
       import mixed from "./through-mixed.js";
       export const value = 1;
@@ -430,10 +431,19 @@ devAndProductionTest("import cycles below and through a file with an ES import a
       import { value } from "./through-esm.js";
       module.exports = { read: () => value };
     `,
+    // first-mixed.js and first-esm.js import each other. The page reaches first-mixed.js first.
+    "first-mixed.js": `
+      import { value } from "./first-esm.js";
+      module.exports = { read: () => value };
+    `,
+    "first-esm.js": `
+      import "./first-mixed.js";
+      export const value = 2;
+    `,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage({ below: ["b", "a"], through: 1 });
+    await c.expectMessage({ below: ["b", "a"], through: 1, first: 2 });
   },
 });
 devTest("hmr handles rapid consecutive edits", {

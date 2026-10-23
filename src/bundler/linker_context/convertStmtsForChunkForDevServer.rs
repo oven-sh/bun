@@ -46,6 +46,7 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 /// runtime does not fill `hmr.imports` for it. Its imports are loaded from
 /// inside the function, the way `bun build` binds them inside `__commonJS`:
 ///
+/// ```text
 ///     "module/cjs"(hmr, module, exports) {
 /// 2 ┃   var [module_1, module_2] = hmr.importsSync(["module_1", "module_2"]);
 ///   ┃   hmr.updateImport = [
@@ -55,6 +56,7 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///
 /// 3 ┃   module.exports = module_1.add(1, module_2.mul(2, 3));
 ///     },
+/// ```
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,

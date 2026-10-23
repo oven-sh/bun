@@ -619,7 +619,10 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 }
 
 function getEsmExports(m: HMRModule) {
-  return m.esm ? m.exports : (m.exports ??= toESM(m.cjs.exports));
+  if (m.esm || m.exports) return m.exports;
+  const view = toESM(m.cjs.exports);
+  // A CommonJS module that still runs can replace `module.exports`, so its view is not kept yet.
+  return m.state === State.Pending ? view : (m.exports = view);
 }
 
 type HotAcceptFunction = (esmExports?: any | void) => void;

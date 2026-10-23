@@ -47,6 +47,9 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
+    // The walk stops every allocator of the heap. No Date has a local time to drop before one has computed it.
+    if (!vm.dateCache.takeMayHaveCachedLocalGregorianDateTime())
+        return;
     JSC::HeapIterationScope iterationScope(vm.heap);
     vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
         static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();

@@ -2478,6 +2478,536 @@ describe("css tests", () => {
     );
   });
 
+  describe("inset", () => {
+    // The `inset` shorthand is gated on the same compat data as the logical inset properties
+    // (LogicalInset: Chrome 87, Firefox 63, Safari 14.1). For older targets the four physical
+    // longhands are emitted instead of it.
+    const withoutInset = { chrome: 60 << 16, firefox: 50 << 16, safari: 10 << 16 };
+
+    minify_test(".foo{top:0;right:0;bottom:0;left:0}", ".foo{inset:0}");
+
+    prefix_test(
+      `
+      .foo {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 1px 2px 3px 4px;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 1px;
+        bottom: 3px;
+        left: 4px;
+        right: 2px;
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 0 !important;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0 !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+      }
+    `,
+      withoutInset,
+    );
+
+    // Both lowerings compose: the shorthand becomes longhands, and the logical pair shorthand
+    // after it is lowered to left/right as before, keeping source order.
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+        inset-inline: 3px;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        left: 3px;
+        right: 3px;
+      }
+    `,
+      withoutInset,
+    );
+
+    // A value with var() cannot be lowered, so it is kept as written; the parsed
+    // declaration before it is still lowered.
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+        inset: var(--x);
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        inset: var(--x);
+      }
+    `,
+      withoutInset,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+      }
+    `,
+      {
+        chrome: 86 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        inset: 0;
+      }
+    `,
+      {
+        chrome: 87 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        inset: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        inset: 0;
+      }
+    `,
+      {
+        chrome: 87 << 16,
+        firefox: 63 << 16,
+        safari: (14 << 16) | (1 << 8),
+      },
+    );
+
+    // Only `inset` is gated on the targets; the other 4-side shorthands are always emitted.
+    prefix_test(
+      `
+      .foo {
+        margin: 0;
+        padding: 0;
+        scroll-margin: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        margin: 0;
+        padding: 0;
+        scroll-margin: 0;
+      }
+    `,
+      withoutInset,
+    );
+
+    // The same for four longhands. `scroll-margin` has no compat feature, so only this row
+    // reads its gate.
+    prefix_test(
+      `
+      .foo {
+        margin-top: 0;
+        margin-right: 0;
+        margin-bottom: 0;
+        margin-left: 0;
+        padding-top: 0;
+        padding-right: 0;
+        padding-bottom: 0;
+        padding-left: 0;
+        scroll-margin-top: 0;
+        scroll-margin-right: 0;
+        scroll-margin-bottom: 0;
+        scroll-margin-left: 0;
+      }
+    `,
+      indoc`
+      .foo {
+        margin: 0;
+        padding: 0;
+        scroll-margin: 0;
+      }
+    `,
+      withoutInset,
+    );
+
+    const rule = (...declarations: string[]) => `.foo { ${declarations.join("; ")}; }`;
+    const fourSides = rule("top: 0", "bottom: 0", "left: 0", "right: 0");
+
+    // Both sides of each LogicalInset boundary in src/css/compat.rs, and IE 11, which never had it.
+    describe.each([
+      ["chrome 86", { chrome: 86 << 16 }, false],
+      ["chrome 87", { chrome: 87 << 16 }, true],
+      ["edge 86", { edge: 86 << 16 }, false],
+      ["edge 87", { edge: 87 << 16 }, true],
+      ["firefox 62", { firefox: 62 << 16 }, false],
+      ["firefox 63", { firefox: 63 << 16 }, true],
+      ["safari 14.0", { safari: 14 << 16 }, false],
+      ["safari 14.1", { safari: (14 << 16) | (1 << 8) }, true],
+      ["ios_saf 14.4", { ios_saf: (14 << 16) | (4 << 8) }, false],
+      ["ios_saf 14.5", { ios_saf: (14 << 16) | (5 << 8) }, true],
+      ["ie 11", { ie: 11 << 16 }, false],
+    ] as const)("%s", (_, targets, hasInset) => {
+      const expected = hasInset ? rule("inset: 0") : fourSides;
+      prefix_test(rule("top: 0", "right: 0", "bottom: 0", "left: 0"), expected, targets);
+      prefix_test(rule("inset: 0"), expected, targets);
+    });
+
+    // Targets that have `inset`, and no targets: the output does not change. lightningcss keeps
+    // both declarations of the last two rows. Bun lets the later `inset` replace the earlier one.
+    describe.each([
+      [["top: 0", "right: 0", "bottom: 0", "left: 0"], "inset: 0"],
+      [["inset: 0"], "inset: 0"],
+      [["inset: 0", "top: 5px"], "inset: 5px 0 0"],
+      [["inset: 1px", "inset: 0"], "inset: 0"],
+      [["top: 1px", "inset: 0"], "inset: 0"],
+    ] as const)("targets with inset: %j", (declarations, expected) => {
+      cssTest(rule(...declarations), rule(expected));
+      prefix_test(rule(...declarations), rule(expected), {
+        chrome: 87 << 16,
+        firefox: 63 << 16,
+        safari: (14 << 16) | (1 << 8),
+      });
+    });
+
+    // Chrome 80 is the lowest Chrome of the bundler's default targets.
+    describe("chrome 80", () => {
+      const chrome80 = { chrome: 80 << 16 };
+
+      // Two rules with the same selector merge, then the merged block is minified again.
+      prefix_test(
+        ".foo { inset: 0; } .foo { top: 5px; }",
+        rule("top: 5px", "bottom: 0", "left: 0", "right: 0"),
+        chrome80,
+      );
+      prefix_test(".a { .foo { inset: 0; } }", ".a .foo { top: 0; bottom: 0; left: 0; right: 0; }", chrome80);
+      prefix_test(
+        "@media (min-width: 1px) { .foo { inset: 0; } }",
+        "@media (min-width: 1px) { .foo { top: 0; bottom: 0; left: 0; right: 0; } }",
+        chrome80,
+      );
+      prefix_test(rule("top: 0", "right: 0", "bottom: 0"), rule("top: 0", "bottom: 0", "right: 0"), chrome80);
+
+      // lightningcss prints the earlier declarations too (8 and 5 declarations). Bun lets the
+      // later `inset` replace them, as it does for targets with `inset`.
+      prefix_test(rule("inset: 1px", "inset: 0"), fourSides, chrome80);
+      prefix_test(rule("top: 1px", "inset: 0"), fourSides, chrome80);
+    });
+
+    // The inset cases of lightningcss `test_position`.
+    describe("lightningcss test_position", () => {
+      cssTest(
+        `
+      .foo {
+        top: 0;
+        left: 0;
+        bottom: 0;
+        right: 0;
+      }
+    `,
+        indoc`
+      .foo {
+        inset: 0;
+      }
+    `,
+      );
+
+      cssTest(
+        `
+      .foo {
+        top: 2px;
+        left: 4px;
+        bottom: 2px;
+        right: 4px;
+      }
+    `,
+        indoc`
+      .foo {
+        inset: 2px 4px;
+      }
+    `,
+      );
+
+      cssTest(
+        `
+      .foo {
+        top: 1px;
+        left: 2px;
+        bottom: 3px;
+        right: 4px;
+      }
+    `,
+        indoc`
+      .foo {
+        inset: 1px 4px 3px 2px;
+      }
+    `,
+      );
+
+      cssTest(
+        `
+      .foo {
+        inset-block-start: 2px;
+        inset-block-end: 2px;
+        inset-inline-start: 4px;
+        inset-inline-end: 4px;
+      }
+    `,
+        indoc`
+      .foo {
+        inset-block: 2px;
+        inset-inline: 4px;
+      }
+    `,
+      );
+
+      cssTest(
+        `
+      .foo {
+        inset-block-start: 2px;
+        inset-block-end: 3px;
+        inset-inline-start: 4px;
+        inset-inline-end: 5px;
+      }
+    `,
+        indoc`
+      .foo {
+        inset-block: 2px 3px;
+        inset-inline: 4px 5px;
+      }
+    `,
+      );
+
+      // Bun prints `inset-block: 2px 3px` before `inset: 4px`: the shorthand flushes the
+      // logical values it overrides (#38576).
+      cssTestTodo(
+        `
+      .foo {
+        inset-block-start: 2px;
+        inset-block-end: 3px;
+        inset: 4px;
+        inset-inline-start: 4px;
+        inset-inline-end: 5px;
+      }
+    `,
+        indoc`
+      .foo {
+        inset: 4px;
+        inset-inline: 4px 5px;
+      }
+    `,
+      );
+
+      prefix_test(
+        `
+      .foo {
+        inset-inline-start: 2px;
+      }
+    `,
+        indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        left: 2px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        left: 2px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        right: 2px;
+      }
+    `,
+        {
+          safari: 8 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+      .foo {
+        inset-inline-start: 2px;
+        inset-inline-end: 4px;
+      }
+    `,
+        indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        left: 2px;
+        right: 4px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        left: 2px;
+        right: 4px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        left: 4px;
+        right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        left: 4px;
+        right: 2px;
+      }
+    `,
+        {
+          safari: 8 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+      .foo {
+        inset-inline: 2px;
+      }
+    `,
+        indoc`
+      .foo {
+        left: 2px;
+        right: 2px;
+      }
+    `,
+        {
+          safari: 8 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+      .foo {
+        inset-block-start: 2px;
+      }
+    `,
+        indoc`
+      .foo {
+        top: 2px;
+      }
+    `,
+        {
+          safari: 8 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+      .foo {
+        inset-block-end: 2px;
+      }
+    `,
+        indoc`
+      .foo {
+        bottom: 2px;
+      }
+    `,
+        {
+          safari: 8 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+      .foo {
+        top: 1px;
+        left: 2px;
+        bottom: 3px;
+        right: 4px;
+      }
+    `,
+        indoc`
+      .foo {
+        top: 1px;
+        bottom: 3px;
+        left: 2px;
+        right: 4px;
+      }
+    `,
+        {
+          safari: 8 << 16,
+        },
+      );
+    });
+  });
+
   describe("scroll-paddding", () => {
     prefix_test(
       `

@@ -2315,4 +2315,43 @@ c {
       "/across-files-url.css",
     ],
   });
+
+  const insetFamily = {
+    "/entry.css": /* css */ `
+      .overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0; }
+      .author { position: absolute; inset: 0; }
+      .logical { inset-block: 0; }
+    `,
+  };
+
+  // The default browser targets (Chrome 80, Safari 14) do not have the inset family.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`css/InsetFamilyDefaultTargets-${backend}`, {
+      backend,
+      files: insetFamily,
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+          /* entry.css */
+          .overlay { position: fixed; top: 0; bottom: 0; left: 0; right: 0; }
+          .author { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
+          .logical { top: 0; bottom: 0; }
+        `);
+      },
+    });
+  }
+
+  itBundled("css/InsetFamilyTargetBun", {
+    target: "bun",
+    files: insetFamily,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        .overlay { position: fixed; inset: 0; }
+        .author { position: absolute; inset: 0; }
+        .logical { inset-block: 0; }
+      `);
+    },
+  });
 });

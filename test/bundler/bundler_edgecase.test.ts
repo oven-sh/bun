@@ -2147,6 +2147,386 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
+  // A module that `import()` or `require()` loads runs inside `__esm(() => {...})`, and its
+  // functions and exports are read from outside of it. The body of an `if`, `else`, `while` or
+  // `do` without braces opens no scope, so a module-level `var` in it must still be declared
+  // outside the wrapper. Each expected value is what node prints for the source.
+  itBundled("edgecase/EsmWrapperVarInBracelessBody", {
+    files: {
+      "/entry.js": `
+        const lib = await import("./lib.js");
+        console.log("root.Object is a " + lib.hasRoot() + ", mode is " + lib.getMode());
+      `,
+      "/lib.js": `
+        if (typeof window !== "undefined") var root = window; else var root = globalThis;
+        var mode = "default";
+        if (globalThis) var mode = "custom";
+        export function hasRoot() { return typeof root.Object; }
+        export function getMode() { return mode; }
+      `,
+    },
+    run: { stdout: "root.Object is a function, mode is custom" },
+  });
+  const varsInBracelessBodies = `
+    var n = 1;
+    if (globalThis) var a = "a";
+    if (!globalThis) {} else var b = "b";
+    while (n--) var c = "c";
+    do var d = "d"; while (0);
+    if (globalThis) if (globalThis) var e = "e";
+    if (!globalThis) {} else if (globalThis) var f = "f";
+    if (globalThis) var { g, h: [h] } = { g: "g", h: ["h"] };
+    if (globalThis) var i;
+    i = "i";
+    if (!globalThis) var notTaken = "j";
+    if (globalThis) var k = "k";
+    var readInsideTheWrapper = a + typeof notTaken;
+    export { k };
+    export function get() {
+      return [a, b, c, d, e, f, g, h, i, typeof notTaken, readInsideTheWrapper].join(" ");
+    }
+  `;
+  const varsInBracelessBodiesOutput = "a b c d e f g h i undefined aundefined k";
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`edgecase/EsmWrapperVarInBracelessBodyImport/${backend}`, {
+      files: {
+        "/entry.js": `
+          const lib = await import("./lib.js");
+          console.log(lib.get(), lib.k);
+        `,
+        "/lib.js": varsInBracelessBodies,
+      },
+      backend,
+      run: { stdout: varsInBracelessBodiesOutput },
+    });
+  }
+  itBundled("edgecase/EsmWrapperVarInBracelessBodyRequire", {
+    files: {
+      "/entry.js": `
+        const lib = require("./lib.js");
+        console.log(lib.get(), lib.k);
+      `,
+      "/lib.js": varsInBracelessBodies,
+    },
+    format: "cjs",
+    run: { stdout: varsInBracelessBodiesOutput },
+  });
+  itBundled("edgecase/EsmWrapperVarInBracelessBodyMinify", {
+    files: {
+      "/entry.js": `
+        const lib = await import("./lib.js");
+        console.log(lib.get(), lib.k);
+      `,
+      "/lib.js": varsInBracelessBodies,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: varsInBracelessBodiesOutput },
+  });
+  itBundled("edgecase/EsmWrapperVarInBracelessBodyOfDependency", {
+    files: {
+      "/entry.js": `
+        const lazy = await import("./lazy.js");
+        console.log(lazy.fromEsm, lazy.fromCjs);
+      `,
+      // Both dependencies run inside a wrapper, because their importer does.
+      "/lazy.js": `
+        import { getX } from "./esm.js";
+        import { getV } from "./cjs.cjs";
+        export const fromEsm = getX();
+        export const fromCjs = getV();
+      `,
+      "/esm.js": `
+        if (globalThis) var x = "esm";
+        export function getX() { return x; }
+      `,
+      "/cjs.cjs": `
+        if (globalThis) var v = "cjs";
+        exports.getV = function () { return v; };
+      `,
+    },
+    run: { stdout: "esm cjs" },
+  });
+  itBundled("edgecase/EsmWrapperVarInBracelessBodyImportCycle", {
+    files: {
+      "/entry.js": `
+        const a = await import("./a.js");
+        console.log(a.beforeTheBody, a.getX());
+      `,
+      "/a.js": `
+        import { beforeTheBody } from "./b.js";
+        if (globalThis) var x = 1;
+        export function getX() { return x; }
+        export { beforeTheBody };
+      `,
+      // Runs before the body of a.js: the "var" is declared and not yet assigned.
+      "/b.js": `
+        import { getX } from "./a.js";
+        export const beforeTheBody = typeof getX();
+      `,
+    },
+    run: { stdout: "undefined 1" },
+  });
+  // Pins the "var" of the body without braces only. A plain top-level "var" beside a lowered "using" stays in its try.
+  itBundled("edgecase/EsmWrapperVarInBracelessBodyWithLoweredUsing", {
+    files: {
+      "/entry.js": `
+        const lib = await import("./lib.js");
+        console.log(lib.get());
+      `,
+      "/lib.js": `
+        using resource = { [Symbol.dispose]() {} };
+        if (globalThis) var x = "x";
+        export function get() { return x; }
+      `,
+    },
+    run: { stdout: "x" },
+  });
+  // A bundle is module code, and module code rejects a top-level "var f" beside "function f".
+  // This "var" keeps its statement, so the bundle loads as it does without the relocation.
+  itBundled("edgecase/EsmWrapperVarInBracelessBodyWithTheNameOfAFunction", {
+    files: {
+      "/entry.js": `
+        await import("./script.js");
+        console.log(globalThis.typeofF);
+      `,
+      "/script.js": `
+        function f() {}
+        if (globalThis) var f = 2;
+        globalThis.typeofF = typeof f;
+      `,
+    },
+    run: { stdout: "number" },
+  });
+  // The statement that follows "for (var i; ...)" reads the "i" of the top level too.
+  itBundled("edgecase/EsmWrapperVarInForHeadWithoutInitializer", {
+    files: {
+      "/entry.js": `
+        const lib = await import("./lib.js");
+        console.log(lib.getI(), lib.getCount(), lib.inAFunction());
+      `,
+      "/lib.js": `
+        for (var i; !i;) i = 7;
+        var count = 0;
+        for (var j, k; count < 3; count++) j = k;
+        export function getI() { return i; }
+        export function getCount() { return count + typeof j; }
+        export function inAFunction() { for (var n; !n;) n = 3; return n; }
+      `,
+    },
+    run: { stdout: "7 3undefined 3" },
+  });
+  itBundled("edgecase/EsmWrapperEnumInBracelessBody", {
+    files: {
+      "/entry.ts": `
+        const lib = await import("./lib.ts");
+        console.log(lib.keys(), lib.getFoo());
+      `,
+      "/lib.ts": `
+        import { Foo } from "./types";
+        var n = 1;
+        if (globalThis) enum A { a = 1 }
+        if (!globalThis) {} else enum B { b = 2 }
+        while (n--) enum C { c = 3 }
+        do enum D { d = 4 } while (0);
+        if (globalThis) var Foo = 5;
+        export function keys() { return [A, B, C, D].map(e => Object.keys(e).join("")).join(" "); }
+        export function getFoo() { return Foo; }
+      `,
+      "/types.ts": `export type Foo = number;`,
+    },
+    run: { stdout: "1a 2b 3c 4d 5" },
+  });
+  // A "var" in a body without braces and a top-level "var" of the same name are one variable, so the
+  // wrapper makes every store of that name, in source order. The linker lifts no store of it above the wrapper.
+  const storeOrderModules: Record<string, [source: string, expected: unknown]> = {
+    "if-then-var": [`if (globalThis) var x = "body"; var x = 2; export function get() { return x; }`, 2],
+    "else-then-var": [`if (!globalThis) {} else var x = "body"; var x = 2; export function get() { return x; }`, 2],
+    "while-then-var": [`var n = 1; while (n--) var x = "body"; var x = 2; export function get() { return x; }`, 2],
+    "do-then-var": [`do var x = "body"; while (0); var x = 2; export function get() { return x; }`, 2],
+    "if-then-function": [
+      `if (globalThis) var x = "body"; var x = function () {}; export function get() { return typeof x; }`,
+      "function",
+    ],
+    "if-then-arrow": [
+      `if (globalThis) var x = "body"; var x = () => {}; export function get() { return typeof x; }`,
+      "function",
+    ],
+    "if-then-class": [
+      `if (globalThis) var x = "body"; var x = class {}; export function get() { return typeof x; }`,
+      "function",
+    ],
+    "if-then-export-var": [
+      `if (globalThis) var x = "body"; export var x = null; export function get() { return x; }`,
+      null,
+    ],
+    "if-then-two-vars": [
+      `if (globalThis) var x = "body"; var x = 2, y = 3; var y = 4; export function get() { return [x, y]; }`,
+      [2, 4],
+    ],
+    "if-then-store-then-var": [`if (globalThis) var x; x = "store"; var x = 2; export function get() { return x; }`, 2],
+    "if-without-value-then-var": [`if (globalThis) var x; var x = 2; export function get() { return x; }`, 2],
+    "for-then-var": [`for (var x; !x; ) x = "body"; var x = 0; export function get() { return x; }`, 0],
+    "read-then-var-then-if": [
+      `globalThis.typeofXBeforeItsVar = typeof x; var x = 2; if (globalThis) var x = "body";
+       export function get() { return [globalThis.typeofXBeforeItsVar, x]; }`,
+      ["undefined", "body"],
+    ],
+    "dead-if-then-store-then-var": [`if (false) var x; x = "store"; var x = 2; export function get() { return x; }`, 2],
+    "dead-for-then-store-then-var": [
+      `if (false) for (var x; ; ) break; x = "store"; var x = 2; export function get() { return x; }`,
+      2,
+    ],
+    "read-then-dead-if-then-var": [
+      `globalThis.typeofXBeforeItsDeadVar = typeof x; if (false) var x = 1; var x = 2;
+       export function get() { return [globalThis.typeofXBeforeItsDeadVar, x]; }`,
+      ["undefined", 2],
+    ],
+    "var-then-if": [`var x = 2; if (globalThis) var x = "body"; export function get() { return x; }`, "body"],
+    "var-then-if-without-value": [`var x = 2; if (globalThis) var x; export function get() { return x; }`, 2],
+    "if-reads-var": [`var x = 10; if (globalThis) var x = x + 1; export function get() { return x; }`, 11],
+    "if-reads-and-resets-var": [
+      `var count = 10; if (globalThis) var count = (globalThis.countWas = count, 0);
+       export function get() { return [globalThis.countWas, count]; }`,
+      [10, 0],
+    ],
+    "if-then-exported-pattern": [
+      `if (globalThis) var x = 1; export var { x, z } = { x: 2, z: 9 }, w = x + 1;
+       export function get() { return [x, z, w]; }`,
+      [2, 9, 3],
+    ],
+  };
+  for (const minifySyntax of [false, true]) {
+    itBundled(`edgecase/EsmWrapperVarInBracelessBodyStoreOrder${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.js": `
+          const results = {};
+          ${Object.keys(storeOrderModules)
+            .map(name => `results[${JSON.stringify(name)}] = (await import("./${name}.js")).get();`)
+            .join("\n")}
+          console.log(JSON.stringify(results));
+        `,
+        ...Object.fromEntries(Object.entries(storeOrderModules).map(([name, [source]]) => [`/${name}.js`, source])),
+      },
+      minifySyntax,
+      run: {
+        stdout: JSON.stringify(
+          Object.fromEntries(Object.entries(storeOrderModules).map(([name, [, expected]]) => [name, expected])),
+        ),
+      },
+    });
+  }
+  // A branch that never runs still declares its "var": a read gives undefined and does not throw.
+  const varsInDeadBracelessBodies = `
+    if (false) var a = 1;
+    if (true) {} else var b = 2;
+    if (process.env.NODE_ENV !== "production") var c = 3;
+    if (false) if (globalThis) var d = 4;
+    if (false) var { e, f: [f] } = { e: 5, f: [6] };
+    if (false) var g = 7;
+    g = "assigned";
+    export function get() { return [a, b, c, d, e, f, g]; }
+  `;
+  for (const minifySyntax of [false, true]) {
+    itBundled(`edgecase/EsmWrapperVarInDeadBracelessBodyImport${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.js": `
+          const lib = await import("./lib.js");
+          console.log(JSON.stringify(lib.get()));
+        `,
+        "/lib.js": varsInDeadBracelessBodies,
+      },
+      define: { "process.env.NODE_ENV": '"production"' },
+      minifySyntax,
+      run: { stdout: '[null,null,null,null,null,null,"assigned"]' },
+    });
+    itBundled(`edgecase/EsmWrapperVarInDeadBracelessBodyRequire${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.js": `
+          const lib = require("./lib.js");
+          console.log(JSON.stringify(lib.get()));
+        `,
+        "/lib.js": varsInDeadBracelessBodies,
+      },
+      define: { "process.env.NODE_ENV": '"production"' },
+      format: "cjs",
+      minifySyntax,
+      run: { stdout: '[null,null,null,null,null,null,"assigned"]' },
+    });
+  }
+  itBundled("edgecase/EsmWrapperVarInBracelessBodySplitting", {
+    files: {
+      "/a.js": `console.log("a", require("./lib.js").getX());`,
+      "/b.js": `console.log("b", require("./lib.js").getX());`,
+      "/lib.js": `
+        if (globalThis) var x = 1;
+        export function getX() { return x; }
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    target: "node",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a 1" },
+      { file: "/out/b.js", stdout: "b 1" },
+    ],
+  });
+  // Without a wrapper the same relocation runs, and the program does not change.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/VarInBracelessBodyWithoutWrapper${minify ? "Minify" : ""}`, {
+      files: {
+        "/entry.js": `
+          import { get } from "./lib.js";
+          console.log(get());
+        `,
+        "/lib.js": `
+          if (globalThis) var a = "a";
+          for (var i; !i;) i = 7;
+          export function get() { return a + i; }
+        `,
+      },
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).not.toContain("__esm");
+        if (!minify) expect(output).toContain("for (;!i; )");
+      },
+      run: { stdout: "a7" },
+    });
+  }
+  // The dev server runs each module as a function and lifts nothing out of it: its output keeps these declarations.
+  itBundled("edgecase/VarInBracelessBodyDevServerFormat", {
+    format: "internal_bake_dev",
+    files: {
+      "/entry.js": `
+        if (globalThis) var inIf = 1;
+        for (var inFor; !inFor;) inFor = 2;
+        console.log(inIf, inFor);
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toContain("var inIf = 1");
+      expect(output).toContain("for (var inFor;");
+    },
+  });
+  itBundled("edgecase/VarInBracelessBodyIsRegisteredForFastRefresh", {
+    files: {
+      "/entry.jsx": `
+        if (globalThis) var InIf = () => null;
+        export { InIf };
+      `,
+    },
+    external: ["react-refresh/runtime"],
+    reactFastRefresh: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('$RefreshReg$(InIf, "entry.jsx:InIf")');
+    },
+  });
   itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass", {
     files: {
       "/entry.ts": `

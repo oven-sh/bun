@@ -677,6 +677,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         Expr::init_identifier(ref_, loc)
                     }
 
+                    fn var_stores_stay_in_wrapper(&self, ref_: Ref) -> bool {
+                        let symbols = self.symbols.get();
+                        symbols
+                            .get_const(symbols.follow(ref_))
+                            .is_some_and(|symbol| symbol.var_stores_stay_in_wrapper())
+                    }
+
                     /// The pattern without the locals the linker bound to exports
                     /// (`const { a } = await import(…)`): assigning one would
                     /// overwrite the export.
@@ -763,7 +770,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     if let Some(initializer) = decl.value {
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
                                         if initializer.can_be_moved()
-                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                            && let B::B::BIdentifier(id) = decl.binding.data
+                                            && !hoist.var_stores_stay_in_wrapper(id.get().r#ref)
                                         {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {

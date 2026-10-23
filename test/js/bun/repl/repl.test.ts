@@ -750,6 +750,38 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("a var in a body without braces persists across evaluations", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "if (true) var b = 2",
+        "b",
+        "var a = 1",
+        "if (true) var a = 2",
+        "a",
+        "var i = 0; while (i < 2) var w = i++",
+        "w",
+        "if (false) var notTaken = 1",
+        "typeof notTaken",
+        "for (var k; !k;) k = 7",
+        "k",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        "2",
+        "1",
+        "undefined",
+        "2",
+        "undefined",
+        "1",
+        "undefined",
+        '"undefined"',
+        "undefined",
+        "7",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("destructured declarations persist across evaluations", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
         "const [a, b, c] = [10, 20, 30]",

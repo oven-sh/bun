@@ -108,7 +108,7 @@ pub struct Symbol {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct SymbolFlags: u8 {
+    pub struct SymbolFlags: u16 {
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -131,6 +131,9 @@ bitflags::bitflags! {
 
         /// A call of this function declaration or lifted export ignores `this`.
         const CALL_IGNORES_THIS = 1 << 7;
+
+        /// The `__esm` wrapper stores into this `var`, so no store of it is lifted above the wrapper. Set on the root of the link chain.
+        const VAR_STORES_STAY_IN_WRAPPER = 1 << 8;
     }
 }
 
@@ -159,6 +162,7 @@ symbol_flag_accessors! {
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
     called_as_method, set_called_as_method => CALLED_AS_METHOD;
     call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
+    var_stores_stay_in_wrapper, set_var_stores_stay_in_wrapper => VAR_STORES_STAY_IN_WRAPPER;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);

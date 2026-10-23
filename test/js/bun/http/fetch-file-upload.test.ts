@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -219,6 +219,73 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
+  });
+});
+
+// A file body that cannot go through sendfile (small bodies; always on Windows)
+// is opened, or dup()ed for Bun.file(fd), read and closed again per upload. On
+// Windows dup() hands back a raw HANDLE and the read goes through libuv, which
+// used to wrap the HANDLE in a CRT fd that nothing released: one of the 8192
+// CRT slots leaked per upload, and after ~8190 uploads fetch(Bun.file(fd)) and
+// every fs.openSync() in the process failed with EMFILE. Descriptors are handed
+// out lowest-free-first on every platform, so the number openSync() returns
+// after a batch of uploads shows whether the per-upload descriptor was released.
+describe.each(["Bun.file(path)", "Bun.file(fd)"])("%s upload releases its descriptor", kind => {
+  test.concurrent("lowest free fd is unchanged after 100 uploads", async () => {
+    using dir = tempDir("fetch-file-upload-fd", { "body.txt": "hello" });
+    const script = /* js */ `
+      import fs from "node:fs";
+
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return new Response(await req.text());
+        },
+      });
+
+      // Held open for the whole run so every probe below lands above it.
+      const fd = fs.openSync("body.txt", "r");
+      const body = () => ${kind === "Bun.file(fd)" ? "Bun.file(fd)" : 'Bun.file("body.txt")'};
+
+      async function upload() {
+        const res = await fetch(server.url, { method: "POST", body: body() });
+        const echoed = await res.text();
+        if (res.status !== 200) throw new Error("upload failed with status " + res.status);
+        return echoed;
+      }
+
+      function lowestFreeFd() {
+        const probe = fs.openSync("body.txt", "r");
+        fs.closeSync(probe);
+        return probe;
+      }
+
+      // Only checked once: the duplicate of fd shares its file position, so for
+      // Bun.file(fd) the later uploads dup, read straight to EOF and close.
+      const first = await upload();
+      if (first !== "hello") throw new Error("unexpected echoed body: " + JSON.stringify(first));
+
+      const before = lowestFreeFd();
+      const N = 100;
+      for (let i = 0; i < N; i++) await upload();
+      const after = lowestFreeFd();
+
+      console.log(JSON.stringify({ before, after }));
+      // Leaking the per-upload descriptor costs exactly one slot per upload.
+      if (after - before >= N / 2) {
+        throw new Error("leaked " + (after - before) + " descriptors over " + N + " uploads");
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.includes('"after"'), stderr, exitCode }).toEqual({ stdout: true, stderr: "", exitCode: 0 });
   });
 });
 

@@ -14,7 +14,6 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -106,6 +105,7 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockRejectedValue);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup);
+JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementationReject);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementation);
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
@@ -774,6 +774,10 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
             init.set(JSC::JSFunction::create(init.vm, init.owner, 2, String(), jsMockFunctionWithImplementationCleanup, ImplementationVisibility::Public));
         });
+    mock.withImplementationRejectFunction.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, 2, String(), jsMockFunctionWithImplementationReject, ImplementationVisibility::Public));
+        });
     mock.mockWithImplementationCleanupDataStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(Bun::MockWithImplementationCleanupData::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
@@ -1344,21 +1348,35 @@ MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(JSC
     return obj;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
+static void restoreAfterWithImplementation(VM& vm, JSValue cleanupData)
 {
-    auto& vm = jsGlobalObject->vm();
-    auto ctx = dynamicDowncast<MockWithImplementationCleanupData>(callframe->argument(1));
+    auto ctx = dynamicDowncast<MockWithImplementationCleanupData>(cleanupData);
     if (!ctx) {
-        return JSValue::encode(jsUndefined());
+        return;
     }
 
     auto fn = dynamicDowncast<JSMockFunction>(ctx->internalField(0).get());
     fn->implementation.set(vm, fn, ctx->internalField(1).get());
     fn->tail.set(vm, fn, ctx->internalField(2).get());
     fn->fallbackImplmentation.set(vm, fn, ctx->internalField(3).get());
-
-    return JSValue::encode(jsUndefined());
 }
+
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
+{
+    restoreAfterWithImplementation(jsGlobalObject->vm(), callframe->argument(1));
+    return JSValue::encode(callframe->argument(0));
+}
+
+// Rethrows: the promise that withImplementation() returned is the result of this reaction, and it has to reject.
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementationReject, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    restoreAfterWithImplementation(vm, callframe->argument(1));
+    scope.throwException(jsGlobalObject, callframe->argument(0));
+    return {};
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
@@ -1402,23 +1420,23 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     }
 
     if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
-        auto capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
         auto ctx = MockWithImplementationCleanupData::create(globalObject, thisObject, lastImpl, lastTail, lastFallback);
 
-        JSFunction* cleanup = globalObject->mockModule.withImplementationCleanupFunction.getInitializedOnMainThread(globalObject);
-        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
-        auto callData = JSC::getCallData(performPromiseThenFunction);
-        MarkedArgumentBuffer arguments;
-        arguments.append(promise);
-        arguments.append(cleanup);
-        arguments.append(cleanup);
-        arguments.append(capability);
-        arguments.append(ctx);
-        ASSERT(!arguments.hasOverflowed());
-        call(globalObject, performPromiseThenFunction, callData, jsUndefined(), arguments);
-        RETURN_IF_EXCEPTION(scope, {});
+        // PromiseResolve, as await does: a Promise subclass is adopted through its then().
+        JSC::JSPromise* source = JSC::JSPromise::resolvedPromise(globalObject, promise);
+        if (scope.exception()) [[unlikely]] {
+            restoreAfterWithImplementation(vm, ctx);
+            return {};
+        }
 
-        return JSC::JSValue::encode(promise);
+        // Not `promise` itself: the restore reaction marks that one as handled, which would hide its rejection.
+        JSC::JSPromise* result = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+        source->performPromiseThenWithContext(vm, globalObject,
+            globalObject->mockModule.withImplementationCleanupFunction.getInitializedOnMainThread(globalObject),
+            globalObject->mockModule.withImplementationRejectFunction.getInitializedOnMainThread(globalObject),
+            result, ctx);
+
+        return JSC::JSValue::encode(result);
     }
 
     thisObject->implementation.set(vm, thisObject, lastImpl);

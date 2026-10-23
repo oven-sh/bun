@@ -1,4 +1,3 @@
-use bstr::ByteSlice;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_reference;
@@ -75,7 +74,13 @@ fn is_identifier_of_type_node(reference: Reference) -> bool {
 /// `"T"`.
 fn type_names_in<'a>(text: &'a [u8], offset: u32, name: &'a [u8]) -> impl Iterator<Item = Span> + 'a {
     let is_part_of_name = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
-    text.find_iter(name).filter_map(move |at| {
+    let mut from = 0;
+    let found = std::iter::from_fn(move || {
+        let at = from + strings::index_of(text.get(from..)?, name)?;
+        from = at + name.len().max(1);
+        Some(at)
+    });
+    found.filter_map(move |at| {
         let (before, after) = (text.get(..at)?, text.get(at + name.len()..)?);
         if before.last().is_some_and(is_part_of_name) || after.first().is_some_and(is_part_of_name) {
             return None;

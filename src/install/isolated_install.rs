@@ -2455,9 +2455,20 @@ pub(crate) fn install_isolated_packages(
                             let package_len = store_path.len();
                             let mut hash_buf: install::BuntagHashBuf = Default::default();
                             let marker = installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf);
-                            // `exists` follows the link of an entry that left the global store.
-                            if store_path.try_append(marker).is_err() || !sys::exists_z(store_path.slice_z()) {
-                                break 'needs_install true;
+                            // A copy with the markers of two patches was written on top of another.
+                            if marker.starts_with(crate::BUN_HASH_TAG) {
+                                // `open` follows the link of an entry that left the global store.
+                                let Ok(package) = sys::Dir::open(store_path.slice()) else {
+                                    break 'needs_install true;
+                                };
+                                if !crate::package_install::has_only_patch_marker(&package, marker) {
+                                    break 'needs_install true;
+                                }
+                            } else {
+                                // `exists` follows the link of an entry that left the global store.
+                                if store_path.try_append(marker).is_err() || !sys::exists_z(store_path.slice_z()) {
+                                    break 'needs_install true;
+                                }
                             }
                             // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.
                             if matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball) {

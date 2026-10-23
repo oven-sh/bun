@@ -814,7 +814,7 @@ pub fn raise_default_action(sig: c_int) -> ! {
     _exit(128 + sig)
 }
 
-/// Exposes `raise_default_action` to C++ (`onExitSignal` in c-bindings.cpp).
+/// Exposes `raise_default_action` to C++ (`onExitSignal` and `onSIGSYS` in c-bindings.cpp).
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__raiseDefaultAction(sig: c_int) -> ! {

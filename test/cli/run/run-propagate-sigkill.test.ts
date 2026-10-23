@@ -121,4 +121,25 @@ describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise
     expect(await proc.exited).toBe(128 + constants.signals.SIGINT);
     expect(proc.signalCode).toBeNull();
   });
+
+  // bun handles SIGSYS itself, for seccomp traps, and re-raises one that was sent with kill(2).
+  // bun is not PID 1 here. A real PID 1 ignores that signal: see fs-stat-seccomp-linux.test.ts.
+  test("a SIGSYS sent with kill(2) that nothing listens for", async () => {
+    const { dir, env } = project();
+    using _ = dir;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.kill(process.pid, "SIGSYS"); console.log("survived");`],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: "",
+      signalCode: null,
+      exitCode: 128 + constants.signals.SIGSYS,
+    });
+  });
 });

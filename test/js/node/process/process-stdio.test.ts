@@ -349,6 +349,195 @@ describe.concurrent.skipIf(isWindows)(
       await expectDrainOverSocket("", 1 << 20);
     });
 
+    // The chunk the sink holds is pending in Writable: writableLength counts it and writableNeedDrain is set until
+    // 'drain'. Write callbacks run in write order, after 'drain', never inside write().
+    test("process.stdout tracks a held write in writableLength and writableNeedDrain", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const out = process.stdout, report = o => require("fs").writeSync(2, JSON.stringify(o) + "\\n");
+           const state = () => ({ length: out.writableLength, needDrain: out.writableNeedDrain });
+           const order = [];
+           const ret1 = out.write(Buffer.alloc(1 << 20, "A"), () => order.push("cb1"));
+           const ret2 = out.write("B", () => order.push("cb2"));
+           report({ ret1, ret2, order, ...state() });
+           out.once("drain", () => {
+             order.push("drain");
+             process.nextTick(() => report({ order, ...state() }));
+           });`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        lazy: true,
+      });
+      const events = jsonLines(proc.stderr);
+      expect(await events.next()).toEqual({
+        ret1: false,
+        ret2: false,
+        order: [],
+        length: (1 << 20) + 1,
+        needDrain: true,
+      });
+      const [stdout, drained, exitCode] = await Promise.all([proc.stdout.bytes(), events.next(), proc.exited]);
+      expect(stdout.byteLength).toBe((1 << 20) + 1);
+      expect(stdout[stdout.byteLength - 1]).toBe("B".charCodeAt(0));
+      expect(drained).toEqual({ order: ["drain", "cb1", "cb2"], length: 0, needDrain: false });
+      expect(exitCode).toBe(0);
+    });
+
+    // pino's sonic-boom takes its batched fd writer only when process.stdout.write is the prototype's.
+    test("process.stdout.write is inherited from the prototype", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Writable } = require("node:stream");
+           process.stdout.write(JSON.stringify({
+             own: Object.hasOwn(process.stdout, "write"),
+             proto: process.stdout.write === process.stdout.constructor.prototype.write,
+             writable: process.stdout instanceof Writable,
+           }) + "\\n");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ own: false, proto: true, writable: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test("process.stdout.write decodes the encoding argument and the default encoding", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.stdout.write("\u00e9", "latin1");
+           process.stdout.write("aGk=", "base64");
+           process.stdout.write("hi", "utf16le");
+           process.stdout.setDefaultEncoding("hex");
+           process.stdout.write("4142");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(Buffer.from(stdout).toString("hex")).toBe("e9" + "6869" + "68006900" + "4142");
+      expect(exitCode).toBe(0);
+    });
+
+    test("process.stdout holds corked writes until uncork() and then calls back in order", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const out = process.stdout, order = [];
+           out.cork();
+           for (const c of ["a", "b", "c"]) out.write(c, () => order.push(c));
+           const corked = { length: out.writableLength, corked: out.writableCorked, order: [...order] };
+           out.uncork();
+           process.nextTick(() => {
+             require("fs").writeSync(2, JSON.stringify({ corked, after: { length: out.writableLength, order } }) + "\\n");
+           });`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("abc");
+      expect(JSON.parse(stderr)).toEqual({
+        corked: { length: 3, corked: 1, order: [] },
+        after: { length: 0, order: ["a", "b", "c"] },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The reader goes away after the first chunk. The held write fails with EPIPE, the stream emits 'error' and
+    // 'close' and is reset, as node's stdout is, so a later write still calls back.
+    test("process.stdout takes writes again after a failed write", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const out = process.stdout, ev = [], report = o => require("fs").writeSync(2, JSON.stringify(o) + "\\n");
+           out.on("close", () => ev.push("close"));
+           out.once("error", e => {
+             ev.push("error:" + e.code);
+             out.write("again", e => {
+               ev.push("cbAfter:" + (e ? e.code : null));
+               process.nextTick(() => report({ ev, length: out.writableLength, errored: out.errored, writable: out.writable }));
+             });
+           });
+           out.write(Buffer.alloc(1 << 20, "A"), e => ev.push("cb1:" + (e ? e.code : null)));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const reader = proc.stdout.getReader();
+      await reader.read();
+      await reader.cancel();
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const report = JSON.parse(stderr.trim().split("\n").pop()!);
+      expect(report.ev.slice(0, 3)).toEqual(["cb1:EPIPE", "error:EPIPE", "close"]);
+      expect(report.ev.filter(e => e.startsWith("cbAfter:"))).toHaveLength(1);
+      expect({ length: report.length, errored: report.errored, writable: report.writable }).toEqual({
+        length: 0,
+        errored: null,
+        writable: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // A throw from the callback of a held write, or from a 'drain' listener, is an uncaughtException as in node.
+    test.each(["callback", "drain"])("a throw from the %s of a held write is an uncaughtException", async where => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", e => { require("fs").writeSync(2, "uncaughtException:" + e.message); process.exit(0); });
+           process.on("unhandledRejection", e => { require("fs").writeSync(2, "unhandledRejection:" + e.message); process.exit(1); });
+           const out = process.stdout;
+           if (${JSON.stringify(where)} === "drain") out.once("drain", () => { throw new Error("from drain"); });
+           out.write(Buffer.alloc(1 << 20, "A"), () => { if (${JSON.stringify(where)} === "callback") throw new Error("from callback"); });`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        lazy: true,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect(stdout.byteLength).toBe(1 << 20);
+      expect(stderr).toBe("uncaughtException:from " + where);
+      expect(exitCode).toBe(0);
+    });
+
+    // Bun.stdout.writer() takes an ArrayBuffer. So do the streams over it, unlike node's.
+    test("process.stdout.write takes an ArrayBuffer and a SharedArrayBuffer", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const ab = new Uint8Array([65, 66]).buffer;
+           const sab = new SharedArrayBuffer(2); new Uint8Array(sab).set([67, 68]);
+           process.stdout.write(ab); process.stdout.write(sab); process.stdout.write("\\n");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ABCD\n");
+      expect(exitCode).toBe(0);
+    });
+
     // Bun.spawn's "pipe" is a socketpair; these go through sh so fd 1 is a real pipe(2).
     test("console.log and process.stdout.write are not truncated over a real pipe", async () => {
       await using proc = spawn({

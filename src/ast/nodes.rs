@@ -860,13 +860,7 @@ impl ExportsKind {
         )
     }
 
-    /// The dev server prints a module of this kind as an ESM entry with a
-    /// dependency list, which the HMR runtime loads into `hmr.imports`. Any
-    /// other kind prints as a CommonJS function, which has no such list and
-    /// has to load its imports itself.
-    ///
-    /// Only `bun build --format=internal_bake_dev` sees `EsmWithDynamicFallback`:
-    /// its link step gives that kind to an ESM file with a dynamic `export *`.
+    /// Whether the dev server prints this kind as an ESM entry, which has a dependency list.
     pub fn has_dev_server_dependency_list(self) -> bool {
         matches!(self, Self::Esm | Self::EsmWithDynamicFallback)
     }

@@ -154,8 +154,7 @@ export class HMRModule {
     }
   }
 
-  /** Lowered from the `import` statements of a CommonJS module. Its registry entry has no
-   * dependency list, so it loads them when it runs, as `bun build` does inside `__commonJS`. */
+  /** Lowered from the `import` statements of a CommonJS module, which has no dependency list. */
   importsSync(ids: Id[]) {
     const list: HMRModule[] = [];
     for (const id of ids) {

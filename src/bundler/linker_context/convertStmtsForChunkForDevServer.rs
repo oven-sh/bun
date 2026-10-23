@@ -14,14 +14,15 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
 /// The conversion logic is completely different for format .internal_bake_dev
 ///
-/// This function populates all three lists:
-/// 1. outside_wrapper_prefix: all import statements, unmodified. ESM only.
-/// 2. inside_wrapper_prefix: the import variables and `hmr.updateImport`
+/// For ESM, this function populates all three lists:
+/// 1. outside_wrapper_prefix: all import statements, unmodified.
+/// 2. inside_wrapper_prefix: a var decl line and a call to `module.retrieve`
 /// 3. inside_wrapper_suffix: all non-import statements
+/// For CommonJS, list 1 stays empty and list 2 loads the imports with `hmr.importsSync([ids])`.
 ///
-/// For ESM, the imports are rewritten at print time to fit the packed array
-/// format that the HMR runtime can decode. This encoding is low on JS objects
-/// and indentation.
+/// The imports are rewritten at print time to fit the packed array format
+/// that the HMR runtime can decode. This encoding is low on JS objects and
+/// indentation.
 ///
 /// 1 ┃ "module/esm": [ [
 ///   ┃   'module_1', 1, "add",
@@ -41,22 +42,6 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///   ┃   };
 ///     }, false ],
 ///        ----- "is the module async?"
-///
-/// A CommonJS module is printed as a function with no dependency list, so the
-/// runtime does not fill `hmr.imports` for it. Its imports are loaded from
-/// inside the function, the way `bun build` binds them inside `__commonJS`:
-///
-/// ```text
-///     "module/cjs"(hmr, module, exports) {
-/// 2 ┃   var [module_1, module_2] = hmr.importsSync(["module_1", "module_2"]);
-///   ┃   hmr.updateImport = [
-///   ┃     (module) => (module_1 = module),
-///   ┃     (module) => (module_2 = module),
-///   ┃   ];
-///
-/// 3 ┃   module.exports = module_1.add(1, module_2.mul(2, 3));
-///     },
-/// ```
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,

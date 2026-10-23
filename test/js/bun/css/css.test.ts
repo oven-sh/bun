@@ -5052,21 +5052,28 @@ describe("css tests", () => {
     ]) {
       minify_test(`.foo { font-family: "${keyword} x"; }`, `.foo{font-family:"${keyword} x"}`);
     }
-    // Identifiers are joined by one blank, so an empty word changes the name.
+    // Identifiers are joined by one blank, so two blanks in a row need the string.
     minify_test('.foo { font-family: "HW Impey  Bold"; }', '.foo{font-family:"HW Impey  Bold"}');
-    minify_test('.foo { font-family: " a"; }', '.foo{font-family:" a"}');
-    minify_test('.foo { font-family: "a "; }', '.foo{font-family:"a "}');
+    minify_test('.foo { font-family: "  a"; }', '.foo{font-family:"  a"}');
+    minify_test('.foo { font-family: "a  "; }', '.foo{font-family:"a  "}');
     minify_test('.foo { font-family: " "; }', '.foo{font-family:" "}');
     minify_test('.foo { font: 12px "a  b", serif; }', '.foo{font:12px "a  b",serif}');
     minify_test(
-      '@font-face { font-family: "a  b"; src: local(" a"); }',
-      '@font-face{font-family:"a  b";src:local(" a")}',
+      '@font-face { font-family: "a  b"; src: local("a  b"); }',
+      '@font-face{font-family:"a  b";src:local("a  b")}',
     );
     minify_test('@font-palette-values --p { font-family: "a  b"; }', '@font-palette-values --p{font-family:"a  b"}');
+    // One blank at either end is dropped, as before. It does not hide a generic family.
+    minify_test('.foo { font-family: " a"; }', ".foo{font-family:a}");
+    minify_test('.foo { font-family: "a "; }', ".foo{font-family:a}");
+    minify_test('.foo { font-family: " a b ", serif; }', ".foo{font-family:a b,serif}");
+    minify_test('@font-face { font-family: x; src: local(" a"); }', "@font-face{font-family:x;src:local(a)}");
+    minify_test('.foo { font-family: " serif x"; }', '.foo{font-family:" serif x"}');
+    minify_test('.foo { font-family: "b),2 "; }', '.foo{font-family:"b),2 "}');
     // The same names, each written as one identifier with escaped blanks.
     minify_test(".foo { font-family: serif\\ x; }", '.foo{font-family:"serif x"}');
     minify_test(".foo { font-family: a\\ \\ b; }", '.foo{font-family:"a  b"}');
-    minify_test(".foo { font-family: \\ a; }", '.foo{font-family:" a"}');
+    minify_test(".foo { font-family: \\ a; }", ".foo{font-family:a}");
     // Only a whole first word that is a generic family keeps the quotes.
     minify_test('.foo { font-family: "x serif"; }', ".foo{font-family:x serif}");
     minify_test('.foo { font-family: "test inherit"; }', ".foo{font-family:test inherit}");
@@ -8408,7 +8415,7 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
       "a.css": [
         `.a { font-family: Arial, "Sans-Serif Pro", sans-serif }`,
         `.b { font: 12px "HW Impey  Bold", serif }`,
-        `@font-face { font-family: "Serif Gothic"; src: local(" a") }`,
+        `@font-face { font-family: "Serif Gothic"; src: local("HW Impey  Bold") }`,
         `.c { font-family: "Times New Roman", "x serif" }`,
         "",
       ].join("\n"),
@@ -8429,7 +8436,8 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     expect(minified).toEqual({
       stdout:
         `.a{font-family:Arial,"Sans-Serif Pro",sans-serif}.b{font:12px "HW Impey  Bold",serif}` +
-        `@font-face{font-family:"Serif Gothic";src:local(" a")}.c{font-family:Times New Roman,x serif}\n`,
+        `@font-face{font-family:"Serif Gothic";src:local("HW Impey  Bold")}` +
+        `.c{font-family:Times New Roman,x serif}\n`,
       stderr: "",
       exitCode: 0,
     });
@@ -8447,7 +8455,7 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
 
           @font-face {
             font-family: "Serif Gothic";
-            src: local(" a");
+            src: local("HW Impey  Bold");
           }
 
           .c {

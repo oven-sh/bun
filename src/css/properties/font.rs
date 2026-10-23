@@ -382,13 +382,17 @@ impl FontFamily {
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
-                let mut words = bun_core::strings::split(val, b" ");
+                // Like lightningcss, drop a blank at either end: in published CSS it is a typo.
+                let name = val.strip_prefix(b" ").unwrap_or(val);
+                let name = name.strip_suffix(b" ").unwrap_or(name);
+                let mut words = bun_core::strings::split(name, b" ");
                 let first = words.next().unwrap_or(b"");
                 let generic_first = !is_reserved_custom_ident(first)
                     && <GenericFontFamily as css::EnumProperty>::from_ascii_case_insensitive(first)
                         .is_some();
                 // Parsed back, a leading generic family is the keyword, and blanks collapse to one.
-                let mut quoted = first.is_empty() || generic_first || is_reserved_custom_ident(val);
+                let mut quoted =
+                    first.is_empty() || generic_first || is_reserved_custom_ident(name);
                 if !quoted {
                     dest.scratchbuf.clear();
                     let _ = css::serializer::serialize_identifier(first, &mut dest.scratchbuf);
@@ -401,7 +405,7 @@ impl FontFamily {
                         let _ = css::serializer::serialize_identifier(word, &mut dest.scratchbuf);
                     }
                     let len = dest.scratchbuf.len();
-                    if !quoted && len < val.len() + 2 {
+                    if !quoted && len < name.len() + 2 {
                         return dest.write_scratchbuf(0..len);
                     }
                 }

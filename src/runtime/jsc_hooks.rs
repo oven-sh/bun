@@ -99,6 +99,9 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
+    /// `Some` while the `--isolate` sweep before the swap runs: the stdio sinks it
+    /// reached, one ref each, re-armed after it (see [`stop_active_handles_for_test_isolation`]).
+    pub(crate) stdio_sinks_kept_for_retire: Option<Vec<ptr::NonNull<crate::webcore::FileSink>>>,
     /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
@@ -377,6 +380,7 @@ unsafe fn init_runtime_state(
             }
         },
         wake_ctx: None,
+        stdio_sinks_kept_for_retire: None,
         cron_jobs: Vec::new(),
         lint: core::cell::OnceCell::new(),
         // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
@@ -1782,9 +1786,34 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// handles when it runs, so drain first so they are armed before the sweep,
 /// then stop. (VM teardown must *not* drain here — its
 /// prepareForDestruction discards the pre-exit queues.)
+///
+/// The file's socket close handlers still run after this sweep and may write to
+/// `process.stdout`/`process.stderr`, so those sinks decline it (`on_abort` records
+/// them) and are re-armed here for the swap's sweep after it retires the realm.
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
+    let state = runtime_state();
+    // SAFETY: live boxed per-thread `RuntimeState`; the sweep's callbacks
+    // reach the field through `runtime_state()` again, never through this
+    // borrow, which ends at each statement.
+    unsafe {
+        if !state.is_null() {
+            (*state).stdio_sinks_kept_for_retire = Some(Vec::new());
+        }
+    }
     let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
+    // SAFETY: as above.
+    let kept = unsafe {
+        if state.is_null() {
+            None
+        } else {
+            (*state).stdio_sinks_kept_for_retire.take()
+        }
+    };
+    for sink in kept.into_iter().flatten() {
+        // SAFETY: `on_abort` took a ref on each entry; the call releases it.
+        unsafe { crate::webcore::FileSink::rearm_for_retire(sink.as_ptr(), vm) };
+    }
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {

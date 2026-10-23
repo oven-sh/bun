@@ -20,7 +20,9 @@ use crate::{DependencyID, ExtractData, PackageID};
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::package_install;
-use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
+use crate::package_installer::{
+    DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext, UnreadRows,
+};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
@@ -336,6 +338,7 @@ pub(crate) fn install_hoisted_packages(
         places,
         ..Default::default()
     };
+    let mut described = Vec::new();
 
     {
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
@@ -397,6 +400,14 @@ pub(crate) fn install_hoisted_packages(
             let names = bun_ptr::RawSlice::new(parts.items_name());
             let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
             let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
+
+            // A partial install saves nothing, so it describes no row either.
+            let mut unread = (this.lockfile.has_unread_packages && packages_to_install.is_none())
+                .then(|| UnreadRows::init(&lockfile_ref));
+            let bins = match &mut unread {
+                Some(unread) => unread.bins(parts.items_bin()),
+                None => bins,
+            };
 
             let pkg_len = this.lockfile.packages.len();
             let trees_count = this.lockfile.buffers.trees.len();
@@ -472,6 +483,7 @@ pub(crate) fn install_hoisted_packages(
                     }
                     set
                 },
+                unread,
             };
         };
 
@@ -594,6 +606,9 @@ pub(crate) fn install_hoisted_packages(
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
         installer.summary.successfully_installed =
             Some(core::mem::take(&mut installer.successfully_installed));
+        if let Some(unread) = installer.unread.take() {
+            described = unread.described;
+        }
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s
@@ -603,6 +618,8 @@ pub(crate) fn install_hoisted_packages(
             }
         }
     }
+    // Nothing views the lockfile's buffers any more.
+    this.adopt_described(&described);
 
     Ok(summary)
 }

@@ -1004,6 +1004,11 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         if let Some(cond) = get_str(&entry_expr, b"conditions") {
             (pkg.meta.os, pkg.meta.arch, pkg.meta.libc) = parse_conditions(cond);
         }
+        // yarn.lock has the bins, not the scripts.
+        if resolution.tag.is_self_described() {
+            pkg.meta.mark_unread();
+            this.has_unread_packages = true;
+        }
         let pid = this.append_package_dedupe(&mut pkg)?;
         entries[i].package_id = pid;
         this.record_package_extensions(pid, &added);

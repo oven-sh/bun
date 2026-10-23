@@ -1852,6 +1852,11 @@ pub(crate) fn install_isolated_packages(
                             trusted_entries.push(entry_idx);
                             break 'eligible false;
                         }
+                        // Its bins are not known before this install meets its package.json, and
+                        // an entry that other projects share is built once.
+                        if pkg_metas[pkg_id as usize].is_unread() {
+                            break 'eligible false;
+                        }
                         if lockfile.patched_dependencies.count() > 0 {
                             let mut name_version_buf = bun_paths::path_buffer_pool::get();
                             let mut cursor = std::io::Cursor::new(&mut name_version_buf.0[..]);
@@ -2228,6 +2233,8 @@ pub(crate) fn install_isolated_packages(
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
+        // A partial install saves nothing, so it describes no row either.
+        let describes_unread = lockfile_ro.has_unread_packages && packages_to_install.is_none();
         let manager_ptr: *mut PackageManager = manager;
         let mut installer = store::Installer {
             lockfile: lockfile_ptr,
@@ -2259,6 +2266,12 @@ pub(crate) fn install_isolated_packages(
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
+            described: describes_unread.then(|| {
+                (0..lockfile.packages.len())
+                    .map(|_| std::sync::OnceLock::new())
+                    .collect()
+            }),
+            held_for_described: describes_unread.then(Vec::new),
         };
         // From here on, no `&mut PackageManager` is held across a call on `installer`, because it
         // would alias.
@@ -2498,6 +2511,9 @@ pub(crate) fn install_isolated_packages(
                         {
                             installer.summary.offline_misses.in_place.push(pkg_id);
                         }
+                        if installer.described.is_some() {
+                            installer.describe(pkg_id, installer::PackageJson::Stored(entry_id));
+                        }
                         let mut state = CompleteState::Skipped;
                         if uses_global_store {
                             // Warm hit: the global virtual store already holds
@@ -2661,6 +2677,8 @@ pub(crate) fn install_isolated_packages(
             }
         }
 
+        installer.start_held_tasks();
+
         if installer.manager().pending_task_count() > 0 {
             let mgr: *mut PackageManager = manager_ptr;
             let mut wait = Wait {
@@ -2689,6 +2707,7 @@ pub(crate) fn install_isolated_packages(
         installer.unlink_left_out_entries();
         installer.warn_left_out_links();
         installer.record_update_request_trust();
+        installer.adopt_described();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

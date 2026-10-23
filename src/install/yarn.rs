@@ -783,15 +783,21 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 arch: entry.cpu.combine(),
                 os: entry.os.combine(),
                 man_dir: SemverString::default(),
-                has_install_script: HasInstallScript::False,
+                // yarn.lock records neither the bins nor the scripts. The registry's manifest has
+                // them for an npm package, see `fetch_necessary_package_metadata_after_yarn_or_pnpm_migration`.
+                has_install_script: if resolution.tag.is_self_described() {
+                    HasInstallScript::Unread
+                } else {
+                    HasInstallScript::False
+                },
                 integrity: entry.tarball_integrity(),
                 ..Default::default()
             },
             bin: Bin::init(),
             scripts: Default::default(),
         };
-        // yarn.lock does not record bins. For a `file:` folder or a `link:`, they are read from the
-        // package.json on disk.
+        this.has_unread_packages |= package.meta.is_unread();
+        // For a `file:` folder or a `link:`, the bins are read from the package.json on disk.
         if matches!(
             resolution.tag,
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink

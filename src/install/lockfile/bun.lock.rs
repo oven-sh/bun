@@ -1061,6 +1061,8 @@ impl Stringifier {
 
         if meta.has_install_script() {
             write_key(&mut *writer, b" \"hasInstallScript\": true")?;
+        } else if meta.is_unread() {
+            write_key(&mut *writer, b" \"hasInstallScript\": null")?;
         }
 
         if bin.tag != BinTag::None {
@@ -2602,10 +2604,15 @@ pub(crate) fn parse_into_binary_lockfile(
                             if let Some(libc) = deps_os_cpu_libc_bin_bundle_obj.get(b"libc") {
                                 pkg.meta.libc = Npm::negatable_from_json_value::<Npm::Libc>(libc);
                             }
-                            if let Some(&JSON::E::JsonValue::Boolean(has_install_script)) =
-                                deps_os_cpu_libc_bin_bundle_obj.get(b"hasInstallScript")
-                            {
-                                pkg.meta.set_has_install_script(has_install_script);
+                            match deps_os_cpu_libc_bin_bundle_obj.get(b"hasInstallScript") {
+                                Some(&JSON::E::JsonValue::Boolean(has_install_script)) => {
+                                    pkg.meta.set_has_install_script(has_install_script);
+                                }
+                                Some(JSON::E::JsonValue::Null) if res.tag.is_self_described() => {
+                                    pkg.meta.mark_unread();
+                                    lockfile.has_unread_packages = true;
+                                }
+                                _ => {}
                             }
                         }
                     }

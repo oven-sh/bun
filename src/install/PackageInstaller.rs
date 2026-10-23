@@ -28,6 +28,7 @@ use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
+use crate::package_manager_real::unread_packages::Described;
 use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
 use crate::patch_install::{self, PatchTask};
@@ -108,6 +109,50 @@ pub struct PackageInstaller<'a> {
     pub(crate) trees: Box<[TreeContext]>,
 
     pub(crate) seen_bin_links: StringHashMap<()>,
+
+    /// `Some` if the lockfile has a row that no package.json was read for.
+    pub(crate) unread: Option<Box<UnreadRows>>,
+}
+
+/// A row that is `HasInstallScript::Unread` gets its `bin` from the package.json that this install
+/// puts into `node_modules`. The trees borrow the lockfile's buffers for the whole install, so the
+/// strings of such a `bin` wait in `described` for `PackageManager::adopt_described`.
+pub struct UnreadRows {
+    /// `PackageInstaller::bins` views this copy of the column. An unread row has no `bin` in it
+    /// until it is described.
+    bins: Vec<Bin>,
+    pub(crate) described: Vec<(PackageID, Described)>,
+}
+
+impl UnreadRows {
+    pub(crate) fn init(lockfile: &Lockfile) -> Box<UnreadRows> {
+        let packages = lockfile.packages.slice();
+        let mut bins = packages.items_bin().to_vec();
+        for (bin, meta) in bins.iter_mut().zip(packages.items_meta()) {
+            if meta.is_unread() {
+                *bin = Bin::init();
+            }
+        }
+        Box::new(UnreadRows {
+            bins,
+            described: Vec::new(),
+        })
+    }
+
+    /// The buffers of the `bin` that `package_id` was described with.
+    fn strings_of(&self, package_id: PackageID) -> Option<(&[u8], &[bun_semver::ExternalString])> {
+        (self.described.iter())
+            .find(|(id, _)| *id == package_id)
+            .map(|(_, package)| (package.string_bytes.as_slice(), package.extern_strings.as_slice()))
+    }
+
+    /// The column to link from. `rows` is the lockfile's, which can have grown.
+    pub(crate) fn bins(&mut self, rows: &[Bin]) -> bun_ptr::RawSlice<Bin> {
+        if let Some(appended) = rows.get(self.bins.len()..) {
+            self.bins.extend_from_slice(appended);
+        }
+        bun_ptr::RawSlice::new(self.bins.as_slice())
+    }
 }
 
 use bun_core::UnwrapOrOom;
@@ -763,6 +808,11 @@ impl<'a> PackageInstaller<'a> {
             debug_assert!(package_id != invalid_package_id);
             let bin = self.bins[package_id as usize];
             debug_assert!(bin.tag != bin::Tag::None);
+            let (bin_strings, bin_extern_strings) =
+                match self.unread.as_ref().and_then(|unread| unread.strings_of(package_id)) {
+                    Some(described) => described,
+                    None => (string_buf, lockfile.buffers.extern_strings.as_slice()),
+                };
 
             let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
                 .name
@@ -879,8 +929,8 @@ impl<'a> PackageInstaller<'a> {
                     global_bin_path: manager.options.bin_path,
                     package_name: package_name_,
                     target_package_name,
-                    string_buf,
-                    extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
+                    string_buf: bin_strings,
+                    extern_string_buf: bin_extern_strings,
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
@@ -1555,7 +1605,10 @@ impl<'a> PackageInstaller<'a> {
         self.metas = bun_ptr::RawSlice::new(packages.items_meta());
         self.names = bun_ptr::RawSlice::new(packages.items_name());
         self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
-        self.bins = bun_ptr::RawSlice::new(packages.items_bin());
+        self.bins = match &mut self.unread {
+            Some(unread) => unread.bins(packages.items_bin()),
+            None => bun_ptr::RawSlice::new(packages.items_bin()),
+        };
         self.resolutions = bun_ptr::RawSlice::new(packages.items_resolution());
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
@@ -1662,6 +1715,76 @@ impl<'a> PackageInstaller<'a> {
             .and_then(|()| path.try_append(alias))
             .map_err(|_| NAME_TOO_LONG)?;
         Ok(path)
+    }
+
+    /// See `UnreadRows`. `self.bins` has no `bin` for `package_id`, whose files were linked from
+    /// the cache just now. Returns true if its package.json declares one.
+    #[cold]
+    #[inline(never)]
+    fn describe_linked(
+        &mut self,
+        package_id: PackageID,
+        pkg_name: String,
+        resolution: &Resolution,
+    ) -> bool {
+        if !self.metas[package_id as usize].is_unread() {
+            return false;
+        }
+        // A patch does not change what the row records.
+        let entry = self.cache_entry_name(package_id, pkg_name, resolution, None);
+        let package_dir = [
+            strings::without_trailing_slash(self.manager().cache_directory_path.as_bytes()),
+            bun_paths::SEP_STR.as_bytes(),
+            entry.as_bytes(),
+        ]
+        .concat();
+        self.describe_unread(package_id, resolution, &package_dir)
+    }
+
+    /// `describe_linked` for a package that an earlier install put into the current tree.
+    #[cold]
+    #[inline(never)]
+    fn describe_installed(
+        &mut self,
+        package_id: PackageID,
+        alias: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        if !self.metas[package_id as usize].is_unread() {
+            return false;
+        }
+        let Ok(package_dir) = self.package_path(alias) else {
+            return false;
+        };
+        self.describe_unread(package_id, resolution, package_dir.slice())
+    }
+
+    fn describe_unread(
+        &mut self,
+        package_id: PackageID,
+        resolution: &Resolution,
+        package_dir: &[u8],
+    ) -> bool {
+        let described = self.manager_mut().describe_in(package_dir, resolution.tag);
+        let row = self.lockfile().packages.items_bin()[package_id as usize];
+        if let Some(described) = &described {
+            // Inline bytes of the row, like the integrity of an extracted package. The strings
+            // of its `bin` follow in `PackageManager::adopt_described`.
+            self.lockfile_mut().packages.items_meta_mut()[package_id as usize]
+                .set_has_install_script(described.has_install_script);
+        }
+        let Some(unread) = self.unread.as_mut() else {
+            return false;
+        };
+        let Some(described) = described else {
+            // The row stays unread, and keeps the `bin` that it has.
+            unread.bins[package_id as usize] = row;
+            return row.tag != bin::Tag::None;
+        };
+        unread.bins[package_id as usize] = described.bin;
+        let has_bin = described.bin.tag != bin::Tag::None;
+        unread.described.push((package_id, described));
+        has_bin
     }
 
     fn get_installed_package_scripts_count(
@@ -2398,7 +2521,10 @@ impl<'a> PackageInstaller<'a> {
                 self.summary.offline_misses.in_place.push(package_id);
             }
 
-            if self.bins[package_id as usize].tag != bin::Tag::None {
+            if self.bins[package_id as usize].tag != bin::Tag::None
+                || (self.unread.is_some()
+                    && self.describe_installed(package_id, alias.slice(string_buf!()), resolution))
+            {
                 self.trees[self.current_tree_id as usize]
                     .binaries
                     .add(dependency_id)
@@ -2474,7 +2600,10 @@ impl<'a> PackageInstaller<'a> {
                     self.node.complete_one();
                 }
 
-                if self.bins[package_id as usize].tag != bin::Tag::None {
+                if self.bins[package_id as usize].tag != bin::Tag::None
+                    || (self.unread.is_some()
+                        && self.describe_linked(package_id, pkg_name, resolution))
+                {
                     self.trees[self.current_tree_id as usize]
                         .binaries
                         .add(dependency_id)

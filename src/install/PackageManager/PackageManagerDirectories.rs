@@ -138,6 +138,22 @@ pub fn try_get_cache_directory(this: &mut PackageManager) -> Result<Fd, Director
     unsafe { get_cache_directory_raw(this) }.map_err(DirectoryError::OpenCache)
 }
 
+/// The cache directory, if there is one already. `get_cache_directory` creates it.
+pub(crate) fn existing_cache_directory(this: &mut PackageManager) -> Option<Fd> {
+    if this.cache_directory.is_none() {
+        let exists = if this.options.enable.contains(Enable::CACHE) {
+            fetch_cache_directory_path(this.env_mut(), Some(this.options.cache_directory))
+                .is_ok_and(|dir| sys::directory_exists_at(Fd::cwd(), &ZBox::from_bytes(&dir.path)).unwrap_or(false))
+        } else {
+            sys::directory_exists_at(Fd::cwd(), bun_core::zstr!("node_modules/.cache")).unwrap_or(false)
+        };
+        if !exists {
+            return None;
+        }
+    }
+    try_get_cache_directory(this).ok()
+}
+
 /// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
 /// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
 /// materializes a `&mut PackageManager` covering the whole struct — only the
@@ -904,6 +920,40 @@ pub fn cached_tarball_folder_name(
     print(!has_verified_base, patch_hash)
 }
 
+/// The cache entry of the bytes that a git, GitHub or tarball row pins. Empty if the row pins none:
+/// a repository with no commit, or a tarball with no integrity.
+pub(crate) fn cached_pinned_folder_name(
+    this: &PackageManager,
+    resolution: &Resolution,
+    integrity: &Integrity,
+) -> &'static ZStr {
+    match resolution.tag {
+        ResolutionTag::Git if !resolution.git().resolved.is_empty() => {
+            cached_git_folder_name(this, resolution.git(), None)
+        }
+        ResolutionTag::Github if !resolution.github().resolved.is_empty() => {
+            cached_github_folder_name(this, resolution.github(), None)
+        }
+        ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball
+            if integrity.tag.is_supported() =>
+        {
+            let url = match resolution.tag {
+                ResolutionTag::LocalTarball => resolution.local_tarball(),
+                _ => resolution.remote_tarball(),
+            };
+            cached_tarball_folder_name_print(
+                cached_package_folder_name_buf(),
+                integrity,
+                false,
+                resolution.tag,
+                this.lockfile.str(url),
+                None,
+            )
+        }
+        _ => ZStr::EMPTY,
+    }
+}
+
 impl PackageManager {
     /// Returns true if what this run reads from a `file:` path or URL can become the integrity in
     /// bun.lock.
@@ -1423,6 +1473,9 @@ pub fn update_lockfile_if_needed(
                 meta.set_has_install_script(false);
             }
         }
+    }
+    if manager.lockfile.has_unread_packages {
+        manager.describe_unread_from_cache();
     }
 
     Ok(())

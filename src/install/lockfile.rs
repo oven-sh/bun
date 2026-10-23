@@ -194,6 +194,10 @@ pub struct Lockfile {
 
     /// Packages that so far only rows inside a bundle resolve to. Runtime-only, sized lazily.
     pub(crate) only_bundled: DynamicBitSet,
+
+    /// True if a row may be `HasInstallScript::Unread`. Set by what creates such a row, so that a
+    /// lockfile without one never looks for them.
+    pub(crate) has_unread_packages: bool,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -1398,6 +1402,7 @@ impl Lockfile {
         // Carry the on-disk format version over from the lockfile we loaded so a
         // re-save preserves it (a fresh `new` defaults to the current version).
         new.text_lockfile_version = old.text_lockfile_version;
+        new.has_unread_packages = old.has_unread_packages;
 
         if old.patched_dependencies.count() > 0 {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;
@@ -2290,6 +2295,7 @@ impl Lockfile {
             held_at_load: DynamicBitSet::default(),
             exact_pinned: DynamicBitSet::default(),
             only_bundled: DynamicBitSet::default(),
+            has_unread_packages: false,
         }
     }
 

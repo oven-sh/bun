@@ -10,6 +10,7 @@ use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
     package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
+    update_lockfile_if_needed,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
 use bun_paths::{self as Path, AutoAbsPath};
@@ -811,6 +812,8 @@ impl PackageManagerCommand {
                 Output::flush();
                 Global::exit(0);
             }
+            // SAFETY: `update_lockfile_if_needed` never dereferences the lockfile through `load_lockfile`.
+            unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
             package_json_write_back::write_migrated(pm);
             let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
             // SAFETY: `load_lockfile` is `Ok` (errors exited above), and `save_to_disk` reads only its

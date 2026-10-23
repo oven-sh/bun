@@ -46,6 +46,20 @@ pub enum HasInstallScript {
     #[default]
     False,
     True,
+    /// No package.json was read for the row, so its `bin` is not known either. A lockfile of
+    /// another package manager records neither. bun.lock has it as `"hasInstallScript": null`, and
+    /// bun.lockb as `False`.
+    Unread,
+}
+
+impl From<bool> for HasInstallScript {
+    fn from(has_script: bool) -> Self {
+        if has_script {
+            HasInstallScript::True
+        } else {
+            HasInstallScript::False
+        }
+    }
 }
 
 impl Default for Meta {
@@ -78,15 +92,20 @@ impl Meta {
     }
 
     pub fn set_has_install_script(&mut self, has_script: bool) {
-        self.has_install_script = if has_script {
-            HasInstallScript::True
-        } else {
-            HasInstallScript::False
-        };
+        self.has_install_script = has_script.into();
     }
 
     pub(crate) fn needs_update(&self) -> bool {
         self.has_install_script == HasInstallScript::Old
+    }
+
+    /// See `HasInstallScript::Unread`.
+    pub(crate) fn is_unread(&self) -> bool {
+        self.has_install_script == HasInstallScript::Unread
+    }
+
+    pub(crate) fn mark_unread(&mut self) {
+        self.has_install_script = HasInstallScript::Unread;
     }
 
     // The only concrete builder type used in install is the lockfile

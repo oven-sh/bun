@@ -3464,8 +3464,10 @@ pub mod serializer {
     /// Number of columns in the on-disk package table.
     const FIELD_COUNT: usize = PackageField::ALL.len();
 
+    /// `has_unread`: see `Lockfile::has_unread_packages`.
     pub(crate) fn save<SemverIntType: VersionInt>(
         list: &List<SemverIntType>,
+        has_unread: bool,
         stream: &mut lockfile::bun_lockb::StreamType<'_>,
     ) -> crate::Result<()> {
         stream.write_int_le::<u64>(list.len() as u64)?;
@@ -3516,6 +3518,20 @@ pub mod serializer {
                             (&raw const copy).cast::<u8>(),
                             mem::size_of_val(&copy),
                         )
+                    })?;
+                }
+            } else if has_unread && matches!(field, PackageField::Meta) {
+                // bun.lockb has no value for `HasInstallScript::Unread`, and a Bun that does not
+                // know it refuses a file that has one.
+                let metas: &[Meta] = sliced.items::<"meta", Meta>();
+                for meta in metas {
+                    let mut meta = *meta;
+                    if meta.is_unread() {
+                        meta.set_has_install_script(false);
+                    }
+                    // SAFETY: Meta is #[repr(C)] POD with its padding in named fields.
+                    stream.write_all(unsafe {
+                        bun_core::ffi::slice((&raw const meta).cast::<u8>(), mem::size_of::<Meta>())
                     })?;
                 }
             } else {

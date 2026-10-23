@@ -171,7 +171,7 @@ pub(crate) fn save(
         }
     }
 
-    package::serializer::save(&this.packages, &mut stream)?;
+    package::serializer::save(&this.packages, this.has_unread_packages, &mut stream)?;
     buffers::save(this, options, &mut stream)?;
     stream.write_int_le(0u64)?;
 

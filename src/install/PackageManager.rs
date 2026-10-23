@@ -92,6 +92,8 @@ pub mod run_tasks;
 pub mod security_scanner;
 #[path = "PackageManager/updatePackageJSONAndInstall.rs"]
 pub mod update_package_json_and_install;
+#[path = "PackageManager/unread_packages.rs"]
+pub(crate) mod unread_packages;
 #[path = "PackageManager/UpdateRequest.rs"]
 pub mod update_request;
 #[path = "PackageManager/workspace_manifests.rs"]

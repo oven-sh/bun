@@ -1038,6 +1038,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             &mut snapshot_dep_paths,
         )?;
         pkg.resolution = res.copy();
+        // pnpm-lock.yaml records neither the bins nor the scripts, see `yarn::migrate_yarn_lockfile`.
+        if res.tag.is_self_described() {
+            pkg.meta.mark_unread();
+            lockfile.has_unread_packages = true;
+        }
 
         let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
         if has_unbound_peers {

@@ -2187,11 +2187,37 @@ impl<'a> HTTPClient<'a> {
         self.start_::<true>();
     }
 
+    /// A request that names its protocol keeps it, and only a `Bytes` body can be sent again.
+    pub(crate) fn can_retry_over_http1(&self) -> bool {
+        self.flags.forced_protocol.is_none()
+            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+    }
+
+    /// The peer refused the request with HTTP_1_1_REQUIRED before it sent a response.
+    pub(crate) fn retry_over_http1(&mut self) {
+        debug_assert!(self.h2.is_none());
+        debug_assert!(self.can_retry_over_http1());
+        self.pin_to_http1();
+        self.restart_from_top();
+    }
+
+    /// `can_offer_h2` and `can_try_h3_alt_svc` refuse the request from here on, redirects included.
+    pub(crate) fn pin_to_http1(&mut self) {
+        if self.flags.forced_protocol.is_none() {
+            self.flags.forced_protocol = Some(Protocol::Http1_1);
+        }
+    }
+
     pub(crate) fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
+        self.h2_retries += 1;
+        self.restart_from_top();
+    }
+
+    /// Start the request again through `start()`. The body can be sent again from its first byte.
+    fn restart_from_top(&mut self) {
         self.unregister_abort_tracker();
         self.flags.protocol = Protocol::Http1_1;
-        self.h2_retries += 1;
         let body = core::mem::replace(
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
@@ -4124,7 +4150,7 @@ impl<'a> HTTPClient<'a> {
                     // PendingConnect that the rest of this loop would re-coalesce
                     // onto (which would serialise N cold fetches into N
                     // sequential handshakes). The origin already chose h1 once.
-                    waiter.flags.forced_protocol = Some(Protocol::Http1_1);
+                    waiter.pin_to_http1();
                     waiter.start_::<true>();
                 }
                 // The first waiter becomes the new leader; the rest re-coalesce

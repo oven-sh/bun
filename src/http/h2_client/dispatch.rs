@@ -517,6 +517,7 @@ fn dispatch_frame(
                 }
                 _ => Some(crate::Error::HTTP2StreamReset),
             };
+            stream.http1_required |= code == wire::ErrorCode::HTTP_1_1_REQUIRED.0;
         }
         FT_GOAWAY => {
             if stream_id != 0 {
@@ -532,11 +533,14 @@ fn dispatch_frame(
                 wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31();
             let code: u32 = wire::u32_from_bytes(&payload[4..8]);
             let graceful = code == wire::ErrorCode::NO_ERROR.0;
+            let http1_required = code == wire::ErrorCode::HTTP_1_1_REQUIRED.0;
+            session.http1_required |= http1_required;
             let last_id = session.goaway_last_stream_id;
             for &s_ptr in session.streams.values() {
                 // SAFETY: stream pointer valid for session lifetime.
                 let s = stream_mut(s_ptr);
                 if s.id > last_id {
+                    s.http1_required |= http1_required;
                     s.fatal_error = Some(if graceful {
                         crate::Error::HTTP2RefusedStream
                     } else {
@@ -547,6 +551,10 @@ fn dispatch_frame(
                     // still complete successfully" — don't discard a
                     // response that already finished in this same read.
                     s.fatal_error = Some(crate::Error::HTTP2GoAway);
+                    // The peer may have processed the request: only an idempotent one goes again.
+                    if http1_required && s.client_ref().is_some_and(|c| c.method.is_idempotent()) {
+                        s.http1_required = true;
+                    }
                 }
             }
         }

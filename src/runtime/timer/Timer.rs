@@ -196,6 +196,7 @@ impl All {
             countdown_int,
             wrapped_promise,
             JSValue::UNDEFINED,
+            true,
         ))
     }
 
@@ -218,6 +219,7 @@ impl All {
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
+        fakeable: bool,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
@@ -238,6 +240,7 @@ impl All {
             countdown_int,
             wrapped_callback,
             arguments,
+            fakeable,
         ))
     }
 
@@ -246,6 +249,7 @@ impl All {
         callback: JSValue,
         arguments: JSValue,
         countdown: JSValue,
+        fakeable: bool,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
@@ -266,6 +270,7 @@ impl All {
             countdown_int,
             wrapped_callback,
             arguments,
+            fakeable,
         ))
     }
 
@@ -527,7 +532,30 @@ pub(crate) fn set_timeout_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller_no_frame();
-    All::set_timeout(&global.js_thread(context), callback, arguments, countdown)
+    All::set_timeout(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        false,
+    )
+}
+
+// HOST_EXPORT(Bun__Timer__setFakeTimeout, c)
+pub(crate) fn set_fake_timeout_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+    countdown: JSValue,
+) -> JsResult<JSValue> {
+    let context = global.bun_vm().context_of_caller_no_frame();
+    All::set_timeout(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        true,
+    )
 }
 
 // HOST_EXPORT(Bun__Timer__setInterval, c)
@@ -538,7 +566,30 @@ pub(crate) fn set_interval_export(
     countdown: JSValue,
 ) -> JsResult<JSValue> {
     let context = global.bun_vm().context_of_caller_no_frame();
-    All::set_interval(&global.js_thread(context), callback, arguments, countdown)
+    All::set_interval(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        false,
+    )
+}
+
+// HOST_EXPORT(Bun__Timer__setFakeInterval, c)
+pub(crate) fn set_fake_interval_export(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    arguments: JSValue,
+    countdown: JSValue,
+) -> JsResult<JSValue> {
+    let context = global.bun_vm().context_of_caller_no_frame();
+    All::set_interval(
+        &global.js_thread(context),
+        callback,
+        arguments,
+        countdown,
+        true,
+    )
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)

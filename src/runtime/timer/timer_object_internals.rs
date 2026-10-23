@@ -35,6 +35,9 @@ pub(crate) struct TimerObjectInternals {
     pub(crate) context: bun_jsc::ContextId,
     /// `VirtualMachine::test_isolation_generation` when it did.
     pub(crate) generation: u32,
+    /// Whether this timeout came from the fake timer functions installed by
+    /// `useFakeTimers`. Captured native timer functions remain real timers.
+    pub(crate) fakeable: bool,
 }
 
 // Putting `interval` between `id` and `this_value` would pad this to 48 bytes.
@@ -61,6 +64,7 @@ impl Default for TimerObjectInternals {
             flags: Cell::new(Flags::default()),
             context: bun_jsc::ContextId::default(),
             generation: 0,
+            fakeable: false,
         }
     }
 }
@@ -286,6 +290,7 @@ impl TimerObjectInternals {
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
+        fakeable: bool,
     ) {
         let vm = VirtualMachine::get_mut_ptr();
         let state = crate::jsc_hooks::runtime_state();
@@ -306,6 +311,7 @@ impl TimerObjectInternals {
             interval: Cell::new(interval),
             context: cx.context().id(),
             generation: cx.vm().test_isolation_generation,
+            fakeable,
             this_value: JsCell::new(JsRef::empty()),
         };
         // `self` is at its final address (embedded in its heap-allocated parent).
@@ -566,7 +572,11 @@ impl TimerObjectInternals {
             s.this_value.with_mut(|r| r.downgrade());
         } else {
             time_before_call = Timespec::ms_from_now(
-                TimespecMockMode::AllowMockedTime,
+                if s.fakeable {
+                    TimespecMockMode::AllowMockedTime
+                } else {
+                    TimespecMockMode::ForceRealTime
+                },
                 i64::from(s.interval.get()),
             );
         }
@@ -784,10 +794,19 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
-        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
-        // Only `Bun.sleep()` has an `interval` below 1.
+        let now = Timespec::now(if self.fakeable {
+            TimespecMockMode::AllowMockedTime
+        } else {
+            TimespecMockMode::ForceRealTime
+        });
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
-        let min_delay = unsafe { (*state).timer.fake_timers.min_delay_ms() };
+        let min_delay = if self.fakeable {
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
+            unsafe { (*state).timer.fake_timers.min_delay_ms() }
+        } else {
+            0
+        };
+        // Only `Bun.sleep()` has an `interval` below 1.
         let scheduled_time = now.add_ms(i64::from(self.interval.get().max(min_delay)));
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {

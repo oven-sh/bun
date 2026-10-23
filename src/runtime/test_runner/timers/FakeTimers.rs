@@ -1,5 +1,5 @@
 use bun_core::Timespec;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult, Strong};
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
@@ -11,6 +11,8 @@ use crate::timer::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
+    safe fn JSMock__createFakeSetTimeoutFunction(global: &JSGlobalObject) -> JSValue;
+    safe fn JSMock__createFakeSetIntervalFunction(global: &JSGlobalObject) -> JSValue;
 }
 
 #[derive(Default)]
@@ -19,6 +21,8 @@ pub(crate) struct FakeTimers {
     now: Option<Timespec>,
     /// `Date.now()` minus `now.ms()`.
     date_now_offset: f64,
+    original_set_timeout: Option<Strong>,
+    original_set_interval: Option<Strong>,
     /// Depth of [`FakeTimers::fire`] calls on the stack; each covers the callback and its microtask drain.
     firing: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
@@ -147,11 +151,38 @@ impl FakeTimers {
         if self.is_active() && self.firing > 0 { 1 } else { 0 }
     }
 
-    fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
+    fn activate(&mut self, js_now: f64, global: &JSGlobalObject) -> JsResult<()> {
+        let global_this = global.to_js_value();
+        if self.original_set_timeout.is_none() {
+            let original = global_this
+                .get(global, "setTimeout")?
+                .ok_or_else(|| global.throw(format_args!("globalThis.setTimeout is not available")))?;
+            self.original_set_timeout = Some(Strong::create(original, global));
+        }
+        if self.original_set_interval.is_none() {
+            let original = global_this
+                .get(global, "setInterval")?
+                .ok_or_else(|| global.throw(format_args!("globalThis.setInterval is not available")))?;
+            self.original_set_interval = Some(Strong::create(original, global));
+        }
+        // Keep each original native function intact so references captured
+        // before activation continue to schedule real timers.
+        global_this.put(
+            global,
+            b"setTimeout",
+            JSMock__createFakeSetTimeoutFunction(global),
+        );
+        global_this.put(
+            global,
+            b"setInterval",
+            JSMock__createFakeSetIntervalFunction(global),
+        );
         self.set_now(global, &Timespec::EPOCH, Some(js_now));
+        Ok(())
     }
 
     fn deactivate(&mut self, global: &JSGlobalObject) -> ClearedTimers {
+        self.restore_timer_functions(global);
         let cleared = self.clear();
         self.clear_now(global);
         cleared
@@ -163,7 +194,18 @@ impl FakeTimers {
     /// JS has stopped) can walk the still-populated fake heap and release
     /// `TimeoutObject` pins and discard `AbortSignalTimeout` timers.
     pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
+        self.restore_timer_functions(global);
         self.clear_now(global);
+    }
+
+    fn restore_timer_functions(&mut self, global: &JSGlobalObject) {
+        let global_this = global.to_js_value();
+        if let Some(original) = self.original_set_timeout.take() {
+            global_this.put(global, b"setTimeout", original.get());
+        }
+        if let Some(original) = self.original_set_interval.take() {
+            global_this.put(global, b"setInterval", original.get());
+        }
     }
 
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that
@@ -371,7 +413,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     set_fake_timer_marker(global, true)?;
 
     // SAFETY: `timer::All` is per-thread, and `activate` doesn't re-enter it.
-    unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
+    unsafe { (*timer_all()).fake_timers.activate(js_now, global)? };
 
     Ok(bun_jsc::cpp::JSMock__toThisStrict(global, frame.this()))
 }

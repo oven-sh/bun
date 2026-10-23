@@ -10,8 +10,7 @@ namespace Bun {
 
 using namespace JSC;
 
-JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static JSC::EncodedJSValue setTimeoutImpl(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, bool fakeable)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue job = callFrame->argument(0);
@@ -63,11 +62,25 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 #endif
 
+    if (fakeable) {
+        RELEASE_AND_RETURN(scope, Bun__Timer__setFakeTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
+    }
     RELEASE_AND_RETURN(scope, Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
+JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setTimeoutImpl(globalObject, callFrame, false);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFakeSetTimeout,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setTimeoutImpl(globalObject, callFrame, true);
+}
+
+static JSC::EncodedJSValue setIntervalImpl(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, bool fakeable)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue job = callFrame->argument(0);
@@ -120,7 +133,22 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
 #endif
 
+    if (fakeable) {
+        RELEASE_AND_RETURN(scope, Bun__Timer__setFakeInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
+    }
     RELEASE_AND_RETURN(scope, Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setIntervalImpl(globalObject, callFrame, false);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFakeSetInterval,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setIntervalImpl(globalObject, callFrame, true);
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -278,9 +306,31 @@ JSValue createSetTimeoutFunction(VM& vm, JSObject* globalObject)
     return createTimerFunction(vm, globalObject, "setTimeout"_s, functionSetTimeout, setTimeoutPromisifyCustomGetter);
 }
 
+JSValue createFakeSetTimeoutFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setTimeout"_s, functionFakeSetTimeout, setTimeoutPromisifyCustomGetter);
+}
+
 JSValue createSetIntervalFunction(VM& vm, JSObject* globalObject)
 {
     return createTimerFunction(vm, globalObject, "setInterval"_s, functionSetInterval, setIntervalPromisifyCustomGetter);
+}
+
+JSValue createFakeSetIntervalFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "setInterval"_s, functionFakeSetInterval, setIntervalPromisifyCustomGetter);
+}
+
+extern "C" EncodedJSValue JSMock__createFakeSetTimeoutFunction(JSGlobalObject* lexicalGlobalObject)
+{
+    auto& vm = getVM(lexicalGlobalObject);
+    return JSValue::encode(createFakeSetTimeoutFunction(vm, defaultGlobalObject(lexicalGlobalObject)));
+}
+
+extern "C" EncodedJSValue JSMock__createFakeSetIntervalFunction(JSGlobalObject* lexicalGlobalObject)
+{
+    auto& vm = getVM(lexicalGlobalObject);
+    return JSValue::encode(createFakeSetIntervalFunction(vm, defaultGlobalObject(lexicalGlobalObject)));
 }
 
 JSValue createSetImmediateFunction(VM& vm, JSObject* globalObject)

@@ -5707,44 +5707,38 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     }
 }
 
+/// `stat()` the path or `fstat()` the fd of a file store.
+fn stat_file(pathlike: &PathOrFileDescriptor<'_>) -> bun_sys::Result<bun_sys::Stat> {
+    match pathlike {
+        PathOrFileDescriptor::Path(path) => {
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            bun_sys::stat(path.slice_z(&mut buffer))
+        }
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+    }
+}
+
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &RefPtr<Store>) {
     // `Store::data_mut` encapsulates the raw-pointer deref under the
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();
-    match &file.pathlike {
-        PathOrFileDescriptor::Path(path) => {
-            let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
-        }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
-    }
+    // the file may not exist yet. That's okay.
+    let bun_sys::Result::Ok(stat) = stat_file(&file.pathlike) else {
+        return;
+    };
+    let mode = stat.st_mode as bun_sys::Mode;
+    let is_regular = bun_sys::S::ISREG(mode);
+    // macOS and the BSDs report the bytes buffered in a pipe or a socket as its st_size.
+    file.max_size = if is_regular || (bun_sys::S::ISDIR(mode) && stat.st_size > 0) {
+        ((stat.st_size.max(0)) as u64) as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = mode;
+    file.seekable = Some(is_regular);
+    file.last_modified = stat_to_js_mtime(&stat);
 }
 
 /// Whether a second Blob over `store` reads the same bytes from the start.

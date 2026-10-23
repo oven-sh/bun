@@ -3044,9 +3044,16 @@ pub(crate) mod __gated_printer {
 
             // For CJS modules, unwrap the default export and convert to ESM
             if wrap_with_to_esm {
-                self.print(b".then((m)=>");
-                self.print_symbol(self.options.to_esm_ref);
-                self.print(b"(m.default");
+                // The parameter has no symbol, so the minifier can name `__toESM` `m`.
+                let to_esm = self.name_for_symbol(self.options.to_esm_ref);
+                let (then, argument): (&[u8], &[u8]) = if to_esm == b"m" {
+                    (b".then((n)=>", b"(n.default")
+                } else {
+                    (b".then((m)=>", b"(m.default")
+                };
+                self.print(then);
+                self.print_identifier(to_esm);
+                self.print(argument);
                 if self.options.input_module_type == bundle_opts::ModuleType::Esm {
                     self.print(b",1");
                 }

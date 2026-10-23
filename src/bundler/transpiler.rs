@@ -254,9 +254,7 @@ impl<'a> Transpiler<'a> {
     ) -> crate::Result<Transpiler<'a>> {
         // `from` reported what is wrong with the user's flags when it read them.
         let mut repeated = bun_ast::Log::init();
-        let mut options =
-            from.options
-                .for_target(target, from.fs().top_level_dir(), &mut repeated)?;
+        let mut options = from.options.for_target(target, &mut repeated)?;
         options.load_defines(arena, Some(from.env()), &mut repeated)?;
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_target: log is non-null");
         // SAFETY: see fn doc.

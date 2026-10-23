@@ -2046,6 +2046,18 @@ pub mod bv2_impl {
             Ok(ct)
         }
 
+        /// The hint of a browser build says which target to set. The page of a server build has no such choice.
+        fn browser_build_hint(&self, graph: Target, set_target: &'static str) -> &'static str {
+            let is_page_of_server_build = graph == Target::Browser
+                && self.framework.is_none()
+                && self.transpiler.options.target.is_server_side();
+            if is_page_of_server_build {
+                ". The scripts of an HTML file are bundled for the browser"
+            } else {
+                set_target
+            }
+        }
+
         /// By calling this function, it implies that the returned log *will* be
         /// written to. For DevServer, this allocates a per-file log for the sources
         /// it is called on. Function must be called on the bundle thread.
@@ -2854,9 +2866,10 @@ pub mod bv2_impl {
                                             source,
                                             import_record.range,
                                             format_args!(
-                                                "Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                                "Browser build cannot {} Node.js module: \"{}\"{}",
                                                 bstr::BStr::new(import_record.kind.error_label()),
-                                                bstr::BStr::new(path_to_use)
+                                                bstr::BStr::new(path_to_use),
+                                                self.browser_build_hint(target, ". To use Node.js builtins, set target to 'node' or 'bun'"),
                                             ),
                                             path_to_use,
                                             import_record.kind,
@@ -7036,7 +7049,7 @@ pub mod bv2_impl {
                                                     ),
                                                     bstr::BStr::new(&import_record.path.text),
                                                     if self.dev_server.is_none() {
-                                                        ". To use Node.js builtins, set target to 'node' or 'bun'"
+                                                        self.browser_build_hint(ctx.target, ". To use Node.js builtins, set target to 'node' or 'bun'")
                                                     } else {
                                                         ""
                                                     },
@@ -7059,7 +7072,7 @@ pub mod bv2_impl {
                                                     ),
                                                     bstr::BStr::new(&import_record.path.text),
                                                     if self.dev_server.is_none() {
-                                                        ". When bundling for Bun, set target to 'bun'"
+                                                        self.browser_build_hint(ctx.target, ". When bundling for Bun, set target to 'bun'")
                                                     } else {
                                                         ""
                                                     },

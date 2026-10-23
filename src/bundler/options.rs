@@ -106,18 +106,29 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
         .collect()
 }
 
+/// Where `init_external_modules` gets the absolute form of a relative `--external` path.
+#[derive(Clone, Copy)]
+pub(crate) enum ExternalPaths<'a> {
+    RelativeTo(&'a [u8]),
+    /// Another graph of the same bundle resolved them when the build started.
+    CopiedFrom(&'a ExternalModules),
+}
+
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
 /// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
 pub(crate) fn init_external_modules(
-    cwd: &[u8],
+    paths: ExternalPaths<'_>,
     externals: &[&[u8]],
     log: &mut bun_ast::Log,
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
         node_modules: StringSet::default(),
-        abs_paths: StringSet::default(),
+        abs_paths: match paths {
+            ExternalPaths::RelativeTo(_) => StringSet::default(),
+            ExternalPaths::CopiedFrom(from) => bun_core::handle_oom(from.abs_paths.clone()),
+        },
         patterns: default_wildcard_patterns(),
     };
 
@@ -165,7 +176,7 @@ pub(crate) fn init_external_modules(
             });
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
-        } else {
+        } else if let ExternalPaths::RelativeTo(cwd) = paths {
             let normalized = validate_path(log, cwd, external, b"external path");
 
             if !normalized.is_empty() {
@@ -1446,7 +1457,7 @@ impl TargetOptions {
         target: Target,
         transform: &api::TransformOptions,
         entry_points: EntryPointFlags<'_>,
-        top_level_dir: &[u8],
+        external_paths: ExternalPaths<'_>,
         log: &mut bun_ast::Log,
     ) -> Result<TargetOptions, crate::Error> {
         Ok(TargetOptions {
@@ -1470,7 +1481,7 @@ impl TargetOptions {
             )?,
             extension_order: ResolveFileExtensions::init(target, &transform.extension_order),
             external: init_external_modules(
-                top_level_dir,
+                external_paths,
                 &transform
                     .external
                     .iter()
@@ -1574,7 +1585,6 @@ impl<'a> BundleOptions<'a> {
     pub(crate) fn for_target(
         &self,
         target: Target,
-        top_level_dir: &[u8],
         log: &mut bun_ast::Log,
     ) -> Result<BundleOptions<'a>, crate::Error> {
         // `--main-fields`, `--conditions` and node addons are for the graph that the user builds.
@@ -1587,7 +1597,7 @@ impl<'a> BundleOptions<'a> {
             target,
             &self.transform_options,
             entry_points,
-            top_level_dir,
+            ExternalPaths::CopiedFrom(&self.external),
             log,
         )?;
         let mut opts = self.clone_with(for_target, target.keeps_builtins_external(), None);
@@ -1847,7 +1857,7 @@ impl<'a> BundleOptions<'a> {
             target,
             &transform,
             entry_points,
-            fs.top_level_dir(),
+            ExternalPaths::RelativeTo(fs.top_level_dir()),
             log_mut,
         )?;
         let bundler_feature_flags = Runtime::Features::init_bundler_feature_flags(

@@ -3560,6 +3560,39 @@ std::optional<EVP_PKEY_CTX*> EVPMDCtxPointer::verifyInit(
     return ctx;
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/deps/ncrypto/ncrypto.cc#L4457-L4470
+std::optional<EVP_PKEY_CTX*> EVPMDCtxPointer::signInitWithContext(
+    const EVPKeyPointer& key,
+    const Digest& digest,
+    const Buffer<const unsigned char>& context_string)
+{
+    EVP_PKEY_CTX* ctx = nullptr;
+    // The digest is passed on, as in Node's BoringSSL branch. Its OpenSSL branch drops the digest.
+    if (!EVP_DigestSignInit(ctx_.get(), &ctx, digest, nullptr, key.get())) {
+        return std::nullopt;
+    }
+    if (EVP_PKEY_CTX_set1_signature_context_string(ctx, context_string.data, context_string.len) <= 0) {
+        return std::nullopt;
+    }
+    return ctx;
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/deps/ncrypto/ncrypto.cc#L4512-L4525
+std::optional<EVP_PKEY_CTX*> EVPMDCtxPointer::verifyInitWithContext(
+    const EVPKeyPointer& key,
+    const Digest& digest,
+    const Buffer<const unsigned char>& context_string)
+{
+    EVP_PKEY_CTX* ctx = nullptr;
+    if (!EVP_DigestVerifyInit(ctx_.get(), &ctx, digest, nullptr, key.get())) {
+        return std::nullopt;
+    }
+    if (EVP_PKEY_CTX_set1_signature_context_string(ctx, context_string.data, context_string.len) <= 0) {
+        return std::nullopt;
+    }
+    return ctx;
+}
+
 DataPointer EVPMDCtxPointer::signOneShot(
     const Buffer<const unsigned char>& buf) const
 {

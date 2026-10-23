@@ -98,6 +98,7 @@ pub(crate) struct Listener {
     /// True if the selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type
     /// names.
     is_complex_selector: bool,
+    selector: &'static str,
 }
 
 impl Listener {
@@ -115,6 +116,7 @@ impl Listener {
             within: Within::Anything,
             is_exit,
             is_complex_selector,
+            selector,
         }
     }
 
@@ -291,9 +293,9 @@ where
                 report = match (kind, is_exit) {
                     (Kind::Root, true) => report.at_the_end(),
                     (_, true) => report.listened_on(node.span()).on_exit(true),
-                    (_, false) if listener.is_complex_selector => {
-                        report.listened_on(node.span()).by_selector()
-                    }
+                    (_, false) if listener.is_complex_selector => report
+                        .listened_on(node.span())
+                        .by_selector(listener.selector),
                     (_, false) => report.listened_on(node.span()),
                 };
                 if let Some((span, text)) = it.fix {

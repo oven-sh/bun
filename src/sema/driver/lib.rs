@@ -458,6 +458,20 @@ pub enum TaskSize {
     Unlimited,
 }
 
+/// `PlanOptions::rejects_broken_configurations`
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Rejects {
+    /// A program is created anyway, as `tsc` does. Only a file that can't be read gets none.
+    #[default]
+    Nothing,
+    /// typescript-eslint's `getWatchProgramsForProjects`: also one with its own error
+    /// (`GetConfigFileParsingDiagnostics`), except 18003, which says there are no files.
+    Unparsed,
+    /// tsgolint's `CreateProgram`: also one that the program reports an error about, in its options or files
+    /// (`GetProgramDiagnostics`).
+    Everything,
+}
+
 /// How a request is run.
 #[derive(Clone, Copy, Default)]
 pub struct PlanOptions {
@@ -489,16 +503,21 @@ pub struct PlanOptions {
     /// configuration file or one that it references, or else the same for the configuration files further up
     /// (`findOrCreateDefaultConfiguredProjectWorker`). A file that no project includes isn't checked.
     pub requires_including_project: bool,
+    /// With `Request::listed_projects`, a file in `Request::paths` that none of them has among its root files isn't
+    /// checked, because typescript-eslint throws for it.
+    pub only_in_listed_projects: bool,
+    /// True if the files that `Request::script_kinds` and `Request::script_kinds_by_extension` assign a language aren't
+    /// modules an import can resolve by name (`Host::imports_script_kinds_by_name`).
+    pub script_kinds_only_set_languages: bool,
     /// With `requires_including_project`: `Request::project` isn't the project of every file. It's the project of
     /// the files that no project includes, which are checked after all. It's never rejected, and shares no parsed file
     /// with the others. Only applies if the request has more programs than threads. Otherwise those files stay
     /// unchecked, because a separate request after this one has all the threads for them, and this request's memory is
     /// free by then.
     pub project_is_fallback: bool,
-    /// `CreateProgram` of tsgolint: there's no program for a configuration file that has an error, either in itself or
-    /// in what the program reports about its options and files (`GetProgramDiagnostics`). No file is checked in it. See
+    /// The config files with an error that get no program. No file is checked in one. See
     /// `Report::rejected_programs`.
-    pub rejects_broken_configurations: bool,
+    pub rejects_broken_configurations: Rejects,
     /// A program's `lib.*.d.ts` files come from the `typescript` installed for it: the first `node_modules/typescript`
     /// from the configuration file's directory upwards, if it has the files that `lib` and `target` require. Otherwise
     /// they're `Request::libs`. That way this reads the same declaration of `Element` as the project's own compiler.
@@ -797,7 +816,9 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
         // A caller that rejects broken configurations wants what `tsc -p` reports about them, including output paths
         // (5011, 5055).
         .chain(
-            (!is_build && !request.build && !request.plan_options.rejects_broken_configurations)
+            (!is_build
+                && !request.build
+                && request.plan_options.rejects_broken_configurations != Rejects::Everything)
                 .then(|| (b"noEmit".to_vec(), Json::Bool(true))),
         )
         .collect()
@@ -1326,6 +1347,7 @@ pub fn check_provided_then<R>(
     });
     disk.script_kinds = script_kinds.collect();
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
+    disk.script_kinds_only_set_languages = request.plan_options.script_kinds_only_set_languages;
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let report = check_request(&disk, request);
@@ -1899,6 +1921,9 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 add(first, Extent::Project, path.clone());
                 continue;
             }
+            if request.plan_options.only_in_listed_projects && !listed.is_empty() {
+                continue;
+            }
             let nearest = config_in(dirname::<Posix>(path));
             match projects.owner_of(disk, request, nearest, path) {
                 Err(_) if request.plan_options.requires_including_project => {
@@ -2319,7 +2344,7 @@ fn check_project_of(
                 let diagnostics: Vec<Diagnostic> = (errors.iter())
                     .map(|it| diagnostic_from_config_error(disk, config, it, &mut last))
                     .collect();
-                if !request.plan_options.rejects_broken_configurations {
+                if request.plan_options.rejects_broken_configurations == Rejects::Nothing {
                     match request.build {
                         true => report
                             .diagnostics
@@ -2805,6 +2830,9 @@ impl Host for WithOutputs<'_> {
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         self.disk.extra_file_extensions()
+    }
+    fn imports_script_kinds_by_name(&self) -> bool {
+        self.disk.imports_script_kinds_by_name()
     }
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)
@@ -3732,13 +3760,23 @@ fn check_named_files(
             let it = host::from_argument(&host::from_native(request.cwd), it);
             is_same_path(&it, &config_path, host.is_case_sensitive())
         });
-    let rejects_broken = request.plan_options.rejects_broken_configurations && !is_fallback_project;
+    let rejects = match request.plan_options.rejects_broken_configurations {
+        _ if is_fallback_project => Rejects::Nothing,
+        it => it,
+    };
     let rejected_program = |diagnostics: Vec<Diagnostic>| RejectedProgram {
         config_path: config_path.clone(),
         diagnostics,
         files: named.unwrap_or_default().to_vec(),
     };
-    if rejects_broken && always_reported > first_own_diagnostic {
+    let is_rejected = match rejects {
+        Rejects::Nothing => false,
+        Rejects::Unparsed => {
+            (project.errors.iter()).any(|it| !it.is_about_options && it.code != 18003)
+        }
+        Rejects::Everything => always_reported > first_own_diagnostic,
+    };
+    if is_rejected {
         let diagnostics = report.diagnostics.split_off(first_own_diagnostic);
         report.rejected_programs.push(rejected_program(diagnostics));
         return report;
@@ -3850,7 +3888,7 @@ fn check_named_files(
         report.globals.extend(files.global_names().map(files_of));
         return report;
     }
-    if rejects_broken {
+    if rejects == Rejects::Everything {
         let problems = files.program_problems();
         let problems = ConfigError::from_problems(host, session, &config_path, problems.iter());
         about_options.extend(problems.iter().map(config_diagnostic));

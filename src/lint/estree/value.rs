@@ -120,6 +120,24 @@ pub(crate) enum Object<'a> {
     },
     /// The `regex` of a `Literal`
     Regex { pattern: &'a [u8], flags: &'a [u8] },
+    /// A `SvelteDirectiveKey`'s `modifiers`: a list of strings, like the ones in `on:click|once`.
+    Modifiers(crate::ast::svelte::SvelteNode<'a>),
+}
+
+impl<'a> Object<'a> {
+    /// The strings of [`Object::Modifiers`].
+    pub(crate) fn strings(self) -> impl Iterator<Item = &'a [u8]> {
+        let node = match self {
+            Object::Modifiers(node) => Some(node),
+            _ => None,
+        };
+        let text = node.map_or(&[][..], |it| {
+            it.file().svelte().map_or(&[][..], |it| it.text())
+        });
+        node.into_iter()
+            .flat_map(|it| it.parts(crate::ast::svelte::Role::Modifier))
+            .map(move |it| text.get(it.0.range()).unwrap_or_default())
+    }
 }
 
 impl From<bool> for Value<'_> {
@@ -204,6 +222,8 @@ enum Inner<'a> {
         outermost: Expr<'a>,
     },
     JsxChildren(Expr<'a>, JsxChildren<'a>),
+    /// A component node's children.
+    Svelte(super::svelte::Children<'a>),
 }
 
 macro_rules! lists {
@@ -295,6 +315,10 @@ impl<'a> Nodes<'a> {
 
     pub(super) fn jsx_children(element: Expr<'a>, children: JsxChildren<'a>) -> Nodes<'a> {
         Nodes(Inner::JsxChildren(element, children))
+    }
+
+    pub(super) fn svelte(children: super::svelte::Children<'a>) -> Nodes<'a> {
+        Nodes(Inner::Svelte(children))
     }
 
     /// `length`
@@ -402,6 +426,7 @@ impl<'a> Iterator for Nodes<'a> {
                     Some(VNode::new(*element, Part::Whitespace(span.start)))
                 }
             },
+            Inner::Svelte(children) => Some(children.next()?),
         })
     }
 }

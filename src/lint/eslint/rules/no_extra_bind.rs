@@ -151,7 +151,8 @@ impl Rule for NoExtraBind {
         {
             return;
         }
-        cx.report(property, UNEXPECTED).fix(|fixer| {
+        // ESLint reports it on leaving the function.
+        cx.report(property, UNEXPECTED).listened_by(func, true).fix(|fixer| {
             let is_fixable = is_side_effect_free(argument) && function.tag() == ExprTag::Fn;
             is_fixable.then(|| fix(fixer, e, member, function)).flatten()
         });

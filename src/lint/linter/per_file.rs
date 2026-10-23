@@ -86,7 +86,7 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
 
 impl<'a> File<'a> {
     /// Ignores the file's config comments from now on.
-    pub(crate) fn ignore_config_comments(&self) {
+    pub fn ignore_config_comments(&self) {
         self.lazy.linter.ignores_comments.set(true);
     }
 

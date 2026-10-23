@@ -38,6 +38,8 @@ pub(super) const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
 pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
 pub(super) const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
+/// Not a node builder flag: an object type's members in TypeScript 6's order (`insertion_order_of_props`).
+pub(super) const INSERTION_ORDER: u32 = 1 << 17;
 /// The flags that `typeToString` passes to `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
@@ -3833,6 +3835,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
         // `getNamedMembers`: what a class declares precedes what it inherits. Its shape already has that order.
         let properties: Vec<Prop<'s>> = match self.c.data(ty) {
+            _ if self.flags & INSERTION_ORDER != 0 => {
+                let order = self.c.insertion_order_of_props(ty, &shape.props);
+                let arena = self.c.arena;
+                (order.into_iter().map(|i| shape.props[i].clone_in(arena))).collect()
+            }
             TypeData::Ref { .. }
             | TypeData::Anon {
                 origin: Origin::ClassStatic(_),

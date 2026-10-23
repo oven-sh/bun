@@ -57,7 +57,11 @@ impl Rule for VarsOnTop {
         }
         let (parent, is_oxlint) = (statement.parent(), cx.language().is_oxlint);
         let is_on_top = match parent {
-            Node::File(file) => is_var_on_top(statement, file.body(), true),
+            // An exported statement is checked in the body that contains the export, which in a component is its
+            // script.
+            Node::File(file) if statement.is_exported() || ast_utils::is_program(parent) => {
+                is_var_on_top(statement, file.body(), true)
+            }
             Node::Func(func) => func.body_statements().is_some_and(|body| {
                 let skips_prologue = func.kind() != FnKind::StaticBlock;
                 is_var_on_top(statement, body, skips_prologue)

@@ -6,7 +6,8 @@
 //! A thread that has a VM is a lint thread ([`Crew`]). It reads, parses and lints whole files, and the program's
 //! queries about a file are plain function calls. Files that need JavaScript are handed to these threads
 //! ([`Engine::work_off`]). A thread without a VM that turns out to need one posts a job and waits
-//! ([`Engine::with_vm`]).
+//! ([`Engine::with_vm`]). The typed files, for which ESLint's parser creates TypeScript programs that take gigabytes,
+//! only go to a few VMs, the lanes ([`Start::expect`]).
 //!
 //! The rule that keeps this free of deadlocks: **a thread with a VM never waits for something that can itself wait for
 //! a VM. Other threads may wait for it.** So it never joins a parallel region of the pool
@@ -23,7 +24,7 @@ use core::ptr::NonNull;
 
 use bun_core::strings;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
-use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
+use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Lanes, Serve, Vm, Work, program};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -413,12 +414,19 @@ struct Start {
     /// Set if the run won't have more than a few VMs. Stays unset if a VM starts before the files are known.
     is_for_few: AtomicBool,
     memory: std::sync::OnceLock<usize>,
+    /// The [`Lanes`], and the maximum number of VMs. Set by `expect`.
+    lanes: Guarded<Lanes>,
+    most: AtomicUsize,
 }
 
 impl Start {
     /// [`memory_for_engines`]
     fn memory(&self) -> usize {
         *self.memory.get_or_init(memory_for_engines)
+    }
+
+    fn lanes(&self) -> Lanes {
+        *self.lanes.lock()
     }
 
     /// Creates a VM for this thread.
@@ -440,15 +448,34 @@ impl Start {
         first.unwrap_or_else(start_vm)
     }
 
-    /// [`Engine::expect`]
-    fn expect(&self, demand: &Demand, size: u64, most: usize) {
+    /// [`Engine::expect`]. The lanes are decided here, once, before the first VM sets JSC's options for good.
+    fn expect(&self, demand: &Demand, size: u64, typed: usize, most: usize) {
         demand.expect(size, most);
         // How many VMs the files are worth.
         let is_enough = |&vms: &usize| !demand.is_worth_another(vms, 0);
         let vms = (1..most).find(is_enough).unwrap_or(most);
-        // With few VMs, cores are left for JSC's compiler threads.
-        let is_for_few = vms <= usize::from(bun_core::get_thread_count()) / 2;
+        let untyped = if size > 0 { vms * NOT_LOADED_YET } else { 0 };
+        let lanes = lanes_for(self.memory(), untyped, TYPED_LANE, typed, most);
+        *self.lanes.lock() = lanes;
+        self.most.store(most, Ordering::Relaxed);
+        // With few VMs, cores are left for JSC's compiler threads. The first VM is one of the lanes.
+        let is_for_few = vms + lanes.admitted - 1 <= usize::from(bun_core::get_thread_count()) / 2;
         self.is_for_few.store(is_for_few, Ordering::Relaxed);
+    }
+}
+
+/// The memory a lane is assumed to take: each keeps the typed programs of all the components it lints, which take
+/// gigabytes in a large project.
+const TYPED_LANE: usize = 12_000_000_000;
+
+/// How many lanes lint `typed` files: as many as fit, `lane` bytes each, into `budget` alongside the `untyped` bytes
+/// the other VMs are assumed to take, at most `threads`, and at most one per 16 files. The first VM is one of them, and
+/// lints them if not even one fits.
+fn lanes_for(budget: usize, untyped: usize, lane: usize, typed: usize, threads: usize) -> Lanes {
+    let fit = budget.saturating_sub(untyped) / lane.max(1);
+    let most = threads.min(typed.div_ceil(16)).max(1);
+    Lanes {
+        admitted: fit.clamp(1, most),
     }
 }
 
@@ -632,6 +659,8 @@ struct Member {
     is_gone: bool,
     /// [`Shared::number`] of the last work that it has finished its part of.
     done_with: u64,
+    /// Its lane index, if it's a lane. The first member is lane 0.
+    lane: Option<usize>,
 }
 
 impl Member {
@@ -656,6 +685,10 @@ struct CrewState {
     pending: usize,
     /// The first member has no heavy file left in `shared`.
     is_done_with_heavy: bool,
+    /// True if no typed file is left in `shared`.
+    is_done_with_typed: bool,
+    /// How many members became lanes. None stops being one, so there are never more than were admitted, freed or not.
+    lanes: usize,
     /// The member that should run its `exit` handlers now.
     ends: Option<usize>,
     memory: Memory,
@@ -669,9 +702,23 @@ impl CrewState {
         }
     }
 
-    /// How many VMs are busy with heavy files. They don't count towards how many VMs the other files are worth.
+    /// How many VMs are busy with heavy or typed files. They don't count towards how many VMs the other files are
+    /// worth.
     fn heavy_vms(&self) -> usize {
-        usize::from(self.shared.is_some() && !self.is_done_with_heavy)
+        if self.shared.is_none() {
+            return 0;
+        }
+        let is_kept = |(at, it): &(usize, &Member)| {
+            !it.is_freed
+                && ((*at == 0 && !self.is_done_with_heavy)
+                    || (it.lane.is_some() && !self.is_done_with_typed))
+        };
+        self.all.iter().enumerate().filter(is_kept).count()
+    }
+
+    /// True if the first member is busy with heavy or typed files.
+    fn keeps_the_first(&self) -> bool {
+        self.shared.is_some() && !(self.is_done_with_heavy && self.is_done_with_typed)
     }
 }
 
@@ -679,6 +726,7 @@ impl CrewState {
 enum Next {
     Posted(Posted),
     Heavy(Shared),
+    Typed(Shared),
     Light(Shared),
     End { frees: bool },
 }
@@ -723,7 +771,8 @@ impl Crew {
     }
 
     /// Starts members while there's work that no member is going to take soon, and another VM is worth it and fits.
-    /// `Err` if a thread couldn't be started.
+    /// `Err` if a thread couldn't be started. A lane is started while typed files are left and fewer lanes were created
+    /// than admitted: its memory was reserved when they were admitted.
     fn start_more(crew: &Arc<Crew>, state: &mut CrewState) -> Result<(), Vec<u8>> {
         loop {
             let free = |it: &&Member| !it.is_freed && (it.is_idle || it.is_starting());
@@ -735,10 +784,17 @@ impl Crew {
                 false => has_files || light > state.all.iter().filter(free).count(),
             };
             let vms = state.vms();
+            // SAFETY: read from `shared` under the lock.
+            let has_typed = !state.is_done_with_typed
+                && (state.shared).is_some_and(|it| unsafe { it.work() }.has_typed());
+            let wants_a_lane = has_typed
+                && state.lanes < crew.start.lanes().admitted
+                && vms.count < crew.start.most.load(Ordering::Relaxed);
             let planned = crew.start.memory();
-            if !is_needed
-                || !(state.memory).has_room_for_another(planned, crew.demand.left(), vms)
-                || !crew.demand.is_worth_another(vms.count, state.heavy_vms())
+            if !wants_a_lane
+                && (!is_needed
+                    || !(state.memory).has_room_for_another(planned, crew.demand.left(), vms)
+                    || !crew.demand.is_worth_another(vms.count, state.heavy_vms()))
             {
                 return Ok(());
             }
@@ -752,7 +808,12 @@ impl Crew {
             if state.all.is_empty() {
                 state.memory.begin(crew.demand.left());
             }
-            state.all.push(Member::default());
+            let lane = (state.all.is_empty() || wants_a_lane).then_some(state.lanes);
+            state.lanes += usize::from(lane.is_some());
+            state.all.push(Member {
+                lane,
+                ..Member::default()
+            });
             if state.shared.is_some() {
                 state.pending += 1;
                 crew.busy.store(state.pending, Ordering::Relaxed);
@@ -795,13 +856,28 @@ impl Crew {
             if let Some(posted) = found.and_then(|found| state.posted.remove(found)) {
                 return Next::Posted(posted);
             }
-            match state
-                .shared
-                .filter(|it| state.all[at].done_with != it.number)
+            let shared = (state.shared).filter(|it| state.all[at].done_with != it.number);
+            // A member started before the typed files were known becomes a lane, while fewer were created than
+            // admitted.
+            if let Some(shared) = shared
+                && state.all[at].lane.is_none()
+                && state.lanes < self.start.lanes().admitted
+                && !state.is_done_with_typed
+                // SAFETY: read from `shared` under the lock.
+                && unsafe { shared.work() }.has_typed()
             {
-                Some(shared) if at == 0 && !state.is_done_with_heavy => return Next::Heavy(shared),
-                Some(shared) => return Next::Light(shared),
-                None => {}
+                state.all[at].lane = Some(state.lanes);
+                state.lanes += 1;
+            }
+            // The lanes take the typed files before the others.
+            let lane = state.all[at].lane.filter(|_| !state.is_done_with_typed);
+            match (shared, lane) {
+                (Some(shared), _) if at == 0 && !state.is_done_with_heavy => {
+                    return Next::Heavy(shared);
+                }
+                (Some(shared), Some(_)) => return Next::Typed(shared),
+                (Some(shared), None) => return Next::Light(shared),
+                (None, _) => {}
             }
             state.all[at].is_idle = true;
             self.is_posted.wait_guarded(&mut state);
@@ -833,6 +909,13 @@ impl Crew {
                     let work = unsafe { shared.work() };
                     if !work.heavy() {
                         crew.state.lock().is_done_with_heavy = true;
+                    }
+                }
+                Next::Typed(shared) => {
+                    // SAFETY: this member is counted in `pending` until `leave_the_work`.
+                    let work = unsafe { shared.work() };
+                    if !work.typed() {
+                        crew.state.lock().is_done_with_typed = true;
                     }
                 }
                 Next::Light(shared) => {
@@ -890,7 +973,7 @@ impl Crew {
         // Never the first member, which has the heavy files, and never the last one besides it.
         if at != 0
             && state.memory.is_too_much(planned)
-            && vms.count - state.heavy_vms() > 1
+            && vms.count - usize::from(state.keeps_the_first()) > 1
             && !state.all.iter().any(|it| it.is_freed && !it.is_gone)
         {
             state.memory.freed_at = state.memory.files_done;
@@ -942,6 +1025,7 @@ impl Crew {
             number: state.calls,
         });
         state.is_done_with_heavy = !work.has_heavy();
+        state.is_done_with_typed = !work.has_typed();
         // A member that's about to free its VM doesn't take part.
         let number = state.calls;
         for member in state.all.iter_mut().filter(|it| it.is_freed) {
@@ -1042,14 +1126,28 @@ impl Engine for Engines {
         self.0.demand.report_realm_need(size, needed_realm);
     }
 
-    fn expect(&self, _files: usize, size: u64, most: usize) {
-        self.0.start.expect(&self.0.demand, size, most);
+    fn expect(&self, _files: usize, size: u64, typed: usize, most: usize) {
+        self.0.start.expect(&self.0.demand, size, typed, most);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cgroup_line, parse_limit};
+    use super::{Lanes, lanes_for, parse_cgroup_line, parse_limit};
+
+    #[test]
+    fn admits_lanes() {
+        let lanes = |admitted| Lanes { admitted };
+        const GB: usize = 1_000_000_000;
+        // 64 GB, of which 4 for the other VMs: 5 lanes of 12 GB fit.
+        assert_eq!(lanes_for(64 * GB, 4 * GB, 12 * GB, 546, 8), lanes(5));
+        assert_eq!(lanes_for(64 * GB, 4 * GB, 12 * GB, 546, 4), lanes(4));
+        // At most one per 16 files.
+        assert_eq!(lanes_for(64 * GB, 0, 12 * GB, 17, 8), lanes(2));
+        assert_eq!(lanes_for(64 * GB, 0, 12 * GB, 16, 8), lanes(1));
+        // Not even one fits, so the first VM lints them anyway.
+        assert_eq!(lanes_for(8 * GB, 4 * GB, 12 * GB, 546, 8), lanes(1));
+    }
 
     #[test]
     fn parses_cgroup_lines() {

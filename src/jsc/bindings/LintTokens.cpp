@@ -169,7 +169,9 @@ JSObject* createToken(JSGlobalObject* globalObject, LintHost* host, LintTokenLis
     bool isRegex = kind == LintTokenKind::RegularExpression;
     bool isComment = &list == &state.comments;
     LintTokenShape::Kind shapeKind;
-    if (host->isOxlint())
+    if (kind >= LintTokenKind::HTMLText)
+        shapeKind = LintTokenShape::SvelteToken;
+    else if (host->isOxlint())
         shapeKind = isComment ? LintTokenShape::OxlintComment : LintTokenShape::OxlintToken;
     else if (!host->isEspree())
         shapeKind = isRegex ? LintTokenShape::TypeScriptRegex : LintTokenShape::TypeScriptToken;
@@ -1373,6 +1375,10 @@ constexpr ASCIILiteral tokenTypeNames[lintTokenKindCount] = {
     "Line"_s,
     "Block"_s,
     "Shebang"_s,
+    "HTMLText"_s,
+    "HTMLIdentifier"_s,
+    "HTMLComment"_s,
+    "MustacheKeyword"_s,
 };
 
 } // namespace
@@ -1520,6 +1526,7 @@ void initializeShapes(VM& vm, JSGlobalObject* globalObject, LintHost* host)
     JSCell* oxlintLoc = createGetter(globalObject, "get loc"_s, jsLintOxlintLoc);
     initializeShape(vm, globalObject, host, LintTokenShape::OxlintToken, createClass(vm, globalObject, "Token"_s, 0), oxlintLoc, { typeKey, valueKey, regexKey, startKey, endKey, rangeKey, locKey });
     initializeShape(vm, globalObject, host, LintTokenShape::OxlintComment, createClass(vm, globalObject, "Comment"_s, 0), oxlintLoc, { typeKey, valueKey, startKey, endKey, rangeKey, locKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::SvelteToken, objectPrototype, otherLoc, { typeKey, valueKey, rangeKey, locKey });
 }
 
 } // namespace

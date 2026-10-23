@@ -301,12 +301,18 @@ struct How<'h> {
     atoms: &'h dyn Intern,
     /// Allocations shared by all files, freed when the run ends.
     memory: &'h Session,
+    /// It's parsed the way the linter parses a file with these options, not the way the formatter does.
+    linted: Option<&'h LanguageOptions>,
 }
 
 impl How<'_> {
     /// Returns the language, dialect and parse options for the file.
     fn language_and_dialect(&self) -> (LanguageOptions, Dialect, ParseOptions) {
         let path = self.path;
+        if let Some(language) = self.linted {
+            let options = language.parse_options(path);
+            return (language.clone(), options.dialect, options);
+        }
         let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
             .iter()
             .any(|it| ends_in(path, it));
@@ -509,7 +515,7 @@ fn format_block_in(
 }
 
 /// Parses scripts and expressions in HTML.
-fn parse_javascript(code: Code<'_>, then: Then<'_>) {
+pub(crate) fn parse_javascript(code: Code<'_>, then: Then<'_>) {
     let names = Session::new();
     let names = (&Interner::new_in(&names) as &dyn Intern, &names);
     parse_code(code, &Resolved::default(), names, then);
@@ -529,12 +535,34 @@ fn parse_code(
         verifies: false,
         atoms,
         memory,
+        linted: None,
     };
     with_file(&how, code.text, |file, _, _| then(file));
 }
 
+/// Parses `text` the way rules see the file at `path` in `language`, and calls `then` with the file.
+pub(crate) fn parse_as_linted(
+    path: &[u8],
+    text: &[u8],
+    language: &LanguageOptions,
+    then: Then<'_>,
+) {
+    let names = Session::new();
+    let how = How {
+        path,
+        is_script: false,
+        is_flow: false,
+        resolved: &Resolved::default(),
+        verifies: false,
+        atoms: &Interner::new_in(&names),
+        memory: &names,
+        linted: Some(language),
+    };
+    with_file(&how, text, |file, _, _| then(file));
+}
+
 /// Parses the expressions in a Svelte component.
-fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
+pub(crate) fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
     let names = Session::new();
     let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
     let how = |path| How {
@@ -545,6 +573,7 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
         verifies: false,
         atoms: &atoms,
         memory: &names,
+        linted: None,
     };
     let [javascript, typescript] =
         [&b"dummy.js"[..], b"dummy.ts"].map(|path| (path, how(path).language_and_dialect()));
@@ -833,6 +862,7 @@ fn format(
                 verifies: false,
                 atoms,
                 memory,
+                linted: None,
             };
             with_file(&how, &text, |file, _, _| {
                 bun_format::flow::uncommented(file)
@@ -851,6 +881,7 @@ fn format(
             verifies,
             atoms,
             memory,
+            linted: None,
         };
         match format_as(&how, &text, scratch) {
             Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),

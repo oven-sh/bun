@@ -11,13 +11,13 @@
 
 use super::ast::{self, Numbered};
 use super::layouts;
+use super::units::Units;
 use super::wire::{self, ask};
 use crate::ast::File;
 use crate::code_path::estree::{self, Tree};
 use crate::estree::{Dialect, NodeType};
 use crate::selector::Selector;
 use crate::utils::sort;
-use bun_core::strings::Utf16OffsetTable;
 
 const NONE: u32 = u32::MAX;
 /// Set in a call's first word if the rest of the word is an event's index.
@@ -214,7 +214,7 @@ pub(super) struct Known<'k, 'a> {
 /// Answers [`ask::LISTEN`]. `selectors` are the selectors for [`selector_numbers`].
 pub(super) fn listen<'a>(
     file: &'a File<'a>,
-    offsets: &Utf16OffsetTable,
+    offsets: &Units,
     words: &[u32],
     selectors: &[Option<&Selector>],
     known: Known<'_, 'a>,

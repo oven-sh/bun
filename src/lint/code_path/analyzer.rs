@@ -17,7 +17,8 @@ use crate::ast::{
     BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, KeyKind, MemberKind,
     Node, Pat, PatTag, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
 };
-use crate::rule::NodeTags;
+use crate::context::{Listened, Listener, Phase};
+use crate::rule::{NodeTags, When};
 pub(super) use crate::utils::ast_utils::is_property_definition;
 use bun_sema::atom::Atom;
 use bun_sema::hir;
@@ -1115,10 +1116,7 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
         false,
     );
     file.lazy.code_paths.finish(0);
-    Steps {
-        file,
-        steps: recorder.steps.into_iter(),
-    }
+    Steps::new(file, recorder.steps)
 }
 
 /// [`steps`] for only the code path that starts at `root`: the file, a function, a static block or
@@ -1156,10 +1154,7 @@ pub(super) fn steps_of<'a>(
     }
     recorder.walk(vec![first], None, is_shallow);
     store.finish(first_segment);
-    Steps {
-        file,
-        steps: recorder.steps.into_iter(),
-    }
+    Steps::new(file, recorder.steps)
 }
 
 /// The loop whose next iteration starts at `node`. It's `isLoopingTarget` from ESLint's
@@ -1266,10 +1261,22 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
     is_end_reachable
 }
 
-/// See [`steps`].
+/// See [`steps`]. A rule's reports while it's at a step are reported in the listener ESLint calls there.
 pub struct Steps<'a> {
     file: &'a File<'a>,
     steps: std::vec::IntoIter<Step<'a>>,
+    /// The listener the steps are walked in, which applies to reports again after them.
+    around: Listener,
+}
+
+impl<'a> Steps<'a> {
+    fn new(file: &'a File<'a>, steps: Vec<Step<'a>>) -> Steps<'a> {
+        Steps {
+            file,
+            steps: steps.into_iter(),
+            around: file.sink.listening.get(),
+        }
+    }
 }
 
 impl<'a> Iterator for Steps<'a> {
@@ -1281,6 +1288,34 @@ impl<'a> Iterator for Steps<'a> {
         if let Step::Event(event) = step {
             self.file.lazy.code_paths.follow(event);
         }
+        self.file.sink.listening.set(listener_at(step));
         Some(step)
     }
+}
+
+impl Drop for Steps<'_> {
+    fn drop(&mut self) {
+        self.file.sink.listening.set(self.around);
+    }
+}
+
+/// The listener ESLint calls at `step`. Event listeners have no selectors: ESLint emits the events that start code
+/// paths and segments on entering the node, the ones that end segments on leaving it, and the ones that end a code path
+/// after the listeners on leaving its node.
+fn listener_at(step: Step<'_>) -> Listener {
+    let (node, phase) = match step {
+        Step::Enter(node) => (node, Phase::Entering),
+        Step::Exit(node) => (node, Phase::Leaving),
+        Step::Event(event) => match event {
+            Event::CodePathStart(_, node)
+            | Event::SegmentStart(_, node)
+            | Event::UnreachableSegmentStart(_, node)
+            | Event::SegmentLoop(_, _, node) => (node, Phase::Event(When::Entering)),
+            Event::SegmentEnd(_, node) | Event::UnreachableSegmentEnd(_, node) => {
+                (node, Phase::Event(When::Leaving))
+            }
+            Event::CodePathEnd(_, node) => (node, Phase::Event(When::LeavingCodePath)),
+        },
+    };
+    Listener::new(Listened::Node(node.packed()), phase)
 }

@@ -1,6 +1,6 @@
 //! Svelte: a port of `prettier-plugin-svelte` 4.1.1 and of the parser of Svelte 5.57. See "Svelte" in `../CLAUDE.md`.
 
-mod ast;
+pub mod ast;
 mod code;
 mod doc;
 mod js;
@@ -20,6 +20,7 @@ use crate::options::{
 use crate::range::{Offsets, write_with_line_ending};
 use crate::stack::Stack;
 use crate::syntax_error::{BeforeNormalizing, Message, SyntaxError};
+use parser::ReadFor;
 
 /// Allocations made while formatting one file that can be reused for the next.
 #[derive(Default)]
@@ -64,8 +65,13 @@ impl<'p> Parsers<'p> {
         })
     }
 
-    /// Parses `text`. Returns `Err(None)` if an expression in it is nested too deeply.
-    fn tree_of<'a>(self, text: &'a [u8]) -> Result<ast::Tree<'a>, Option<SyntaxError>> {
+    /// Parses `text`, from byte `start` on. Returns `Err(None)` if an expression in it is nested too deeply.
+    fn tree_of<'a>(
+        self,
+        text: &'a [u8],
+        start: usize,
+        read_for: ReadFor,
+    ) -> Result<ast::Tree<'a>, Option<SyntaxError>> {
         let mut tree = Err(None);
         (self.parts)(text, &mut |parse_part| {
             let mut js = js::FromParser {
@@ -74,9 +80,11 @@ impl<'p> Parsers<'p> {
                 is_typescript: false,
                 is_nested_too_deeply: false,
                 typescript_at: None,
+                shorthand_at: None,
                 stopped_at: None,
+                read_for,
             };
-            let parsed = parser::parse(text, &mut js);
+            let parsed = parser::parse(text, start, read_for, &mut js);
             tree = parsed.map_err(|error| {
                 // The expected token is missing because the expression was cut off at the `as`: `{a as b}`,
                 // `{(a as b)}`.
@@ -89,17 +97,43 @@ impl<'p> Parsers<'p> {
                         .then_some(it + leading_whitespace)
                 });
                 let typescript_at = (js.typescript_at)
-                    .filter(|&it| it == error.1 as usize)
+                    .filter(|it| it.0 == error.1 as usize)
+                    .map(|it| it.1)
                     .or(word);
                 match typescript_at {
                     _ if js.is_nested_too_deeply => None,
-                    Some(at) => Some(SyntaxError(Message::TypeScriptInJavaScript, at as u32)),
-                    None => Some(error),
+                    Some(at) if read_for == ReadFor::Formatting => {
+                        Some(SyntaxError(Message::TypeScriptInJavaScript, at as u32))
+                    }
+                    _ if js.shorthand_at == Some(error.1 as usize) => {
+                        Some(SyntaxError(Message::ShorthandOutsidePattern, error.1))
+                    }
+                    _ => Some(error),
                 }
             });
         });
         tree
     }
+}
+
+/// A component's tree as it is in the file, for the linter. [`format`] first strips a byte order mark, carriage returns
+/// and whitespace at the ends. Here nothing is stripped, so every span is a range of `text`. Svelte starts after a byte
+/// order mark, which ESLint strips before any parser sees the text. `Err(None)` if an expression is nested too deeply.
+/// An error is Svelte's, also for TypeScript without `lang="ts"`, and its offset is a byte of `text`.
+pub fn parse_tree(
+    text: &[u8],
+    parts: ParseParts,
+    program: crate::options::ParseJavaScript,
+) -> Result<ast::Tree<'_>, Option<SyntaxError>> {
+    let parsers = Parsers {
+        program: Parse::Function(program),
+        parts,
+    };
+    let start = match text.starts_with(crate::text::BOM) {
+        true => crate::text::BOM.len(),
+        false => 0,
+    };
+    parsers.tree_of(text, start, ReadFor::Linting)
 }
 
 /// Appends the formatted text to `out`. `parse_javascript` is used instead of `options.parse_javascript`.
@@ -132,7 +166,7 @@ pub fn format(
         SyntaxError(message, before + at).before_normalizing_end_of_line(without_bom)
     };
     let to_format_error = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
-    let mut tree = (parsers.tree_of(text))
+    let mut tree = (parsers.tree_of(text, 0, ReadFor::Formatting))
         .map_err(|error| error.map_or(FormatError::NestedTooDeeply, to_format_error))?;
     // Prettier's `isSourceElement` accepts nothing in a component, as in HTML, so a range leaves the text unchanged.
     // Prettier itself prints the text that the plugin parsed, where `<script ✂prettier:content✂="..">{}</script>`

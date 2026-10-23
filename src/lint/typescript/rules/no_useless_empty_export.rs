@@ -45,7 +45,7 @@ impl Rule for NoUselessEmptyExport {
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if is_empty_export(stmt)
-            && matches!(stmt.parent(), Node::File(_))
+            && ast_utils::is_program(stmt.parent())
             && *cx.state.get_or_insert_with(|| stmt.file().body().iter().any(is_other_export_or_import))
         {
             cx.report(stmt, USELESS_EXPORT).fix(|fixer| fixer.remove(stmt));

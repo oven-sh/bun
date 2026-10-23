@@ -9,7 +9,8 @@ const UNEXPECTED: Message = Message::new("unexpected", "Unexpected require().");
 /// ESLint's `ACCEPTABLE_PARENTS`.
 fn is_acceptable_parent(node: Node<'_>) -> bool {
     match node {
-        Node::File(_) | Node::VarDecl(_) => true,
+        Node::File(_) => ast_utils::is_program(node),
+        Node::VarDecl(_) => true,
         Node::Expr(e) => matches!(
             e.tag(),
             ExprTag::Assign | ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::Cond

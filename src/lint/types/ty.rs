@@ -558,6 +558,17 @@ impl<'a> Type<'a> {
         )
     }
 
+    /// [`Type::get_properties`] in TypeScript 6's order, where `getPropertiesOfType` returns them in insertion order:
+    /// own members before inherited ones, base types in heritage clause order, a spread's right operand before its
+    /// left. See [the module](super#where-the-answers-are-not-those-of-typescript-6).
+    pub fn get_properties_in_insertion_order(self) -> SymbolList<'a> {
+        SymbolList::new(
+            self.file,
+            self.file
+                .query(|q| q.properties_of_type_in_insertion_order(self.id)),
+        )
+    }
+
     /// `type.getProperty(name)`, `checker.getPropertyOfType(type, name)`
     pub fn get_property(self, name: &[u8]) -> Option<TsSymbol<'a>> {
         let id = self.file.query(|q| q.property_of_type(self.id, name))?;
@@ -623,6 +634,13 @@ impl<'a> Type<'a> {
     pub fn to_text(self) -> Vec<u8> {
         self.file
             .query(|q| q.type_to_string(self.id, None, TypeFormatFlags::DEFAULT))
+    }
+
+    /// `checker.typeToString(type)` as TypeScript 6 prints it: an object type's members in
+    /// [`Type::get_properties_in_insertion_order`] order.
+    pub fn to_text_in_insertion_order(self) -> Vec<u8> {
+        self.file
+            .query(|q| q.type_to_string_in_insertion_order(self.id, None, TypeFormatFlags::DEFAULT))
     }
 
     /// `checker.typeToString(type, enclosingDeclaration, flags)`

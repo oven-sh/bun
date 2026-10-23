@@ -12,15 +12,17 @@
 mod field;
 mod parent;
 mod schema;
+mod svelte;
 mod value;
 mod views;
 mod vnode;
 
 pub(crate) use field::Field;
 pub(crate) use schema::{FieldEntry, NodeType};
+pub(crate) use svelte::{is_svelte_type, svelte_text_tokens};
 pub(crate) use value::Sink;
 pub(crate) use value::{Nodes, Object, Value};
-pub(crate) use vnode::VNode;
+pub(crate) use vnode::{PackedVNode, VNode};
 
 use crate::ast::File;
 

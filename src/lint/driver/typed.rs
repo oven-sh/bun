@@ -18,7 +18,7 @@ use crate::run::Environment;
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::glob::Picomatch;
+use bun_lint::glob::{Minimatch, MinimatchOptions, Picomatch};
 use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
@@ -27,10 +27,10 @@ use bun_lint::linter::{
 };
 use bun_sema::json::Json;
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::{inside, is_same_path, to_file_name_lower_case};
+use bun_sema::resolve::{ScriptKind, inside, is_same_path, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, Provided, as_read, from_native, is_bundled, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs, RejectedProgram, WithoutInclude};
+use bun_sema_driver::{Category, Diagnostic, Libs, RejectedProgram, Rejects, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -257,6 +257,84 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
     list.retain(|it| seen.insert(it.clone()));
     let to_checker_format = |it: Vec<u8>| from_native(&crate::paths::to_native(it));
     list.into_iter().map(to_checker_format).collect()
+}
+
+/// Where typescript-estree looks for a component's program.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum ProjectsOf {
+    /// `projectService`: the project the project service opens the file in, from a config file that includes it.
+    Service,
+    /// `parserOptions.project`: the first of these config files, in the checker's format, that has the file among its
+    /// root files (`getWatchProgramsForProjects`).
+    Listed(Vec<Vec<u8>>),
+}
+
+/// Where typescript-estree looks for the program of the file at `path` with `options`. `None` if it throws before that:
+/// a config file that `project` names doesn't exist, `true` finds none in the file's directory or its parents up to
+/// `tsconfigRootDir` (`getProjectConfigFiles`), or both `project` and `projectService` are on.
+pub(crate) fn projects_of(options: &Json, path: &[u8], cwd: &[u8]) -> Option<ProjectsOf> {
+    let is_on = |name: &[u8]| options.get(name).is_some_and(Json::is_truthy);
+    if is_on(b"projectService") {
+        return (!is_on(b"project")).then_some(ProjectsOf::Service);
+    }
+    let cwd = crate::paths::from_native(cwd);
+    if let Some(Json::Bool(true)) = options.get(b"project") {
+        let root = match options.get(b"tsconfigRootDir").and_then(Json::as_str) {
+            Some(root) => crate::paths::resolve(&cwd, &crate::paths::portable(&cwd, root)),
+            None => cwd,
+        };
+        let mut directory = crate::paths::dirname(&crate::paths::from_native(path)).to_vec();
+        loop {
+            let config = crate::paths::resolve(&directory, b"tsconfig.json");
+            let native = crate::paths::to_native(config);
+            if crate::fs::is_file(&native) {
+                return Some(ProjectsOf::Listed(vec![from_native(&native)]));
+            }
+            let parent = crate::paths::dirname(&directory).to_vec();
+            // A Windows root, such as `C:/`, is longer than one byte and is its own parent.
+            if parent == directory || parent.len() <= 1 || parent.len() < root.len() {
+                return None;
+            }
+            directory = parent;
+        }
+    }
+    let listed = resolve_project_list(options, &cwd);
+    let are_there = listed.iter().all(|it| crate::fs::is_file(to_native(it)));
+    (are_there && !listed.is_empty()).then_some(ProjectsOf::Listed(listed))
+}
+
+/// True if `options`' `projectService.allowDefaultProject` may match the file at `path` (minimatch with `dot`, on the
+/// path relative to `tsconfigRootDir`), in which case typescript-estree throws or uses the default project. Also true
+/// without a root, for a pattern that isn't a string, and for a path outside the root.
+pub(crate) fn may_be_default_project(options: &Json, path: &[u8], cwd: &[u8]) -> bool {
+    let allowed = options
+        .get(b"projectService")
+        .and_then(|it| it.get(b"allowDefaultProject"));
+    let patterns = match allowed {
+        None | Some(Json::Null) => return false,
+        Some(Json::Array(patterns)) => patterns,
+        Some(_) => return true,
+    };
+    let cwd = crate::paths::from_native(cwd);
+    let root = match options.get(b"tsconfigRootDir").and_then(Json::as_str) {
+        Some(root) if crate::paths::is_absolute(root) => {
+            crate::paths::resolve(&cwd, &crate::paths::portable(&cwd, root))
+        }
+        _ => return !patterns.is_empty(),
+    };
+    let file = crate::paths::resolve(&cwd, &crate::paths::from_native(path));
+    let relative = crate::paths::relative(&root, &file);
+    if crate::paths::is_external(&relative) {
+        return !patterns.is_empty();
+    }
+    let options = MinimatchOptions {
+        dot: true,
+        ..MinimatchOptions::default()
+    };
+    (patterns.iter()).any(|it| {
+        it.as_str()
+            .is_none_or(|pattern| Minimatch::with(pattern, options).matches(&relative))
+    })
 }
 
 /// Returns what tinyglobby finds for `pattern` under `root`, sorted. tinyglobby itself returns them in the order it
@@ -505,7 +583,10 @@ fn check_and_lint_in(
             project_is_fallback: matches!(project, Project::Including(_)),
             memory: environment.memory,
             shares_every_file: true,
-            rejects_broken_configurations: matches!(project, Project::Including(_)),
+            rejects_broken_configurations: match project {
+                Project::Including(_) => Rejects::Everything,
+                Project::Nearest | Project::This(_) => Rejects::Nothing,
+            },
             // typescript-eslint uses the project's own compiler. tsgolint bundles its own library files.
             prefers_project_typescript_libs: matches!(project, Project::Nearest),
             ..Default::default()
@@ -604,6 +685,224 @@ fn check_and_lint_in(
 /// package's project.
 pub(crate) fn is_out_of_proportion(program: &WithoutInclude) -> bool {
     program.included >= 1000 && program.included >= 100 * program.requested_files
+}
+
+/// Reports from a component's typed rules, or the error that ends the lint run.
+pub(crate) type ComponentResult = Result<Vec<LintMessage>, Vec<u8>>;
+
+/// A Svelte component whose typed program is checked ([`crate::svelte`]). By its path it's a file in its project, with
+/// the program that svelte-eslint-parser builds from it for typescript-eslint in its place, in the language its `lang`
+/// names. The project's other files with `extraFileExtensions` extensions are root files as they are on disk, parsed as
+/// TypeScript, and no import resolves to them.
+pub(crate) struct Component<'c> {
+    pub(crate) path: &'c [u8],
+    /// The component's config, whose `parserOptions` name the projects.
+    pub(crate) config: &'c Arc<ResolvedConfig>,
+    /// How its program is parsed.
+    pub(crate) language: &'c bun_lint::language::LanguageOptions,
+    /// Its program.
+    pub(crate) program: &'c [u8],
+    /// True if the program is JavaScript (`getJavaScriptParserOptions`). It's checked in a program of its project with
+    /// `allowJs`.
+    pub(crate) is_javascript: bool,
+    pub(crate) projects: &'c ProjectsOf,
+    /// Extra information about the program's file.
+    pub(crate) component_program: bun_lint::types::ComponentProgram<'c>,
+    /// Lints the file of the program, once the checker has it, preserving reports and failures.
+    pub(crate) lint: &'c (dyn for<'f> Fn(&'f File<'f>) -> ComponentResult + Sync),
+}
+
+/// Each component's `parserOptions.project` config files.
+struct ProjectsOfComponents<'t> {
+    by_path: &'t ByPath,
+    components: &'t [&'t Component<'t>],
+}
+
+impl bun_sema_driver::ListedProjects for ProjectsOfComponents<'_> {
+    fn of(&self, path: &[u8], is_case_sensitive: bool) -> &[Vec<u8>] {
+        let at = self.by_path.get(path, is_case_sensitive);
+        match at
+            .and_then(|at| self.components.get(at))
+            .map(|it| it.projects)
+        {
+            Some(ProjectsOf::Listed(listed)) => listed,
+            _ => &[],
+        }
+    }
+}
+
+/// Checks the programs of `components`, each in the project where typescript-estree finds it ([`ProjectsOf`]), and
+/// lints each one with the checker's results. `None` for one that's in no checked program: a project that doesn't
+/// include it, or a TypeScript config file that the checker rejects. typescript-eslint throws for those.
+pub(crate) fn check_components(
+    context: &Context,
+    environment: &Environment,
+    components: &[Component],
+) -> Vec<Option<ComponentResult>> {
+    let mut results: Vec<Option<ComponentResult>> = components.iter().map(|_| None).collect();
+    // Each way of finding the project, and each language, gets a separate request.
+    let mut groups: Vec<(bool, bool, Vec<usize>)> = Vec::new();
+    for (at, component) in components.iter().enumerate() {
+        let is_service = *component.projects == ProjectsOf::Service;
+        let group =
+            (groups.iter_mut()).find(|it| it.0 == is_service && it.1 == component.is_javascript);
+        match group {
+            Some(group) => group.2.push(at),
+            None => groups.push((is_service, component.is_javascript, vec![at])),
+        }
+    }
+    for (is_service, is_javascript, indices) in groups {
+        let some: Vec<&Component> = indices.iter().map(|&at| &components[at]).collect();
+        let checked = check_components_in(context, environment, &some, (is_service, is_javascript));
+        for (at, result) in indices.into_iter().zip(checked) {
+            results[at] = result;
+        }
+    }
+    results
+}
+
+/// [`check_components`] for the components that one request checks: whether the project service finds their projects,
+/// and whether their programs are JavaScript.
+fn check_components_in(
+    context: &Context,
+    environment: &Environment,
+    components: &[&Component],
+    (is_service, is_javascript): (bool, bool),
+) -> Vec<Option<ComponentResult>> {
+    let paths: Vec<Vec<u8>> = components.iter().map(|it| it.path.to_vec()).collect();
+    let by_path = ByPath {
+        exact: (paths.iter().enumerate())
+            .map(|(at, path)| (from_native(path), at))
+            .collect(),
+        folded: OnceLock::new(),
+    };
+    let listed = ProjectsOfComponents {
+        by_path: &by_path,
+        components,
+    };
+    let mut results: Guarded<Vec<Option<ComponentResult>>> =
+        Guarded::new(components.iter().map(|_| None).collect());
+    let read_library = |path: &[u8], then: &mut dyn FnMut(&[u8])| match environment.libs {
+        Libs::Bundled(libs) if is_bundled(path) => {
+            if let Some(text) = (libs.read)(crate::paths::basename(path)) {
+                then(&text);
+            }
+        }
+        Libs::Bundled(_) | Libs::Directory(_) => {
+            if let Ok(text) = crate::fs::read(to_native(path)) {
+                then(&text);
+            }
+        }
+    };
+    let after_file = |checker: &mut bun_sema::check::Checker<'_, '_>, file: FileId| {
+        let program = checker.p.files;
+        let name = program.module(file).file_name();
+        let Some(at) = by_path.get(name, program.is_case_sensitive) else {
+            return;
+        };
+        let component = components[at];
+        let started = context.timing.now();
+        let linted = bun_lint::types::with_component_file(
+            checker,
+            (file, component.path),
+            component.language,
+            Some(&read_library),
+            Some(context.modules),
+            component.component_program,
+            |file| (component.lint)(file),
+        );
+        context.timing.add(&context.timing.rules, started);
+        if let Some(linted) = linted {
+            results.lock()[at] = Some(linted);
+        }
+    };
+    // The watch program of `project` already enables JavaScript when finding roots. The project service uses the project's
+    // options instead; `getJavaScriptParserOptions` enables JavaScript only after those roots have been found.
+    let arguments: &[&[u8]] = match is_javascript && !is_service {
+        true => &[b"--skipLibCheck", b"--allowJs"],
+        false => &[b"--skipLibCheck"],
+    };
+    let command_line = bun_sema_driver::parse_command_line(arguments, &environment.cwd);
+    let language = match is_javascript {
+        true => ScriptKind::Js,
+        false => ScriptKind::Ts,
+    };
+    let script_kinds: Vec<(Vec<u8>, ScriptKind)> =
+        paths.iter().map(|it| (it.clone(), language)).collect();
+    // typescript-estree treats files with `extraFileExtensions` extensions as TypeScript (`ScriptKind.Deferred`).
+    let mut extensions: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
+    for component in components {
+        let options = &component.config.language.parser_options;
+        for extension in strings_of(options.get(b"extraFileExtensions")) {
+            if extension.starts_with(b".") && !extensions.iter().any(|it| it.0 == extension) {
+                extensions.push((extension.to_vec(), ScriptKind::Ts));
+            }
+        }
+    }
+    let request = bun_sema_driver::Request {
+        cwd: &environment.cwd,
+        project: context.options.tsconfig.as_deref(),
+        listed_projects: (!is_service).then_some(&listed as &dyn bun_sema_driver::ListedProjects),
+        build: false,
+        errors: &[],
+        paths: &paths,
+        // `getJavaScriptParserOptions` enables JavaScript after discovery, keeping the original root files. The entry-point
+        // path does that without widening admission: these paths have the `.svelte` extension, not a JavaScript extension.
+        are_entry_points: is_javascript && is_service,
+        script_kinds: &script_kinds,
+        script_kinds_by_extension: &extensions,
+        conditions: &[],
+        compiler_options: &command_line.compiler_options,
+        threads: context.options.threads,
+        libs: environment.libs,
+        progress: None,
+        order: 1,
+        plan_options: bun_sema_driver::PlanOptions {
+            after_file_only_for_checked_files: true,
+            checks_only_requested_paths: true,
+            reads_sources_of_references: true,
+            uses_project_directory_as_cwd: true,
+            skips_file_diagnostics: true,
+            memory: environment.memory,
+            shares_every_file: true,
+            // typescript-eslint throws if TypeScript can't read `project`'s config. The project service opens the file
+            // anyway.
+            rejects_broken_configurations: match is_service {
+                true => Rejects::Nothing,
+                false => Rejects::Unparsed,
+            },
+            prefers_project_typescript_libs: true,
+            requires_including_project: is_service,
+            only_in_listed_projects: !is_service,
+            script_kinds_only_set_languages: true,
+            ..Default::default()
+        },
+        stops_like_tsc: false,
+        uses_typescript_wording: false,
+        after_file: Some(&after_file),
+    };
+    let already_read: AlreadyRead = (components.iter())
+        .map(|it| (from_native(it.path), it.program.to_vec()))
+        .collect();
+    let provided = Provided {
+        already_read,
+        keeps_byte_order_marks: true,
+        ..Default::default()
+    };
+    let (rejected, is_case_sensitive) =
+        bun_sema_driver::check_provided_then(&request, provided, |report| {
+            (report.rejected_programs, report.is_case_sensitive)
+        });
+    let mut results = std::mem::take(results.get_mut());
+    for path in rejected.iter().flat_map(|it| &it.files) {
+        if let Some(result) = by_path
+            .get(path, is_case_sensitive)
+            .and_then(|at| results.get_mut(at))
+        {
+            *result = None;
+        }
+    }
+    results
 }
 
 /// Reports each error that stops tsgolint from building a program (`CreateProgram`) the way oxlint does: "Invalid

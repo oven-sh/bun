@@ -239,12 +239,27 @@ fn with<'m>(path: &Path<'m>, name: &'m str) -> Path<'m> {
     path
 }
 
-struct Walk<'a, 'm> {
+/// What a walk calls with each reference it finds, in upstream's generator order, with the stack as it is when that
+/// generator yields it.
+type OnFound<'a, 'm, 'w> = &'w mut dyn FnMut(TrackedReference<'a, 'm>, &mut SharedStack<'a>);
+
+struct Walk<'a, 'm, 'w> {
     file: &'a File<'a>,
     /// The variables whose references are being followed.
-    variables: SmallVec<[Variable<'a>; 4]>,
+    variables: SharedStack<'a>,
     found: Vec<TrackedReference<'a, 'm>>,
+    /// `variables` when the first one was found.
+    followed_at_first: Option<SharedStack<'a>>,
+    /// Receives the findings instead of `found`.
+    on_found: Option<OnFound<'a, 'm, 'w>>,
 }
+
+/// The `variableStack` of one of upstream's trackers, which all its generators share. Each one pushes the variable
+/// whose references it follows and, when done, pops the last one, whatever that is by then. A generator only asked for
+/// its first reference, as in `!tracker.iteratePropertyReferences(node, map).next().done`, never finishes: what it
+/// pushed stays, and later generators skip those variables until one that started before it pops them.
+#[derive(Clone, Default)]
+pub struct SharedStack<'a>(SmallVec<[Variable<'a>; 4]>);
 
 impl<'a> ReferenceTracker<'a> {
     pub fn new(file: &'a File<'a>) -> Self {
@@ -259,11 +274,13 @@ impl<'a> ReferenceTracker<'a> {
         ReferenceTracker { mode, ..self }
     }
 
-    fn walk<'m>(&self) -> Walk<'a, 'm> {
+    fn walk<'m, 'w>(&self) -> Walk<'a, 'm, 'w> {
         Walk {
             file: self.file,
-            variables: SmallVec::new(),
+            variables: SharedStack::default(),
             found: Vec::new(),
+            followed_at_first: None,
+            on_found: None,
         }
     }
 
@@ -274,7 +291,29 @@ impl<'a> ReferenceTracker<'a> {
         &self,
         map: &'m dyn Trace<'m>,
     ) -> Vec<TrackedReference<'a, 'm>> {
-        let mut walk = self.walk();
+        self.global_references(map, self.walk())
+    }
+
+    /// [`iterate_global_references`](Self::iterate_global_references) the way an upstream `for .. of` loop iterates it:
+    /// the body, `on_found`, runs where the generator yields, with the tracker's [`SharedStack`] as it is there.
+    /// Whatever the body leaves on it, the generator skips, and pops in its place.
+    pub fn for_each_global_reference<'m>(
+        &self,
+        map: &'m dyn Trace<'m>,
+        on_found: &mut dyn FnMut(TrackedReference<'a, 'm>, &mut SharedStack<'a>),
+    ) {
+        let walk = Walk {
+            on_found: Some(on_found),
+            ..self.walk()
+        };
+        self.global_references(map, walk);
+    }
+
+    fn global_references<'m>(
+        &self,
+        map: &'m dyn Trace<'m>,
+        mut walk: Walk<'a, 'm, '_>,
+    ) -> Vec<TrackedReference<'a, 'm>> {
         for (name, member) in map.members() {
             if let Some(variable) = walk.unmodified_global(name) {
                 walk.variable_references(
@@ -432,6 +471,35 @@ impl<'a> ReferenceTracker<'a> {
         walk.property_references(expr, &SmallVec::new(), View::Map(map));
         walk.found
     }
+
+    /// [`iterate_property_references`](Self::iterate_property_references) for the tracker whose generators left
+    /// `stack`. Iterated to the end, or exited with `return`, it pops everything it pushes.
+    pub fn iterate_property_references_on<'m>(
+        &self,
+        expr: Expr<'a>,
+        map: &'m dyn Trace<'m>,
+        stack: &SharedStack<'a>,
+    ) -> Vec<TrackedReference<'a, 'm>> {
+        let mut walk = self.walk();
+        walk.variables.clone_from(stack);
+        walk.property_references(expr, &SmallVec::new(), View::Map(map));
+        walk.found
+    }
+
+    /// `tracker.iteratePropertyReferences(expr, map).next().value` for the tracker whose generators left `stack`. A
+    /// generator that finds one is abandoned there, with what it pushed.
+    pub fn first_property_reference<'m>(
+        &self,
+        expr: Expr<'a>,
+        map: &'m dyn Trace<'m>,
+        stack: &mut SharedStack<'a>,
+    ) -> Option<TrackedReference<'a, 'm>> {
+        let mut walk = self.walk();
+        walk.variables.clone_from(stack);
+        walk.property_references(expr, &SmallVec::new(), View::Map(map));
+        *stack = walk.followed_at_first?;
+        walk.found.into_iter().next()
+    }
 }
 
 /// Upstream's `isPassThrough`: returns the parent if it evaluates to `e`'s value, like `a || e` and `c ? a : e`.
@@ -477,11 +545,22 @@ fn is_member_expression(member: Expr<'_>) -> bool {
     }
 }
 
-impl<'a, 'm> Walk<'a, 'm> {
+impl<'a, 'm> Walk<'a, 'm, '_> {
+    fn push(&mut self, found: TrackedReference<'a, 'm>) {
+        if let Some(on_found) = self.on_found.as_mut() {
+            on_found(found, &mut self.variables);
+            return;
+        }
+        if self.found.is_empty() {
+            self.followed_at_first = Some(self.variables.clone());
+        }
+        self.found.push(found);
+    }
+
     /// Reports at `span` that `node` reads the value `map` describes, if `map` has a `[READ]`.
     fn report_at(&mut self, node: Node<'a>, span: Span, path: &Path<'m>, map: View<'m>) {
         if let Some(info) = map.info(ReferenceKind::Read) {
-            self.found.push(TrackedReference {
+            self.push(TrackedReference {
                 node,
                 span,
                 path: path.clone(),
@@ -494,7 +573,7 @@ impl<'a, 'm> Walk<'a, 'm> {
     /// Reports `node`, if `map` lists this kind of use.
     fn report(&mut self, node: Node<'a>, path: &Path<'m>, kind: ReferenceKind, map: View<'m>) {
         if let Some(info) = map.info(kind) {
-            self.found.push(TrackedReference {
+            self.push(TrackedReference {
                 node,
                 span: node.span(),
                 path: path.clone(),
@@ -523,10 +602,10 @@ impl<'a, 'm> Walk<'a, 'm> {
         map: View<'m>,
         should_report: bool,
     ) {
-        if self.variables.contains(&variable) {
+        if self.variables.0.contains(&variable) {
             return;
         }
-        self.variables.push(variable);
+        self.variables.0.push(variable);
         let references: Vec<Reference<'a>> = match variable {
             Variable::Symbol(symbol) => symbol.references().collect(),
             Variable::Global(name) => self.file.unresolved_references_to(name.bytes()).collect(),
@@ -542,7 +621,8 @@ impl<'a, 'm> Walk<'a, 'm> {
                 self.property_references(identifier, path, map);
             }
         }
-        self.variables.pop();
+        // The last one, which is this variable unless a body abandoned a generator.
+        self.variables.0.pop();
     }
 
     /// Upstream's `_iteratePropertyReferences`.
@@ -604,6 +684,10 @@ impl<'a, 'm> Walk<'a, 'm> {
                     Target::Pat(pat) => pat.symbol(),
                     Target::Expr(e) => find_variable_of(e),
                 };
+                // In a component, what only the lowering declares isn't a variable: a store's `$x`.
+                let symbol = symbol.filter(|&it| {
+                    self.file.view().is_none() || self.file.svelte_variable_of(it).is_some()
+                });
                 let variable = match symbol {
                     Some(symbol) => Variable::Symbol(symbol),
                     None if self.file.global(name.bytes()).is_some() => Variable::Global(name),

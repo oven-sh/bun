@@ -72,6 +72,9 @@ pub struct ConfiguredRule {
     name: Option<Arc<[u8]>>,
     /// See [`ConfiguredRule::or_else`].
     or_else: Option<Box<ConfiguredJsRule>>,
+    /// True if the config has no entry for it, and it's only there so a comment can turn it on by name
+    /// ([`ResolvedConfig::answer_for_unconfigured`]).
+    pub(super) is_unconfigured: bool,
 }
 
 impl ConfiguredRule {
@@ -86,6 +89,7 @@ impl ConfiguredRule {
             reported_as: entry.meta,
             name: None,
             or_else: None,
+            is_unconfigured: false,
         }
     }
 
@@ -304,6 +308,11 @@ pub struct ResolvedConfig {
     pub processor_location: Option<Arc<js_plugin::Processor>>,
     /// The name of `languageOptions.parser`, if one is configured.
     pub parser_name: Option<Box<[u8]>>,
+    /// The file of the module that exports `languageOptions.parser`, if known. A parser without a name has one too.
+    pub parser_module: Option<Box<[u8]>>,
+    /// The parser names that an object in `parserOptions.parser` gives per script `lang`, as svelte-eslint-parser reads
+    /// them. The options hold the parsers as is, which can't describe a module namespace.
+    pub parser_names: Vec<(Box<[u8]>, Box<[u8]>)>,
     /// True if one of the plugins is eslint-plugin-html. Loading it patches ESLint's `Linter` to extract the scripts
     /// from an HTML file.
     pub changes_linter: bool,
@@ -631,6 +640,43 @@ impl ResolvedConfig {
         self.validate(entry, None, severity, &options);
         self.rules
             .push(ConfiguredRule::new(entry, severity, options));
+        self.prepared = OnceLock::new();
+    }
+
+    /// Makes `entry` replace the JavaScript plugin rule `rule`: one more instance of `entry` under `rule`'s name, where
+    /// `rule` is among the rules, with its severity and options. The plugin rules it hides stay as they are.
+    pub fn answer_for(&mut self, rule: &Arc<js_plugin::Rule>, entry: &'static RuleEntry) {
+        let Some(at) = (self.js_rules.iter()).position(|it| Arc::ptr_eq(&it.configured.rule, rule))
+        else {
+            return;
+        };
+        let js = self.js_rules.remove(at);
+        let name: Arc<[u8]> = rule.id[..].into();
+        let instance = ConfiguredRule::new(entry, js.severity, Arc::clone(&js.options));
+        self.validate(entry, Some(&name), js.severity, &js.options);
+        let place = js.position.min(self.rules.len());
+        self.rules.insert(place, instance.named(Some(name)));
+        // The rules before it in the config stay before it.
+        for later in self.js_rules.iter_mut().skip(at) {
+            later.position += 1;
+        }
+        for later in &mut self.formatting_rules {
+            later.position.0 += usize::from(later.position.0 >= place);
+            later.position.1 -= usize::from(later.position.1 > at);
+        }
+        self.has_named_rules = true;
+        self.prepared = OnceLock::new();
+    }
+
+    /// Adds `entry` under `name`, a JavaScript plugin rule the config doesn't name, which `entry` replaces here. It's
+    /// off, so a comment that turns `name` on turns `entry` on, like any rule the config doesn't name.
+    pub fn answer_for_unconfigured(&mut self, name: Arc<[u8]>, entry: &'static RuleEntry) {
+        let instance = ConfiguredRule {
+            is_unconfigured: true,
+            ..ConfiguredRule::new(entry, Severity::Off, Arc::from([]))
+        };
+        self.rules.push(instance.named(Some(name)));
+        self.has_named_rules = true;
         self.prepared = OnceLock::new();
     }
 }

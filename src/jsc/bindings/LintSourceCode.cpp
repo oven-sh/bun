@@ -344,7 +344,37 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject*, EncodedJ
     if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
     LintHost* host = LintHost::from(globalObject);
-    return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes())));
+    return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes()), host->isSvelte()));
+}
+
+// A service of svelte-eslint-parser or of typescript-eslint that a component has where ESLint lints it, and not here: a rule that
+// reads it throws an error that starts as typescript-eslint's does without types, which tells Rust to have ESLint run the rule
+// (`ASKS_FOR_TYPES` in host.rs).
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeMissingService, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName name))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto message = makeString("You have used a rule which requires parserServices."_s, String(name.publicName()), " of svelte-eslint-parser, which a component does not have here."_s);
+    return throwVMError(globalObject, scope, createError(globalObject, message));
+}
+
+// svelte-eslint-parser's services for a component: `isSvelte`, and those that rules here do without.
+static JSObject* svelteParserServices(JSGlobalObject* globalObject, LintHost* host)
+{
+    VM& vm = globalObject->vm();
+    JSObject* services = constructEmptyObject(globalObject);
+    CustomGetterSetter* missing = CustomGetterSetter::create(vm, jsLintSourceCodeMissingService, nullptr);
+    auto putMissing = [&](ASCIILiteral name) {
+        services->putDirectCustomAccessor(vm, Identifier::fromString(vm, name), missing, static_cast<unsigned>(PropertyAttribute::CustomAccessor));
+    };
+    if (!host->isEspree()) {
+        for (auto name : { "program"_s, "esTreeNodeToTSNodeMap"_s, "tsNodeToESTreeNodeMap"_s })
+            putMissing(name);
+    }
+    services->putDirect(vm, Identifier::fromString(vm, "isSvelte"_s), jsBoolean(true));
+    services->putDirect(vm, Identifier::fromString(vm, "isSvelteScript"_s), jsBoolean(false));
+    for (auto name : { "getSvelteHtmlAst"_s, "getStyleContext"_s, "getStyleSelectorAST"_s, "styleNodeLoc"_s, "styleNodeRange"_s, "styleSelectorNodeLoc"_s, "svelteParseContext"_s })
+        putMissing(name);
+    return services;
 }
 
 // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
@@ -361,7 +391,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, Encod
     if (JSObject* services = state.parserServices.get())
         return JSValue::encode(services);
     JSObject* services;
-    if (host->isOxlint()) {
+    if (host->isSvelte())
+        services = svelteParserServices(globalObject, host);
+    else if (host->isOxlint()) {
         services = constructEmptyObject(globalObject);
         objectConstructorFreeze(globalObject, services);
         RETURN_IF_EXCEPTION(scope, {});

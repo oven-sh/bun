@@ -2,6 +2,7 @@
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
+use super::units::Units;
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
@@ -14,7 +15,6 @@ use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
 use bun_core::printer::json_stringify;
-use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
 use core::cell::RefCell;
 use rustc_hash::FxHashMap;
@@ -37,6 +37,7 @@ pub struct Report {
     pub end: Option<(u32, u32)>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggested>,
+    pub reported_on: Option<crate::linter::ReportedOn>,
 }
 
 /// An element of ESLint's `suggestions`.
@@ -200,6 +201,8 @@ struct RunOptions<'h> {
     enabled: &'h [&'h Configured],
     wants_fixes: bool,
     physical_path_len: Option<usize>,
+    /// True if the rules are only created, and no listener is called.
+    only_creates: bool,
 }
 
 const PLUGIN_PROTOCOL_ERROR: &[u8] =
@@ -265,8 +268,8 @@ impl<'e> Host<'e> {
     }
 
     /// [`Engine::expect`]
-    pub fn expect(&self, files: usize, size: u64, most: usize) {
-        self.engine.expect(files, size, most);
+    pub fn expect(&self, files: usize, size: u64, typed: usize, most: usize) {
+        self.engine.expect(files, size, typed, most);
     }
 
     /// [`Engine::may_need_realm`]
@@ -320,12 +323,17 @@ impl<'e> Host<'e> {
             && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
     }
 
+    /// True if `thrown`, a rule's thrown message, asks for parser services that the host doesn't provide.
+    pub fn asks_for_parser_services(thrown: &[u8]) -> bool {
+        // With an oxlint config, the error's class precedes the message.
+        let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
+        message.starts_with(NEEDS_TYPES_ERROR_PREFIX)
+    }
+
     /// True if `thrown`, the message of an error that `rule` threw, means the rule needs types. From then on the rule
     /// [has asked](Host::has_asked_for_types).
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
-        // With an oxlint config, the error's class precedes the message.
-        let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
-        if !message.starts_with(NEEDS_TYPES_ERROR_PREFIX) {
+        if !Self::asks_for_parser_services(thrown) {
             return false;
         }
         if !self.has_asked_for_types(rule) {
@@ -422,11 +430,14 @@ impl<'e> Host<'e> {
             return Arc::clone(&known.plugin);
         }
         let numbering = (state.plugins.len() as u32, state.rules);
-        let plugin = Arc::new(plugin_from_description(
-            described,
-            numbering,
-            needs_config_file,
-        ));
+        let mut plugin = plugin_from_description(described, numbering, needs_config_file);
+        // `[{ module, export }, null, prefix]` for a plugin a config has imported.
+        let located = crate::json::parse(&location).and_then(|it| {
+            let module = it.as_array()?.first()?.get(b"module")?.as_str()?;
+            Some(Box::from(module))
+        });
+        plugin.module = plugin.module.or(located);
+        let plugin = Arc::new(plugin);
         let first_rule = state.rules;
         state.rules += plugin.rules.len() as u32;
         state.plugins.push(Loaded {
@@ -562,16 +573,44 @@ impl<'e> Host<'e> {
             enabled,
             wants_fixes,
             physical_path_len,
+            only_creates: false,
         };
+        self.run(file, &run_options, parse_again)
+    }
+
+    /// Creates the rules `enabled` for `file`, in order, as ESLint does before it lints a file, and calls none of their
+    /// listeners. The first rule's throw is the failure.
+    pub fn create_on_block<'a>(
+        &self,
+        file: &'a File<'a>,
+        settings: &FileSettings,
+        enabled: &[&Configured],
+        parse_again: Option<&ParseAgain>,
+    ) -> Result<(), Failure> {
+        let run_options = RunOptions {
+            settings,
+            enabled,
+            wants_fixes: true,
+            physical_path_len: None,
+            only_creates: true,
+        };
+        self.run(file, &run_options, parse_again).map(drop)
+    }
+
+    fn run<'a>(
+        &self,
+        file: &'a File<'a>,
+        run_options: &RunOptions,
+        parse_again: Option<&ParseAgain>,
+    ) -> Result<Vec<Report>, Failure> {
         let size = file.text().len();
         let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
         if self.engine.thread_has_realm() {
-            (self.engine).with_vm_here(size, &mut |vm| {
-                outcome = self.run_in(vm, file, &run_options)
-            })?;
+            (self.engine)
+                .with_vm_here(size, &mut |vm| outcome = self.run_in(vm, file, run_options))?;
         } else if let Some(parse_again) = parse_again {
             self.engine.with_vm(size, &mut |vm| {
-                parse_again(&mut |file| outcome = self.run_in(vm, file, &run_options));
+                parse_again(&mut |file| outcome = self.run_in(vm, file, run_options));
             })?;
         }
         let (reports, used) = outcome?;
@@ -591,9 +630,12 @@ impl<'e> Host<'e> {
             enabled,
             wants_fixes,
             physical_path_len,
+            only_creates,
         } = *run_options;
-        let text = file.text();
-        let offsets = Utf16OffsetTable::without_bom(text);
+        // Rules see a component as svelte-eslint-parser presents it.
+        let component = file.svelte();
+        let text = component.map_or_else(|| file.text(), |it| it.text());
+        let offsets = Units::of(file);
         let has_bom = text.starts_with(b"\xEF\xBB\xBF");
         let path = file.path();
         let plugins = Self::plugins_to_load(enabled);
@@ -606,7 +648,9 @@ impl<'e> Host<'e> {
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
             | (source_type_for_oxlint(file) << 5)
-            | (u32::from(ast::shortens_nodes(file)) << 8);
+            | (u32::from(ast::shortens_nodes(file)) << 8)
+            | (u32::from(component.is_some()) << 9)
+            | (u32::from(only_creates) << 10);
         wire::words(
             &mut message,
             &[
@@ -869,6 +913,7 @@ fn plugin_from_description(
                 ),
             ])
         }),
+        module: (described.get(b"file").and_then(Json::as_str)).map(Into::into),
         id: (described.get(b"id").and_then(Json::as_str)).map(Into::into),
         has_no_plugin_properties: described.get(b"hasNothing").and_then(Json::as_bool)
             == Some(true),

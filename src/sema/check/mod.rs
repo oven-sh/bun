@@ -57,6 +57,7 @@ mod expr;
 mod flow;
 mod grammarchecks;
 mod infer;
+mod insertion_order;
 mod instantiate;
 pub mod jsdoc;
 mod jsx;

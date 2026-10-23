@@ -236,15 +236,26 @@ impl<'a> Quick<'_, 'a> {
                 );
                 (ids.iter()).for_each(|&id| self.statement_of_list(Stmt::from_raw(self.file, id)))
             }
-            None => (statements.iter()).for_each(|stmt| self.statement_of_list(stmt)),
+            // As the analysis walks them: with the kind the file's view gives them, and in place of a hidden node, its
+            // children, which leave the path unchanged where that's plain.
+            None => {
+                for stmt in statements.with_hidden() {
+                    if !Node::Stmt(stmt).is_hidden() {
+                        self.statement_of_list(stmt);
+                    } else if !self.is_plain(stmt) {
+                        self.has_given_up = true;
+                        return;
+                    }
+                }
+            }
         }
     }
 
+    /// True if `stmt` contains no other statement and doesn't jump anywhere. Whether it may throw only matters in a
+    /// `try` statement.
     #[inline]
-    fn statement_of_list(&mut self, stmt: Stmt<'a>) {
-        // Most statements contain no other statement and don't jump anywhere, and whether they may
-        // throw only matters in a `try` statement.
-        let is_plain = self.tries.is_empty()
+    fn is_plain(&self, stmt: Stmt<'a>) -> bool {
+        self.tries.is_empty()
             && !matches!(
                 stmt.tag(),
                 StmtTag::Block
@@ -262,8 +273,12 @@ impl<'a> Quick<'_, 'a> {
                     | StmtTag::ForOf
                     | StmtTag::Switch
                     | StmtTag::Try
-            );
-        match is_plain {
+            )
+    }
+
+    #[inline]
+    fn statement_of_list(&mut self, stmt: Stmt<'a>) {
+        match self.is_plain(stmt) {
             true => self.plain_statement(stmt),
             false => self.statement(stmt),
         }

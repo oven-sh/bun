@@ -23,6 +23,17 @@ pub trait Work: Sync {
     /// left.
     fn heavy(&self) -> bool;
 
+    /// True if a typed file hasn't been taken yet: one for which ESLint's parser creates a TypeScript program, and
+    /// which isn't a [`HEAVY`] file. Each realm that lints them keeps its own programs, so only a few do: [`Lanes`].
+    fn has_typed(&self) -> bool {
+        false
+    }
+
+    /// Lints one of the typed files. Only the [lanes](Lanes)' threads call it. Returns `false` once none is left.
+    fn typed(&self) -> bool {
+        false
+    }
+
     /// Lints one of the other files. `realm` is the number of the calling thread's realm. Returns `false` once none are
     /// left.
     fn light(&self, realm: usize) -> bool;
@@ -33,7 +44,22 @@ pub trait Work: Sync {
     /// Does all the remaining work on the calling thread.
     fn finish_here(&self) {
         while self.heavy() {}
+        while self.typed() {}
         while self.light(0) {}
+    }
+}
+
+/// How many realms lint the typed files: see [`Engine::expect`].
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Lanes {
+    /// How many may, the first realm among them. At least 1: if not even one fits into the realm memory budget, the
+    /// first realm lints them anyway.
+    pub admitted: usize,
+}
+
+impl Default for Lanes {
+    fn default() -> Lanes {
+        Lanes { admitted: 1 }
     }
 }
 
@@ -63,9 +89,10 @@ pub trait Engine: Sync {
     /// How many threads are busy with [`Engine::work_off`].
     fn busy(&self) -> usize;
 
-    /// Announces how many files will need a realm, their total size, and the maximum number of realms. It isn't called
-    /// if finding that out takes a realm.
-    fn expect(&self, _files: usize, _size: u64, _most: usize) {}
+    /// Announces how many files will need a realm, the total size of those that are neither [`HEAVY`] nor typed, how
+    /// many are typed ([`Work::typed`]), and the maximum number of realms. It isn't called if finding that out takes a
+    /// realm. Decides the [`Lanes`] too.
+    fn expect(&self, _files: usize, _size: u64, _typed: usize, _most: usize) {}
 
     /// Announces that further files, `size` bytes in total, might need a realm. Whether each one does is only known
     /// when it's linted. Call it after [`Engine::expect`].
@@ -170,8 +197,8 @@ impl Demand {
     /// Compares how much sooner the run would end with what the realm costs. It's based on all the files of the run,
     /// not on the remaining ones, because how many remain when a thread happens to ask depends on timing.
     ///
-    /// `busy_with_heavy` is how many of the `realms` are busy with [`HEAVY`] files, which aren't counted among these
-    /// files.
+    /// `busy_with_heavy` is how many of the `realms` are busy with [`HEAVY`] or typed files, which aren't counted among
+    /// these files.
     pub fn is_worth_another(&self, realms: usize, busy_with_heavy: usize) -> bool {
         let left = self.0.lock();
         if realms == 0 || realms >= left.most {

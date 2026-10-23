@@ -107,6 +107,13 @@ pub trait Host: Sync {
     /// `extraFileExtensions`: the extensions, each with its `.`, whose language the host knows,
     /// besides TypeScript's own. `include` matches files that have them.
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)];
+    /// True if an import can resolve to a file whose name TypeScript doesn't recognize and whose `script_kind` the host
+    /// knows by that exact name. Not when the host only gives TypeScript the language of a linter's files, as
+    /// typescript-eslint does with `extraFileExtensions`: TypeScript resolves `./a.svelte` to `a.svelte.ts` and the
+    /// like.
+    fn imports_script_kinds_by_name(&self) -> bool {
+        true
+    }
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
@@ -3484,6 +3491,7 @@ impl<'h> Resolver<'h> {
             // knows, `a.ts` and `a.d.ts` come before `a.js`, whatever language that is.
             let is_source_file = ScriptKind::from_file_name(path).is_none()
                 && self.host.script_kind(path).is_some()
+                && self.host.imports_script_kinds_by_name()
                 && self.is_file(path);
             let resolved_from_file = match is_source_file {
                 true => Some(path.to_vec()),

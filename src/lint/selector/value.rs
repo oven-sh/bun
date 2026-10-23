@@ -80,8 +80,33 @@ impl Short {
 
 /// `offset` the way ESLint counts: in UTF-16 code units, not counting a byte order mark.
 fn utf16_offset(file: &File, offset: u32) -> f64 {
-    let units = bun_core::strings::wtf8_len_utf16(file.slice(Span::new(0, offset)));
-    f64::from(units.saturating_sub(u32::from(file.has_bom())))
+    let text = file.svelte().map_or_else(|| file.text(), |it| it.text());
+    let units = bun_core::strings::wtf8_len_utf16(text.get(..offset as usize).unwrap_or_default());
+    f64::from(units.saturating_sub(u32::from(text.starts_with(crate::source::BOM))))
+}
+
+/// A selector sees the same coordinates as the host, including nodes whose spans are in the lowered program.
+fn span_of(node: VNode<'_>) -> Span {
+    let span = node.span();
+    match node.file().view() {
+        Some(view) if !node.is_in_component() => {
+            let start = view.in_file(span.start);
+            let end = if span.is_empty() {
+                start
+            } else {
+                view.in_file(span.end - 1) + 1
+            };
+            Span::new(start, end)
+        }
+        _ => span,
+    }
+}
+
+fn position(file: &File<'_>, offset: u32) -> crate::span::Position {
+    match file.view() {
+        Some(view) => file.display_position(view.in_program(offset)),
+        None => file.position(offset),
+    }
 }
 
 /// `text[index]`
@@ -168,14 +193,14 @@ impl<'a> Val<'a> {
         };
         match (self, key.property) {
             (Val::Node(node), P::Type) => Val::Str(node.node_type().name().as_bytes()),
-            (Val::Node(node), P::Parent) => node.parent().map_or(Val::Null, Val::Node),
+            (Val::Node(node), P::Parent) => node.parent_in_component().map_or(Val::Null, Val::Node),
             (Val::Node(node), P::Range) => Val::Range(node),
             (Val::Node(node), P::Loc) => Val::Loc(node),
             (Val::Node(node), P::Start) if has_offsets(node) => {
-                Val::Number(utf16_offset(node.file(), node.span().start))
+                Val::Number(utf16_offset(node.file(), span_of(node).start))
             }
             (Val::Node(node), P::End) if has_offsets(node) => {
-                Val::Number(utf16_offset(node.file(), node.span().end))
+                Val::Number(utf16_offset(node.file(), span_of(node).end))
             }
             (Val::Node(node), _) => {
                 let entry = key.field.and_then(|field| node.node_type().field(field));
@@ -202,6 +227,13 @@ impl<'a> Val<'a> {
             (Val::Object(Object::Template { raw, .. }), P::Raw) => Val::Str(raw),
             (Val::Object(Object::Regex { pattern, .. }), P::Pattern) => Val::Str(pattern),
             (Val::Object(Object::Regex { flags, .. }), P::Flags) => Val::Str(flags),
+            (Val::Object(object @ Object::Modifiers(_)), P::Length) => {
+                Val::Number(object.strings().count() as f64)
+            }
+            (Val::Object(object @ Object::Modifiers(_)), P::Index(index)) => object
+                .strings()
+                .nth(index as usize)
+                .map_or(Val::Undefined, Val::Str),
 
             (Val::Regex { pattern, .. }, P::Source) => Val::Str(pattern),
             (Val::Regex { flags, .. }, P::Flags) => Val::Short(Short::from_flags(flags)),
@@ -211,19 +243,19 @@ impl<'a> Val<'a> {
             (Val::Regex { .. }, P::LastIndex) => Val::Number(0.0),
 
             (Val::Range(node), P::Index(0)) => {
-                Val::Number(utf16_offset(node.file(), node.span().start))
+                Val::Number(utf16_offset(node.file(), span_of(node).start))
             }
             (Val::Range(node), P::Index(1)) => {
-                Val::Number(utf16_offset(node.file(), node.span().end))
+                Val::Number(utf16_offset(node.file(), span_of(node).end))
             }
             (Val::Range(_), P::Length) => Val::Number(2.0),
-            (Val::Loc(node), P::Start) => Val::Position(node.file(), node.span().start),
-            (Val::Loc(node), P::End) => Val::Position(node.file(), node.span().end),
+            (Val::Loc(node), P::Start) => Val::Position(node.file(), span_of(node).start),
+            (Val::Loc(node), P::End) => Val::Position(node.file(), span_of(node).end),
             (Val::Position(file, offset), P::Line) => {
-                Val::Number(f64::from(file.position(offset).line))
+                Val::Number(f64::from(position(file, offset).line))
             }
             (Val::Position(file, offset), P::Column) => {
-                Val::Number(f64::from(file.position(offset).column))
+                Val::Number(f64::from(position(file, offset).column))
             }
             _ => Val::Undefined,
         }
@@ -239,6 +271,16 @@ impl<'a> Val<'a> {
             Val::Number(value) => then(&text::number_to_string(value)),
             Val::Str(text) | Val::BigInt(text) => then(text),
             Val::Short(text) => then(text.as_bytes()),
+            Val::Object(object @ Object::Modifiers(_)) => {
+                let mut joined = Vec::new();
+                for (at, name) in object.strings().enumerate() {
+                    if at != 0 {
+                        joined.push(b',');
+                    }
+                    joined.extend_from_slice(name);
+                }
+                then(&joined)
+            }
             Val::Object(_) | Val::Node(_) | Val::Loc(_) | Val::Position(..) => {
                 then(b"[object Object]")
             }
@@ -252,7 +294,7 @@ impl<'a> Val<'a> {
     /// `String(value)` for an array.
     fn joined(self) -> Vec<u8> {
         if let Val::Range(node) = self {
-            let (file, span) = (node.file(), node.span());
+            let (file, span) = (node.file(), span_of(node));
             let mut joined = text::number_to_string(utf16_offset(file, span.start));
             joined.push(b',');
             joined.extend_from_slice(&text::number_to_string(utf16_offset(file, span.end)));
@@ -281,6 +323,7 @@ impl<'a> Val<'a> {
                 literal.names == Names::Number
                     && (value == literal.number || value.is_nan() && literal.number.is_nan())
             }
+            Val::Object(Object::Modifiers(_)) => self.with_string(|text| *text == *literal.text),
             Val::Object(_) | Val::Node(_) | Val::Loc(_) | Val::Position(..) => {
                 literal.names == Names::Object
             }

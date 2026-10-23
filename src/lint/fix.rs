@@ -2,7 +2,7 @@
 
 use crate::ast::File;
 use crate::context::IntoText;
-use crate::span::{Span, Spanned};
+use crate::span::{Domain, Span, Spanned};
 use crate::tokens::{Token, TokenKind};
 use crate::utils::ast_utils::is_on_one_line;
 use crate::utils::directives::match_directives_pattern;
@@ -445,7 +445,8 @@ impl<'a> Fixer<'a> {
 /// The return type of the function passed to [`Report::fix`](crate::context::Report::fix).
 pub trait IntoFix {
     /// ESLint's `mergeFixes`: merges all the fixes into one. Returns `None` if there are none, or if two overlap.
-    fn into_fix(self, file: &File) -> Option<Fix>;
+    /// `domain` is the text they're in.
+    fn into_fix(self, file: &File, domain: Domain) -> Option<Fix>;
 
     /// Returns the fix that was created first.
     fn first_fix(&self) -> Option<&Fix>;
@@ -453,7 +454,7 @@ pub trait IntoFix {
 
 impl IntoFix for Fix {
     #[inline]
-    fn into_fix(self, _: &File) -> Option<Fix> {
+    fn into_fix(self, _: &File, _: Domain) -> Option<Fix> {
         Some(self)
     }
 
@@ -465,8 +466,8 @@ impl IntoFix for Fix {
 
 impl<T: IntoFix> IntoFix for Option<T> {
     #[inline]
-    fn into_fix(self, file: &File) -> Option<Fix> {
-        self?.into_fix(file)
+    fn into_fix(self, file: &File, domain: Domain) -> Option<Fix> {
+        self?.into_fix(file, domain)
     }
 
     #[inline]
@@ -479,7 +480,7 @@ impl IntoFix for Vec<Fix> {
     fn first_fix(&self) -> Option<&Fix> {
         self[..].first()
     }
-    fn into_fix(mut self, file: &File) -> Option<Fix> {
+    fn into_fix(mut self, file: &File, domain: Domain) -> Option<Fix> {
         if self.len() <= 1 {
             return self.pop();
         }
@@ -491,7 +492,7 @@ impl IntoFix for Vec<Fix> {
             if fix.span.start < at {
                 return None;
             }
-            text.extend_from_slice(file.slice(Span::before(at, fix.span)));
+            text.extend_from_slice(file.slice_in(domain, Span::before(at, fix.span)));
             text.extend_from_slice(&fix.text);
             at = fix.span.end;
         }
@@ -506,8 +507,8 @@ impl<const N: usize> IntoFix for [Fix; N] {
     fn first_fix(&self) -> Option<&Fix> {
         self[..].first()
     }
-    fn into_fix(self, file: &File) -> Option<Fix> {
-        Vec::from(self).into_fix(file)
+    fn into_fix(self, file: &File, domain: Domain) -> Option<Fix> {
+        Vec::from(self).into_fix(file, domain)
     }
 }
 

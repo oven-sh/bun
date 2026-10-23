@@ -3,7 +3,7 @@
 use crate::linter::globals::{ConfigGlobals, Tables, environment};
 use crate::options::Json;
 use bun_sema::resolve::{Dialect, ScriptKind};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, OnceLock};
 
 /// ESLint's `languageOptions.sourceType`.
@@ -93,6 +93,7 @@ impl InferGlobals {
 #[derive(Clone, Debug)]
 pub(crate) struct GlobalsFromOptions {
     all: Arc<Vec<(Box<[u8]>, Global)>>,
+    order: Arc<Vec<Box<[u8]>>>,
     enabled_own: Vec<Box<[u8]>>,
     shadowed_env_globals: Vec<(Box<[u8]>, Global)>,
     envs: Vec<Box<[u8]>>,
@@ -136,6 +137,16 @@ impl GlobalsFromOptions {
                 }
             }
         }
+        let mut seen = FxHashSet::default();
+        let mut order: Vec<Box<[u8]>> = globals
+            .iter()
+            .filter(|it| seen.insert(&it.0[..]))
+            .map(|it| it.0.clone())
+            .collect();
+        // Object.keys keeps the first insertion of an overridden name, with array-index keys first.
+        crate::utils::sort::sort_by_cached_key(&mut order, |name| {
+            bun_core::fmt::js_array_index(name).unwrap_or(u32::MAX)
+        });
         crate::utils::sort::sort_unstable(&mut enabled_own_globals);
         crate::utils::sort::sort_unstable(&mut envs);
         crate::utils::sort::sort_by(&mut own_globals, |a, b| a.0.cmp(&b.0));
@@ -152,6 +163,7 @@ impl GlobalsFromOptions {
         });
         GlobalsFromOptions {
             all: Arc::new(globals),
+            order: Arc::new(order),
             enabled_own: enabled_own_globals,
             shadowed_env_globals,
             envs,
@@ -167,6 +179,8 @@ pub struct LanguageOptions {
     pub source_type: SourceType,
     /// `languageOptions.globals`, sorted by name. The globals that the ECMAScript version defines aren't listed.
     pub globals: Arc<Vec<(Box<[u8]>, Global)>>,
+    /// The same names in configuration property order. Overrides keep their first position; settings are in `globals`.
+    pub global_order: Arc<Vec<Box<[u8]>>>,
     /// The names that `globals` itself enables, not those from an `env`. Sorted.
     pub enabled_own_globals: Vec<Box<[u8]>>,
     /// With an oxlint config: the `env` setting of each variable that `globals` turns off. See
@@ -288,6 +302,14 @@ fn source_type_of(value: Option<&Json>) -> Option<SourceType> {
 }
 
 impl LanguageOptions {
+    /// The configured globals in property order, with their final settings from the sorted lookup table.
+    pub(crate) fn globals_in_order(&self) -> impl Iterator<Item = &(Box<[u8]>, Global)> {
+        self.global_order.iter().filter_map(|name| {
+            let at = self.globals.binary_search_by(|it| it.0.cmp(name)).ok()?;
+            self.globals.get(at)
+        })
+    }
+
     /// The variables that oxlint's `addGlobals` defines for a plugin, in its order: for each enabled `env` the
     /// read-only variables and then the writable ones, followed by the entries of `globals`. A name in `globals` only
     /// appears in that last group, and not at all if it's `"off"`. Unlike oxlint's own rules, plugins only get `Array`
@@ -458,6 +480,7 @@ impl LanguageOptions {
             },
             source_type,
             globals: globals.all,
+            global_order: globals.order,
             enabled_own_globals: globals.enabled_own,
             shadowed_env_globals: globals.shadowed_env_globals,
             envs: globals.envs,
@@ -508,7 +531,7 @@ impl LanguageOptions {
         options
     }
 
-    fn set_source_type(&mut self, source_type: SourceType) {
+    pub fn set_source_type(&mut self, source_type: SourceType) {
         self.source_type = source_type;
         // ESLint turns `globalReturn` off for espree in a module. Babel's parser ignores it there.
         self.global_return = wants_global_return(&self.parser_options)
@@ -641,6 +664,7 @@ impl Default for LanguageOptions {
             ecma_version: Self::LATEST_ECMA_VERSION,
             source_type: SourceType::Module,
             globals: Arc::default(),
+            global_order: Arc::default(),
             enabled_own_globals: Vec::new(),
             shadowed_env_globals: Vec::new(),
             envs: Vec::new(),

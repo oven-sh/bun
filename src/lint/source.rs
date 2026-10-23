@@ -111,7 +111,7 @@ pub enum LineBreaks {
 
 impl LineBreaks {
     /// Returns true if `\n` is the only line break in `text`.
-    fn is_plain(self, text: &[u8]) -> bool {
+    pub(crate) fn is_plain(self, text: &[u8]) -> bool {
         use bun_core::strings::{contains, contains_char};
         !contains_char(text, b'\r')
             && match self {
@@ -125,7 +125,7 @@ impl LineBreaks {
     }
 
     /// Returns the start offset of each line in `text`.
-    fn starts(self, text: &[u8], is_plain: bool) -> Vec<u32> {
+    pub(crate) fn starts(self, text: &[u8], is_plain: bool) -> Vec<u32> {
         let ends: &[u8] = match self {
             // `\n` is the only line break, as in nearly every file.
             _ if is_plain => return bun_core::strings::line_starts(text),
@@ -158,9 +158,12 @@ impl LineBreaks {
     }
 }
 
-/// A text's line starts.
-pub struct LineStarts {
-    starts: Vec<u32>,
+/// The byte order mark, as UTF-8.
+pub const BOM: &[u8] = b"\xEF\xBB\xBF";
+
+/// A text's line starts, in `S`, which owns or borrows them.
+pub struct LineStarts<S = Vec<u32>> {
+    starts: S,
     /// The last line found (0-based). The next lookup is usually near it.
     last: Cell<u32>,
 }
@@ -171,7 +174,9 @@ impl LineStarts {
         let last = Cell::new(0);
         LineStarts { starts, last }
     }
+}
 
+impl<S: std::ops::Deref<Target = [u32]>> LineStarts<S> {
     /// Returns the start of line `line` (1-based).
     #[inline]
     pub fn start_of(&self, line: u32) -> Option<u32> {
@@ -228,6 +233,73 @@ impl LineStarts {
         let between = starts.get(low + 1..high).unwrap_or_default();
         let at = low + between.partition_point(|&start| start <= offset);
         (at as u32 + 1, starts.get(at).copied().unwrap_or(0))
+    }
+}
+
+/// Lines and columns of a file other than the linted one, as ESLint counts them: in UTF-16 code units from 1, without a
+/// byte order mark. For a Svelte component, which is linted as the program it's lowered to.
+pub struct Places<'t> {
+    pub text: &'t [u8],
+    lines: LineStarts<std::borrow::Cow<'t, [u32]>>,
+}
+
+impl<'t> Places<'t> {
+    pub fn new(text: &'t [u8]) -> Places<'t> {
+        Places::with_starts(text, Places::starts_of(text).into())
+    }
+
+    /// For `text`, whose lines start at `starts`: [`Places::starts_of`].
+    pub fn with_starts(text: &'t [u8], starts: std::borrow::Cow<'t, [u32]>) -> Places<'t> {
+        Places {
+            text,
+            lines: LineStarts {
+                starts,
+                last: Cell::new(0),
+            },
+        }
+    }
+
+    /// The line starts of `text`, for [`Places::with_starts`].
+    pub fn starts_of(text: &[u8]) -> Vec<u32> {
+        let breaks = LineBreaks::EcmaScript;
+        breaks.starts(text, breaks.is_plain(text))
+    }
+
+    fn start_of_line(&self, line: u32, start: u32) -> u32 {
+        match line == 1 && self.text.starts_with(BOM) {
+            true => start.max(3),
+            false => start,
+        }
+    }
+
+    /// The line and column of `offset`.
+    pub fn position(&self, offset: u32) -> (u32, u32) {
+        let offset = offset.min(self.text.len() as u32);
+        let (line, start) = self.lines.line_at(offset);
+        let start = self.start_of_line(line, start);
+        let between = self
+            .text
+            .get(start as usize..offset as usize)
+            .unwrap_or_default();
+        (line, bun_core::strings::utf8_decoded_len_utf16(between) + 1)
+    }
+
+    /// The offset of a line and column. A column between a character's two UTF-16 code units maps to its offset plus 2,
+    /// as in [`File::offset`].
+    pub fn offset(&self, line: u32, column: u32) -> u32 {
+        let Some(start) = self.lines.start_of(line) else {
+            return self.text.len() as u32;
+        };
+        let (mut at, mut units) = (self.start_of_line(line, start) as usize, 1);
+        while units < column && at < self.text.len() {
+            let (c, size) = bun_core::lexer::char_and_size(self.text, at);
+            if c > 0xFFFF && units + 1 == column {
+                return at as u32 + 2;
+            }
+            units += if c > 0xFFFF { 2 } else { 1 };
+            at += size.max(1);
+        }
+        at as u32
     }
 }
 

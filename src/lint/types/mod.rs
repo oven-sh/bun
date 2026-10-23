@@ -83,7 +83,10 @@
 //! - [`Type::to_text`]: the order of a union's constituents, which is sorted and doesn't depend on what was checked
 //!   before. Where a long type is truncated. `typeof f` for a function with expando members.
 //! - [`Type::get_properties`] is in declaration order, own before inherited. TypeScript 7 sorts, TypeScript 6 uses
-//!   insertion order. Nothing should depend on it.
+//!   insertion order. Nothing should depend on it. A rule that reports in property order, or keys on how a type is
+//!   printed, uses [`Type::get_properties_in_insertion_order`] and [`Type::to_text_in_insertion_order`]: TypeScript
+//!   6's order, except that a union's constituents, and so the keys of a mapped type over a union (`Pick`, `Omit`,
+//!   `Record`), stay sorted, where TypeScript 6 follows the order in which it happened to create the types.
 //! - [`Signature::to_text`] prints a construct signature's `new` without being asked to.
 //! - [`Expr::resolved_signature`](crate::ast::Expr::resolved_signature) is `None` for a call of an `any` value, where
 //!   TypeScript has a signature without parameters that returns `any`. For an optional call, the signature returns what
@@ -287,11 +290,13 @@ queries! {
     fn is_related(relation: Relation, source: TypeId, target: TypeId) -> bool;
     fn base_types(ty: TypeId) -> &'a [TypeId];
     fn properties_of_type(ty: TypeId) -> &'a [SymbolRef];
+    fn properties_of_type_in_insertion_order(ty: TypeId) -> &'a [SymbolRef];
     fn property_of_type(ty: TypeId, name: &[u8]) -> Option<SymbolRef>;
     fn type_of_property_of_type(ty: TypeId, name: &[u8]) -> Option<TypeId>;
     fn index_infos_of_type(ty: TypeId) -> &'a [IndexInfoData];
     fn signatures_of_type(ty: TypeId, kind: SignatureKind) -> &'a [SigId];
     fn type_to_string(ty: TypeId, enclosing: Option<NodeRef>, flags: TypeFormatFlags) -> Vec<u8>;
+    fn type_to_string_in_insertion_order(ty: TypeId, enclosing: Option<NodeRef>, flags: TypeFormatFlags) -> Vec<u8>;
 
     // ── symbols ──
     fn symbol_info(symbol: SymbolRef) -> SymbolInfo<'a>;
@@ -533,6 +538,32 @@ pub fn with_file_and_modules<R>(
     inferred: Option<&dyn crate::linter::globals::InferredGlobals>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
+    let besides = Besides {
+        modules,
+        formatter,
+        inferred,
+        component_program: None,
+    };
+    with_file_besides(checker, file, path, language, read_library, &besides, then)
+}
+
+/// What a file of [`with_file_besides`] gets before it's linted.
+struct Besides<'c> {
+    modules: Option<&'c dyn crate::modules::Modules>,
+    formatter: Option<&'c dyn crate::formats::Formats>,
+    inferred: Option<&'c dyn crate::linter::globals::InferredGlobals>,
+    component_program: Option<ComponentProgram<'c>>,
+}
+
+fn with_file_besides<R>(
+    checker: &mut bun_sema::check::Checker<'_, '_>,
+    file: FileId,
+    path: Option<&[u8]>,
+    language: &crate::language::LanguageOptions,
+    read_library: Option<ReadLibrary<'_>>,
+    besides: &Besides<'_>,
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> Option<R> {
     let module = checker.p.files.module(file);
     let (hir, bound) = (checker.hir(file), checker.bound(file));
     if module.is_lib || hir.ran_out_of_stack || bound.ran_out_of_stack {
@@ -543,15 +574,56 @@ pub fn with_file_and_modules<R>(
     Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
         let file = File::new(path, hir, bound, atoms, language, Some(types));
-        if let Some(modules) = modules {
+        if let Some(modules) = besides.modules {
             file.set_modules(modules);
         }
-        if let Some(formatter) = formatter {
+        if let Some(formatter) = besides.formatter {
             file.set_formatter(formatter, None);
         }
-        if let Some(inferred) = inferred {
+        if let Some(inferred) = besides.inferred {
             file.set_inferred_globals(inferred);
+        }
+        if let Some(of) = &besides.component_program {
+            file.set_view(of.view);
+            file.set_svelte(of.component, of.lowered);
         }
         then(&file)
     }))
+}
+
+/// Extra information about the type-checked program file of a Svelte component.
+#[derive(Copy, Clone)]
+pub struct ComponentProgram<'c> {
+    /// What rules see of the program: [`File::view`].
+    pub view: &'c crate::ast::view::View,
+    /// [`File::svelte`]
+    pub component: &'c crate::ast::svelte::Component,
+    pub lowered: &'c crate::ast::svelte::Lowered,
+}
+
+/// [`with_file_and_modules`] for the file `file` of the component `of`, which is linted under `path`.
+pub fn with_component_file<R>(
+    checker: &mut bun_sema::check::Checker<'_, '_>,
+    (file, path): (FileId, &[u8]),
+    language: &crate::language::LanguageOptions,
+    read_library: Option<ReadLibrary<'_>>,
+    modules: Option<&dyn crate::modules::Modules>,
+    of: ComponentProgram<'_>,
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> Option<R> {
+    let besides = Besides {
+        modules,
+        formatter: None,
+        inferred: None,
+        component_program: Some(of),
+    };
+    with_file_besides(
+        checker,
+        file,
+        Some(path),
+        language,
+        read_library,
+        &besides,
+        then,
+    )
 }

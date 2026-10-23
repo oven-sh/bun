@@ -1,11 +1,13 @@
 //! Implements [`Js`] on top of the JavaScript parser. It plays the role that acorn plays for Svelte's own parser.
 
 use super::ast::{Expression, ExpressionKind, Span};
-use super::parser::{Js, ParsedExpression, Statement};
+use super::parser::{Js, ParsedExpression, ReadFor, Statement};
 use crate::html::js::Parse;
 use crate::options::{Goal, ParsePart, Part};
 use bun_lint::ast::walk::{Visitor, walk};
-use bun_lint::ast::{BinOp, Expr, ExprKind, File, FnBody, Node, Stmt, StmtKind, VarKind};
+use bun_lint::ast::{
+    BinOp, Expr, ExprKind, ExprTag, File, Flags, FnBody, Node, PropKind, Stmt, StmtKind, VarKind,
+};
 
 pub(crate) struct FromParser<'p> {
     /// Parses a program.
@@ -15,10 +17,14 @@ pub(crate) struct FromParser<'p> {
     pub(crate) is_typescript: bool,
     /// Parsing a part ran out of stack.
     pub(crate) is_nested_too_deeply: bool,
-    /// Offset of the last error, if that error is TypeScript-only syntax in JavaScript.
-    pub(crate) typescript_at: Option<usize>,
+    /// The last error, if it's TypeScript-only syntax in JavaScript: the offset where acorn stops, and where that
+    /// syntax starts.
+    pub(crate) typescript_at: Option<(usize, usize)>,
+    /// Offset of the last error, if it's the `=` of an object's shorthand property: `{ a = 1 }`.
+    pub(crate) shorthand_at: Option<usize>,
     /// Offset where the last expression was cut off before an `as`, a `satisfies` or a `!`.
     pub(crate) stopped_at: Option<usize>,
+    pub(crate) read_for: ReadFor,
 }
 
 fn kind_of(e: Expr<'_>) -> ExpressionKind {
@@ -41,7 +47,7 @@ fn kind_of(e: Expr<'_>) -> ExpressionKind {
 }
 
 /// Describes `e`, which was parsed from text that starts at offset `at` in the component.
-fn describe<'b>(file: &'b File<'b>, e: Expr<'b>, at: u32) -> Expression {
+fn describe<'b>(file: &'b File<'b>, e: Expr<'b>, at: u32, read_for: ReadFor) -> Expression {
     let span = e.span();
     // Svelte attaches the comments before a parenthesis to the `ParenthesizedExpression`, which it drops.
     let after = e.parens().next().map_or(0, |innermost| innermost.start + 1);
@@ -54,8 +60,86 @@ fn describe<'b>(file: &'b File<'b>, e: Expr<'b>, at: u32) -> Expression {
     };
     Expression {
         from: at + from,
+        has_type_info: read_for == ReadFor::Linting && has_type_info(e),
         ..Expression::new(span, kind_of(e))
     }
+}
+
+/// svelte-eslint-parser's `hasTypeInfo`: an assertion, a literal, a function whose parameters and return are typed, and
+/// expressions built from those. A loop over what's left to inspect, because the expression can nest to any depth.
+fn has_type_info(e: Expr<'_>) -> bool {
+    let mut pending: smallvec::SmallVec<[Expr<'_>; 8]> = smallvec::smallvec![e];
+    while let Some(e) = pending.pop() {
+        let typed = match e.kind() {
+            ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. }
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex(_)
+            | ExprKind::Template(_)
+            | ExprKind::Unary { .. } => true,
+            ExprKind::Fn(function) => {
+                let params = function.params_with_this().all(|it| {
+                    let is_property = it.flags().contains(Flags::PARAMETER_PROPERTY);
+                    is_property || (it.default().is_none() && it.ty().is_some())
+                });
+                match (params, function.return_type(), function.body()) {
+                    (false, ..) => false,
+                    (true, Some(_), _) => true,
+                    (true, None, FnBody::Expr(body)) => {
+                        pending.push(body);
+                        true
+                    }
+                    (true, None, _) => false,
+                }
+            }
+            ExprKind::Object(props) => {
+                for prop in props.iter() {
+                    match prop.value() {
+                        Some(value) if prop.kind() != PropKind::Shorthand => pending.push(value),
+                        _ => return false,
+                    }
+                }
+                true
+            }
+            ExprKind::Array(elements) => {
+                pending.extend(elements.iter().filter(|it| it.tag() != ExprTag::Missing));
+                true
+            }
+            ExprKind::Spread(argument) => {
+                pending.push(argument);
+                true
+            }
+            ExprKind::Cond { yes, no, .. } => {
+                pending.extend([yes, no]);
+                true
+            }
+            ExprKind::Assign { value, .. } => {
+                pending.push(value);
+                true
+            }
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => {
+                pending.push(right);
+                true
+            }
+            _ => false,
+        };
+        if !typed {
+            return false;
+        }
+    }
+    true
 }
 
 /// Finds the outermost `a as T` that ends where `e` ends. Returns the end of `a` and the start of `T`.
@@ -88,12 +172,22 @@ fn assertion_at_end(e: Expr<'_>) -> Option<(u32, u32)> {
     }
 }
 
+/// In JavaScript: where acorn stops at the first TypeScript-only syntax, and where that syntax starts.
+fn typescript_in<'a>(file: &'a File<'a>) -> Option<(u32, u32)> {
+    let starts = file.first_typescript_syntax_in_javascript()?;
+    let stops = bun_lint::linter::acorn_stops_at_typescript(file).unwrap_or(starts);
+    Some((stops, starts))
+}
+
 /// Finds the errors that acorn reports and TypeScript's parser leaves to the checker.
-struct EarlyErrors {
+struct EarlyErrors<'a> {
+    text: &'a [u8],
     is_typescript: bool,
     /// Number of non-arrow functions and classes that enclose the current node.
     depth: u32,
     first_error: Option<u32>,
+    /// True if the first error is a shorthand property's `=`.
+    is_shorthand: bool,
     /// In JavaScript, the offset of the first TypeScript `as`, `satisfies` or `!`. acorn stops before it.
     first_typescript_operator: Option<u32>,
     /// In JavaScript, the offset of the first `<T>a`, which the parser doesn't report.
@@ -109,7 +203,7 @@ fn scopes_of(node: Node<'_>) -> u32 {
     }
 }
 
-impl<'a> Visitor<'a> for EarlyErrors {
+impl<'a> Visitor<'a> for EarlyErrors<'a> {
     fn enter(&mut self, node: Node<'a>) {
         self.depth += scopes_of(node);
         let Node::Expr(e) = node else {
@@ -140,6 +234,14 @@ impl<'a> Visitor<'a> for EarlyErrors {
             }
             // "The keyword 'yield' is reserved"
             ExprKind::Ident(_) => (e.text() == b"yield").then(|| e.span().start),
+            // "Shorthand property assignments are valid only in destructuring patterns", at the `=` of `{ a = 1 }`.
+            ExprKind::Object(props) if !e.is_assignment_target() => props.iter().find_map(|it| {
+                let ExprKind::Assign { target, .. } = it.value()?.kind() else {
+                    return None;
+                };
+                let equals = bun_lint::tokens::skip_trivia(self.text, target.span().end);
+                (it.kind() == PropKind::Shorthand).then_some(equals)
+            }),
             ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => {
                 let start = e.span().start;
                 if !self.is_typescript && self.first_assertion.is_none_or(|it| start < it) {
@@ -159,8 +261,11 @@ impl<'a> Visitor<'a> for EarlyErrors {
             }
             _ => None,
         };
-        if let Some(error) = error {
-            self.first_error.get_or_insert(error);
+        if let Some(error) = error
+            && self.first_error.is_none()
+        {
+            self.first_error = Some(error);
+            self.is_shorthand = matches!(e.kind(), ExprKind::Object(_));
         }
     }
 
@@ -194,23 +299,29 @@ impl FromParser<'_> {
                 is_typescript,
             };
             let (mut result, mut stops_at, mut typescript_at) = (Err(at), None, None);
+            let mut shorthand_at = None;
             let parsed = (self.parse_part)(part, &mut |file, end| {
                 let mut early = EarlyErrors {
+                    text: file.text(),
                     is_typescript,
                     depth: 0,
                     first_error: None,
+                    is_shorthand: false,
                     first_typescript_operator: None,
                     first_assertion: None,
                 };
                 walk(file, &mut early);
                 stops_at = early.first_typescript_operator;
                 // acorn doesn't support any TypeScript syntax.
-                typescript_at = (file.first_typescript_syntax_in_javascript().into_iter())
-                    .chain(early.first_assertion)
-                    .min()
-                    .filter(|it| {
+                typescript_at = (typescript_in(file).into_iter())
+                    .chain(early.first_assertion.map(|it| (it, it)))
+                    .min_by_key(|it| it.1)
+                    .filter(|(_, it)| {
                         !is_typescript && early.first_error.is_none_or(|error| *it < error)
                     })
+                    .map(|(stops, it)| (at + stops as usize, at + it as usize));
+                shorthand_at = (early.first_error)
+                    .filter(|_| early.is_shorthand)
                     .map(|it| at + it as usize);
                 result = match (early.first_error, file.body().iter().next()) {
                     (Some(error), _) => Err(at + error as usize),
@@ -230,9 +341,13 @@ impl FromParser<'_> {
                 }
                 (None, Some(it)) => {
                     self.typescript_at = Some(it);
-                    return Err(it);
+                    return Err(it.0);
                 }
-                (None, None) => return result,
+                (None, None) => {
+                    self.shorthand_at =
+                        shorthand_at.filter(|it| matches!(result, Err(error) if error == *it));
+                    return result;
+                }
             }
         }
     }
@@ -246,13 +361,15 @@ impl FromParser<'_> {
     ) -> Result<R, usize> {
         let (mut result, mut typescript_at) = (None, None);
         self.parse.call(self.path(), program, false, &mut |file| {
-            typescript_at = file.first_typescript_syntax_in_javascript();
+            typescript_at = typescript_in(file);
             if !file.has_parse_errors() && typescript_at.is_none() {
                 result = (file.body().iter().next()).and_then(|it| read(file, it.kind()));
             }
         });
-        self.typescript_at = typescript_at.map(|it| (at + it) as usize - 1);
-        result.ok_or_else(|| self.typescript_at.unwrap_or(at as usize))
+        let in_component = |it: u32| (at + it) as usize - 1;
+        self.typescript_at =
+            typescript_at.map(|(stops, it)| (in_component(stops), in_component(it)));
+        result.ok_or_else(|| self.typescript_at.map_or(at as usize, |it| it.0))
     }
 }
 
@@ -262,6 +379,7 @@ impl Js for FromParser<'_> {
     }
 
     fn expression_at(&mut self, text: &[u8], at: usize) -> Result<ParsedExpression, usize> {
+        let read_for = self.read_for;
         self.part(
             (text.len(), at),
             Goal::Expression,
@@ -275,9 +393,9 @@ impl Js for FromParser<'_> {
                 let at = at as u32;
                 let assertion = assertion_at_end(first.unwrap_or(e));
                 Some(ParsedExpression {
-                    expression: describe(file, e, at),
+                    expression: describe(file, e, at, read_for),
                     end,
-                    first: first.map(|it| describe(file, it, at)),
+                    first: first.map(|it| describe(file, it, at, read_for)),
                     assertion: assertion.map(|it| (at + it.0, at + it.1)),
                 })
             },

@@ -136,6 +136,11 @@ impl<'a> EsNode<'a> {
         self.node.span()
     }
 
+    #[inline]
+    pub(crate) fn packed(self) -> crate::estree::PackedVNode {
+        self.node.packed()
+    }
+
     /// Calls `visit` with each ESTree node that `node` produces, outer nodes before the ones inside them. Over all of a
     /// file's nodes, that covers every ESTree node exactly once.
     pub fn for_each_at(node: Node<'a>, mut visit: impl FnMut(EsNode<'a>)) {
@@ -150,11 +155,29 @@ impl<'a> EsNode<'a> {
     }
 }
 
+impl EsNode<'_> {
+    /// The node's [`Diagnostic::twin`](crate::context::Diagnostic::twin).
+    pub(crate) fn twin(self) -> u8 {
+        let (_, span) = self.node.type_and_span();
+        self.node.twin(span)
+    }
+}
+
 impl Spanned for EsNode<'_> {
     #[inline]
     fn span(&self) -> Span {
         EsNode::span(*self)
     }
+}
+
+/// ESLint's `attributeCount` and `identifierCount` of `source`, a listener key, as `analyzeParsedSelector` counts them
+/// in esquery's parse: including where [`Selector::parse`] rejects the parse, like a class that doesn't exist, which
+/// ESLint only throws on when it has to decide whether a node matches it. `None` if esquery can't parse it.
+pub(crate) fn specificity(source: &[u8]) -> Option<(u32, u32)> {
+    let (program, root) = parse::parse(source.strip_suffix(b":exit").unwrap_or(source)).ok()?;
+    let mut analysis = compile::Analysis::default();
+    analysis.analyze(&program, root);
+    Some((analysis.attribute_count, analysis.identifier_count))
 }
 
 /// A compiled selector: ESLint's `ESQueryParsedSelector`.

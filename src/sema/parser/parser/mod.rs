@@ -277,6 +277,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     failed_at: (T, u32),
     /// `failed_at`, if that call is why the last `try_parse` rolled back.
     pub(crate) was_abandoned_at: Option<(T, u32)>,
+    /// True if that call ends the file, even in a speculative parse: [`Parser::keep_failure`].
+    is_failure_kept: bool,
 }
 
 /// `isAnExternalModuleIndicatorNode`
@@ -527,6 +529,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             has_reported: false,
             failed_at: (T::Eof, 0),
             was_abandoned_at: None,
+            is_failure_kept: false,
         }
     }
 
@@ -1049,7 +1052,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 return result;
             }
             None => self.was_abandoned_at = None,
-            Some(Rejection::Syntax) => {
+            Some(Rejection::Syntax) if !self.is_failure_kept => {
                 self.lx.rejection = None;
                 self.was_abandoned_at = Some(self.failed_at);
             }
@@ -1059,6 +1062,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.has_reported = had_reported;
         self.rollback(&checkpoint);
         None
+    }
+
+    /// Makes the current failure the file's error, even during a speculative parse: TypeScript keeps what it has read,
+    /// and reports the error.
+    pub(crate) fn keep_failure(&mut self) {
+        self.is_failure_kept = self.lx.rejection == Some(Rejection::Syntax);
     }
 
     /// `lookAhead` for a test that parses. Everything it built is discarded.

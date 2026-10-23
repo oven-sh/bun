@@ -11,7 +11,7 @@
 //! - Whitespace is what Rust's `char::is_whitespace` accepts: U+0085 counts, U+FEFF doesn't.
 
 use super::directives::{ConfigComment, Label};
-use super::message::{Data, LintMessage, Locator, RuleId, Suggestion, Suppression};
+use super::message::{Data, LintMessage, Locator, Positions, RuleId, Suggestion, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};

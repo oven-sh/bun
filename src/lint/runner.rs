@@ -1,14 +1,16 @@
 //! Runs rules on a file.
 
+use crate::ast::svelte::SvelteTag;
 use crate::ast::{
     BinOp, Case, Chain, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle,
     ImportSpec, Member, NOT_IN_TREE, Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt,
     StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
-use crate::context::{Cx, CxBase, Diagnostic, Severity};
+use crate::context::{Cx, CxBase, Diagnostic, Listened, Listener, Phase, Severity};
+use crate::estree::VNode;
 use crate::rule::{Meta, NAME_CLASSES, NodeTags, On, Rule, When, name_class};
 use crate::rule_set::{NUMBERS, RuleBits, RuleSet};
-use crate::span::Span;
+use crate::span::{Domain, Span, Spanned};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, kind_counts};
 use bun_sema::hir;
@@ -1161,6 +1163,7 @@ fn has_any_of<'a>(file: &'a File<'a>, on: &On) -> bool {
         types present_types;
         pats present_pats;
     }
+    has_any = has_any || on.svelte != 0 && file.svelte_tags_present() & on.svelte != 0;
     let (calls, members) = (on.call_name_groups(), on.member_name_groups());
     let may_have_names = (calls[3] | members[3]) != 0 && file.may_have_names_of(on);
     has_any = has_any || calls[3] != 0 && file.may_have_named(ExprTag::Call, calls, may_have_names);
@@ -1210,7 +1213,9 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
             false => None,
         };
         for &id in (found.as_deref()).unwrap_or_else(|| file.exprs_of(EXPR_TAGS[kind])) {
-            rule.expr(grouped_expr(file, id), cx);
+            let e = grouped_expr(file, id);
+            listens_to(file, e);
+            rule.expr(e, cx);
         }
         if let Some(found) = found {
             file.by_kind().spare.set(found);
@@ -1219,40 +1224,55 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
     if on.has(On::OPTIONAL_CHAINS) {
         for kind in CHAINED {
             for &id in file.chained_exprs_of(kind) {
-                rule.optional_chain(grouped_expr(file, id), cx);
+                let e = grouped_expr(file, id);
+                listens_to(file, e);
+                rule.optional_chain(e, cx);
             }
         }
     }
     each_bit(on.binaries, |op| {
         for &id in file.binaries_at(op) {
-            rule.binary(grouped_expr(file, id), cx);
+            let e = grouped_expr(file, id);
+            listens_to(file, e);
+            rule.binary(e, cx);
         }
     });
     each_bit(on.unaries, |op| {
         for &id in file.unaries_at(op) {
-            rule.unary(grouped_expr(file, id), cx);
+            let e = grouped_expr(file, id);
+            listens_to(file, e);
+            rule.unary(e, cx);
         }
     });
     each_bit(on.stmts, |kind| {
         for &id in file.stmts_of(StmtTag::ALL[kind]) {
-            rule.stmt(Stmt::from_raw(file, id), cx);
+            let statement = Stmt::from_raw(file, id);
+            listens_to(file, statement);
+            rule.stmt(statement, cx);
         }
     });
     each_bit(on.types, |kind| {
         for &id in file.types_of(TypeTag::ALL[kind]) {
-            rule.ty(TypeNode::from_raw(file, id), cx);
+            let ty = TypeNode::from_raw(file, id);
+            listens_to(file, ty);
+            rule.ty(ty, cx);
         }
     });
     each_bit(on.pats, |kind| {
         for &id in file.pats_of(PatTag::ALL[kind]) {
-            rule.pat(Pat::from_raw(file, id), cx);
+            let pat = Pat::from_raw(file, id);
+            listens_to(file, pat);
+            rule.pat(pat, cx);
         }
     });
     macro_rules! sorts {
         ($($sort:ident $every:ident $method:ident;)*) => {
             if on.has($(On::$sort)|*) {
                 $(if on.has(On::$sort) {
-                    file.$every(|it| rule.$method(it, cx));
+                    file.$every(|it| {
+                        listens_to(file, it);
+                        rule.$method(it, cx)
+                    });
                 })*
             }
         };
@@ -1270,6 +1290,7 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
         IMPORT_SPECS every_import_spec import_spec;
         EXPORT_SPECS every_export_spec export_spec;
     }
+    file.sink.listening.take();
     if on.has(On::SYMBOLS) {
         for symbol in file.symbols() {
             rule.symbol(symbol, cx);
@@ -1283,9 +1304,33 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
     }
     if !on.nodes.is_empty() {
         for node in nodes_of(file, on.nodes) {
+            listens_to(file, node);
             rule.node(node, cx);
         }
     }
+    each_bit(on.svelte, |tag| {
+        for node in file.svelte_nodes_of(SvelteTag::ALL[tag]) {
+            listens_to(file, node);
+            rule.svelte_node(node, cx);
+        }
+    });
+    file.sink.listening.take();
+}
+
+/// Sets the listener that reports from here on are created in: one that's called with `node`.
+#[inline(always)]
+fn listens_to<'a>(file: &'a File<'a>, node: impl Spanned) {
+    if !file.sink.notes_listeners.get() {
+        return;
+    }
+    let node = match (node.packed_node(), node.svelte_id()) {
+        (Some(node), _) => Listened::Node(node),
+        (None, Some(id)) => Listened::Svelte(id),
+        (None, None) => Listened::Unknown,
+    };
+    file.sink
+        .listening
+        .set(Listener::new(node, Phase::AsReported));
 }
 
 /// A rule running on a file, after `call_unordered`.
@@ -1307,16 +1352,19 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
 
     #[inline]
     fn enter(&mut self, node: Node<'a>) {
+        listens_to(node.file(), node);
         self.rule.enter(node, &mut self.cx);
     }
 
     #[inline]
     fn exit(&mut self, node: Node<'a>) {
+        listens_to(node.file(), node);
         self.rule.exit(node, &mut self.cx);
     }
 
     fn finish(&mut self) {
         if self.finishes {
+            self.cx.base.file.sink.listening.take();
             self.rule.finish(&mut self.cx);
         }
     }
@@ -1635,38 +1683,22 @@ pub(crate) fn run<'a, S: RuleSet>(
 /// The indexes into `diagnostics`, sorted by position.
 ///
 /// `when` is for a tool that runs its rules differently from ESLint. It has an entry per rule that overrides what the
-/// rule and its reports specify. If it's empty, those apply.
-pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
-    // ESLint sorts only by line and column, which leaves reports that start at the same position in the order they were
-    // made: first listeners called on entering a node, outer node first, then listeners called on leaving, inner node
-    // first, then reports made when the program ends, rule by rule. 51 bits.
-    let within_start = |it: &Diagnostic| {
-        // The node is the reported span unless the report specifies another. A node that starts earlier is entered
-        // before all nodes that start here, and left after them.
-        let named = it.details.as_deref().and_then(|it| it.listened_on);
-        let node = named.filter(|_| when.is_empty()).unwrap_or(it.span);
-        let is_outer = u64::from(node.start < it.span.start);
-        let (end, rule) = (u64::from(node.end), u64::from(it.rule));
-        // There are fewer than 1 << 15 rules.
-        let longer_first = ((u64::from(u32::MAX) - end) << 16) | rule;
-        match when.get(it.rule as usize).copied().unwrap_or(it.when) {
-            When::Once => rule << 32,
-            When::Entering => ((2 - is_outer) << 48) | longer_first,
-            When::EnteringBySelector => (2 << 48) | longer_first | (1 << 15),
-            When::EnteringShorterFirst => (2 << 48) | (end << 16) | rule,
-            When::Leaving => ((3 + is_outer) << 48) | (end << 16) | rule,
-            When::LeavingCodePath => (3 << 48) | (end << 16) | (1 << 15) | rule,
-            When::AtTheEnd => (5 << 48) | (rule << 32) | end,
-            When::Last => (6 << 48) | longer_first,
-        }
-    };
+/// rule and its reports specify. If it's empty, those apply. `in_program` maps a
+/// [component](crate::span::Domain::Original) offset to the linted text, which is where its reports are ordered among
+/// the others.
+pub(crate) fn sorted<'a>(
+    file: &'a File<'a>,
+    diagnostics: &[Diagnostic],
+    when: &[When],
+    in_program: &dyn Fn(u32) -> u32,
+) -> Vec<u32> {
     // Each one's start, with its index in the list in the low 32 bits.
     let starts = diagnostics.iter().zip(0u64..);
     let mut order: Vec<u64> = starts
-        .map(|(it, at)| (u64::from(it.span.start) << 32) | at)
+        .map(|(it, at)| (u64::from(in_linted(it, it.span, in_program).start) << 32) | at)
         .collect();
     order.sort_unstable();
-    let mut same_start: Vec<u128> = Vec::new();
+    let mut same_start: Vec<(Order<'_>, u32)> = Vec::new();
     for tied in order.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
         if tied.len() < 2 {
             continue;
@@ -1674,11 +1706,17 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
         same_start.clear();
         same_start.extend(tied.iter().filter_map(|&packed_index| {
             let it = diagnostics.get(packed_index as u32 as usize)?;
-            Some((u128::from(within_start(it)) << 32) | u128::from(packed_index as u32))
+            let mut visit = reported_on(it, when, in_program);
+            // The twin index of an `Identifier` in ESLint's tree is only computed here.
+            if let Listened::Identifier(node, span, twin) = it.listener.node {
+                let found = identifier_at(node.unpack(file), span, twin);
+                visit.twin = found.map_or(0, |it| it.twin(span));
+            }
+            Some((Order::of(visit, u64::from(it.rule)), packed_index as u32))
         }));
         same_start.sort();
         for (packed_index, sorted) in tied.iter_mut().zip(&same_start) {
-            *packed_index = u64::from(*sorted as u32);
+            *packed_index = u64::from(sorted.1);
         }
     }
     order
@@ -1686,6 +1724,401 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
         .map(|packed_index| packed_index as u32)
         .collect()
 }
+
+/// `it`'s `span` in the linted text.
+fn in_linted(it: &Diagnostic, span: Span, in_program: &dyn Fn(u32) -> u32) -> Span {
+    match it.domain {
+        Domain::Linted => span,
+        Domain::Original => Span::new(in_program(span.start), in_program(span.end)),
+    }
+}
+
+/// The position of ESLint's traversal when a listener reports: the node, and which of its listeners.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct Visit<'s> {
+    pub(crate) when: When,
+    /// True if the node starts before the reported range.
+    pub(crate) is_outer: bool,
+    /// The node's end, in the linted text, and for merging with another linter's reports, in the file it's built from
+    /// ([`listener_key`]).
+    pub(crate) end: u32,
+    /// How many of the node's ancestors have its range. `None` if unknown.
+    pub(crate) nesting: Option<u8>,
+    /// How many of the node's parent's children that ESLint visits before it have its range: 1 for the value of `{a}`.
+    pub(crate) twin: u8,
+    /// The listener's key, in [`sorted`], if it's a selector that's more than a node kind.
+    pub(crate) selector: Option<&'s [u8]>,
+    pub(crate) stage: Stage,
+}
+
+/// A listener's position among the ones ESLint calls on entering or leaving one node: code path event listeners come
+/// before selector listeners, except for the events that end the node's code path, which come after them.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub enum Stage {
+    Event,
+    #[default]
+    Selector,
+    Ending,
+}
+
+/// What `it` was reported on. The node is the reported one unless the report names another. For `when`, see [`sorted`].
+pub(crate) fn reported_on(
+    it: &Diagnostic,
+    when: &[When],
+    in_program: &dyn Fn(u32) -> u32,
+) -> Visit<'static> {
+    let details = it.details.as_deref().filter(|_| when.is_empty());
+    let named = details.and_then(|it| it.listened_on);
+    let (node, span) = (
+        in_linted(it, named.unwrap_or(it.span), in_program),
+        in_linted(it, it.span, in_program),
+    );
+    Visit {
+        when: when.get(it.rule as usize).copied().unwrap_or(it.when),
+        is_outer: node.start < span.start,
+        end: node.end,
+        nesting: it.nesting.filter(|_| when.is_empty()),
+        twin: it.twin,
+        selector: details.and_then(|it| it.selector).map(str::as_bytes),
+        stage: Stage::Selector,
+    }
+}
+
+/// What the ESLint listener `it` stands for was called with, and when ([`Diagnostic::listener`]), in positions of the
+/// file `file`'s program is built from, which are the positions of another linter's reports about it: where the merge
+/// with those places it. The listener's key is separate: `None` if it's unknown, and for a code path event, which has
+/// none.
+pub(crate) fn listener_key<'a>(
+    it: &Diagnostic,
+    file: &'a File<'a>,
+) -> (Visit<'static>, Option<std::borrow::Cow<'static, [u8]>>) {
+    use std::borrow::Cow;
+    let reported = in_file(file, it.domain, it.span);
+    let details = it.details.as_deref();
+    let Listener { node, phase } = match it.listener.node {
+        // A report the rule makes when a code path ends: use the reported node.
+        Listened::Unknown if it.when == When::LeavingCodePath => {
+            let root = it.node.map(|node| code_path_root(node.unpack(file)));
+            let node = root.map_or(Listened::Unknown, |it| Listened::Node(it.packed()));
+            Listener::new(node, Phase::Event(When::LeavingCodePath))
+        }
+        _ => it.listener,
+    };
+    let (mut when, is_event) = match phase {
+        Phase::AsReported => (it.when, false),
+        Phase::Entering => (When::Entering, false),
+        Phase::Leaving => (When::Leaving, false),
+        Phase::Event(when) => (when, true),
+    };
+    let listened = match node {
+        Listened::Node(node) => {
+            let node = node.unpack(file);
+            VNode::from_listened(node).map(|it| {
+                let mut of = from_es_node(file, it);
+                // svelte-eslint-parser has `$:` as a separate node, with the labeled statement's range.
+                if let Node::Stmt(statement) = node
+                    && statement.is_svelte_reactive()
+                {
+                    of.names = Some(("SvelteReactiveStatement", "SvelteReactiveStatement:exit"));
+                }
+                of
+            })
+        }
+        Listened::Es(node) => Some(from_es_node(file, VNode::unpack(node, file))),
+        Listened::Identifier(node, span, twin) => {
+            identifier_at(node.unpack(file), span, twin).map(|it| from_es_node(file, it))
+        }
+        Listened::Svelte(id) => file.svelte_node(id).map(|node| OfNode {
+            span: node.span(),
+            nesting: Spanned::nesting(&node),
+            twin: 0,
+            names: Some((node.tag().type_name(), node.tag().exit_name())),
+            is_program: node.tag() == SvelteTag::Program,
+        }),
+        Listened::Unknown => None,
+    };
+    let is_program = listened.as_ref().is_some_and(|it| it.is_program);
+    let ends_code_path = || match node {
+        Listened::Node(node) => crate::code_path::starts_code_path(node.unpack(file)),
+        _ => is_program,
+    };
+    let stage = match when {
+        _ if !is_event => Stage::Selector,
+        When::Entering => Stage::Event,
+        When::Leaving if !ends_code_path() => Stage::Event,
+        _ => Stage::Ending,
+    };
+    // ESLint ends the `Program`'s code path after every `Program:exit` listener.
+    when = match when {
+        When::LeavingCodePath if is_program => When::AfterTheEnd,
+        When::Leaving if is_program && is_event => When::AfterTheEnd,
+        When::Leaving if is_program => When::AtTheEnd,
+        when => when,
+    };
+    let (span, nesting, twin, names) = match listened {
+        _ if when == When::AtTheEnd => (program_in_file(file), Some(0), 0, None),
+        Some(of) => (of.span, of.nesting, of.twin, of.names),
+        // The listened node's position as the report gives it, which `Report::listened_in_component` sets along with
+        // its nesting.
+        None => {
+            let named = details.and_then(|it| it.listened_on);
+            (
+                named.map_or(reported, |node| in_file(file, it.domain, node)),
+                named.and(it.nesting),
+                0,
+                None,
+            )
+        }
+    };
+    let stated = details.and_then(|it| match &it.listener_key {
+        Some(key) => Some(Cow::Owned(key.to_vec())),
+        None => it.selector.map(|it| Cow::Borrowed(it.as_bytes())),
+    });
+    let type_key = match when {
+        _ if is_event => None,
+        When::Entering => names.map(|it| it.0),
+        When::Leaving => names.map(|it| it.1),
+        When::AtTheEnd => Some("Program:exit"),
+        _ => None,
+    };
+    let visit = Visit {
+        when,
+        is_outer: span.start < reported.start,
+        end: span.end,
+        nesting,
+        twin,
+        selector: None,
+        stage,
+    };
+    (
+        visit,
+        stated.or_else(|| type_key.map(|it| Cow::Borrowed(it.as_bytes()))),
+    )
+}
+
+/// `span` in `domain`, as a span in the file that `file`'s program is built from. A code node that ends in glue, like a
+/// statement the lowering ends with a `;`, ends where its code ends.
+fn in_file<'a>(file: &'a File<'a>, domain: Domain, span: Span) -> Span {
+    match (domain, file.view()) {
+        (Domain::Linted, Some(view)) => {
+            let start = view.in_file(span.start);
+            let end = match span.end.checked_sub(1).filter(|_| span.end > span.start) {
+                Some(last) if view.is_glue(last) => view.in_file(last),
+                Some(last) => view.in_file(last) + 1,
+                None => start,
+            };
+            Span::new(start, end.max(start))
+        }
+        _ => span,
+    }
+}
+
+/// The node whose code path contains `node`: itself if one starts there, otherwise the enclosing function, static block
+/// or field initializer, or the file.
+fn code_path_root(node: Node<'_>) -> Node<'_> {
+    let mut at = node;
+    while !matches!(at, Node::File(_)) && !crate::code_path::starts_code_path(at) {
+        at = at.parent();
+    }
+    at
+}
+
+/// The range of ESLint's `Program`, in the file.
+fn program_in_file<'a>(file: &'a File<'a>) -> Span {
+    match file.svelte_root() {
+        Some(root) => root.span(),
+        None => VNode::program(file).span(),
+    }
+}
+
+/// What [`listener_key`] needs from the node a listener was called with.
+struct OfNode {
+    span: Span,
+    /// [`Visit::nesting`]
+    nesting: Option<u8>,
+    /// [`Visit::twin`]
+    twin: u8,
+    /// The keys of a listener for its type, on entering and on leaving it.
+    names: Option<(&'static str, &'static str)>,
+    is_program: bool,
+}
+
+/// Among the ESLint tree nodes built from `node`, the `Identifier` at `span` that comes after `twin` others there.
+fn identifier_at<'a>(node: Node<'a>, span: Span, mut twin: u8) -> Option<VNode<'a>> {
+    let mut found = None;
+    VNode::for_each_with_type_at(node, &mut |it, node_type| {
+        let is_it = node_type == crate::estree::NodeType::Identifier && it.span() == span;
+        if found.is_none() && is_it {
+            match twin {
+                0 => found = Some(it),
+                _ => twin -= 1,
+            }
+        }
+    });
+    found
+}
+
+fn from_es_node<'a>(file: &'a File<'a>, node: VNode<'a>) -> OfNode {
+    let (node_type, span) = node.type_and_span();
+    let names = Some((node_type.name(), node_type.exit_name()));
+    match node.base() {
+        Node::File(_) => OfNode {
+            span: program_in_file(file),
+            nesting: Some(0),
+            twin: 0,
+            names,
+            is_program: true,
+        },
+        _ => OfNode {
+            span: in_file(file, Domain::Linted, span),
+            nesting: Some(nesting_of(file, node, span)),
+            twin: node.twin(span),
+            names,
+            is_program: false,
+        },
+    }
+}
+
+/// How many of the ancestors of `node`, whose program range is `span`, ESLint has with that range: in the program, and
+/// where the program has `node` as a component's code, in the component around that code. Synthesized nodes aren't
+/// ancestors ([`Node::is_hidden`]).
+fn nesting_of<'a>(file: &'a File<'a>, node: VNode<'a>, span: Span) -> u8 {
+    let span = in_file(file, Domain::Linted, span);
+    let mut count = 0;
+    let mut at = node;
+    while let Some(parent) = at.parent() {
+        if matches!(parent.base(), Node::File(_)) {
+            if let Some((owner, _)) = file.svelte_owner(node.base()) {
+                let around = std::iter::once(owner).chain(owner.ancestors());
+                count += around.take_while(|it| it.span() == span).count();
+            }
+            break;
+        }
+        if in_file(file, Domain::Linted, parent.span()) != span {
+            break;
+        }
+        count += 1;
+        at = parent;
+    }
+    u8::try_from(count).unwrap_or(u8::MAX)
+}
+
+/// [`sorted`]'s order for reports that start at one position: ESLint's traversal order, whether the rule runs natively
+/// or in ESLint's own `Linter`. ESLint sorts by line and column only, which leaves reports that start at the same
+/// position in report order: in listeners on entering a node, the outer node first; then in listeners on leaving one,
+/// the inner first; then in `Program:exit`, rule by rule; then when the program's code path ends. A node that starts
+/// earlier (`is_outer`) is entered before all nodes that start here, and left after them. Of nodes with the same range,
+/// the outer one is entered first and left last. One node's listeners are ordered by [stage](Stage), then by selector,
+/// less specific first (`ESQueryParsedSelector#compare`), and listeners with the same selector in rule order: `rule` is
+/// the rule's index in the config, or among the natively run rules.
+#[derive(Clone, Debug)]
+pub(crate) struct Order<'s> {
+    place: u64,
+    nesting: u32,
+    /// [`Visit::twin`]: ESLint enters and leaves the earlier of two siblings with the same range first.
+    twin: u32,
+    stage: Stage,
+    /// esquery's `attributeCount` and `identifierCount`
+    specificity: (u32, u32),
+    selector: &'s [u8],
+    rule: u64,
+    then: u64,
+}
+
+impl<'s> Order<'s> {
+    pub(crate) fn of(visit: Visit<'s>, rule: u64) -> Order<'s> {
+        let (is_outer, end) = (u64::from(visit.is_outer), u64::from(visit.end));
+        let longer_first = u64::from(u32::MAX) - end;
+        let outer_first = u32::from(visit.nesting.unwrap_or(0));
+        let twin = u32::from(visit.twin);
+        // A code path's end comes after the listeners on leaving its node.
+        let inner_first = 2 * (u32::from(u8::MAX) - outer_first);
+        let (place, nesting, then) = match visit.when {
+            When::Once => (0, 0, 0),
+            When::Entering => (((2 - is_outer) << 33) | longer_first, outer_first, 0),
+            When::EnteringShorterFirst => ((2 << 33) | end, 0, 0),
+            When::Leaving => (((3 + is_outer) << 33) | end, inner_first, 0),
+            When::LeavingCodePath => (((3 + is_outer) << 33) | end, inner_first + 1, 0),
+            When::AtTheEnd => (5 << 33, 0, end),
+            When::AfterTheEnd => (6 << 33, 0, end),
+            When::Last => ((7 << 33) | longer_first, 0, 0),
+        };
+        let is_from_listener =
+            matches!(visit.when, When::Entering | When::Leaving | When::AtTheEnd);
+        let selector = visit.selector.filter(|_| is_from_listener);
+        Order {
+            place,
+            nesting,
+            twin,
+            stage: visit.stage,
+            specificity: selector.map_or((0, 1), specificity),
+            selector: selector.unwrap_or_default(),
+            rule,
+            then,
+        }
+    }
+}
+
+/// esquery's specificity of `selector`, as ESLint reads it. Each selector is parsed once per thread, because messages
+/// are ordered by it one at a time, and a run has few selectors.
+fn specificity(selector: &[u8]) -> (u32, u32) {
+    thread_local! {
+        static KNOWN: std::cell::RefCell<rustc_hash::FxHashMap<Box<[u8]>, (u32, u32)>> = Default::default();
+    }
+    KNOWN.with_borrow_mut(|known| {
+        if let Some(&found) = known.get(selector) {
+            return found;
+        }
+        let found = crate::selector::specificity(selector).unwrap_or((0, 1));
+        known.insert(selector.into(), found);
+        found
+    })
+}
+
+impl Order<'_> {
+    /// [`Ord::cmp`], where `by_text` says whether selectors with the same specificity are ordered by their text.
+    pub(crate) fn cmp_by(&self, other: &Self, by_text: bool) -> std::cmp::Ordering {
+        (
+            self.place,
+            self.nesting,
+            self.twin,
+            self.stage,
+            self.specificity,
+        )
+            .cmp(&(
+                other.place,
+                other.nesting,
+                other.twin,
+                other.stage,
+                other.specificity,
+            ))
+            .then_with(|| match by_text {
+                true => bun_core::strings::order_utf16(self.selector, other.selector),
+                false => std::cmp::Ordering::Equal,
+            })
+            .then((self.rule, self.then).cmp(&(other.rule, other.then)))
+    }
+}
+
+impl Ord for Order<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cmp_by(other, true)
+    }
+}
+
+impl PartialOrd for Order<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Order<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Order<'_> {}
 
 /// One bit per row of [`On::ROWS`].
 type Rows = [u64; On::ROWS.div_ceil(64)];
@@ -1746,6 +2179,7 @@ fn rows_of<'a>(
         10 import_specs;
         11 export_specs;
     }
+    add(On::SVELTE, u64::from(file.svelte_tags_present() != 0));
     rows
 }
 

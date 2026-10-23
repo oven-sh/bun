@@ -703,8 +703,13 @@ let groups = [];
 // The rule whose code is running, for the message of what it throws.
 let currentRule = null;
 let currentNode = null;
+let currentListening = null;
+let fileIsSvelte = false;
 // `currentRule.rule.create()` is being called.
 let isCreating = false;
+// True while the returned value is checked and its listeners are read, which ESLint's `runRules` does outside of its
+// per-rule error reporting, so a throw then is reported without a rule.
+let isReadingListeners = false;
 
 function addListeners(entry, listeners) {
   for (const key of Object.keys(listeners)) {
@@ -715,7 +720,7 @@ function addListeners(entry, listeners) {
       groupByKey.set(key, (group = []));
       groups.push(group);
     }
-    group.push({ entry, listener });
+    group.push({ entry, listener, key });
   }
 }
 
@@ -767,9 +772,12 @@ function traverse() {
     }
     const node = (currentNode = nodes[what]);
     for (let i = 0; i < group.length; i++) {
-      const { entry, listener } = group[i];
+      const { entry, listener, key } = group[i];
       currentRule = entry;
+      if (fileIsSvelte)
+        currentListening = { node, when: key.endsWith(":exit") ? LEAVING : ENTERING, selector: key, ofCodePath: false };
       listener(node);
+      currentListening = null;
     }
   }
 }
@@ -925,10 +933,12 @@ function openCodePaths() {
       else if (isStart(kind) && at >= included) replaceCurrentSegments(at);
     }
     const node = nodes[events[at + 1] >>> 3];
-    for (const { entry, listener } of calls) {
+    for (const { entry, listener, key } of calls) {
       currentRule = entry;
+      if (fileIsSvelte) currentListening = { node, when: CODE_PATH_EVENTS.get(key), selector: null, ofCodePath: true };
       if (kind === 6) listener(first, segments[events[at + 3]], node);
       else listener(first, node);
+      currentListening = null;
     }
     if (isLegacy) {
       if (kind === 1) open.pop();
@@ -950,8 +960,9 @@ function reset() {
   nodes = [];
   groupByKey = new Map();
   groups = [];
-  currentRule = currentNode = null;
-  isCreating = false;
+  currentRule = currentNode = currentListening = null;
+  fileIsSvelte = false;
+  isCreating = isReadingListeners = false;
   // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
   afterHooks = [];
   resetScopes();
@@ -961,6 +972,7 @@ function reset() {
 function lint() {
   const { 0: flags, 1: plugins, 2: settingsId, 3: count, 4: pathLength, 5: physicalLength } = messageWords(6);
   const words = messageWords(6 + plugins + count);
+  fileIsSvelte = (flags & 512) !== 0;
   // Only the plugins that have a rule which runs on the file, and which no module exports.
   const missing = Array.from(words.subarray(6, 6 + plugins)).filter(position => !loadedPlugins.has(position));
   if (missing.length > 0) return missing;
@@ -988,6 +1000,17 @@ function lint() {
   for (let position = 0; position < count; position++) {
     const entry = entries[position];
     entry.position = entry.reporter.position = position;
+    entry.own.report = fileIsSvelte
+      ? (...args) => {
+          const context = reportContext(args, currentListening, sourceCode.visitorKeys);
+          native.reportContext(context ? JSON.stringify(context.on) : null);
+          try {
+            return entry.reporter.report(...args);
+          } finally {
+            native.reportContext(null);
+          }
+        }
+      : entry.reporter.report;
     currentRule = entry;
     // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
     // under one of them.
@@ -999,11 +1022,15 @@ function lint() {
         ? listenersOfOnce(entry)
         : entry.rule.create(fileContext.extend(entry.own));
     isCreating = false;
+    isReadingListeners = true;
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }
     addListeners(entry, listeners);
+    isReadingListeners = false;
   }
+  // `create_on_block` in host.rs: only create the rules.
+  if ((flags & 1024) !== 0) return null;
   try {
     if (groups.length > 0) traverse();
   } finally {
@@ -1099,6 +1126,7 @@ function handle(kind) {
 }
 
 function respond(kind) {
+  if (kind >= COMPILE_SVELTE) return handleForSvelte();
   if (kind >= FORMAT_WITH_PRETTIER) return handleForPrettier();
   if (kind >= LINT_WITH_ESLINT) return handleForEslint(kind);
   if (kind >= PREPROCESS) return handleForProcessor(kind);
@@ -1128,6 +1156,7 @@ function respond(kind) {
     if (fileSettings?.freezes)
       return FAILED + JSON.stringify([currentRule?.position ?? null, saidByOxlint(error), line]);
     if (isCreating) return FAILED + JSON.stringify(thrownInCreate(error));
+    if (isReadingListeners) return FAILED + JSON.stringify([null, messageOf(error), null]);
     return FAILED + JSON.stringify([currentRule?.position ?? null, messageOf(error), line]);
   } finally {
     reset();

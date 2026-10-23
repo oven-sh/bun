@@ -35,6 +35,31 @@ function serializeLanguageOptions({ parser, parserOptions, ...rest }) {
   return out;
 }
 
+// The parsers keyed by a script's `lang`, as svelte-eslint-parser reads them from `parserOptions.parser`, which holds
+// them as is because JSON can't represent a module namespace. For an object, the fields `objectId` reads, which the
+// options merge into the parser of an earlier object: `{ name, version, meta: { name, version } }` without the
+// `undefined` ones, and `false` for anything that's neither a string nor `null`. `null` for a parser that isn't an
+// object. An `undefined` parser is left out, so the previous one stays.
+function parserMetadata(parsers) {
+  const isObject = value => value !== null && typeof value === "object";
+  const given = (object, keys) =>
+    Object.fromEntries(
+      keys
+        .filter(key => object[key] !== undefined)
+        .map(key => [key, typeof object[key] === "string" || object[key] === null ? object[key] : false]),
+    );
+  const metadata = parser => {
+    if (typeof parser === "string") return parser;
+    if (!isObject(parser)) return null;
+    const out = given(parser, ["name", "version"]);
+    const { meta } = parser;
+    if (meta !== undefined) out.meta = isObject(meta) ? given(meta, ["name", "version"]) : meta === null ? null : false;
+    return out;
+  };
+  const entries = Object.entries(parsers).filter(([, parser]) => parser !== undefined);
+  return Object.fromEntries(entries.map(([lang, parser]) => [lang, metadata(parser)]));
+}
+
 // What a worker has to know of a parser to stand in for it until a rule calls it: `module` and `export`, the module that exports
 // it, if there is one, the names of its functions, and what else it has that is JSON.
 function describeParser(parser) {
@@ -200,6 +225,8 @@ function serializeConfigObject(given, index) {
   if (languageOptions && typeof languageOptions === "object") {
     out.languageOptions = serializeLanguageOptions(languageOptions);
     if (languageOptions.parser) out.$parser = describeParser(languageOptions.parser);
+    const inner = languageOptions.parserOptions?.parser;
+    if (inner && typeof inner === "object" && !objectId(inner)) out.$parsers = parserMetadata(inner);
   }
   if (processor !== undefined) {
     out.processor = typeof processor === "string" ? processor : ((processor && objectId(processor)) ?? "unknown");

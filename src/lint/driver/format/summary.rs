@@ -156,6 +156,7 @@ pub(crate) fn suppression_errors(has_unused: bool, has_new: bool) -> Option<File
         text: Some(Vec::new()),
         line_starts: None,
         run_keys: Vec::new(),
+        processed: Vec::new(),
         is_fixed: false,
         fixes: 0,
         fixed_text: None,

@@ -122,7 +122,7 @@ For one run, use `--plugin`. Next to an ESLint config its prefix is the name you
 bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
 ```
 
-With an ESLint config, eight plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, `json`, and `markdown`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
+With an ESLint config, nine plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, `json`, `markdown`, and, on Svelte components, `svelte` (see [Svelte](#svelte)). Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
 
 `bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
 
@@ -209,10 +209,42 @@ Bun hands every other file to the `eslint` package in your project, so keep `esl
 
 - A language from another plugin, such as `css/css`.
 - A JSON or Markdown rule that isn't built in, such as one of your own. The whole file then goes to `eslint`.
-- A parser for another file type, such as `vue-eslint-parser`, `svelte-eslint-parser`, or `yaml-eslint-parser`.
+- A parser for another file type, such as `vue-eslint-parser` or `yaml-eslint-parser`.
 - `eslint-plugin-html`.
+- A Svelte component that Bun doesn't lint itself. See [Svelte](#svelte).
 
 You still run `bun lint`, and these files show up in the same report. `bun lint --doctor` shows how many files go to `eslint`.
+
+## Svelte
+
+If an ESLint config lints `.svelte` files with `svelte-eslint-parser`, Bun lints the components itself:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import svelte from "eslint-plugin-svelte";
+
+export default [...svelte.configs.recommended];
+```
+
+Rules see a component as `svelte-eslint-parser` 1.9 presents it: the same nodes, tokens, scopes and positions. On a component:
+
+- The [`eslint-plugin-svelte` rules](/lint/rules#svelte) that Bun has run natively instead of the package's, under whatever name the config gives the plugin, and so does its processor, `processor: "svelte/svelte"`. So do ESLint's core rules and the other built-in rules.
+- Other plugins' rules run in JavaScript, on the same tree, if the installed `eslint` runs no rule on the component.
+- In `.svelte.js` and `.svelte.ts` files, the runes are globals. Bun runs its own rules there, and the installed `eslint` runs the plugins' rules.
+- `svelte/no-unused-props`, `svelte/require-store-reactive-access` and `svelte/no-navigation-without-resolve` read types if `parserOptions` has `project` or `projectService` and `@typescript-eslint/parser` reads the scripts. Bun generates the same TypeScript for the component that `svelte-eslint-parser` generates for them.
+- `svelte/no-unused-svelte-ignore` compiles the component with the project's `svelte/compiler` and preprocessors, which is JavaScript. It only does so if the config file loads `eslint-plugin-svelte`.
+
+The installed `eslint` runs the rest on the same component, and the reports are merged in ESLint's order:
+
+- The `eslint-plugin-svelte` rules that Bun doesn't have. `bun lint --doctor` counts the others as native.
+- The rules that need types, such as typescript-eslint's typed rules.
+- Another plugin's rule that a comment in the component turns on or configures.
+- Other plugins' rules, on a component where one of them asks for parser services that only `eslint` has, such as typescript-eslint's or `svelte-eslint-parser`'s.
+
+If `eslint` runs one of these rules on a component, it runs all other plugins' rules there too, because ESLint sets up every rule before it runs any.
+
+The whole component goes to `eslint` if `svelte-eslint-parser` or Svelte would read it differently from Bun: with a `language`, a `compilerOptions.runes` that's a function, a `<template LANG="pug">` whose attribute isn't in lower case, or `generics` that typescript-eslint reads differently. A fix that turns a component into one of those hands it over too. Without `eslint`, such a component is skipped and named in a warning.
+
+Another plugin's `processor` runs on a component as on any other file, even if the config names it `svelte/svelte`. See [Processors](#processors). `eslint` lints a block that holds the component, with all its rules. A block with a file name of its own gets the config for that name, so Bun may lint it natively.
 
 ## Processors
 
@@ -229,7 +261,7 @@ export default [
 
 ## Notes
 
-- **JavaScript rules don't get types.** `parserServices.program` is `null`, even with `--type-aware`. A rule that calls typescript-eslint's `getParserServices()` doesn't run, and `bun lint` exits with code `2`.
+- **JavaScript rules don't get types.** `parserServices.program` is `null`, even with `--type-aware`. A rule that calls typescript-eslint's `getParserServices()` doesn't run, and `bun lint` exits with code `2`. On a Svelte component, the installed `eslint` runs it instead.
 - **Plugins run on several threads.** Each thread imports the plugin, so module-level state is per thread, not per run.
 - **A renamed built-in plugin runs in JavaScript.** For example, `@antfu/eslint-config` registers `@typescript-eslint` as `ts`.
 - **A rule that throws ends the run** with exit code `2`. With an oxlint config, Bun reports the error for that file and continues.

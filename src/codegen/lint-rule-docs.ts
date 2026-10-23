@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -44,7 +45,11 @@ export type Rule = {
   kind: string | null;
   category: string | null;
   fix: string;
+  /** True if it reads types: it needs them, or it's an eslint-plugin-svelte rule that uses them when the config
+  /** provides them. */
   type_aware: boolean;
+  /** True if it needs types to do anything. */
+  requires_types: boolean;
   deprecated: boolean;
   on_by_default: "error" | "warn" | false;
   docs_url: string;
@@ -147,7 +152,8 @@ export type Config = {
  * that bunfig.toml can't turn on.
  */
 export function configFor(rule: Rule, written: string): Config | null {
-  if (rule.deprecated || rule.languages.length || written.includes("\n{/* never reports */}\n")) return null;
+  if (rule.deprecated || rule.languages.length || isOfComponents(rule) || written.includes("\n{/* never reports */}\n"))
+    return null;
   const documented = documentedIn(written);
   const schema = rule.schema ?? inferredSchema(documented, examplesOf(pageOf(rule), written, 1).examples);
   const severity = rule.on_by_default || "error";
@@ -173,7 +179,7 @@ function configSection(rule: Rule, { toggle, needsOptions, defaults }: Config) {
   const parts = ["## Configure"];
   if (rule.on_by_default === "error") parts.push("On by default as an error. To turn it off:");
   else if (rule.on_by_default) parts.push("On by default as a warning. To turn it off:");
-  else if (rule.type_aware)
+  else if (rule.requires_types)
     parts.push("Off by default. This rule needs types, so turning it on makes `bun lint` type check your code first.");
   else if (needsOptions) parts.push("Off by default. It needs an option:");
   else parts.push("Off by default. To turn it on:");
@@ -228,6 +234,48 @@ export default [
   }`;
 }
 
+/** An eslint-plugin-svelte rule, which runs on the Svelte components that an ESLint config lints with
+/** svelte-eslint-parser. */
+export const isOfComponents = (rule: Rule) => pageOf(rule).startsWith("svelte/");
+
+/** The "## Configure" section of an eslint-plugin-svelte rule. Only an ESLint config lints components. */
+function componentSection(rule: Rule) {
+  const config = rule.type_aware
+    ? `import svelte from "eslint-plugin-svelte";
+import ts from "typescript-eslint";
+
+export default [
+  ...svelte.configs.recommended,
+  {
+    files: ["**/*.svelte"],
+    languageOptions: {
+      parserOptions: { parser: ts.parser, projectService: true, extraFileExtensions: [".svelte"] },
+    },
+    rules: { ${JSON.stringify(rule.id)}: "error" },
+  },
+];`
+    : `import svelte from "eslint-plugin-svelte";
+
+export default [
+  ...svelte.configs.recommended,
+  { rules: { ${JSON.stringify(rule.id)}: "error" } },
+];`;
+  const needs = rule.requires_types
+    ? ". It reads types, so the scripts of a component need `@typescript-eslint/parser` and a project:"
+    : rule.type_aware
+      ? ". It uses types where the scripts of a component have `@typescript-eslint/parser` and a project:"
+      : ":";
+  return `## Configure
+
+Off by default. It runs on the Svelte components that an ESLint config lints with \`svelte-eslint-parser\`, in the place of the rule of \`eslint-plugin-svelte\`${needs}
+
+{/* skip */}
+
+\`\`\`js eslint.config.js
+${config}
+\`\`\``;
+}
+
 /** A page's body without the generated section. */
 export function writtenPart(body: string) {
   const [start, end] = [body.indexOf(`${CONFIG_START}\n`), body.indexOf(`${CONFIG_END}\n\n`)];
@@ -239,8 +287,12 @@ export function bodyFor(rule: Rule, body: string) {
   const written = writtenPart(body);
   const config = configFor(rule, written);
   const at = written.search(/^## Examples$/m);
-  if ((!config && !rule.languages.length) || at < 0) return written;
-  const configure = config ? configSection(rule, config) : languageSection(rule);
+  if ((!config && !rule.languages.length && !isOfComponents(rule)) || at < 0) return written;
+  const configure = config
+    ? configSection(rule, config)
+    : isOfComponents(rule)
+      ? componentSection(rule)
+      : languageSection(rule);
   const section = `${CONFIG_START}\n\n${configure}\n\n${CONFIG_END}\n\n`;
   return written.slice(0, at) + section + written.slice(at);
 }
@@ -265,8 +317,15 @@ const PLUGINS: Record<string, string> = {
   "jest": "Jest",
   "vitest": "Vitest",
   "prettier": "Prettier",
+  "svelte": "Svelte",
   "json": "JSON",
   "markdown": "Markdown",
+};
+
+/** The index's note on a plugin's rules, shown before their table. */
+const NOTES: Record<string, string> = {
+  svelte:
+    "The rules of `eslint-plugin-svelte`. Bun runs them in the place of the package's on the Svelte components that an ESLint config lints with `svelte-eslint-parser`, under whatever name the config gives the plugin. See [Svelte](/lint/plugins#svelte).\n\n",
 };
 
 /** Contents of `index.mdx`: a table of every rule, grouped by plugin. */
@@ -278,9 +337,9 @@ export function indexFor(rules: Rule[]) {
       .sort((a, b) => (a.id < b.id ? -1 : 1))
       .map(
         rule =>
-          `| [\`${rule.id}\`](/lint/rules/${pageOf(rule)}) | ${cell(rule.description)} | ${rule.on_by_default || ""} | ${fixable(rule.fix) === "no" ? "" : fixable(rule.fix)} | ${rule.type_aware ? "yes" : ""} |`,
+          `| [\`${rule.id}\`](/lint/rules/${pageOf(rule)}) | ${cell(rule.description)} | ${rule.on_by_default || ""} | ${fixable(rule.fix) === "no" ? "" : fixable(rule.fix)} | ${rule.requires_types ? "yes" : rule.type_aware ? "when available" : ""} |`,
       );
-    return `## ${name}\n\n${rows.length} rules.\n\n| Rule | Description | Default | Fixable | Needs types |\n| --- | --- | --- | --- | --- |\n${rows.join("\n")}\n`;
+    return `## ${name}\n\n${NOTES[plugin] ?? ""}${rows.length} rules.\n\n| Rule | Description | Default | Fixable | Needs types |\n| --- | --- | --- | --- | --- |\n${rows.join("\n")}\n`;
   });
   return `---
 title: "Lint rules"
@@ -314,6 +373,8 @@ export type Example = {
   languageOptions?: Record<string, unknown>;
   /** Fake packages to install next to the example (name to version). For rules that check installed versions. */
   packages?: Record<string, string>;
+  /** Lint the component with eslint-plugin-svelte's processor, `processor: "svelte/svelte"`. */
+  processor?: boolean;
   /** Extra files to write next to the example. */
   files: Record<string, string>;
 };
@@ -327,7 +388,7 @@ export type Example = {
  * - `{/* skip *\/}`: don't run this block.
  *
  * `bad` and `good` can be followed by JSON with `options`, `count`, `filename`, `compilerOptions`, `root`, `config`,
- * `settings`, `language`, `languageOptions` or `packages`. A page with `{/* never reports *\/}` on its own line doesn't need a `bad` example.
+ * `settings`, `language`, `languageOptions`, `packages` or `processor`. A page with `{/* never reports *\/}` on its own line doesn't need a `bad` example.
  */
 export function examplesOf(page: string, body: string, firstLine: number): { examples: Example[]; problems: string[] } {
   const [examples, problems]: [Example[], string[]] = [[], []];
@@ -357,7 +418,7 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
     while (end < lines.length && !lines[end].startsWith(fence[1])) end++;
     const code = lines.slice(i + 1, end).join("\n") + "\n";
     if (!pending) {
-      if (/^([cm]?[jt]s|[jt]sx)$/.test(fence[2]))
+      if (/^([cm]?[jt]s|[jt]sx|svelte)$/.test(fence[2]))
         problems.push(`line ${firstLine + i}: ${fence[2]} block has no marker (bad, good, file or skip)`);
     } else if (pending.word === "file") {
       files[String(pending.meta)] = code;
@@ -373,6 +434,7 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
         settings,
         languageOptions,
         packages,
+        processor,
       } = pending.meta;
       examples.push({
         page,
@@ -389,6 +451,7 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
         settings,
         languageOptions,
         packages,
+        processor,
         files,
       });
       files = {};
@@ -439,9 +502,12 @@ const joinsPaths = new Set(["import/named", "import/no-relative-packages"]);
 export async function lintExamples(dir: string, examples: Example[], byPage: Map<string, Rule>, lint: Lint) {
   const outcomes = new Map<Example, Outcome>();
   const nameOf = (it: Example) => `${it.page.replaceAll("/", "__")}__${it.line}`;
-  // Those in another language are below an ESLint config of their own.
+  // Examples in another language, and those of eslint-plugin-svelte rules, run under their own ESLint config.
   const languagesOf = (it: Example) => byPage.get(it.page)!.languages;
-  const directoryOf = (it: Example) => join(dir, ...(languagesOf(it).length ? ["languages"] : []), nameOf(it));
+  const isInComponents = (it: Example) => isOfComponents(byPage.get(it.page)!);
+  const rootOf = (it: Example) => (it.packages?.svelte ? `svelte-${it.packages.svelte}` : "svelte");
+  const below = (it: Example) => (languagesOf(it).length ? ["languages"] : isInComponents(it) ? [rootOf(it)] : []);
+  const directoryOf = (it: Example) => join(dir, ...below(it), nameOf(it));
   const put = (path: string, content: string) => (
     mkdirSync(dirname(path), { recursive: true }),
     writeFileSync(path, content)
@@ -458,9 +524,13 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
     for (const [name, content] of Object.entries(it.files)) put(join(directoryOf(it), name), content);
     for (const [name, version] of Object.entries(it.packages ?? {}))
       put(join(directoryOf(it), "node_modules", name, "package.json"), JSON.stringify({ name, version }));
+    // The SvelteKit rules look for it among the project's dependencies.
+    if (isInComponents(it) && it.packages && !it.files["package.json"])
+      put(join(directoryOf(it), "package.json"), JSON.stringify({ devDependencies: it.packages }));
     // Escape `*/` in options like `**/*.js`, or it would close the comment.
     const setting = JSON.stringify(["error", ...it.options]).replaceAll("*/", "*\\/");
-    const enabled = languagesOf(it).length ? it.code : `${it.code}\n/* eslint ${rule.id}: ${setting} */\n`;
+    const isConfigured = languagesOf(it).length || isInComponents(it);
+    const enabled = isConfigured ? it.code : `${it.code}\n/* eslint ${rule.id}: ${setting} */\n`;
     put(join(directoryOf(it), it.filename), enabled);
     if (!rule.type_aware) continue;
     const compilerOptions = { ...typed, ...it.compilerOptions };
@@ -495,7 +565,82 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
       `${imports.join("\n")}\nexport default [\n${objects.join(",\n")}\n];\n`,
     );
   }
-  const native = examples.filter(it => it.config !== "oxlint" && !languagesOf(it).length);
+  // The Svelte version is that of the `svelte` next to eslint-plugin-svelte, so each version gets its own directory.
+  const inComponents = examples.filter(isInComponents);
+  const componentRoots = Map.groupBy(inComponents, it => rootOf(it));
+  for (const [name, part] of componentRoots) {
+    const version = part[0].packages?.svelte ?? "5.57.2";
+    const objects = part.map(it => {
+      const rule = byPage.get(it.page)!;
+      const parserOptions = rule.type_aware
+        ? "{ parser: ts, projectService: true, extraFileExtensions: ['.svelte'] }"
+        : "{ parser: ts }";
+      return `  { files: [${JSON.stringify(`${nameOf(it)}/${it.filename}`)}], languageOptions: { parser, parserOptions: ${parserOptions} },${it.processor ? ' processor: "svelte/svelte",' : ""} settings: ${JSON.stringify(it.settings ?? {})}, rules: { ${JSON.stringify(rule.id)}: ${JSON.stringify(["error", ...it.options])} } }`;
+    });
+    const root = join(dir, name);
+    put(join(root, "package.json"), JSON.stringify({ devDependencies: { svelte: version } }));
+    put(
+      join(root, "eslint.config.mjs"),
+      `import parser from "svelte-eslint-parser";\nimport ts from "@typescript-eslint/parser";\nimport svelte from "eslint-plugin-svelte";\nexport default [\n  { plugins: { svelte } },\n${objects.join(",\n")}\n];\n`,
+    );
+    // Nothing calls the packages, so stand-ins are enough: the native rules replace eslint-plugin-svelte's.
+    const ofSvelte = [...byPage.values()].filter(isOfComponents);
+    const rules = ofSvelte.map(rule => {
+      const schema = JSON.stringify(rule.schema ?? []);
+      return `${JSON.stringify(rule.value)}: { meta: { schema: ${schema} }, create() { throw new Error("ran in ESLint"); } }`;
+    });
+    const standIn = (name: string, main: string, more: object = {}) => {
+      put(
+        join(root, "node_modules", name, "package.json"),
+        JSON.stringify({ name, version: "0.0.0", main: "index.js", ...more }),
+      );
+      put(join(root, "node_modules", name, "index.js"), main);
+    };
+    standIn(
+      "eslint-plugin-svelte",
+      `const svelte = { preprocess: text => [text], postprocess: ([messages]) => messages, supportsAutofix: true };
+module.exports = { meta: { name: "eslint-plugin-svelte" }, rules: { ${rules.join(", ")} }, processors: { svelte } };`,
+    );
+    const throws = (name: string) =>
+      `module.exports = { meta: { name: ${JSON.stringify(name)} }, parseForESLint() { throw new Error("parsed in ESLint"); } };`;
+    standIn("svelte-eslint-parser", throws("svelte-eslint-parser"));
+    // A component is only linted if `eslint` is installed, for the parts Bun passes to it.
+    standIn("eslint", `exports.Linter = class { verify() { throw new Error("linted by ESLint"); } };`);
+    standIn("@typescript-eslint/parser", throws("typescript-eslint/parser"));
+    // `svelte/no-unused-svelte-ignore` asks the project's compiler, which here warns about each `<img>` without an
+    // `alt`.
+    standIn(
+      "svelte",
+      `exports.VERSION = ${JSON.stringify(version)};
+exports.compile = code => {
+  const at = offset => {
+    const before = code.slice(0, offset);
+    return { line: before.split("\\n").length, column: offset - before.lastIndexOf("\\n") - 1, character: offset };
+  };
+  const warnings = [...code.matchAll(/<img(?![^>]*alt)[^>]*>/g)].map(it => ({
+    code: "a11y_missing_attribute",
+    start: at(it.index),
+    end: at(it.index + it[0].length),
+  }));
+  return { warnings };
+};`,
+      {
+        version,
+        exports: {
+          ".": "./index.js",
+          "./compiler": "./index.js",
+          "./store": { types: "./store.d.ts", default: "./index.js" },
+          "./package.json": "./package.json",
+        },
+      },
+    );
+    // The stores' types, for the rules that read types.
+    put(
+      join(root, "node_modules", "svelte", "store.d.ts"),
+      "export interface Readable<T> { subscribe(run: (value: T) => void, invalidate?: () => void): () => void }\nexport interface Writable<T> extends Readable<T> { set(value: T): void }\nexport function writable<T>(value: T): Writable<T>;\n",
+    );
+  }
+  const native = examples.filter(it => it.config !== "oxlint" && !languagesOf(it).length && !isInComponents(it));
   const together = native.filter(it => !it.root);
   const runs = [
     ...[false, true].map(typed => ({
@@ -507,6 +652,7 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
       .filter(it => it.root)
       .map(it => ({ cwd: directoryOf(it), typed: byPage.get(it.page)!.type_aware, part: [it] })),
     { cwd: join(dir, "languages"), typed: false, part: inLanguages },
+    ...[...componentRoots].map(([name, part]) => ({ cwd: join(dir, name), typed: false, part })),
   ];
   for (const it of examples) if (it.root && !it.files["package.json"]) put(join(directoryOf(it), "package.json"), "{}");
   for (const { cwd, typed, part } of runs) {
@@ -662,7 +808,8 @@ if (import.meta.main) {
     const examples = [...byPage.keys()].flatMap(
       page => examplesIn(page, readFileSync(join(pagesRoot, page + ".mdx"), "utf8"))?.examples ?? [],
     );
-    const dir = mkdtempSync(join(tmpdir(), "bun-lint-rule-docs-"));
+    // The paths it reports for a component are real paths.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "bun-lint-rule-docs-")));
     try {
       put(
         join(pagesRoot, "reports.json"),

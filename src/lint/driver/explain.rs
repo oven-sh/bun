@@ -137,7 +137,10 @@ pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
                 b"category",
                 category.map_or(Json::Null, |it| text(it.as_bytes())),
             ),
-            (b"type_aware", Json::Bool(meta.requires_types)),
+            (
+                b"type_aware",
+                Json::Bool(meta.requires_types || meta.runs_where_types_are()),
+            ),
             (b"fix", text(fix)),
             (
                 b"default",
@@ -148,6 +151,8 @@ pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
             ),
             (b"docs_url", text(&meta.docs_url())),
             (b"id", text(&names.id)),
+            // oxlint's `type_aware` is also true for a rule that uses types when the config provides them.
+            (b"requires_types", Json::Bool(meta.requires_types)),
             (
                 b"aliases",
                 Json::Array(names.aliases.iter().map(|it| text(it)).collect()),
@@ -296,6 +301,8 @@ fn facts(
     }
     if meta.requires_types {
         facts.push("needs types");
+    } else if meta.runs_where_types_are() {
+        facts.push("uses types when available");
     }
     if meta.is_deprecated {
         facts.push("deprecated");

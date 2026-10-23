@@ -73,6 +73,8 @@ namespace {
 // The tree as src/lint/js_plugin/ast.rs writes it: eight words, then the parts whose lengths these are.
 struct LintTree {
     uint32_t count, fieldCount, listCount, stringCount;
+    // The last nodes are in no field of another: copies, whose fields have nodes before them.
+    uint32_t detached;
     std::span<const uint8_t> numbers;
     std::span<const uint32_t> starts, ends, parents, fields, lists, strings;
     // The nodes whose properties are in the other order, ascending.
@@ -92,6 +94,9 @@ struct LintTree {
         listCount = words[2];
         stringCount = words[3];
         uint64_t numberCount = words[4], extraLength = words[5], alternateCount = words[6];
+        detached = words[7];
+        if (detached && detached >= count)
+            return false;
         uint64_t size = header * 4 + numberCount * 8 + (uint64_t(count) * 3 + fieldCount + listCount + stringCount + alternateCount) * 4 + count + extraLength;
         if (size > bytes.size())
             return false;
@@ -143,6 +148,8 @@ public:
         case 0:
             switch (number) {
             case 0:
+            // `PRESENT_UNDEFINED`: the same value, in a field that a layout that leaves out undefined ones still has.
+            case 6:
                 return m_absent;
             case 1:
                 return jsNull();
@@ -178,6 +185,8 @@ public:
         }
         case 7:
             return units(number);
+        case 12:
+            return strings(number, start, end);
         default:
             return made(word & 15, number, start, end);
         }
@@ -261,6 +270,35 @@ private:
         if (!regExp->isValid())
             return jsNull();
         return RegExpObject::create(m_vm, m_globalObject->regExpStructure(), regExp);
+    }
+
+    // An array of the strings whose words are at `at` in the lists, after their number.
+    JSValue strings(uint32_t at, uint32_t start, uint32_t end)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (at >= m_tree.lists.size() || m_tree.lists[at] >= m_tree.lists.size() - at)
+            return {};
+        uint32_t length = m_tree.lists[at];
+        MarkedArgumentBuffer items;
+        items.ensureCapacity(length);
+        for (uint32_t i = 1; i <= length; ++i) {
+            uint32_t word = m_tree.lists[at + i];
+            // Only strings: no word refers to the list again.
+            if ((word & 15) != 3 && (word & 15) != 4 && (word & 15) != 0)
+                return {};
+            JSValue item = value(word, start, end);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!item)
+                return {};
+            items.append(item);
+        }
+        if (items.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(m_globalObject, scope);
+            return {};
+        }
+        JSArray* result = constructArray(m_globalObject, static_cast<ArrayAllocationProfile*>(nullptr), items);
+        RETURN_IF_EXCEPTION(scope, {});
+        return result;
     }
 
     JSValue list(uint32_t at)
@@ -532,16 +570,17 @@ __attribute__((minsize)) JSObject* LintNodeState::makeTemplate(JSGlobalObject* g
     return like;
 }
 
-__attribute__((minsize)) JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* host, LayoutKind kind)
+__attribute__((minsize)) JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, bool isSvelte)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (kind == OxlintJavaScript)
         kind = Oxlint;
-    if (JSObject* made = m_visitorKeys[kind].get())
+    size_t slot = isSvelte && kind != Oxlint ? Oxlint + 1 + (kind == Espree) : kind;
+    if (JSObject* made = m_visitorKeys[slot].get())
         return made;
     JSObject* all = constructEmptyObject(globalObject);
-    m_visitorKeys[kind].set(vm, host, all);
+    m_visitorKeys[slot].set(vm, host, all);
     auto add = [&](uint32_t typeName, uint32_t type) {
         MarkedArgumentBuffer keys;
         if (type >= typeCount()) {
@@ -566,7 +605,7 @@ __attribute__((minsize)) JSObject* LintNodeState::visitorKeys(JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, void());
         all->putDirect(vm, Identifier::fromString(vm, AtomString(name(typeName))), list);
     };
-    auto order = m_visitorKeyOrders[kind];
+    auto order = m_visitorKeyOrders[slot];
     for (size_t i = 0; i < order.size(); i += 2) {
         add(order[i], order[i + 1]);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -628,8 +667,10 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     Vector<uint8_t> parentOffsets(count);
     size_t alternatesLeft = tree.alternates.size();
 
-    // What is in a node has a higher number.
-    for (uint32_t id = count; id--;) {
+    // What is in a node of the tree has a higher number. The detached nodes come after it.
+    uint32_t reachable = count - tree.detached;
+    for (uint32_t step = 0; step < count; ++step) {
+        uint32_t id = step < reachable ? reachable - 1 - step : step;
         uint8_t type = tree.types[id];
         const auto& layout = state.layout(kind, type);
         const uint32_t* words = tree.fields.data() + offsets[id];
@@ -679,7 +720,7 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     }
     for (uint32_t id = 1; id < count; ++id)
         asObject(nodes->getIndexQuickly(id))->putDirectOffset(vm, parentOffsets[id], nodes->getIndexQuickly(tree.parents[id]));
-    host->sourceCode.setTree(vm, host, nodes, tree.starts, tree.ends, tree.parents);
+    host->sourceCode.setTree(vm, host, nodes, tree.starts.first(reachable), tree.ends.first(reachable), tree.parents.first(reachable));
     return nodes;
 }
 
@@ -719,7 +760,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintVisitorKeys, (JSGlobalObject * globalObject, Call
     LintHost* host = LintHost::from(globalObject);
     // A number that the JIT has made can be a double.
     uint32_t kind = callFrame->argument(0).isNumber() ? JSC::toUInt32(callFrame->argument(0).asNumber()) : 0;
-    if (kind >= LintNodeState::visitorKeyKinds || !host->nodes.isLoaded())
+    if (kind >= LintNodeState::layoutKinds || !host->nodes.isLoaded())
         return throwVMTypeError(globalObject, scope, "The layouts are not as expected"_s);
     JSObject* keys = host->nodes.visitorKeys(globalObject, host, static_cast<LintNodeState::LayoutKind>(kind));
     RETURN_IF_EXCEPTION(scope, {});

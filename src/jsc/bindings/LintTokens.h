@@ -33,8 +33,13 @@ enum class LintTokenKind : uint8_t {
     Line,
     Block,
     Shebang,
+    // svelte-eslint-parser's, in the markup of a component.
+    HTMLText,
+    HTMLIdentifier,
+    HTMLComment,
+    MustacheKeyword,
 };
-static constexpr size_t lintTokenKindCount = 15;
+static constexpr size_t lintTokenKindCount = 19;
 
 // How the object for a token or a comment is laid out. It's what the parser of the real tool makes, which depends on the kind.
 struct LintTokenShape {
@@ -47,8 +52,10 @@ struct LintTokenShape {
         TypeScriptRegex,
         OxlintToken,
         OxlintComment,
+        // What svelte-eslint-parser makes of the markup.
+        SvelteToken,
     };
-    static constexpr size_t kindCount = 8;
+    static constexpr size_t kindCount = 9;
 
     JSC::WriteBarrier<JSC::Structure> structure;
     // What's in `loc`. With ESLint a CustomGetterSetter, which the location replaces when it's first read. oxlint has a getter.

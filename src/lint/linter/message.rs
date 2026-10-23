@@ -7,7 +7,7 @@ use crate::js_plugin;
 use crate::options::Json;
 use crate::oxlint_help::{Help, Part};
 use crate::rule::{Meta, Plugin};
-use crate::span::Span;
+use crate::span::{Domain, Span};
 use bun_core::printer::json_stringify;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -207,9 +207,60 @@ pub struct LintMessage {
     /// comments. This is the message's 1-based position in that sequence. 0 means it doesn't come from a rule and is
     /// printed first. `u32::MAX` means it's about a comment.
     pub reported: u32,
+    /// The text that its positions, fix, suggestions, labels and claim are in.
+    pub domain: Domain,
+    /// For a message in the [file](Domain::Original) a program is lowered from, while that program is linted: its start
+    /// in the program, which is where the program's comments apply to it. Lowering keeps source order, so it's ordered
+    /// among the program's messages as it is among the file's.
+    pub anchor: Option<(u32, u32)>,
+    /// For a message from ESLint's own `Linter`: what it was reported on, which orders it among the native rules'
+    /// messages that start at the same position ([`LintOptions::residual`](super::LintOptions::residual)). For a native
+    /// rule's message in a file that's linted again for the rules that read other files
+    /// ([`LintOptions::again`](super::LintOptions::again)): what ESLint would have reported it on, which orders those
+    /// rules' reports among it.
+    pub reported_on: Option<ReportedOn>,
+}
+
+/// When ESLint's traversal reported a message: in a node's listener, `when` ([`When::Entering`], [`When::Leaving`],
+/// [`When::LeavingCodePath`], [`When::AtTheEnd`] or [`When::AfterTheEnd`]), whether the node starts before the message,
+/// where it ends in [`LintMessage::domain`]'s text, how many of its ancestors have its range (`None` if unknown), the
+/// listener's key (none for a code path event), and the listener's position among the node's listeners.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ReportedOn {
+    pub when: crate::rule::When,
+    pub is_outer: bool,
+    pub end: u32,
+    pub nesting: Option<u8>,
+    /// How many of the node's parent's children that ESLint visits before it have its range.
+    pub twin: u8,
+    pub selector: Option<Box<[u8]>>,
+    pub stage: crate::runner::Stage,
+    /// For a native rule, its position among the config's rules, as [`merge_with_residual`](super::merge_with_residual)
+    /// counts. For a message from ESLint's own `Linter`, its rule's position in the config.
+    pub rank: Option<u64>,
 }
 
 impl LintMessage {
+    /// Where the linted text's comments apply to it: [`LintMessage::anchor`], or its start.
+    #[inline]
+    pub fn place_in_linted(&self) -> (u32, u32) {
+        match (self.domain, self.anchor) {
+            (Domain::Original, Some(anchor)) => anchor,
+            _ => (self.line, self.column),
+        }
+    }
+
+    /// [`LintMessage::sort`] by [`LintMessage::place_in_linted`], for the linted text's comments.
+    pub fn sort_in_linted(messages: &mut [LintMessage]) {
+        let place = |it: &LintMessage| {
+            let (line, column) = it.place_in_linted();
+            (line as i32, column as i32)
+        };
+        if !messages.is_sorted_by_key(place) {
+            crate::utils::sort::sort_by_key(messages, place);
+        }
+    }
+
     /// Removes from `messages` what a rule without types reports about a node that the typed rule of its
     /// [pair](crate::rule_set::Pairs) also reports. Its fix and suggestions move to the typed rule's report. Returns
     /// true if anything was removed.
@@ -322,7 +373,29 @@ impl Default for LintMessage {
             details: None,
             constant_help: None,
             reported: 0,
+            domain: Domain::Linted,
+            anchor: None,
+            reported_on: None,
         }
+    }
+}
+
+/// Lines and columns.
+pub(crate) trait Positions {
+    /// The line, and the 1-based column.
+    fn position(&self, offset: u32) -> (u32, u32);
+
+    /// Same, for `span`'s start and end.
+    #[inline]
+    fn positions(&self, span: Span) -> ((u32, u32), (u32, u32)) {
+        (self.position(span.start), self.position(span.end))
+    }
+}
+
+impl Positions for crate::source::Places<'_> {
+    #[inline]
+    fn position(&self, offset: u32) -> (u32, u32) {
+        crate::source::Places::position(self, offset)
     }
 }
 
@@ -331,22 +404,23 @@ pub(crate) struct Locator<'a> {
     file: &'a File<'a>,
 }
 
-impl<'a> Locator<'a> {
-    pub(crate) fn new(file: &'a File<'a>) -> Self {
-        Locator { file }
-    }
-
-    /// The line, and the 1-based column.
-    pub(crate) fn position(&self, offset: u32) -> (u32, u32) {
+impl Positions for Locator<'_> {
+    #[inline]
+    fn position(&self, offset: u32) -> (u32, u32) {
         let at = self.file.position(offset);
         (at.line, at.column + 1)
     }
 
-    /// The same for `span`'s start and end.
     #[inline]
-    pub(crate) fn positions(&self, span: Span) -> ((u32, u32), (u32, u32)) {
+    fn positions(&self, span: Span) -> ((u32, u32), (u32, u32)) {
         let (start, end) = self.file.positions(span);
         ((start.line, start.column + 1), (end.line, end.column + 1))
+    }
+}
+
+impl<'a> Locator<'a> {
+    pub(crate) fn new(file: &'a File<'a>) -> Self {
+        Locator { file }
     }
 
     /// `createLintingProblem`: a message from the linter itself at `span`.
@@ -376,6 +450,9 @@ impl<'a> Locator<'a> {
             details: None,
             constant_help: None,
             reported: 0,
+            domain: Domain::Linted,
+            anchor: None,
+            reported_on: None,
         }
     }
 }

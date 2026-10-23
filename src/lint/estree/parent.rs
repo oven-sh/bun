@@ -5,6 +5,7 @@ use crate::ast::{
     BinOp, Expr, ExprKind, FnKind, Func, List, Modifier, Node, Param, Stmt, StmtKind, TypeKind,
     TypeNode, TypeParam,
 };
+use crate::span::Span;
 use smallvec::{SmallVec, smallvec};
 
 /// Returns the node that has `func`'s parameters, type parameters and return type as fields.
@@ -214,6 +215,7 @@ impl<'a> VNode<'a> {
         use Part::*;
         let main = self.with(Main);
         Some(match (self.base, self.part) {
+            (_, Svelte(_) | SvelteKey | Generic) => return super::svelte::parent(self),
             (Node::File(_), _) => return None,
 
             // Parts that work the same for every kind of base node.
@@ -336,6 +338,30 @@ impl<'a> VNode<'a> {
             (_, Main) => VNode::new(self.base.parent(), Main),
             _ => main,
         })
+    }
+
+    /// The number of its parent's children that ESLint visits before it and that have its range, which is `span` in the
+    /// program: [`Diagnostic::twin`](crate::context::Diagnostic::twin). For `{a}` in a component, the program has the
+    /// value, and the key only exists in ESLint's tree.
+    pub(crate) fn twin(self, span: Span) -> u8 {
+        let file = self.file();
+        if let Some((owner, code)) = file.svelte_owner(self.base)
+            && code.node() == Some(self.base)
+        {
+            return u8::from(owner.tag() == crate::ast::svelte::SvelteTag::ShorthandAttribute);
+        }
+        let Some(parent) = self.parent() else {
+            return 0;
+        };
+        let (mut twin, mut is_found) = (0u8, false);
+        parent.for_each_child(|child| {
+            if is_found || child == self {
+                is_found = true;
+            } else if child.span() == span {
+                twin = twin.saturating_add(1);
+            }
+        });
+        twin
     }
 
     /// Calls `visit` with each child, in ESLint's traversal order.

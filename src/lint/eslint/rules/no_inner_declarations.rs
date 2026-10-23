@@ -2,44 +2,109 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow variable or `function` declarations in nested blocks.
-pub struct NoInnerDeclarations {
+pub struct NoInnerDeclarations(Config);
+
+pub const MOVE_DECL_TO_ROOT: Message =
+    Message::new("moveDeclToRoot", "Move {{type}} declaration to {{body}} root.");
+
+/// The options, and the check. eslint-plugin-svelte's rule of the same name is this one, except that a top-level
+/// statement in a component's script counts as at the root.
+pub struct Config {
     is_both: bool,
     allows_block_scoped_functions: bool,
     has_options: bool,
     /// An oxlint option.
     allows_namespaces: bool,
+    /// True if a top-level statement in a script has the `Program` as its parent, not the `SvelteScriptElement`.
+    scripts_are_roots: bool,
 }
 
-const MOVE_DECL_TO_ROOT: Message =
-    Message::new("moveDeclToRoot", "Move {{type}} declaration to {{body}} root.");
-
-/// True if it's directly in the file, a function body or a static block, or it's exported.
-fn is_at_root(statement: Stmt) -> bool {
-    matches!(statement.parent(), Node::File(_) | Node::Func(_)) || statement.is_exported()
+/// What [`Config::finding`] finds: `{{type}}`, and the reported position.
+pub struct Finding {
+    pub kind: &'static str,
+    /// The keyword, for oxlint. Otherwise the statement.
+    pub keyword: Option<Span>,
 }
 
-/// ESLint's `getAllowedBodyDescription`.
-fn get_allowed_body_description<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, NoInnerDeclarations>) -> &'static str {
-    let enclosing_function = cx.state.find(Node::Stmt(statement), |_, parent| parent.as_func().map(Func::kind));
-    match enclosing_function {
-        Some(FnKind::StaticBlock) => "class static block body",
-        Some(_) => "function body",
-        None => "program",
+/// The kind of the innermost function around a node.
+pub type State<'a> = AncestorMemo<'a, FnKind>;
+
+impl Config {
+    pub fn new(options: &Options) -> Config {
+        Config {
+            is_both: options.str(0) == Some("both"),
+            allows_block_scoped_functions: options.object(1).str("blockScopedFunctions") != Some("disallow"),
+            has_options: !options.is_empty(),
+            allows_namespaces: options.object(1).str("namespaces") == Some("allow"),
+            scripts_are_roots: false,
+        }
     }
-}
 
-impl NoInnerDeclarations {
+    /// For eslint-plugin-svelte's rule.
+    pub fn new_for_svelte(options: &Options) -> Config {
+        Config {
+            scripts_are_roots: true,
+            ..Config::new(options)
+        }
+    }
+
+    /// The part of [`NoInnerDeclarations::ON`] the options listen to.
+    pub fn narrow(&self) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Fn]);
+        if self.is_both {
+            on = on.stmts(&[StmtTag::Var]);
+        }
+        on
+    }
+
+    /// The finding for `statement`, a function or a `var`, if it isn't at the root.
+    pub fn finding<'a>(&self, statement: Stmt<'a>, file: &'a File<'a>) -> Option<Finding> {
+        let language = file.language();
+        if language.is_oxlint {
+            return self.finding_as_oxlint(statement, file);
+        }
+        let kind = match statement.kind() {
+            StmtKind::Fn(func) => {
+                if !func.has_body() || self.is_at_root(statement) {
+                    return None;
+                }
+                if self.allows_block_scoped_functions
+                    && language.ecma_version >= 2015
+                    && func.scope().and_then(Scope::parent).is_some_and(Scope::is_strict)
+                {
+                    return None;
+                }
+                "function"
+            }
+            StmtKind::Var(declarations)
+                if declarations.first().is_some_and(|it| it.var_kind() == VarKind::Var)
+                    && !self.is_at_root(statement) =>
+            {
+                "variable"
+            }
+            _ => return None,
+        };
+        Some(Finding { kind, keyword: None })
+    }
+
+    /// True if it's directly in the file, a function body or a static block, or it's exported.
+    fn is_at_root(&self, statement: Stmt) -> bool {
+        let parent = statement.parent();
+        let is_program = matches!(parent, Node::File(_)) && (self.scripts_are_roots || ast_utils::is_program(parent));
+        is_program || matches!(parent, Node::Func(_)) || statement.is_exported()
+    }
+
     /// oxlint 1.87's rule. Without options it allows no function in a block. Anything in a namespace isn't at the root,
     /// exported or not. It reports at the keyword.
-    fn check_as_oxlint<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+    fn finding_as_oxlint<'a>(&self, statement: Stmt<'a>, file: &'a File<'a>) -> Option<Finding> {
         let (kind, keyword) = match statement.kind() {
             StmtKind::Fn(func) if func.has_body() => {
                 let is_strict = || {
                     let outer_scope = func.scope().and_then(Scope::parent);
-                    outer_scope.is_some_and(|it| utils::oxlint::is_strict_mode(it, cx.file()))
+                    outer_scope.is_some_and(|it| utils::oxlint::is_strict_mode(it, file))
                 };
                 if !self.is_both && self.has_options && self.allows_block_scoped_functions && is_strict() {
-                    return;
+                    return None;
                 }
                 ("function", "function")
             }
@@ -48,58 +113,37 @@ impl NoInnerDeclarations {
             {
                 ("variable", "var")
             }
-            _ => return,
+            _ => return None,
         };
         let is_in_namespace = matches!(statement.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::Module);
-        let is_allowed = if is_in_namespace { self.allows_namespaces } else { is_at_root(statement) };
-        if !is_allowed {
-            let body = get_allowed_body_description(statement, cx);
-            let start = statement.span_without_export().start;
-            cx.report(Span::new(start, start + keyword.len() as u32), MOVE_DECL_TO_ROOT)
-                .data("type", kind)
-                .data("body", body);
-        }
+        let is_allowed = if is_in_namespace { self.allows_namespaces } else { self.is_at_root(statement) };
+        let start = statement.span_without_export().start;
+        let keyword = Some(Span::new(start, start + keyword.len() as u32));
+        (!is_allowed).then_some(Finding { kind, keyword })
     }
+}
 
-    fn function<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Fn(func) = statement.kind() else {
-            return;
-        };
-        if !func.has_body() || is_at_root(statement) {
-            return;
-        }
-        if self.allows_block_scoped_functions
-            && cx.language().ecma_version >= 2015
-            && func.scope().and_then(Scope::parent).is_some_and(Scope::is_strict)
-        {
-            return;
-        }
-        let body = get_allowed_body_description(statement, cx);
-        cx.report(statement, MOVE_DECL_TO_ROOT).data("type", "function").data("body", body);
+/// ESLint's `getAllowedBodyDescription`.
+pub fn get_allowed_body_description<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> &'static str {
+    let enclosing_function = state.find(Node::Stmt(statement), |_, parent| parent.as_func().map(Func::kind));
+    match enclosing_function {
+        Some(FnKind::StaticBlock) => "class static block body",
+        Some(_) => "function body",
+        None => "program",
     }
 }
 
 impl Rule for NoInnerDeclarations {
     const META: Meta = Meta::eslint("no-inner-declarations", Kind::Problem);
     const ON: On = On::new().stmts(&[StmtTag::Fn, StmtTag::Var]);
-    /// The kind of the innermost function around a node.
-    type State<'a> = AncestorMemo<'a, FnKind>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
-        NoInnerDeclarations {
-            is_both: options.str(0) == Some("both"),
-            allows_block_scoped_functions: options.object(1).str("blockScopedFunctions") != Some("disallow"),
-            has_options: !options.is_empty(),
-            allows_namespaces: options.object(1).str("namespaces") == Some("allow"),
-        }
+        NoInnerDeclarations(Config::new(options))
     }
 
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        let mut on = On::new().stmts(&[StmtTag::Fn]);
-        if self.is_both {
-            on = on.stmts(&[StmtTag::Var]);
-        }
-        on
+        self.0.narrow()
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
@@ -107,22 +151,15 @@ impl Rule for NoInnerDeclarations {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().is_oxlint {
-            self.check_as_oxlint(statement, cx);
+        let Some(finding) = self.0.finding(statement, cx.file()) else {
             return;
+        };
+        let body = get_allowed_body_description(statement, &mut cx.state);
+        match finding.keyword {
+            Some(keyword) => cx.report(keyword, MOVE_DECL_TO_ROOT),
+            None => cx.report(statement, MOVE_DECL_TO_ROOT),
         }
-        match statement.tag() {
-            StmtTag::Fn => self.function(statement, cx),
-            StmtTag::Var => {
-                let StmtKind::Var(declarations) = statement.kind() else {
-                    return;
-                };
-                if declarations.first().is_some_and(|it| it.var_kind() == VarKind::Var) && !is_at_root(statement) {
-                    let body = get_allowed_body_description(statement, cx);
-                    cx.report(statement, MOVE_DECL_TO_ROOT).data("type", "variable").data("body", body);
-                }
-            }
-            _ => {}
-        }
+        .data("type", finding.kind)
+        .data("body", body);
     }
 }

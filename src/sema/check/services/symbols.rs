@@ -784,6 +784,25 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.list(&symbols)
     }
 
+    /// `properties_of_type` in TypeScript 6's order without `stableTypeOrdering` (`Checker::insertion_order_of_props`).
+    pub fn properties_of_type_in_insertion_order(&mut self, ty: TypeId) -> &'c [SymbolRef] {
+        if let Some(&known) = self.properties_in_insertion_order.get(&ty) {
+            return known;
+        }
+        let object = self.c.reduced_apparent_type_as_object(ty);
+        let Some(members) = self.c.members(object) else {
+            return &[];
+        };
+        let shape: &'p Listed<'p> = members.shape();
+        let order = self.c.insertion_order_of_props(ty, &shape.props);
+        let symbols: Vec<SymbolRef> = (order.into_iter())
+            .map(|i| self.symbol_of_prop(&shape.props[i], members.mapper))
+            .collect();
+        let properties = self.list(&symbols);
+        self.properties_in_insertion_order.insert(ty, properties);
+        properties
+    }
+
     pub fn property_of_type(&mut self, ty: TypeId, name: &[u8]) -> Option<SymbolRef> {
         let name = self.property_name(name);
         let (prop, mapper) = self.c.get_property_of_type(ty, name)?;

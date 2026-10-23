@@ -226,9 +226,10 @@ struct Rules {
 }
 
 impl Rules {
-    /// `wants_types` says whether rules that need types run under `config`.
+    /// `wants_types` says whether rules that need types run under `config`. `is_component` is true if the files are
+    /// natively linted Svelte components, where native rules replace eslint-plugin-svelte's.
     #[optimize(size)]
-    fn add(&mut self, config: &ResolvedConfig, wants_types: bool) {
+    fn add(&mut self, config: &ResolvedConfig, wants_types: bool, is_component: bool) {
         for rule in config
             .configured()
             .filter(|it| it.severity != Severity::Off)
@@ -244,8 +245,12 @@ impl Rules {
             self.has_types |= rule.entry.meta.requires_types && wants_types;
         }
         let on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
-        self.javascript
-            .extend(on.map(|it| Arc::clone(&it.configured.rule)));
+        for rule in on.map(|it| &it.configured.rule) {
+            match is_component && crate::svelte::is_answered_here(config, rule) {
+                true => self.native.push(rule.id.to_vec()),
+                false => self.javascript.push(Arc::clone(rule)),
+            }
+        }
         let on = (config.formatting_rules.iter()).filter(|it| it.severity != Severity::Off);
         self.not_run
             .extend(on.map(|it| (Reason::Formatting, it.rule.0.into())));
@@ -355,14 +360,19 @@ pub(crate) fn lint(
     let (mut by_eslint, mut not_linted) = (Kinds::default(), Kinds::default());
     let mut all_loaded: Vec<&Arc<Loaded>> = vec![&own];
     let mut seen = FxHashSet::default();
-    // Some files are skipped only because the `eslint` package isn't installed.
-    let mut lacks_eslint = false;
+    // Some files are skipped only because the `eslint` package isn't installed. Components are only linted where it is.
+    let (mut lacks_eslint, mut has_components) = (false, false);
     for target in &targets {
         let Status::Matched(config) = &target.status else {
             continue;
         };
-        match target.route() {
-            Route::Eslint => {
+        let route = target.route();
+        // Same as when linting: ESLint lints a component whose blocks aren't read the same way here.
+        let is_component = crate::svelte::is_native(&target.path, config)
+            && crate::fs::read(&target.path)
+                .map_or(true, |text| crate::svelte::is_reproduced(&text));
+        match route {
+            Route::Eslint if !is_component => {
                 files += 1;
                 by_eslint.add(&target.path);
             }
@@ -371,13 +381,16 @@ pub(crate) fn lint(
                 lacks_eslint |= target.loaded.flavor == Flavor::Eslint
                     && config.route_without_processor(&target.path) == Route::Eslint;
             }
-            Route::Native | Route::Language | Route::Processor => {
+            Route::Native | Route::Language | Route::Processor | Route::Eslint => {
                 files += 1;
-                if seen.insert(Arc::as_ptr(config)) {
-                    if let Some(error) = &config.error {
+                has_components |= is_component;
+                if seen.insert((Arc::as_ptr(config), is_component)) {
+                    // ESLint reports config errors itself for the files it lints.
+                    if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
                         return Err(Fatal(error.clone()));
                     }
-                    rules.add(config, loader.wants_types(&target.loaded, config));
+                    let wants_types = loader.wants_types(&target.loaded, config);
+                    rules.add(config, wants_types, is_component);
                 }
             }
         }
@@ -391,7 +404,7 @@ pub(crate) fn lint(
         .filter(|_| targets.is_empty())
     {
         if let FileConfig::Matched(config) = loader.config_of(&own, &paths::join(cwd, name)) {
-            rules.add(&config, loader.wants_types(&own, &config));
+            rules.add(&config, loader.wants_types(&own, &config), false);
         }
     }
     let unknown = all_loaded.iter().flat_map(|it| it.config.unknown_rules());
@@ -439,7 +452,7 @@ pub(crate) fn lint(
         let is_named = || sources.iter().any(|it| it.1 == name);
         if javascript.iter().any(|it| it.0 == name) {
             Some(Need::Rules)
-        } else if name == b"eslint" && (by_eslint.count() > 0 || lacks_eslint) {
+        } else if name == b"eslint" && (by_eslint.count() > 0 || lacks_eslint || has_components) {
             Some(Need::Files)
         } else if let Some(file) = file.as_ref().or_else(|| nested.first()) {
             (loaded.iter().any(|it| it == name) || is_named())

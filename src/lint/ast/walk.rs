@@ -19,6 +19,13 @@ impl<'a> Node<'a> {
         self.children_into(Some(offset), &mut visit);
     }
 
+    /// [`Node::for_each_child`], including the children that the file's [view](File::view) hides.
+    pub(crate) fn for_each_child_with_hidden(self, mut visit: impl FnMut(Node<'a>)) {
+        if !matches!(self, Node::Expr(e) if e.is_name_or_literal()) {
+            self.children_of_non_leaf_into(None, &mut visit);
+        }
+    }
+
     /// The children, in source order.
     pub fn children(self) -> Vec<Node<'a>> {
         let mut children = Vec::new();
@@ -30,7 +37,28 @@ impl<'a> Node<'a> {
     fn children_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
         match self {
             Node::Expr(e) if e.is_name_or_literal() => {}
+            _ if self.file().view().is_some() => self.visible_children_into(near, visit),
             _ => self.children_of_non_leaf_into(near, visit),
+        }
+    }
+
+    /// For a file with a [view](File::view): the children it doesn't hide, and the children of each one it hides in its
+    /// place. A hidden child's contents are inside its span, so `near` narrows its children too.
+    #[inline(never)]
+    fn visible_children_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
+        let mut rest: smallvec::SmallVec<[Node<'a>; 8]> = smallvec::SmallVec::new();
+        self.children_of_non_leaf_into(near, &mut |child| rest.push(child));
+        rest.reverse();
+        while let Some(node) = rest.pop() {
+            if !node.is_hidden() {
+                visit(node);
+                continue;
+            }
+            let first = rest.len();
+            if !matches!(node, Node::Expr(e) if e.is_name_or_literal()) {
+                node.children_of_non_leaf_into(near, &mut |child| rest.push(child));
+            }
+            rest[first..].reverse();
         }
     }
 

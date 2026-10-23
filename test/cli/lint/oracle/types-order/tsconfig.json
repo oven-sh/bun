@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["esnext", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "files": [
+    "global-augment.ts",
+    "merge-second.d.ts",
+    "merge-first.d.ts",
+    "attribute-augmentation.d.ts",
+    "main.ts",
+    "main.svelte",
+    "component-props.svelte",
+    "snippet-and-index-signature.svelte",
+    "recursive-type.svelte",
+    "pick-of-generic-interface.svelte",
+    "function-and-index-signature.svelte",
+    "html-attributes.svelte",
+    "index-signature.svelte",
+    "optional-strings.svelte",
+    "intersection-with-pick.svelte",
+    "literal-unions-with-comments.svelte",
+    "snippet-only.svelte",
+    "imported-alias.svelte",
+    "pick-of-library-type.svelte",
+    "pick-of-imported-interface.svelte",
+    "intersection-with-html-attributes.svelte",
+    "literal-union-property.svelte",
+    "heritage-intersection-pick.svelte",
+    "alias-of-literal-union.svelte",
+    "spread-of-nested-objects.svelte",
+    "stores.svelte"
+  ]
+}

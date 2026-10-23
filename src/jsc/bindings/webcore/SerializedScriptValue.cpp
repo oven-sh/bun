@@ -422,6 +422,7 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 13. added support for ErrorInstance objects.
  * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
+ * Without a new version: an ErrorInstance that has no line, column or sourceURL is marked with ErrorWithoutPosition.
  */
 [[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
 // Deserializers must not pool the version 14 terminal types for older payloads,
@@ -433,6 +434,9 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
 
 // The high bit of a StringData's length determines the character size.
 static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
+
+// In place of the 0 or 1 before a nullable sourceURL. Earlier readers take it for 1, and would refuse every payload of a new version.
+static constexpr int32_t ErrorWithoutPosition = -1;
 
 /*
  * Object serialization is performed according to the following grammar, all tags
@@ -1210,6 +1214,7 @@ private:
                 // propagates out of postMessage/structuredClone (Node parity).
                 String message, sourceURL, stack;
                 unsigned line = 0, column = 0;
+                bool hasPosition = false;
                 {
                     // .message is ToString'd rather than gated on isString (node clones
                     // `e.message = 42` as "42"). Reading it before .line also keeps a
@@ -1231,6 +1236,7 @@ private:
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
                     RETURN_IF_EXCEPTION(scope, false);
+                    hasPosition |= found;
                     if (found && d.isDataDescriptor() && d.value().isNumber())
                         line = d.value().toNumber(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1239,6 +1245,7 @@ private:
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
                     RETURN_IF_EXCEPTION(scope, false);
+                    hasPosition |= found;
                     if (found && d.isDataDescriptor() && d.value().isNumber())
                         column = d.value().toNumber(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1247,6 +1254,7 @@ private:
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
                     RETURN_IF_EXCEPTION(scope, false);
+                    hasPosition |= found;
                     if (found && d.isDataDescriptor() && d.value().isString())
                         sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1264,7 +1272,10 @@ private:
                 writeNullableString(message);
                 write(line);
                 write(column);
-                writeNullableString(sourceURL);
+                if (hasPosition)
+                    writeNullableString(sourceURL);
+                else
+                    write(ErrorWithoutPosition);
                 writeNullableString(stack);
                 return true;
             }
@@ -3759,6 +3770,9 @@ private:
                 fail();
                 return JSValue();
             }
+            const uint8_t* flagPtr = m_ptr;
+            int32_t flag;
+            bool hasPosition = !readLittleEndian(flagPtr, m_end, flag) || flag != ErrorWithoutPosition;
             String sourceURL;
             if (!readNullableString(sourceURL)) {
                 fail();
@@ -3770,6 +3784,12 @@ private:
                 return JSValue();
             }
             auto* obj = ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), WTF::move(stackString));
+            // An ErrorInstance made with a stack always gets a `line` and a `column`.
+            if (!hasPosition) {
+                VM& vm = m_lexicalGlobalObject->vm();
+                JSCell::deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->line);
+                JSCell::deleteProperty(obj, m_lexicalGlobalObject, vm.propertyNames->column);
+            }
             addTerminalToObjectPool(obj);
             return obj;
         }

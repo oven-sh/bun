@@ -17,6 +17,7 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "AsyncContextFrame.h"
 #include "BunStreamConsumers.h"
 
 // These three are used by name below (`JSC::JSUint8Array*` is a typedef and cannot be
@@ -32,6 +33,7 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 #include "helpers.h"
+#include "StringSizeLimit.h"
 #include <wtf/text/StringImpl.h>
 
 namespace WebCore {
@@ -41,19 +43,13 @@ class AbortSignal;
 namespace Bun {
 namespace WebStreams {
 
-// Building a string past this limit would abort the process inside WTF; text consumers
-// check it and throw a catchable out-of-memory error instead. Mirrors the predicate
-// Bun's string constructors use (helpers.h), including the synthetic limit that
-// `bun:internal-for-testing` can lower.
-inline bool exceedsStringLimit(size_t length)
-{
-    return length > Bun__stringSyntheticAllocationLimit || length > WTF::StringImpl::MaxLength;
-}
+// Text consumers check the string length limit and throw a catchable out-of-memory error.
+using Bun::exceedsStringLimit;
 
 // Reduce noise: every class name below is a WebCore JS cell (StreamsForward.h).
 using WebCore::JSCrossRealmTransformState;
-using WebCore::JSDirectSinkCloseState;
 using WebCore::JSDirectStreamController;
+using WebCore::JSDirectStreamSource;
 using WebCore::JSNativeStreamSourceAdapter;
 using WebCore::JSPullIntoDescriptor;
 using WebCore::JSReadableByteStreamController;
@@ -161,6 +157,8 @@ JSC::JSPromise* invokeCallbackReturningPromise(JSC::JSGlobalObject*, JSC::JSObje
 // inline), and a vanilla JSPromise returned unwrapped. userJS: yes — WebStreamsMisc.cpp
 JSC::JSPromise* invokeCallbackReturningPromiseFast(JSC::JSGlobalObject*, JSC::JSObject* callback, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer&);
 JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
+// promiseResolvedWith for internal reactions: nullptr for a non-object, a vanilla JSPromise unwrapped.
+JSC::JSPromise* promiseResolvedWithFast(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // "a promise rejected with r" (rejection never does a `then` lookup)
 JSC::JSPromise* promiseRejectedWith(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 
@@ -232,6 +230,10 @@ void resolvePromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // use
 void rejectPromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 // "Set promise.[[PromiseIsHandled]] to true"
 void markPromiseAsHandled(JSC::VM&, JSC::JSPromise*); // userJS: no — WebStreamsMisc.cpp
+// Rejects as handled in one step. A termination between reject and mark would report the rejection as unhandled.
+void rejectPromiseAsHandled(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: no, never throws — WebStreamsMisc.cpp
+// "a promise rejected with r" whose [[PromiseIsHandled]] is true from the start.
+JSC::JSPromise* promiseRejectedWithAsHandled(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no, never throws — WebStreamsMisc.cpp
 // {value,done} results: use JSC::createIteratorResultObject
 // (<JavaScriptCore/IteratorOperations.h>; VM-cached structure).
 
@@ -251,9 +253,6 @@ void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error);
 // what `controller.error(e)` does, including its no-op once the stream left readable/writable.
 void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
 void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
-
-// error.code === code, for an own or inherited data property `code` (no getters or proxies run). userJS: no — WebStreamsMisc.cpp
-bool errorCodeIs(JSC::VM&, JSC::JSValue error, WTF::ASCIILiteral code);
 
 // Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
 // back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via
@@ -279,7 +278,7 @@ JSReadableStreamBYOBReader* acquireReadableStreamBYOBReader(JSC::JSGlobalObject*
 void setUpReadableStreamDefaultReader(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 void setUpReadableStreamBYOBReader(JSC::JSGlobalObject*, JSReadableStreamBYOBReader*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 JSC::JSPromise* readableStreamReaderGenericCancel(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
-void readableStreamReaderGenericInitialize(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
+void readableStreamReaderGenericInitialize(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSReadableStream*); // userJS: no, never throws — ReadableStreamOperations.cpp
 void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamReaderBase*); // userJS: no (also runs Bun's native-handle updateRef(false) gate) — ReadableStreamOperations.cpp
 
 // Stream-level state ops.
@@ -294,8 +293,9 @@ void readableStreamClearSourceBarriers(JSReadableStream*); // userJS: no — Rea
 // Bun helper used by every consumer teardown: closes the stream iff its state still allows
 // it. Callers: BunStreamConsumers.cpp, BunStreamSource.cpp, JSDirectStreamController.cpp.
 void readableStreamCloseIfPossible(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
-void readableStreamAddReadRequest(JSC::VM&, JSReadableStream*, JSReadRequest*); // userJS: no — ReadableStreamOperations.cpp
-void readableStreamAddReadIntoRequest(JSC::VM&, JSReadableStream*, JSReadIntoRequest*); // userJS: no — ReadableStreamOperations.cpp
+bool readableStreamReadRequestsFull(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
+void readableStreamAddReadRequest(JSC::JSGlobalObject*, JSReadableStream*, JSReadRequest*); // userJS: no (throws when the request deque is full) — ReadableStreamOperations.cpp
+void readableStreamAddReadIntoRequest(JSC::JSGlobalObject*, JSReadableStream*, JSReadIntoRequest*); // userJS: no (throws when the request deque is full) — ReadableStreamOperations.cpp
 void readableStreamFulfillReadRequest(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue chunk, bool done); // userJS: yes (read-request dispatch) — ReadableStreamOperations.cpp
 void readableStreamFulfillReadIntoRequest(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSArrayBufferView* chunk, bool done); // userJS: yes (read-into dispatch) — ReadableStreamOperations.cpp
 size_t readableStreamGetNumReadRequests(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
@@ -362,6 +362,8 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
+// True if a chain of tees or text streams has used too much stack for the next link. The link then continues from a microtask.
+bool streamLinkMustDefer(JSC::VM&); // userJS: no (pure) — WebStreamsMisc.cpp
 JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (error-steps dispatch) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSC::JSValue error); // userJS: yes — JSReadableStreamDefaultReader.cpp
@@ -369,17 +371,9 @@ void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadab
 // a promise of one.
 // Restores the stream's construction-time async-context snapshot around a user
 // source callback (pull/cancel and the direct pull). Defined in WebStreamsMisc.cpp.
-class StreamAsyncContextScope {
-    WTF_MAKE_NONCOPYABLE(StreamAsyncContextScope);
-
+class StreamAsyncContextScope : public AsyncContextScope {
 public:
     StreamAsyncContextScope(JSC::JSGlobalObject*, JSReadableStream*);
-    ~StreamAsyncContextScope();
-
-private:
-    JSC::VM& m_vm;
-    JSC::InternalFieldTuple* m_asyncContextData { nullptr };
-    JSC::JSValue m_previous;
 };
 
 enum class ConsumerFillStep : uint8_t { Done,
@@ -398,7 +392,7 @@ void readableStreamBYOBReaderErrorReadIntoRequests(JSC::JSGlobalObject*, JSReada
 
 // JSReadableStreamDefaultController.cpp
 
-void readableStreamDefaultControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (user pull) — JSReadableStreamDefaultController.cpp
+void readableStreamDefaultControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, MayDefer = MayDefer::Yes); // userJS: yes (user pull) — JSReadableStreamDefaultController.cpp
 bool readableStreamDefaultControllerShouldCallPull(JSReadableStreamDefaultController*); // userJS: no — JSReadableStreamDefaultController.cpp
 void readableStreamDefaultControllerClearAlgorithms(JSReadableStreamDefaultController*); // userJS: no — JSReadableStreamDefaultController.cpp
 void readableStreamDefaultControllerClose(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes — JSReadableStreamDefaultController.cpp
@@ -410,7 +404,7 @@ bool readableStreamDefaultControllerCanCloseOrEnqueue(JSReadableStreamDefaultCon
 
 // JSReadableByteStreamController.cpp
 
-void readableByteStreamControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableByteStreamController*); // userJS: yes (user pull) — JSReadableByteStreamController.cpp
+void readableByteStreamControllerCallPullIfNeeded(JSC::JSGlobalObject*, JSReadableByteStreamController*, MayDefer = MayDefer::Yes); // userJS: yes (user pull) — JSReadableByteStreamController.cpp
 bool readableByteStreamControllerShouldCallPull(JSReadableByteStreamController*); // userJS: no — JSReadableByteStreamController.cpp
 void readableByteStreamControllerClearAlgorithms(JSReadableByteStreamController*); // userJS: no — JSReadableByteStreamController.cpp
 void readableByteStreamControllerClearPendingPullIntos(JSReadableByteStreamController*); // userJS: no — JSReadableByteStreamController.cpp
@@ -421,7 +415,7 @@ void readableByteStreamControllerClose(JSC::JSGlobalObject*, JSReadableByteStrea
 void readableByteStreamControllerCommitPullIntoDescriptor(JSC::JSGlobalObject*, JSReadableStream*, JSPullIntoDescriptor*); // userJS: yes (fulfill dispatch) — JSReadableByteStreamController.cpp
 JSC::JSArrayBufferView* readableByteStreamControllerConvertPullIntoDescriptor(JSC::JSGlobalObject*, JSPullIntoDescriptor*); // userJS: no (intrinsic view construction only) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSArrayBufferView* chunk); // userJS: yes; throws — JSReadableByteStreamController.cpp
-void readableByteStreamControllerEnqueueChunkToQueue(JSReadableByteStreamController*, RefPtr<JSC::ArrayBuffer>&&, size_t byteOffset, size_t byteLength); // userJS: no — JSReadableByteStreamController.cpp
+void readableByteStreamControllerEnqueueChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, RefPtr<JSC::ArrayBuffer>&&, size_t byteOffset, size_t byteLength); // userJS: yes (a full queue errors the controller and throws) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueueClonedChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength); // userJS: yes (per spec a clone failure errors the controller and is rethrown) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueueDetachedPullIntoToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSPullIntoDescriptor*); // userJS: yes; throws — JSReadableByteStreamController.cpp
 void readableByteStreamControllerError(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSValue error); // userJS: yes — JSReadableByteStreamController.cpp
@@ -470,15 +464,15 @@ bool writableStreamCloseQueuedOrInFlight(JSWritableStream*); // userJS: no — W
 void writableStreamDealWithRejection(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 void writableStreamStartErroring(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue reason); // userJS: yes — WritableStreamOperations.cpp
 void writableStreamFinishErroring(JSC::JSGlobalObject*, JSWritableStream*); // userJS: yes (user abort algorithm) — WritableStreamOperations.cpp
-void writableStreamFinishInFlightWrite(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
+void writableStreamFinishInFlightWrite(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no, never throws — WritableStreamOperations.cpp
 void writableStreamFinishInFlightWriteWithError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
-void writableStreamFinishInFlightClose(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
+void writableStreamFinishInFlightClose(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no, never throws — WritableStreamOperations.cpp
 void writableStreamFinishInFlightCloseWithError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 bool writableStreamHasOperationMarkedInFlight(JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
 void writableStreamMarkCloseRequestInFlight(JSC::VM&, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
 void writableStreamMarkFirstWriteRequestInFlight(JSC::VM&, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
-void writableStreamRejectCloseAndClosedPromiseIfNeeded(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no — WritableStreamOperations.cpp
-void writableStreamUpdateBackpressure(JSC::JSGlobalObject*, JSWritableStream*, bool backpressure); // userJS: no — WritableStreamOperations.cpp
+void writableStreamRejectCloseAndClosedPromiseIfNeeded(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no, never throws — WritableStreamOperations.cpp
+void writableStreamUpdateBackpressure(JSC::JSGlobalObject*, JSWritableStream*, bool backpressure); // userJS: no, never throws — WritableStreamOperations.cpp
 void setUpWritableStreamDefaultController(JSC::JSGlobalObject*, JSWritableStream*, JSWritableStreamDefaultController*, JSC::JSValue startResult, double highWaterMark); // userJS: yes (thenable startResult) — WritableStreamOperations.cpp
 void setUpWritableStreamDefaultControllerFromUnderlyingSink(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue underlyingSink, const UnderlyingSinkDict&, double highWaterMark, JSC::JSObject* sizeAlgorithm); // userJS: yes (invokes the user `start`) — WritableStreamOperations.cpp
 
@@ -487,8 +481,8 @@ void setUpWritableStreamDefaultControllerFromUnderlyingSink(JSC::JSGlobalObject*
 JSC::JSPromise* writableStreamDefaultWriterAbort(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*, JSC::JSValue reason); // userJS: yes — JSWritableStreamDefaultWriter.cpp
 JSC::JSPromise* writableStreamDefaultWriterClose(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*); // userJS: yes — JSWritableStreamDefaultWriter.cpp
 JSC::JSPromise* writableStreamDefaultWriterCloseWithErrorPropagation(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*); // userJS: yes — JSWritableStreamDefaultWriter.cpp
-void writableStreamDefaultWriterEnsureClosedPromiseRejected(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*, JSC::JSValue error); // userJS: no — JSWritableStreamDefaultWriter.cpp
-void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*, JSC::JSValue error); // userJS: no — JSWritableStreamDefaultWriter.cpp
+void writableStreamDefaultWriterEnsureClosedPromiseRejected(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*, JSC::JSValue error); // userJS: no, never throws — JSWritableStreamDefaultWriter.cpp
+void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*, JSC::JSValue error); // userJS: no, never throws — JSWritableStreamDefaultWriter.cpp
 std::optional<double> writableStreamDefaultWriterGetDesiredSize(JSWritableStreamDefaultWriter*); // userJS: no (nullopt = spec null) — JSWritableStreamDefaultWriter.cpp
 void writableStreamDefaultWriterRelease(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*); // userJS: no — JSWritableStreamDefaultWriter.cpp
 JSC::JSPromise* writableStreamDefaultWriterWrite(JSC::JSGlobalObject*, JSWritableStreamDefaultWriter*, JSC::JSValue chunk); // userJS: yes (user size() FIRST, then re-checks [[stream]]) — JSWritableStreamDefaultWriter.cpp
@@ -629,15 +623,15 @@ JSC::JSPromise* cancelPendingNativeSource(JSC::JSGlobalObject*, JSReadableStream
 // a JSPromise (the Signal protocol's value).
 JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue jsSinkController); // userJS: yes — BunStreamSource.cpp
 // The direct-stream → native-JSSink path. Returns undefined | JSPromise.
-JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSC::JSObject* underlyingSource); // userJS: yes — BunStreamSource.cpp
+JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSDirectStreamSource*); // userJS: yes — BunStreamSource.cpp
 // The generic pump into a native JSSink controller.
 JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink); // userJS: yes — BunStreamSource.cpp
 
 // JSDirectStreamController.cpp — direct-stream materialization + the direct controller.
 
 // Installs a JSDirectStreamController of the given flavor on the stream, nulls the stream's
-// m_directUnderlyingSource, and sets m_bunMode = Default.
-void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind, double highWaterMark); // userJS: yes — JSDirectStreamController.cpp
+// m_directSource, and sets m_bunMode = Default.
+void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind); // userJS: no — JSDirectStreamController.cpp
 // Drop the direct controller's retained user-source state once no further pull/close callbacks
 // can run (m_closed set, or the stream has left Readable). Idempotent.
 void directStreamControllerClearSource(JSDirectStreamController*); // userJS: no — JSDirectStreamController.cpp
@@ -668,7 +662,11 @@ JSC::JSValue readableStreamIntoText(JSC::JSGlobalObject*, JSReadableStream*); //
 JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 // Drop ONE leading U+FEFF, and only on the generic toText path.
 WTF::String withoutUTF8BOM(const WTF::String&); // userJS: no — BunStreamConsumers.cpp
-// Appends `string` UTF-8 encoded (lone surrogates become U+FFFD); false = over the string limit or allocation failed.
+// UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and write) as
+// U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.
+size_t utf8ByteLengthWithReplacement(WTF::StringView); // userJS: no — BunStreamConsumers.cpp
+size_t writeUTF8WithReplacement(WTF::StringView, std::span<uint8_t> destination); // userJS: no — BunStreamConsumers.cpp
+// Appends `string` UTF-8 encoded; false = over the string limit or allocation failed.
 bool appendUTF8WithinStringLimit(const WTF::String&, WTF::Vector<uint8_t>& bytes); // userJS: no — BunStreamConsumers.cpp
 
 // The three *Direct conversion paths.
@@ -715,9 +713,11 @@ bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::G
 void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: yes
 // NO sentinel guard (reachable on a NativeSink-controlled stream).
 void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
-void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
-JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
+JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*, bool consumed); // userJS: no
 JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no
 JSC::EncodedJSValue ReadableStream__fromDecodedText(Zig::GlobalObject*, JSC::EncodedJSValue string); // userJS: no
 JSC::EncodedJSValue ReadableStream__textDecodeFrom(Zig::GlobalObject*, JSC::EncodedJSValue source); // userJS: yes

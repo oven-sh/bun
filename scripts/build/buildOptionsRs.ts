@@ -23,7 +23,7 @@
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Config } from "./config.ts";
+import type { CodegenFields } from "./config.ts";
 import { writeIfChanged } from "./fs.ts";
 
 /** Rust string literal for `s`. JSON escaping is a strict subset of Rust's. */
@@ -36,7 +36,7 @@ const rstr = (s: string): string => JSON.stringify(s);
  */
 const rbstr = (s: string): string => `${JSON.stringify(s)}.as_bytes()`;
 
-export function generateBuildOptionsRs(cfg: Config): string {
+export function generateBuildOptionsRs(cfg: CodegenFields): string {
   const outPath = resolve(cfg.codegenDir, "build_options.rs");
   const [major, minor, patch] = cfg.version.split(".");
 

@@ -4,10 +4,10 @@
 // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
 // Buffer.alloc frame construction here.
 //
-// Invariant: after ErrorResponse rejects the current request it stays queued
-// until ReadyForQuery; DataRow / CommandComplete / EmptyQueryResponse /
-// CloseComplete arriving in that window must be consumed and discarded, never
-// routed to the released request.
+// Invariant: a request that failed at an ErrorResponse, or that cancel() has
+// rejected, stays queued until ReadyForQuery; DataRow / CommandComplete /
+// EmptyQueryResponse / CloseComplete arriving in that window must be consumed
+// and discarded, never routed to that request.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "node:path";
@@ -30,7 +30,12 @@ test("postgres: DataRow arriving after ErrorResponse is discarded, not routed to
     // panic/ASan report shows up in the diff when the fixture dies
     stderr,
   }).toEqual({
-    stdout: ["FIRST ERR_POSTGRES_SERVER_ERROR", 'SECOND [{"b":"ok"}]'],
+    stdout: [
+      "REJECTED ERR_POSTGRES_SERVER_ERROR",
+      'NEXT [{"b":"ok"}]',
+      "REJECTED ERR_POSTGRES_QUERY_CANCELLED",
+      'NEXT [{"b":"ok"}]',
+    ],
     exitCode: 0,
     signalCode: null,
     stderr: expect.any(String),
@@ -119,7 +124,7 @@ test("postgres: a failing simple query leaves an unrelated cached prepared state
     signalCode: proc.signalCode,
     stderr,
   }).toEqual({
-    stdout: JSON.stringify({ first: [], failed: "ERR_POSTGRES_SYNTAX_ERROR", second: [], third: [], parses: ["P$0"] }),
+    stdout: JSON.stringify({ first: [], failed: "ERR_POSTGRES_SYNTAX_ERROR", second: [], third: [], parses: ["P0"] }),
     exitCode: 0,
     signalCode: null,
     stderr: expect.any(String),

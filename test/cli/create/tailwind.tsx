@@ -1,7 +1,7 @@
 export default function LandingPage() {
   let copied = false;
   const handleCopy = () => {
-    navigator.clipboard.writeText("bun create ./MyComponent.tsx");
+    (navigator as any).clipboard.writeText("bun create ./MyComponent.tsx");
   };
 
   return (

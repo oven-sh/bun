@@ -60,8 +60,6 @@ pub trait StringJsc {
     /// atomized, a borrowed `EncodedSlice` copied.
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for String {
     #[track_caller]
@@ -109,12 +107,6 @@ impl StringJsc for String {
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::TypeError)
-    }
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::SyntaxError)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::RangeError)
     }
 }
 
@@ -208,11 +200,17 @@ pub fn owned_latin1_into_js(global_object: &JSGlobalObject, latin1: Vec<u8>) -> 
 /// UTF-16 `Vec<u16>` → JS string; the allocation is adopted by JSC.
 /// Throws `STRING_TOO_LONG` when over [`String::max_length`].
 pub fn owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) -> JsResult<JSValue> {
+    try_owned_utf16_into_js(global_object, utf16)
+        .ok_or_else(|| global_object.throw_string_too_long())
+}
+
+/// As [`owned_utf16_into_js`], `None` where that throws.
+pub fn try_owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) -> Option<JSValue> {
     if utf16.is_empty() {
-        return Ok(JSValue::js_empty_string(global_object));
+        return Some(JSValue::js_empty_string(global_object));
     }
     let utf16 = core::mem::ManuallyDrop::new(utf16);
-    EncodedSlice::utf16(&utf16).to_external_value(global_object)
+    EncodedSlice::utf16(&utf16).try_to_external_value(global_object)
 }
 
 #[track_caller]

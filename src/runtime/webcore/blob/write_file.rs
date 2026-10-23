@@ -118,6 +118,9 @@ pub(crate) struct WriteFile {
     pub(crate) close_after_io: bool,
     #[cfg(not(windows))]
     pub(crate) mkdirp_if_not_exists: bool,
+    /// The `mode` option of `Bun.write`, for a file that gets created.
+    #[cfg(not(windows))]
+    pub(crate) mode: Option<sys::Mode>,
 }
 
 bun_threading::intrusive_work_task!(WriteFile, task);
@@ -131,6 +134,10 @@ impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
+    #[cfg(not(windows))]
+    fn open_mode(&self) -> sys::Mode {
+        self.mode.unwrap_or(crate::node::fs::DEFAULT_PERMISSION)
+    }
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -298,6 +305,7 @@ impl WriteFile {
         file_blob: Blob,
         bytes_blob: Blob,
         mkdirp_if_not_exists: bool,
+        mode: Option<sys::Mode>,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
             file_blob,
@@ -318,6 +326,7 @@ impl WriteFile {
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
+            mode,
         };
         Ok(write_file)
     }

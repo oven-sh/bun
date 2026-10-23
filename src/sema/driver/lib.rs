@@ -1693,8 +1693,9 @@ impl Projects {
         })
     }
 
-    /// Returns `config`, or else the first of the projects it references, directly or indirectly, that has `file` among
-    /// its files.
+    /// Returns the first of `config` and the projects it references, directly or indirectly, that has `file` among its
+    /// files. If a project that this one references has it too, the file is checked there: in the one that refers to it
+    /// it's the source of a project reference (`IsSourceFromProjectReference`).
     fn find_project_with(
         &mut self,
         disk: &host::Disk,
@@ -1708,6 +1709,7 @@ impl Projects {
         // The configuration files still to visit, next one last. It's a loop because a chain of references can be
         // arbitrarily long.
         let mut pending = vec![config.to_vec()];
+        let mut owner = None;
         while let Some(config) = pending.pop() {
             let is_seen = |it: &Vec<u8>| is_same_path(it, &config, is_case_sensitive);
             if seen.iter().any(is_seen) || !disk.is_file(&config) {
@@ -1720,11 +1722,10 @@ impl Projects {
                 continue;
             };
             let references = project.references.iter().rev();
-            pending.extend(
-                references
-                    .filter(|_| follows_references)
-                    .map(|it| config::resolve_config_file_name_of_project_reference(&it.path)),
-            );
+            let references: Vec<Vec<u8>> = references
+                .filter(|_| follows_references)
+                .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
+                .collect();
             if is_new {
                 let files = match includes_javascript {
                     false => project.files.clone(),
@@ -1744,10 +1745,12 @@ impl Projects {
                 (self.files).insert(config.clone(), paths);
             }
             if self.files[&config].contains(&*to_path(file, is_case_sensitive)) {
-                return Some(config);
+                pending.clear();
+                owner = Some(config);
             }
+            pending.extend(references);
         }
-        None
+        owner
     }
 
     /// Adds the configuration file and the files of `config` and of the projects it references, directly or indirectly.

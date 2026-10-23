@@ -2244,6 +2244,39 @@ declare const either: Shape | Store;
       timeout,
     );
 
+    // Same as ESLint 10.12.0 with @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3, whose numbers are 4 and 1048576.
+    test.concurrent(
+      "a file that a project and one that it references both include has the types of the referenced one",
+      async () => {
+        const options = { strict: true, target: "es2022", types: [] };
+        const text = `declare function it(title: unknown): void;\nconst list: string[] = [];\nit(list[0]);\nexport {};\n`;
+        const { raw, exitCode } = await lint(
+          {
+            ...typed("(services, node) => services.getTypeAtLocation(node).flags"),
+            "tsconfig.json": JSON.stringify({
+              compilerOptions: { ...options, noUncheckedIndexedAccess: true },
+              include: ["src"],
+              references: [{ path: "./tsconfig.cli.json" }],
+            }),
+            "tsconfig.cli.json": JSON.stringify({
+              compilerOptions: { ...options, composite: true },
+              include: ["src/cli"],
+            }),
+            "src/cli/a.ts": text,
+            "src/web/b.ts": text,
+          },
+          ["-f", "json", "src"],
+        );
+        const said = JSON.parse(raw).map((it: { messages: { message: string }[] }) =>
+          it.messages.map(it => it.message),
+        );
+        // `string`, and `string | undefined`.
+        expect(said).toEqual([["32"], ["134217728"]]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
     test.concurrent(
       "a rule that hasn't asked for types gets the same as without them",
       async () => {

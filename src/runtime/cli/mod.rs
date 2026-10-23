@@ -516,9 +516,7 @@ pub(crate) mod help_command {
         let package_remove_i = pick(PACKAGES_TO_REMOVE_FILLER.len());
         let package_create_i = pick(PACKAGES_TO_CREATE_FILLER.len());
 
-        // The filler tables are `&str` (not `&[u8]`) so the `{:<16}`
-        // width spec actually pads — `Display for BStr` writes raw bytes and
-        // ignores formatter width/alignment.
+        // The filler tables are `&str` (not `&[u8]`) so the `{:<16}` width spec pads.
         let args = (
             PACKAGES_TO_X_FILLER[package_x_i],
             PACKAGES_TO_ADD_FILLER[package_add_i],

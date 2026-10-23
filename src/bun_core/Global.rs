@@ -875,7 +875,9 @@ pub enum CAStore {
     OpenSSL = 2,
 }
 
-/// A `CAStore`. `root_certs.cpp` reads this when it builds the default certificate store.
+/// A `CAStore`. `root_certs.cpp` reads this when it builds the default certificate store. `Relaxed`
+/// is enough for it and for `PASSED_CA_STORE_FLAG`: they are written while the arguments are parsed,
+/// before there is another thread.
 #[unsafe(no_mangle)]
 static Bun__Node__CAStore: AtomicU8 = AtomicU8::new(CAStore::Bundled as u8);
 

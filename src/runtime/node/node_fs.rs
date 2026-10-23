@@ -7726,6 +7726,13 @@ impl NodeFS {
                 Ok(buf_) => buf_,
             };
 
+            // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can
+            // end like that too.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
+                return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
+            }
+
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {

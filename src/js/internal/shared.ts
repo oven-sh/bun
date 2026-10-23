@@ -179,45 +179,10 @@ function guardCallback(callback) {
   };
 }
 
-const nodeModulesRE = /[\\/]node_modules[\\/]/;
-const ErrorCaptureStackTrace = Error.captureStackTrace;
-function returnStackFrames(_err: unknown, frames: unknown[]) {
-  return frames;
-}
-
-// Port of node's IsInsideNodeModules: first real user frame inside node_modules?
-// Guarded so a tampered Error.* never escapes to callers like url.parse.
-// https://github.com/nodejs/node/blob/main/src/node_util.cc
-function isInsideNodeModules(frameLimit: number): boolean {
-  let prevLimit: unknown, prevPrepare: unknown;
-  let frames: { getFileName(): string | null }[] | undefined;
-  try {
-    prevLimit = Error.stackTraceLimit;
-    prevPrepare = Error.prepareStackTrace;
-    Error.stackTraceLimit = frameLimit;
-    Error.prepareStackTrace = returnStackFrames;
-    const target: { stack?: unknown } = {};
-    ErrorCaptureStackTrace(target, isInsideNodeModules);
-    frames = target.stack as typeof frames;
-  } catch {
-  } finally {
-    try {
-      Error.stackTraceLimit = prevLimit as typeof Error.stackTraceLimit;
-      Error.prepareStackTrace = prevPrepare as typeof Error.prepareStackTrace;
-    } catch {}
-  }
-  if (!$isJSArray(frames)) return false;
-  try {
-    for (const frame of frames) {
-      const filename = frame.getFileName();
-      if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
-        continue;
-      }
-      return nodeModulesRE.test(filename);
-    }
-  } catch {}
-  return false;
-}
+// Port of node's IsInsideNodeModules: https://github.com/nodejs/node/blob/v26.3.0/src/node_util.cc#L328
+const isInsideNodeModules = $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionIsInsideNodeModules", 1) as (
+  frameLimit?: number,
+) => boolean;
 
 // Marks an addEventListener() options object so that dispatch still invokes the
 // listener after an unrelated listener called event.stopImmediatePropagation().

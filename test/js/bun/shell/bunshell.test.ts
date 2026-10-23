@@ -746,6 +746,261 @@ describe("bunshell", () => {
     TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
     TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");
     TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
+    // An empty string is a command name. Only a command with no word has none.
+    TestBuilder.command`"" arg`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty string literal as argv[0]");
+    TestBuilder.command`${""} arg`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty JS string as argv[0]");
+    TestBuilder.command`"" && echo hi`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty string argv[0] short-circuits &&");
+    TestBuilder.command`$(exit 3) ''`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty string argv[0] after an empty command subst");
+  });
+
+  // POSIX 2.9.1: if the words of a command leave a command name, the status
+  // is that of the command that ran. With no command name, the redirect is
+  // still performed, and the status is that of the last command substitution
+  // the command performed, else 0.
+  //
+  // The expected exit codes are those of bash 5.2. Substitutions run in the
+  // order of bash: words, then assignments, then the redirect. dash runs the
+  // redirect before the assignments.
+  describe("cmd subst status", () => {
+    const exit7 = "console.log('ran'); process.exit(7);";
+    // An expansion that fails: 2^17 words is over the brace expansion limit.
+    const tooManyBraces = { raw: Buffer.alloc(17 * "{1,2}".length, "{1,2}").toString() };
+    const tooManyBracesError = "bun: too many brace expansions (131072 > 65536)\n";
+
+    describe("a sole cmd subst that expands to a command", () => {
+      TestBuilder.command`$(echo ${BUN} exit7.js)`
+        .file("exit7.js", exit7)
+        .stdout("ran\n")
+        .exitCode(7)
+        .runAsTest("reports the exit code of the command");
+
+      TestBuilder.command`$(echo ${BUN} exit7.js) > out.txt`
+        .file("exit7.js", exit7)
+        .fileEquals("out.txt", "ran\n")
+        .exitCode(7)
+        .runAsTest("with stdout redirected");
+
+      TestBuilder.command`$(echo ${BUN} exit7.js) &> out.txt`
+        .file("exit7.js", exit7)
+        .fileEquals("out.txt", "ran\n")
+        .exitCode(7)
+        .runAsTest("with stdout and stderr redirected");
+
+      TestBuilder.command`$(echo ${BUN} ok.js; exit 5)`
+        .file("ok.js", "console.log('ran');")
+        .stdout("ran\n")
+        .exitCode(0)
+        .runAsTest("ignores the exit code of the substitution");
+
+      TestBuilder.command`$(echo ${BUN} exit7.js) || echo fallback`
+        .file("exit7.js", exit7)
+        .stdout("ran\nfallback\n")
+        .runAsTest("takes the || branch");
+
+      TestBuilder.command`$(echo ${BUN} exit7.js) && echo went on`
+        .file("exit7.js", exit7)
+        .stdout("ran\n")
+        .exitCode(7)
+        .runAsTest("fails an && chain");
+
+      // The program closes both pipes, tells the test, and exits when the test
+      // closes the connection. The command is done when the program exits, not
+      // when its pipes reach EOF.
+      test.concurrent("waits for a command that closes its stdout and stderr early", async () => {
+        using dir = tempDir("shell-cmd-subst-closer", {
+          "closer.js": `
+            import { closeSync } from "node:fs";
+            import { connect } from "node:net";
+            const socket = connect(Number(process.argv[2]), "127.0.0.1", () => {
+              closeSync(1);
+              closeSync(2);
+              socket.write("closed");
+            });
+            socket.on("close", () => process.exit(7));`,
+        });
+        const closed = Promise.withResolvers<Bun.Socket>();
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { data: socket => closed.resolve(socket) },
+        });
+        try {
+          const exitCode = $`$(echo ${BUN} closer.js ${server.port})`
+            .cwd(String(dir))
+            .quiet()
+            .then(result => result.exitCode);
+          // A command that ends at the EOF of its pipes settles first, with 0.
+          const first = await Promise.race([closed.promise, exitCode]);
+          if (typeof first !== "number") first.end();
+          expect(await exitCode).toBe(7);
+        } finally {
+          server.stop(true);
+        }
+      });
+
+      TestBuilder.command`$(echo false)`.exitCode(1).runAsTest("builtin");
+    });
+
+    describe("no command name", () => {
+      TestBuilder.command`$(echo; exit 3)`.exitCode(3).runAsTest("one substitution");
+      TestBuilder.command`$(exit 3) $(exit 4)`.exitCode(4).runAsTest("two substitutions");
+      TestBuilder.command`$(exit 4) $(exit 0)`.exitCode(0).runAsTest("last substitution succeeded");
+      TestBuilder.command`$(exit 3) $UNSET`.exitCode(3).runAsTest("substitution before an empty word");
+      TestBuilder.command`$UNSET $(exit 3)`.exitCode(3).runAsTest("substitution after an empty word");
+      TestBuilder.command`$(exit 3)$(exit 4)`.exitCode(4).runAsTest("two substitutions in one word");
+      TestBuilder.command`$(exit 4)$(exit 0)`.exitCode(0).runAsTest("last substitution in a word succeeded");
+      TestBuilder.command`$(exit 3)$UNSET`.exitCode(3).runAsTest("substitution joined to an empty expansion");
+      TestBuilder.command`$(exit 3)$(exit 4) $(exit 5)`.exitCode(5).runAsTest("last word wins over a compound word");
+      TestBuilder.command`$(exit 5) $(exit 3)$(exit 4)`.exitCode(4).runAsTest("last substitution of the last word");
+      TestBuilder.command`$(${BUN} -e ${"process.exit(3)"}) $UNSET`
+        .exitCode(3)
+        .runAsTest("substitution that runs a program");
+      TestBuilder.command`${{ raw: "$(exit 3) $(\n)" }}`.exitCode(3).runAsTest("substitution with an empty body");
+      TestBuilder.command`$(FOO=$(exit 3))`.exitCode(3).runAsTest("status of a nested assignment");
+      TestBuilder.command`$(exit 3) $(true; FOO=bar)`.exitCode(0).runAsTest("nested command resets the status");
+      TestBuilder.command`echo a | $(exit 3) $(exit 4)`.exitCode(4).runAsTest("as the last command of a pipeline");
+      TestBuilder.command`$(exit 3) $(exit 4) && echo hi`.exitCode(4).runAsTest("fails an && chain");
+      TestBuilder.command`$(exit 3) $(exit 4) || echo hi`.stdout("hi\n").runAsTest("takes the || branch");
+      TestBuilder.command`if $(exit 3) $(exit 0); then echo yes; else echo no; fi`
+        .stdout("yes\n")
+        .runAsTest("as an if condition");
+    });
+
+    describe("redirect with no command name", () => {
+      TestBuilder.command`$UNSET > created.txt`.fileEquals("created.txt", "").runAsTest("creates the file");
+      TestBuilder.command`$(exit 3) > $(echo out.txt; exit 4)`
+        .fileEquals("out.txt", "")
+        .exitCode(4)
+        .runAsTest("failing substitution in the redirect is the last one");
+      TestBuilder.command`$(exit 3) > $(echo out.txt)`
+        .fileEquals("out.txt", "")
+        .exitCode(0)
+        .runAsTest("successful substitution in the redirect is the last one");
+      TestBuilder.command`$(exit 0) > $(echo missing-dir/out.txt) || echo fallback`
+        .ensureTempDir()
+        .stdout("fallback\n")
+        .stderr_contains("missing-dir/out.txt")
+        .runAsTest("output redirect that cannot be opened fails the command");
+      TestBuilder.command`$(exit 0) < $(echo missing.txt)`
+        .ensureTempDir()
+        .stderr_contains("missing.txt")
+        .exitCode(1)
+        .runAsTest("input redirect that cannot be opened fails the command");
+      TestBuilder.command`$UNSET > $UNSET`
+        .stderr("bun: ambiguous redirect\n")
+        .exitCode(1)
+        .runAsTest("redirect target that expands to nothing fails the command");
+    });
+
+    describe("a command name ignores the substitutions", () => {
+      TestBuilder.command`true $(exit 3)`.exitCode(0).runAsTest("builtin that succeeds");
+      TestBuilder.command`false $(exit 0)`.exitCode(1).runAsTest("builtin that fails");
+      TestBuilder.command`$(exit 3) $(exit 4) false`.exitCode(1).runAsTest("builtin after empty words");
+      TestBuilder.command`$(exit 3) $(exit 4) ${BUN} exit7.js &> out.txt`
+        .file("exit7.js", exit7)
+        .fileEquals("out.txt", "ran\n")
+        .exitCode(7)
+        .runAsTest("external command after empty words");
+      TestBuilder.command`export FOO=$(exit 3)`.exitCode(0).runAsTest("export");
+      TestBuilder.command`$(exit 3) ${tooManyBraces}`
+        .stderr(tooManyBracesError)
+        .exitCode(1)
+        .runAsTest("failed expansion");
+    });
+
+    describe("assignment-only command", () => {
+      TestBuilder.command`FOO=$(exit 3)`.exitCode(3).runAsTest("failing substitution");
+      TestBuilder.command`FOO="$(exit 3)"`.exitCode(3).runAsTest("failing quoted substitution");
+      TestBuilder.command`FOO=$(exit 0)`.exitCode(0).runAsTest("successful substitution");
+      TestBuilder.command`FOO=x$(exit 3)`.exitCode(3).runAsTest("substitution inside a longer value");
+      TestBuilder.command`FOO="a $(exit 3) b"`.exitCode(3).runAsTest("substitution inside a quoted value");
+      TestBuilder.command`FOO=$(exit 3)$(exit 4)`.exitCode(4).runAsTest("two substitutions in one value");
+      TestBuilder.command`FOO=$(exit 3) BAR=$(exit 4)`.exitCode(4).runAsTest("last substitution wins");
+      TestBuilder.command`FOO=$(exit 3) BAR=$(exit 0)`.exitCode(0).runAsTest("later successful substitution wins");
+      TestBuilder.command`FOO=$(exit 3) BAR=bar`.exitCode(3).runAsTest("later literal value keeps the status");
+      TestBuilder.command`FOO=$(exit 3) BAR=*.nomatch`.exitCode(3).runAsTest("later unmatched glob keeps the status");
+      TestBuilder.command`FOO=$(${BUN} -e ${"process.exit(3)"})`
+        .exitCode(3)
+        .runAsTest("substitution that runs a program");
+      TestBuilder.command`FOO=$(echo x | cat; exit 3)`.exitCode(3).runAsTest("substitution that runs a pipeline");
+      TestBuilder.command`FOO=$(echo v; exit 3); echo $FOO`
+        .stdout("v\n")
+        .runAsTest("value is still assigned and the next statement still runs");
+      TestBuilder.command`FOO=$(false) || echo no`.stdout("no\n").runAsTest("takes the || branch");
+      TestBuilder.command`FOO=$(exit 3) && echo hi`.exitCode(3).runAsTest("fails an && chain");
+      TestBuilder.command`FOO=$(nonexistent_cmd_xyz) && echo went-on`
+        .stderr("bun: command not found: nonexistent_cmd_xyz\n")
+        .exitCode(1)
+        .runAsTest("command that is not found fails an && chain");
+      TestBuilder.command`if FOO=$(false); then echo yes; else echo no; fi`
+        .stdout("no\n")
+        .runAsTest("as an if condition");
+      TestBuilder.command`(FOO=$(exit 3))`.exitCode(3).runAsTest("as the last command of a subshell");
+
+      test("rejects with a ShellError when the shell throws", async () => {
+        let err: Bun.$.ShellError | undefined;
+        try {
+          await $`FOO=$(exit 3)`.quiet().throws(true);
+        } catch (e) {
+          err = e as Bun.$.ShellError;
+        }
+        expect(err).toBeInstanceOf(Bun.$.ShellError);
+        expect(err!.exitCode).toBe(3);
+      });
+    });
+
+    describe("prefix assignments", () => {
+      TestBuilder.command`FOO=$(exit 3) echo hi`.stdout("hi\n").exitCode(0).runAsTest("command name wins");
+      TestBuilder.command`FOO=bar $(exit 4)`.exitCode(4).runAsTest("substitution in a word");
+      TestBuilder.command`FOO=1 $(exit 3) $(exit 4)`.exitCode(4).runAsTest("substitutions in two words");
+      TestBuilder.command`FOO=$(exit 3) $UNSET`.exitCode(3).runAsTest("substitution in the assignment");
+      TestBuilder.command`FOO=$(exit 3) $(exit 4)`.exitCode(3).runAsTest("assignment expands after the word");
+      TestBuilder.command`FOO=$(exit 0) $(exit 4)`.exitCode(0).runAsTest("successful assignment after a failing word");
+      TestBuilder.command`FOO=$(exit 3) $(exit 0)`.exitCode(3).runAsTest("failing assignment after a successful word");
+      TestBuilder.command`FOO=$(echo | cat; exit 3) $(echo | cat; exit 4)`
+        .exitCode(3)
+        .runAsTest("assignment expands after the word, with pipelines in both");
+      TestBuilder.command`FOO=$(exit 3) BAR=$(exit 4) $UNSET`.exitCode(4).runAsTest("last assignment wins");
+      TestBuilder.command`${{ raw: "FOO=$(\n) $(exit 3)" }}`
+        .exitCode(3)
+        .runAsTest("assignment from a substitution with an empty body");
+      TestBuilder.command`FOO=$(echo a >> log.txt) $(echo b >> log.txt) > $(echo c >> log.txt; echo out.txt)`
+        .fileEquals("log.txt", "b\na\nc\n")
+        .runAsTest("substitutions run in the order word, assignment, redirect");
+      TestBuilder.command`FOO=$(echo a >> log.txt) echo ${tooManyBraces}`
+        .ensureTempDir()
+        .doesNotExist("log.txt")
+        .stderr(tooManyBracesError)
+        .exitCode(1)
+        .runAsTest("failed word expansion stops before the assignment");
+      TestBuilder.command`echo $(echo b >> log.txt) > ${tooManyBraces}`
+        .fileEquals("log.txt", "b\n")
+        .stderr(tooManyBracesError)
+        .exitCode(1)
+        .runAsTest("failed redirect expansion stops after the words");
+    });
+
+    // The status does not outlive the command that performed the substitution.
+    describe("does not leak into the next command", () => {
+      TestBuilder.command`$(exit 3); $UNSET`.exitCode(0).runAsTest("empty command after a failing substitution");
+      TestBuilder.command`true $(exit 3); FOO=bar`.exitCode(0).runAsTest("assignment after a command");
+      TestBuilder.command`FOO=$(exit 3); BAR=x`.exitCode(0).runAsTest("assignment after an assignment");
+      TestBuilder.command`false; FOO=bar`.exitCode(0).runAsTest("assignment after a failing command");
+      TestBuilder.command`[[ -z $(exit 3) ]]; FOO=bar`.exitCode(0).runAsTest("assignment after a [[ ]] operand");
+      TestBuilder.command`[[ -z $(exit 3) ]]; $UNSET`.exitCode(0).runAsTest("empty command after a [[ ]] operand");
+    });
   });
 
   describe("tilde_expansion", () => {

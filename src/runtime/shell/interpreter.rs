@@ -547,6 +547,7 @@ impl Interpreter {
                 __prev_cwd: cwd_arr.clone(),
                 __cwd: cwd_arr,
                 cwd_fd,
+                last_cmd_subst_status: None,
             }),
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
@@ -1674,6 +1675,8 @@ pub(crate) struct ShellExecEnv {
     pub(crate) __prev_cwd: Vec<u8>,
     pub(crate) __cwd: Vec<u8>,
     pub(crate) cwd_fd: Fd,
+    /// Status of the last `$(...)` of the simple command now expanding in this env (POSIX 2.9.1).
+    pub(crate) last_cmd_subst_status: Option<ExitCode>,
 }
 
 pub(crate) enum Bufio {
@@ -1835,6 +1838,7 @@ impl ShellExecEnv {
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
+            last_cmd_subst_status: None,
         });
         Ok(bun_core::heap::into_raw(duped))
     }

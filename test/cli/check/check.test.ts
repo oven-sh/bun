@@ -17248,6 +17248,81 @@ export const ab: A<1> = b, ba: B<1> = a, bc: B<1> = c, cb: C<1> = b;
       expect(exitCode).toBe(1);
     });
 
+    test("says '(Missing)' for duplicate JSDoc properties without a name", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: true },
+        }),
+        "a.js": `/**
+ * @typedef {object} CopyInfo
+ * @property {function(): string} getText
+ * @property {function(): void} success
+ * @property {(reason: any) => void} error
+ */
+export {};
+`,
+        "b.ts": `export interface I { a: 1; a: 2 }
+export interface J { "": 1; "": 2 }
+export class C { ""= 1; ""= 2 }
+`,
+        "c.js": `/**
+ * @typedef {object} T
+ * @property {string}
+ * @property {number}
+ */
+/**
+ * @typedef {object} U
+ * @property {string} a
+ * @property {number} a
+ */
+export {};
+`,
+        "e.js": `/**
+ * @callback F
+ * @param {function(): string} a
+ * @param {function(): string} b
+ */
+/**
+ * @typedef {object} V
+ * @property {object} o
+ * @property {function(): string} o.a
+ * @property {function(): string} o.b
+ */
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.js(3,23): error TS2300: Duplicate identifier '(Missing)'.
+        a.js(3,23): error TS1005: '}' expected.
+        a.js(4,23): error TS2300: Duplicate identifier '(Missing)'.
+        a.js(4,23): error TS1005: '}' expected.
+        b.ts(1,22): error TS2300: Duplicate identifier 'a'.
+        b.ts(1,28): error TS2300: Duplicate identifier 'a'.
+        b.ts(1,28): error TS2717: Subsequent property declarations must have the same type.  Property 'a' must be of type '1', but here has type '2'.
+        b.ts(2,22): error TS2300: Duplicate identifier '""'.
+        b.ts(2,29): error TS2300: Duplicate identifier '""'.
+        b.ts(2,29): error TS2717: Subsequent property declarations must have the same type.  Property '""' must be of type '1', but here has type '2'.
+        b.ts(3,18): error TS2300: Duplicate identifier '""'.
+        b.ts(3,25): error TS2300: Duplicate identifier '""'.
+        c.js(4,4): error TS2300: Duplicate identifier '(Missing)'.
+        c.js(4,4): error TS1003: Identifier expected.
+        c.js(4,22): error TS2300: Duplicate identifier '(Missing)'.
+        c.js(4,22): error TS2717: Subsequent property declarations must have the same type.  Property '(Missing)' must be of type 'string', but here has type 'number'.
+        c.js(4,22): error TS1003: Identifier expected.
+        c.js(8,23): error TS2300: Duplicate identifier 'a'.
+        c.js(9,23): error TS2300: Duplicate identifier 'a'.
+        c.js(9,23): error TS2717: Subsequent property declarations must have the same type.  Property 'a' must be of type 'string', but here has type 'number'.
+        e.js(3,20): error TS1005: '}' expected.
+        e.js(4,20): error TS1005: '}' expected.
+        e.js(9,23): error TS2300: Duplicate identifier '(Missing)'.
+        e.js(9,23): error TS1005: '}' expected.
+        e.js(10,23): error TS2300: Duplicate identifier '(Missing)'.
+        e.js(10,23): error TS1005: '}' expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

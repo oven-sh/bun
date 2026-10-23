@@ -924,6 +924,12 @@ impl Checker<'_, '_> {
                 let first = first.and_then(|(of, first)| self.span_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(declaration_span);
                 let text = super::spans::text_of_node_at(self.hir(of), from, to);
+                // `DeclarationNameToString`
+                if self.is_declaration_name_missing(file, declaration) {
+                    let at = (file, declaration_span.1, declaration_span.1);
+                    self.error_at(at, code, &[Arg::Bytes(b"(Missing)")]);
+                    continue;
+                }
                 let text = match is_stored || self.atoms().is_symbol_name(name) {
                     true => Arg::Bytes(&text),
                     false => Arg::Atom(name),

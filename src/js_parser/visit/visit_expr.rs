@@ -216,7 +216,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
             {
-                // TODO: silence this for runtime transpiler
+                // Assigning to a constant is a runtime TypeError, not an early error, so
+                // outside of bundling it must not stop the module from loading (the
+                // assignment may sit on a path that never runs). Bundling still errors:
+                // the linker may inline the constant across modules.
                 let r = js_lexer::range_of_identifier(p.source, expr.loc);
                 let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::Data {
                     text: {
@@ -236,8 +239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 }]);
 
-                let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
-                match is_error {
+                match p.options.bundle {
                     true => p.log().add_range_error_fmt_with_notes(
                         Some(p.source),
                         r,
@@ -248,7 +250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ),
                     ),
 
-                    false => p.log().add_range_error_fmt_with_notes(
+                    false => p.log().add_range_warning_fmt_with_notes(
                         Some(p.source),
                         r,
                         notes,

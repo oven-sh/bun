@@ -2186,7 +2186,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let ref_ = ident.ref_;
 
-        if self.options.features.inlining {
+        // Never substitute a constant's value into an assignment or delete target: that
+        // would turn `e = 2` into `1 = 2`, an early SyntaxError, where the spec says
+        // it is a run-time TypeError.
+        if self.options.features.inlining
+            && opts.assign_target() == js_ast::AssignTarget::None
+            && !opts.is_delete_target()
+        {
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);

@@ -3181,6 +3181,203 @@ describe.concurrent("a test file that can never finish running", () => {
   });
 });
 
+// The test's timeout timer can't fire, so another thread interrupts the script.
+describe.concurrent("a test that never returns to the event loop", () => {
+  const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd());
+  const interrupts = (stderr: string) => stderr.match(/^interrupted JavaScript/gm)?.length ?? 0;
+  const run = (files: Record<string, string>, ...args: string[]) =>
+    runFilesWithEnv({ BUN_TEST_INTERRUPT_AFTER_MS: "200" }, files, ...args);
+  const next = `
+    test("next", async () => {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      await new Promise(resolve => process.nextTick(resolve));
+    });
+  `;
+  const tickForever = `(function tick() { process.nextTick(tick); })();`;
+  const spin = `const spin = ms => { for (const start = performance.now(); performance.now() - start < ms; ); };`;
+
+  const stuck = {
+    "a loop": `for (;;) {}`,
+    "a loop that catches": `for (;;) try { for (;;) {} } catch {}`,
+    "a loop after a timer": `await new Promise(resolve => setTimeout(resolve, 1)); for (;;) {}`,
+    "a loop after reading process.nextTick": `process.nextTick; for (;;) {}`,
+    "promise jobs": `for (let i = 0; i < 5; i++) (async () => { for (;;) await 0; })(); await new Promise(() => {});`,
+    "ticks": `for (let i = 0; i < 5; i++) ${tickForever} await new Promise(() => {});`,
+    // These timers fire before the timeout's timer, and Bun runs the queued ticks after each one.
+    "ticks, with other timers overdue": `
+      setInterval(() => {}, 5);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      ${tickForever}
+      await new Promise(() => {});
+    `,
+  };
+
+  test.each([
+    ...Object.keys(stuck).map(name => [name, []] as const),
+    ...[["--isolate"], ["--isolate=modules"], ["--parallel=2"]].flatMap(flags => [
+      ["a loop", flags] as const,
+      ["ticks, with other timers overdue", flags] as const,
+    ]),
+  ])("interrupts %s %j", async (name, flags) => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { afterEach, test } from "bun:test";
+          afterEach(() => console.error("(pass) cleanup"));
+          test("stuck", async () => { ${stuck[name]} }, 100);
+          ${next}
+        `,
+        "b.test.ts": `import { test } from "bun:test"; ${next}`,
+      },
+      ...flags,
+    );
+    // --parallel prints the files in the order they finish.
+    expect({ results: results(stderr)?.sort(), interrupts: interrupts(stderr), exitCode }).toEqual({
+      results: ["(fail) stuck", "(pass) cleanup", "(pass) cleanup", "(pass) next", "(pass) next"],
+      interrupts: 1,
+      exitCode: 1,
+    });
+  });
+
+  test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])("interrupts a loop in %s", async hook => {
+    const { stderr, counts, exitCode } = await run({
+      "a.test.ts": `
+        import { ${hook}, describe, test } from "bun:test";
+        describe("block", () => {
+          ${hook}(() => { for (;;) {} }, 100);
+          test("inside", () => {});
+        });
+        ${next}
+      `,
+    });
+    expect(results(stderr)).toContain("(pass) next");
+    expect({ interrupts: interrupts(stderr), fails: counts?.[1], exitCode }).toEqual({
+      interrupts: 1,
+      fails: " 1 fail",
+      exitCode: 1,
+    });
+  });
+
+  test("interrupts every --retry attempt", async () => {
+    const { stderr, exitCode } = await run(
+      { "a.test.ts": `import { test } from "bun:test"; test("stuck", () => { for (;;) {} }, 100); ${next}` },
+      "--retry=2",
+    );
+    expect({ results: results(stderr), interrupts: interrupts(stderr), exitCode }).toEqual({
+      results: ["(fail) stuck", "(pass) next"],
+      interrupts: 3,
+      exitCode: 1,
+    });
+  });
+
+  test("interrupts a concurrent test", async () => {
+    const { stderr, exitCode } = await run({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        for (let i = 0; i < 30; i++) {
+          test.concurrent("concurrent " + i, async () => {
+            await new Promise(resolve => setTimeout(resolve, 1));
+            if (i === 15) for (;;) {}
+          }, 100);
+        }
+        ${next}
+      `,
+    });
+    // The tests that waited behind the stuck one may have timed out too.
+    expect(results(stderr)).toContain("(fail) concurrent 15");
+    expect(results(stderr)).toContain("(pass) next");
+    expect({ interrupts: interrupts(stderr), exitCode }).toEqual({
+      interrupts: 1,
+      exitCode: 1,
+    });
+  });
+
+  // Each of these blocks for longer than 100 + 3 * 200 ms, the latest an earlier step's interrupt could fire.
+  test.each(
+    Object.entries({
+      "a test within its own timeout": `
+        test("quick", () => {}, 100);
+        test("blocks", () => spin(1000), 60_000);
+      `,
+      "a test within its own timeout, after a timer": `
+        test("quick", () => {}, 100);
+        test("blocks", async () => { await new Promise(resolve => setTimeout(resolve, 1)); spin(1000); }, 60_000);
+      `,
+      "a test without a timeout": `
+        test("quick", () => {}, 100);
+        test("blocks", () => spin(1000), 0);
+      `,
+    }),
+  )("doesn't interrupt %s", async (_, tests) => {
+    const { stderr, counts, exitCode } = await run({
+      "a.test.ts": `import { test } from "bun:test"; ${spin} ${tests}`,
+    });
+    expect({ interrupts: interrupts(stderr), counts, exitCode }).toEqual({
+      interrupts: 0,
+      counts: [" 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["within its own timeout", 60_000],
+    ["without a timeout", 0],
+  ])("doesn't interrupt a concurrent test %s, next to one that times out", async (_, timeout) => {
+    const { stderr, exitCode } = await run({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        ${spin}
+        test.concurrent("times out", () => new Promise(() => {}), 100);
+        test.concurrent("blocks", async () => {
+          await new Promise(resolve => setTimeout(resolve, 1));
+          spin(1000);
+        }, ${timeout});
+      `,
+    });
+    expect({ results: results(stderr)?.sort(), interrupts: interrupts(stderr), exitCode }).toEqual({
+      results: ["(fail) times out", "(pass) blocks"],
+      interrupts: 0,
+      exitCode: 1,
+    });
+  });
+
+  test.each([[[]], [["--isolate"]], [["--isolate=modules"]]])(
+    "doesn't interrupt the next file's load %j",
+    async flags => {
+      const { stderr, counts, exitCode } = await run(
+        {
+          "a.test.ts": `import { test } from "bun:test"; test("quick", () => {}, 100);`,
+          "b.test.ts": `import { test } from "bun:test"; ${spin} spin(1000); test("loaded", () => {});`,
+        },
+        ...flags,
+      );
+      expect({ interrupts: interrupts(stderr), counts, exitCode }).toEqual({
+        interrupts: 0,
+        counts: [" 2 pass", " 0 fail"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("a test that blocks past its timeout after a timer still passes", async () => {
+    const { stderr, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        ${spin}
+        test("blocks", async () => {
+          await new Promise(resolve => setTimeout(resolve, 1));
+          spin(200);
+        }, 100);
+      `,
+    });
+    expect({ interrupts: interrupts(stderr), counts, exitCode }).toEqual({
+      interrupts: 0,
+      counts: [" 1 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+});
+
 describe.concurrent("the runner sleeps while it waits", () => {
   const waitMs = 1000;
   const cpuMs = (stdout: string) => Number(stdout.match(/^cpu (\d+)$/m)?.[1]);

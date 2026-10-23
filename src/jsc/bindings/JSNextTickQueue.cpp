@@ -72,6 +72,21 @@ void JSNextTickQueue::discard(JSC::VM& vm)
     internalField(2).set(vm, this, jsUndefined());
 }
 
+void JSNextTickQueue::clear(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // Empty until the first process.nextTick() call.
+    JSValue queue = internalField(1).get();
+    if (!queue)
+        return;
+    JSValue shift = queue.get(globalObject, JSC::Identifier::fromString(vm, "shift"_s));
+    MarkedArgumentBuffer args;
+    while (!scope.exception() && !JSC::call(globalObject, shift, queue, args, "Failed to clear next tick queue"_s).isNull()) {
+    }
+    (void)scope.tryClearException();
+    internalField(0).set(vm, this, jsNumber(0));
+}
+
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

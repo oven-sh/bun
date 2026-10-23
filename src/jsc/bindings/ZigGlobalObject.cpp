@@ -68,6 +68,7 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/TerminationDeadline.h>
 #include "BunObject.h"
 #include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
@@ -3580,6 +3581,25 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     if (scope.exception() && vm.isTerminationException(scope.exception())) {
         scope.clearException();
     }
+}
+
+static thread_local JSC::TerminationDeadline* s_testInterruptDeadline = nullptr;
+
+// Replaces this thread's deadline. JavaScript still running when it passes is terminated. A negative delay only cancels.
+// Returns true if the previous deadline fired. Its termination is withdrawn, so the next script runs normally.
+extern "C" bool JSGlobalObject__setTestInterruptDeadline(JSC::JSGlobalObject* globalObject, double millisecondsFromNow)
+{
+    auto& vm = JSC::getVM(globalObject);
+    bool fired = false;
+    if (RefPtr previous = adoptRef(std::exchange(s_testInterruptDeadline, nullptr))) {
+        previous->cancel(vm);
+        fired = previous->didFire();
+        if (fired && WebCore::clientData(vm)->scriptAllowed())
+            vm.cancelTermination();
+    }
+    if (millisecondsFromNow >= 0)
+        s_testInterruptDeadline = &vm.addTerminationDeadline(MonotonicTime::now() + Seconds::fromMilliseconds(millisecondsFromNow)).leakRef();
+    return fired;
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)

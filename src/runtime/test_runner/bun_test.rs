@@ -36,6 +36,9 @@ pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
     unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
 }
 
+/// Overridable via BUN_TEST_INTERRUPT_AFTER_MS for tests, so that they don't wait this long.
+const DEFAULT_INTERRUPT_AFTER_MS: i64 = 5000;
+
 /// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
 /// Local helper so it can compare `bun_core::Timespec` against the
 /// event-loop crate's distinct `Timespec` (converted by field).
@@ -750,6 +753,14 @@ pub(crate) struct BunTest {
     /// frame, which never returns; `exit_file()` nulls this before drop.
     pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
     pub(crate) timer: EventLoopTimer,
+    /// The first and last timeout that the armed deadline is good for: it fires `interrupt_after_ms` to three times that
+    /// after each of them. Both are `EPOCH` if none is armed.
+    interrupt_covers: [Timespec; 2],
+    interrupt_after_ms: i64,
+    /// The running step's timeout, or `EPOCH` if it has none. For a concurrent group, it's the latest timeout among the
+    /// steps `interrupt_group` has started, or `EPOCH` if any of them has none.
+    interrupt_timeout: Timespec,
+    interrupt_group: usize,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
@@ -804,6 +815,14 @@ impl BunTest {
             // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
+            interrupt_covers: [Timespec::EPOCH; 2],
+            interrupt_after_ms: VirtualMachine::get()
+                .env_loader()
+                .get(b"BUN_TEST_INTERRUPT_AFTER_MS")
+                .and_then(|ms| bun_core::fmt::parse_int::<i64>(ms, 10).ok())
+                .map_or(DEFAULT_INTERRUPT_AFTER_MS, |ms| ms.max(0)),
+            interrupt_timeout: Timespec::EPOCH,
+            interrupt_group: usize::MAX,
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
@@ -1052,6 +1071,7 @@ impl BunTest {
         unsafe {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
+            (*this).cancel_interrupt(global);
 
             match (*this).phase {
                 Phase::Collection => {}
@@ -1159,8 +1179,63 @@ impl BunTest {
         }
 
         // SAFETY: loop done; sole `&mut` for the timer update.
-        unsafe { (*this).update_min_timeout(global_this, &min_timeout) };
+        unsafe {
+            // `EPOCH` here means that no step returned a timeout. One may still apply.
+            if min_timeout != Timespec::EPOCH {
+                (*this).interrupt_after(global_this, &min_timeout);
+            }
+            (*this).update_min_timeout(global_this, &min_timeout)
+        };
         Ok(())
+    }
+
+    /// `timer` can't fire while JavaScript never returns to the event loop (a synchronous loop, or an endless run of
+    /// promise jobs), so JSC's timer thread terminates the script if it's still running `interrupt_after_ms` to three
+    /// times that after `timeout`. `timer` is overdue by then and reports the timeout.
+    fn interrupt_after(&mut self, global_this: &JSGlobalObject, timeout: &Timespec) {
+        if self.phase != Phase::Execution {
+            return;
+        }
+        // Any test that a concurrent group has started could be the one running, so all of them have to be overdue.
+        let is_concurrent = self.execution.active_group_ref().is_some_and(|group| group.sequence_end - group.sequence_start > 1);
+        if !is_concurrent || self.interrupt_group != self.execution.group_index {
+            self.interrupt_group = self.execution.group_index;
+            self.interrupt_timeout = *timeout;
+        } else if self.interrupt_timeout != Timespec::EPOCH
+            && (*timeout == Timespec::EPOCH || timeout.order(&self.interrupt_timeout).is_gt())
+        {
+            self.interrupt_timeout = *timeout;
+        }
+        let timeout = self.interrupt_timeout;
+        if timeout == Timespec::EPOCH {
+            return self.cancel_interrupt(global_this);
+        }
+        // Arming costs about 600 cycles, so keep the armed deadline if it's good for this timeout too.
+        if timeout.order(&self.interrupt_covers[0]).is_ge() && timeout.order(&self.interrupt_covers[1]).is_le() {
+            return;
+        }
+        self.interrupt_covers = [timeout, timeout.add_ms(2 * self.interrupt_after_ms)];
+        // A script paused at a breakpoint isn't stuck.
+        let delay = if global_this.bun_vm().debugger.is_some() {
+            -1
+        } else {
+            (timeout.ms() + 3 * self.interrupt_after_ms - Timespec::now_force_real_time().ms()).max(0)
+        };
+        Self::set_interrupt(global_this, delay);
+    }
+
+    fn cancel_interrupt(&mut self, global_this: &JSGlobalObject) {
+        if self.interrupt_covers[1] != Timespec::EPOCH {
+            self.interrupt_covers = [Timespec::EPOCH; 2];
+            Self::set_interrupt(global_this, -1);
+        }
+    }
+
+    fn set_interrupt(global_this: &JSGlobalObject, delay_ms: i64) {
+        if global_this.set_test_interrupt_deadline(delay_ms as f64) {
+            bun_core::pretty_errorln!("<d>interrupted JavaScript that blocked the event loop<r>");
+            bun_core::Output::flush();
+        }
     }
 
     fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
@@ -1196,7 +1271,7 @@ impl BunTest {
         }
     }
 
-    fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
+    fn advance(&mut self, global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
         // capture `self.phase` by raw ptr so the deferred log doesn't
@@ -1305,6 +1380,7 @@ impl BunTest {
             Phase::Execution => {
                 self.in_run_loop = false;
                 self.phase = Phase::Done;
+                self.cancel_interrupt(global_this);
                 Ok(Advance::Exit)
             }
             Phase::Done => Ok(Advance::Exit),
@@ -1356,7 +1432,10 @@ impl BunTest {
         }
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
-        unsafe { (*this).update_min_timeout(global_this, timeout) };
+        unsafe {
+            (*this).interrupt_after(global_this, timeout);
+            (*this).update_min_timeout(global_this, timeout)
+        };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
@@ -1374,6 +1453,8 @@ impl BunTest {
         {
             Ok(v) => v,
             Err(_) => {
+                // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
+                unsafe { (*this).cancel_interrupt(global_this) };
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
                 unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
@@ -1718,6 +1799,9 @@ impl Drop for BunTest {
         if self.timer.state == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
             vm_timer().remove(&raw mut self.timer);
+        }
+        if self.interrupt_covers[1] != Timespec::EPOCH {
+            VirtualMachine::get().global().set_test_interrupt_deadline(-1.0);
         }
 
         for entry in self.extra_execution_entries.drain(..) {

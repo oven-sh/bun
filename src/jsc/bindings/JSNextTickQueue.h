@@ -34,5 +34,7 @@ public:
     // Teardown: whatever was queued no longer runs (field 0 = scheduled flag, field 2 = the JS
     // drain function). The queued callbacks go with the heap.
     void discard(JSC::VM& vm);
+    // Drops the ticks queued so far. Later ones still run.
+    void clear(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 };
 }

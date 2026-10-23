@@ -334,6 +334,11 @@ impl JSGlobalObject {
         JSGlobalObject__clearTerminationException(self)
     }
 
+    /// See `JSGlobalObject__setTestInterruptDeadline`.
+    pub fn set_test_interrupt_deadline(&self, milliseconds_from_now: f64) -> bool {
+        JSGlobalObject__setTestInterruptDeadline(self, milliseconds_from_now)
+    }
+
     pub fn set_time_zone(&self, time_zone: &EncodedSlice) -> bool {
         JSGlobalObject__setTimeZone(self, time_zone)
     }
@@ -1567,6 +1572,10 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
+    safe fn JSGlobalObject__setTestInterruptDeadline(
+        this: &JSGlobalObject,
+        milliseconds_from_now: f64,
+    ) -> bool;
     safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &EncodedSlice) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 

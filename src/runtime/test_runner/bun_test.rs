@@ -193,6 +193,7 @@ pub(crate) mod js_fns {
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
             let cfg = ExecutionEntryCfg {
+                hook_name: Some(tag_name),
                 has_done_parameter,
                 timeout: args.options.timeout,
                 ..Default::default()
@@ -1857,6 +1858,7 @@ pub(crate) enum HookTag {
 
 #[derive(Copy, Clone, Default)]
 pub(crate) struct ExecutionEntryCfg {
+    pub(crate) hook_name: Option<&'static str>,
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
@@ -1874,6 +1876,7 @@ pub(crate) enum AddedInPhase {
 }
 
 pub(crate) struct ExecutionEntry {
+    pub(crate) hook_name: Option<&'static str>,
     pub(crate) base: BaseScope,
     pub callback: Option<Strong>,
     /// 0 = unlimited timeout
@@ -1894,6 +1897,14 @@ pub(crate) struct ExecutionEntry {
 }
 
 impl ExecutionEntry {
+    pub(crate) fn display_name(&self) -> &[u8] {
+        self.base
+            .name
+            .as_deref()
+            .or_else(|| self.hook_name.map(str::as_bytes))
+            .unwrap_or(b"(unnamed)")
+    }
+
     fn create(
         name_not_owned: Option<&[u8]>,
         cb: Option<JSValue>,
@@ -1903,6 +1914,7 @@ impl ExecutionEntry {
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {
         let mut entry = Box::new(ExecutionEntry {
+            hook_name: cfg.hook_name,
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,
             timeout: cfg.timeout,
@@ -1950,6 +1962,7 @@ impl ExecutionEntry {
             } else {
                 Execution::Result::FailBecauseHookTimeout
             };
+            sequence.timed_out_hook = self.hook_name.map(|name| (name, self.timeout));
             sequence.maybe_skip = true;
             return true;
         }

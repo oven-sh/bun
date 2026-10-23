@@ -1575,6 +1575,24 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
 
+// Whether nothing is in the require cache but what imports of data files put there.
+static bool isRequireCacheEmpty(JSC::VM& vm, JSMap* requireMap)
+{
+    if (!requireMap->size())
+        return true;
+    JSMap::Storage* storage = &requireMap->storageRef();
+    for (JSMap::Helper::Entry entry = 0;; ++entry) {
+        auto next = JSMap::Helper::transitAndNext(vm, *storage, entry);
+        if (!next.storage)
+            return true;
+        auto* module = dynamicDowncast<JSCommonJSModule>(next.value);
+        if (!module || module->dataFile != JSCommonJSModule::DataFile::Imported)
+            return false;
+        storage = next.storage;
+        entry = next.entry;
+    }
+}
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,
@@ -1608,7 +1626,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        if (!graph && isRequireCacheEmpty(vm, requireMap)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1740,7 +1758,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        if (!graph && isRequireCacheEmpty(vm, requireMap)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1760,6 +1778,47 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+}
+
+JSValue requireCacheDataFileExports(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSMap* requireMap = requireMapOf(globalObject, graph);
+    JSValue entry = requireMap->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (auto* module = dynamicDowncast<JSCommonJSModule>(entry)) {
+        if (module->dataFile == JSCommonJSModule::DataFile::No)
+            return value;
+        RELEASE_AND_RETURN(scope, module->exportsObject());
+    }
+    // What user code put in require.cache stays there.
+    if (!entry.isUndefined())
+        return value;
+
+    auto* module = JSCommonJSModule::create(globalObject, key, value, true, {});
+    RETURN_IF_EXCEPTION(scope, {});
+    module->setModuleGraph(vm, graph);
+    module->dataFile = JSCommonJSModule::DataFile::Imported;
+    requireMap->set(globalObject, key, module);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value;
+}
+
+JSValue esModuleDefaultExport(JSGlobalObject* globalObject, JSObject* exports)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue esModule = exports->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!esModule || !esModule.toBoolean(globalObject))
+        return {};
+    JSValue defaultExport = exports->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!defaultExport || defaultExport.isUndefined())
+        return {};
+    return defaultExport;
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)

@@ -15,6 +15,9 @@ JSC::JSSourceCode* createObjectModuleSourceCode(GlobalObject*, JSC::JSObject* ex
 // Exports `value` as the default export. If it's a non-array object, its properties are also exported.
 JSC::JSSourceCode* createJSValueModuleSourceCode(GlobalObject*, JSC::JSValue value, WTF::String&& sourceURL);
 
+// The same, but the names of the exports are the keys of `file`, what the loader parsed. Each is that property of `value`.
+JSC::JSSourceCode* createJSValueModuleSourceCode(GlobalObject*, JSC::JSValue value, JSC::JSValue file, WTF::String&& sourceURL);
+
 // Exports `value` as the default export and nothing else.
 JSC::JSSourceCode* createJSValueExportDefaultObjectSourceCode(GlobalObject*, JSC::JSValue value, WTF::String&& sourceURL);
 

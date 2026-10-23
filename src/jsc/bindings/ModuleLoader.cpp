@@ -421,21 +421,14 @@ static JSValue handleVirtualModuleResult(
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
         if (commonJSModule) {
-            const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
-            auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
+            JSValue defaultValue = Bun::esModuleDefaultExport(globalObject, object);
             if (scope.exception()) [[unlikely]] {
                 return rejectOrResolve({});
             }
-            if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
-                auto defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
-                if (scope.exception()) [[unlikely]] {
-                    return rejectOrResolve({});
-                }
-                if (defaultValue && !defaultValue.isUndefined()) {
-                    commonJSModule->setExportsObject(defaultValue);
-                    commonJSModule->hasEvaluated = true;
-                    return commonJSModule;
-                }
+            if (defaultValue) {
+                commonJSModule->setExportsObject(defaultValue);
+                commonJSModule->hasEvaluated = true;
+                return commonJSModule;
             }
         }
 
@@ -870,6 +863,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
+        if (res->result.value.is_path_loader)
+            target->dataFile = JSCommonJSModule::DataFile::Required;
         RELEASE_AND_RETURN(scope, target);
 
     }
@@ -883,6 +878,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
+        if (res->result.value.tag == SyntheticModuleType::ExportsObject && res->result.value.is_path_loader)
+            target->dataFile = JSCommonJSModule::DataFile::Required;
         RELEASE_AND_RETURN(scope, target);
     } else if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
         if constexpr (isExtension) {
@@ -1179,6 +1176,9 @@ static JSValue fetchESMSourceCode(
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
         WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
+        JSC::JSValue exports = value;
+        if (!scope.exception() && res->result.value.is_path_loader)
+            exports = Bun::requireCacheDataFileExports(globalObject, graph, specifierJS, value);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             (void)scope.tryClearException();
@@ -1186,7 +1186,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, exports, value, specifier->toWTFString(BunString::ZeroCopy))));
     }
     // TOML and JSONC may go through here
     else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
@@ -1194,9 +1194,18 @@ static JSValue fetchESMSourceCode(
         if (!value) {
             RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
         }
+        JSC::JSValue exports = value;
+        if (res->result.value.is_path_loader) {
+            exports = Bun::requireCacheDataFileExports(globalObject, graph, specifierJS, value);
+            if (scope.exception()) [[unlikely]] {
+                auto* exception = scope.exception();
+                (void)scope.tryClearException();
+                RELEASE_AND_RETURN(scope, reject(exception));
+            }
+        }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, exports, value, specifier->toWTFString(BunString::ZeroCopy))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {

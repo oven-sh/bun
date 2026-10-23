@@ -126,9 +126,7 @@ public:
     // No consumer has started or claimed the native handle, so a taker (node:stream's NativeReadable) may drive it.
     bool hasPendingNativeSource() const
     {
-        if (m_bunMode != BunStreamMode::NativePending || m_state != ReadableStreamState::Readable)
-            return false;
-        if (m_reader || m_lockedWithoutReader)
+        if (m_bunMode != BunStreamMode::NativePending || m_reader || m_lockedWithoutReader)
             return false;
         JSC::JSValue handle = nativePtrForJS();
         return handle && handle.isObject();

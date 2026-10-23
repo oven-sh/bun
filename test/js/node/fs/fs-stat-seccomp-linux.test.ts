@@ -149,6 +149,8 @@ async function runBunUnderSeccomp(
     cwd: options.cwd,
     stdout: "pipe",
     stderr: "pipe",
+    // `unshare --fork` ignores SIGTERM while it waits for its child.
+    killSignal: options.launcher ? "SIGKILL" : undefined,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode === 77) return null;
@@ -495,14 +497,11 @@ describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () =
 
   // `unshare` arguments that make its command PID 1 of a new pid namespace, or null where the host
   // allows no such namespace. --mount-proc, because LeakSanitizer lists the threads to scan from /proc.
-  // --kill-child, so that the command does not outlive an `unshare` that a timeout kills. BusyBox's
-  // `unshare` has no such option.
+  // --kill-child, so that the command dies with `unshare`. BusyBox's `unshare` has no such option.
   const asPid1 = (() => {
-    for (const killChild of [["--kill-child"], []]) {
-      for (const userNamespace of [[], ["--user", "--map-root-user"]]) {
-        const launcher = ["unshare", ...userNamespace, "--pid", "--fork", ...killChild, "--mount-proc"];
-        if (spawnSync(launcher[0], [...launcher.slice(1), "true"]).status === 0) return launcher;
-      }
+    for (const userNamespace of [[], ["--user", "--map-root-user"]]) {
+      const launcher = ["unshare", ...userNamespace, "--pid", "--fork", "--kill-child", "--mount-proc"];
+      if (spawnSync(launcher[0], [...launcher.slice(1), "true"]).status === 0) return launcher;
     }
     return null;
   })();

@@ -2032,6 +2032,7 @@ function Socket(options?): void {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
+  let stats;
   if (fd !== undefined) {
     // Adopt pipe/character-device fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
@@ -2044,7 +2045,6 @@ function Socket(options?): void {
     // Network-socket fds are not supported (handle adoption needs native
     // support); those keep the previous validated-but-inert behavior.
     if (opts.writable === true) {
-      let stats;
       try {
         stats = require("node:fs").fstatSync(fd);
       } catch {
@@ -2056,6 +2056,18 @@ function Socket(options?): void {
       if (stats.isFile()) {
         throw $ERR_INVALID_FD_TYPE("FILE");
       }
+    }
+  }
+
+  // Node validates this after the type of `fd`. Before the adoption: a throw must leave the caller's fd alone. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L478-L481
+  const typeOfService = opts.typeOfService;
+  if (typeOfService !== undefined) {
+    validateInt32(typeOfService, "options.typeOfService", 0, 255);
+    this[kSetTOS] = typeOfService;
+  }
+
+  if (fd !== undefined) {
+    if (opts.writable === true) {
       // isSocket() covers stdio handed to a child as a socketpair (how spawn
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
@@ -2901,6 +2913,12 @@ Socket.prototype.setNoDelay = function setNoDelay(enable = true) {
   return this;
 };
 
+// Where Node keeps the value in the net.Socket. EBADF when not connecting: a handle with no fd, which is TLS over a stream, or a handle that closed once both sides ended.
+function keepsTypeOfService(socket, errno) {
+  // EINVAL is a unix socket. A kernel EINVAL on an IP socket, which Node throws, looks the same here.
+  return errno === -22 /* UV_EINVAL */ || (errno === -9 /* UV_EBADF */ && !socket.connecting);
+}
+
 // Matches Node's setTypeOfService/getTypeOfService (lib/net.js + TCPWrap).
 // The native handle does the setsockopt (IP_TOS / IPV6_TCLASS); a socket
 // without a handle yet caches the value and applies it on connect.
@@ -2921,7 +2939,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
     const err = this._handle.setTypeOfService(tos);
     // Windows often restricts TOS or reports errors even when partially
     // applied - best-effort there, the way Node treats it.
-    if (err && process.platform !== "win32") {
+    if (err && process.platform !== "win32" && !keepsTypeOfService(this, err)) {
       throw new ErrnoException(err, "setTypeOfService");
     }
   }
@@ -2936,7 +2954,7 @@ Socket.prototype.getTypeOfService = function getTypeOfService() {
   if (typeof res === "number" && res < 0) {
     // getsockopt(IP_TOS) commonly fails on Windows: fall back to the cached
     // value the way Node does.
-    if (process.platform === "win32") {
+    if (process.platform === "win32" || keepsTypeOfService(this, res)) {
       return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
     }
     throw new ErrnoException(res, "getTypeOfService");

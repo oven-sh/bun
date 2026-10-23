@@ -481,7 +481,7 @@ _bun_run_completion() {
         '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
         '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \
         '--jsx-import-source[Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"]:jsx-import-source' \
-        '--jsx-runtime["automatic" (default) or "classic"]: :->jsx-runtime' \
+        '--jsx-runtime[One of: "automatic" (default), "classic", "preserve", "react", "react-jsx", "react-jsxdev"]: :->jsx-runtime' \
         '--preload[Import a module before other modules are loaded]:preload' \
         '-r[Import a module before other modules are loaded]:preload' \
         '--main-fields[Main fields to lookup in package.json. Defaults to --target dependent]:main-fields' \
@@ -528,7 +528,7 @@ _bun_run_completion() {
 
         ;;
     jsx-runtime)
-        _alternative 'args:cmd3:((classic automatic))'
+        _alternative 'args:cmd3:((automatic classic preserve react react-jsx react-jsxdev))'
 
         ;;
     target)
@@ -1037,7 +1037,7 @@ _bun_test_completion() {
         '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
         '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \
         '--jsx-import-source[Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"]:jsx-import-source' \
-        '--jsx-runtime["automatic" (default) or "classic"]: :->jsx-runtime' \
+        '--jsx-runtime[One of: "automatic" (default), "classic", "preserve", "react", "react-jsx", "react-jsxdev"]: :->jsx-runtime' \
         '--preload[Import a module before other modules are loaded]:preload' \
         '-r[Import a module before other modules are loaded]:preload' \
         '--main-fields[Main fields to lookup in package.json. Defaults to --target dependent]:main-fields' \
@@ -1085,6 +1085,10 @@ _bun_test_completion() {
         ;;
     config)
         _files
+
+        ;;
+    jsx-runtime)
+        _alternative 'args:cmd3:((automatic classic preserve react react-jsx react-jsxdev))'
 
         ;;
 

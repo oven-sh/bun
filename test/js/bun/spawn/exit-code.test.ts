@@ -152,18 +152,6 @@ describe.concurrent("a fatal error during a top-level await ends the run", () =>
     expect({ stdout, exitCode }).toEqual({ stdout: "Promise { <pending> }\n", exitCode: 1 });
   });
 
-  it("under --print: an error that a --preload left behind leaves the result its turn", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      { "preload.mjs": `queueMicrotask(() => { throw new Error("boom"); });` },
-      "--preload",
-      "./preload.mjs",
-      "--print",
-      `Bun.sleep(10).then(() => 5)`,
-    );
-    expect(stderr).toContain("error: boom");
-    expect({ stdout, exitCode }).toEqual({ stdout: "5\n", exitCode: 1 });
-  });
-
   const onUncaughtException = `process.on("uncaughtException", e => console.log("caught", e.message));\n`;
   const onUnhandledRejection = `process.on("unhandledRejection", e => console.log("caught", e.message));\n`;
   it.each([

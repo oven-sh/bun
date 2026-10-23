@@ -424,8 +424,6 @@ pub struct VirtualMachine {
     /// made under an earlier count is the finished file's, and is dropped.
     pub test_isolation_generation: u32,
     pub test_isolation_state: TestIsolationState,
-    /// Cached cwd no longer names the real one; cleared by the next successful `getcwd`.
-    cwd_cache_stale: bool,
 }
 
 #[derive(Default)]
@@ -5948,7 +5946,6 @@ impl VirtualMachine {
     }
 
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
-        let cache_stale = self.cwd_cache_stale;
         let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -5957,7 +5954,7 @@ impl VirtualMachine {
             // chdir already moved the cwd; Node ignores the failed getcwd, so do not roll back.
             bun_sys::Result::Err(_) => {
                 // A stale cache is not a base to join onto.
-                if cache_stale {
+                if bun_core::top_level_dir_is_stale() {
                     return Ok(());
                 }
                 let prev = fs.top_level_dir();
@@ -5973,7 +5970,7 @@ impl VirtualMachine {
                     }
                     // Keep the old cwd and stop trusting it until getcwd succeeds.
                     None => {
-                        self.cwd_cache_stale = true;
+                        bun_core::mark_top_level_dir_stale();
                         return Ok(());
                     }
                 }
@@ -5984,7 +5981,6 @@ impl VirtualMachine {
             len += 1;
         }
         fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
-        self.cwd_cache_stale = false;
         Ok(())
     }
 

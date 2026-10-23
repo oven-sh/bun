@@ -376,6 +376,44 @@ fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject,
     }
 }
 
+/// What a read of a request body over `maxRequestBodySize` rejects with. It is the `Error` it always was: only `req.signal` and the response stream get an `AbortError`.
+fn request_body_too_large() -> Body::ValueError {
+    Body::ValueError::Message(BunString::static_(
+        "Request body exceeded maxRequestBodySize",
+    ))
+}
+
+/// A request whose body outgrew `maxRequestBodySize`, before its handler is told. `resp` is detached. Non-generic and out of line, like [`release_body_stream`].
+#[cold]
+#[inline(never)]
+fn refuse_request(
+    resp: uws::AnyResponse,
+    status_written: bool,
+    close_connection: bool,
+    body: Option<&mut Body::Value>,
+    global_this: &JSGlobalObject,
+) {
+    debug_assert!(!resp.has_responded());
+    if !status_written {
+        resp.write_status(b"413 Payload Too Large");
+        resp.end_without_body(close_connection);
+        resp.close_if_done_and_marked();
+    } else {
+        // Never the terminating chunk: it would make a truncated body look complete.
+        resp.force_close();
+    }
+    // Nothing reads this body yet. A first read inside the teardown must fail: it finds an empty body otherwise.
+    if let Some(body) = body {
+        let untouched = match body {
+            Body::Value::Locked(locked) => !locked.has_consumer() && !locked.readable.has(),
+            _ => false,
+        };
+        if untouched {
+            let _ = body.to_error_instance(request_body_too_large(), global_this);
+        }
+    }
+}
+
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
 /// monomorphizations share one copy.
@@ -1339,7 +1377,7 @@ where
             self.detach_response();
             // uWS markDone() clears onAborted on end, so on_abort can never
             // run for this request; this is the last chance to reclaim an
-            // outstanding claim (e.g. a 413 while the handler promise parks).
+            // outstanding claim (e.g. a 426 while the handler promise parks).
             self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
@@ -1369,29 +1407,6 @@ where
         self.end_without_body(true);
     }
 
-    /// Answers 413 to a request whose body outgrew `maxRequestBodySize`, after that body has failed.
-    fn end_with_payload_too_large(&self) {
-        let Some(resp) = self.resp.get() else { return };
-        // A dev server bundle that this request waits for must not answer it later.
-        if let Some(abort) = self.additional_on_abort.replace(None) {
-            (abort.cb)(abort.data.as_ptr());
-            abort.deref();
-        }
-        // Failing the body runs JS, which can answer with a file. The file stream
-        // owns the response from then on, and it hears the close as an abort.
-        if self.flags.has_sendfile_ctx() {
-            resp.force_close();
-            return;
-        }
-        if !resp.has_responded() {
-            self.flags.set_has_written_status(true);
-            resp.write_status(b"413 Payload Too Large");
-        }
-        // The normal end path detaches `self.resp` and releases the base ref. uWS
-        // markDone() clears onAborted, so no abort would ever do either.
-        self.end_without_body(!MUX);
-    }
-
     pub(crate) fn force_close(&self) {
         if let Some(resp) = self.resp.get() {
             self.detach_response();
@@ -1416,6 +1431,15 @@ where
             }
         }
         self.end_stream(self.should_close_connection());
+    }
+
+    /// The request body outgrew `maxRequestBodySize`: the server ends the request as [`Self::on_abort`] does for a client that left.
+    #[cold]
+    #[inline(never)]
+    fn reject_oversized_request_body(&self) {
+        ctx_log!("rejectOversizedRequestBody");
+        debug_assert!(self.pin_count.get() > 0);
+        self.abort(jsc::CommonAbortReason::RequestBodyTooLarge);
     }
 
     fn on_writable_complete_response_buffer(
@@ -1539,6 +1563,15 @@ where
                 return;
             }
         }
+        this.abort(jsc::CommonAbortReason::ConnectionClosed);
+    }
+
+    /// The request ends before its response is complete: the client left, or the server refuses the rest of the request body. The handler hears `reason`, in the same order for both. The caller holds an event loop scope.
+    #[inline(never)]
+    fn abort(&self, reason: jsc::CommonAbortReason) {
+        let this = self;
+        let server = this.server();
+        let vm = server.vm();
         debug_assert!(!this.flags.aborted());
         // mark request as aborted
         this.flags.set_aborted(true);
@@ -1548,9 +1581,24 @@ where
             abort.deref();
         }
 
+        // Before `req.signal` fires: an abort listener must not write to the response that is gone.
+        let resp = this.resp.get();
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
         let global_this = server.global_this();
+        if reason == jsc::CommonAbortReason::RequestBodyTooLarge {
+            this.flags.set_request_body_refused(true);
+            if let Some(resp) = resp {
+                refuse_request(
+                    resp,
+                    this.flags.has_written_status(),
+                    !MUX,
+                    this.request_body_mut(),
+                    global_this,
+                );
+                this.flags.set_has_written_status(true);
+            }
+        }
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1567,11 +1615,7 @@ where
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
             if !shim::signal_aborted(signal) {
-                shim::signal_fire(
-                    signal,
-                    global_this,
-                    jsc::CommonAbortReason::ConnectionClosed,
-                );
+                shim::signal_fire(signal, global_this, reason);
                 any_js_calls.set(true);
             }
             shim::signal_release(signal);
@@ -1587,6 +1631,7 @@ where
             unsafe {
                 ResponseStream::<SSL_ENABLED>::abort(
                     sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED>>(),
+                    reason,
                 );
             }
             // Reject a parked request-body read while this abort still drains microtasks.
@@ -2467,21 +2512,45 @@ where
         }
     }
 
+    /// What a read of the request body rejects with once nothing more of it arrives.
+    fn request_body_error(&self) -> Body::ValueError {
+        if self.flags.request_body_refused() {
+            return request_body_too_large();
+        }
+        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed)
+    }
+
     fn end_request_streaming(&self) -> JsResult<bool> {
         debug_assert!(self.server.get().is_some());
 
         self.request_body_buf.set(Vec::new());
 
+        // Most requests end with nothing of their body left to fail.
+        let body_is_pending = match self.request_body.get() {
+            Some(body) => matches!(&**body, Body::Value::Locked(_)),
+            None => false,
+        };
+        if !body_is_pending
+            && matches!(
+                self.request_body_readable_stream_ref.get(),
+                readable_stream::Strong::Empty
+            )
+        {
+            return Ok(false);
+        }
+        self.fail_request_body()
+    }
+
+    /// What is left of the request body fails. Out of line, so that the common end of a request stays short.
+    #[inline(never)]
+    fn fail_request_body(&self) -> JsResult<bool> {
         let mut any_js_calls = false;
 
         // Reject a pending .text()/.json()/.blob()/... whose body never fully arrived.
         if let Some(body) = self.request_body_mut() {
             if matches!(body, Body::Value::Locked(_)) {
                 let global_this = self.server().global_this();
-                body.to_error_instance(
-                    Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
-                    global_this,
-                )?;
+                body.to_error_instance(self.request_body_error(), global_this)?;
                 any_js_calls = true;
             }
         }
@@ -2500,8 +2569,7 @@ where
                 // False unless `to_error_instance` above reached this same stream through the body.
                 if !bytes.has_received_last_chunk.get() {
                     let global_this = self.server().global_this();
-                    let mut err =
-                        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
+                    let mut err = self.request_body_error();
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ));
@@ -4073,51 +4141,8 @@ where
                 .saturating_add(chunk.len());
             this.request_body_streamed_len.set(streamed_len);
             if streamed_len > server.config().max_request_body_size {
-                this.resp
-                    .get()
-                    .expect("infallible: resp bound")
-                    .clear_on_data();
-                this.flags.set_is_waiting_for_request_body(false);
-                this.resume_request_body_socket();
-
                 let _exit = vm.enter_event_loop_scope();
-
-                // Body first (a tee branch after `req.clone()`), before endRequestStreaming()'s ConnectionClosed.
-                if let Some(body) = this.request_body_mut() {
-                    if matches!(body, Body::Value::Locked(_)) {
-                        let _ = body.to_error_instance(
-                            Body::ValueError::Message(BunString::static_(
-                                "Request body exceeded maxRequestBodySize",
-                            )),
-                            global_this,
-                        );
-                    }
-                }
-
-                // Release the strong stream ref like the `last` arm does, then
-                // error the stream so a pending or future read rejects instead
-                // of hanging forever.
-                let _strong = this
-                    .request_body_readable_stream_ref
-                    .replace(readable_stream::Strong::default());
-
-                readable.value.ensure_still_alive();
-                if let Some(bytes) = readable.ptr.bytes() {
-                    let source = bytes.parent_const();
-                    source.producer.set(WebCore::streams::SourceHandle::None);
-                    // False unless `to_error_instance` above reached this same stream through the body.
-                    if !bytes.has_received_last_chunk.get() {
-                        let mut err = Body::ValueError::Message(BunString::static_(
-                            "Request body exceeded maxRequestBodySize",
-                        ));
-                        bytes.on_data(WebCore::streams::Result::Err(
-                            err.to_stream_error(global_this),
-                        ));
-                        err.reset();
-                    }
-                }
-
-                this.end_with_payload_too_large();
+                this.reject_oversized_request_body();
                 return;
             }
 
@@ -4186,27 +4211,8 @@ where
                 .saturating_add(chunk.len())
                 > server.config().max_request_body_size
             {
-                this.request_body_buf.set(Vec::new());
-                this.resp
-                    .get()
-                    .expect("infallible: resp bound")
-                    .clear_on_data();
-                this.flags.set_is_waiting_for_request_body(false);
-
                 let _exit = vm.enter_event_loop_scope();
-                // Reject the pending body first so endRequestStreaming()
-                // below (via this.endWithoutBody) doesn't substitute a
-                // generic ConnectionClosed. toErrorInstance handles
-                // .Locked itself (rejects the promise, deinits the
-                // readable, calls onReceiveValue).
-                let _ = body.to_error_instance(
-                    Body::ValueError::Message(BunString::static_(
-                        "Request body exceeded maxRequestBodySize",
-                    )),
-                    global_this,
-                );
-
-                this.end_with_payload_too_large();
+                this.reject_oversized_request_body();
                 return;
             }
 
@@ -4611,6 +4617,8 @@ bitflags::bitflags! {
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
+        /// The body outgrew `maxRequestBodySize`: what is left of it fails with that error.
+        const REQUEST_BODY_REFUSED        = 1 << 18;
     }
 }
 
@@ -4691,6 +4699,11 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         request_body_buffer_all,
         set_request_body_buffer_all,
         REQUEST_BODY_BUFFER_ALL
+    );
+    flag_accessor!(
+        request_body_refused,
+        set_request_body_refused,
+        REQUEST_BODY_REFUSED
     );
 
     #[inline]

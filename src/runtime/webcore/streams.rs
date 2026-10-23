@@ -1987,6 +1987,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     /// The response is gone, so this sink never writes again. [`Self::abort`] tells the source.
+    #[cold]
+    #[inline(never)]
     pub(crate) fn revoke_response(&mut self) {
         self.state = HTTPServerWritableState::Aborted;
         self.res = None;
@@ -1996,10 +1998,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
     /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
     /// sink. A `&mut self` argument protector must not be live across that free.
+    /// `reason` is what the source's `cancel()` gets.
     ///
     /// # Safety
     /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
+    pub(crate) unsafe fn abort(this: *mut Self, reason: CommonAbortReason) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
@@ -2015,7 +2018,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.abort(CommonAbortReason::ConnectionClosed);
+        source.abort(reason);
     }
 
     fn unregister_auto_flusher(&mut self) {

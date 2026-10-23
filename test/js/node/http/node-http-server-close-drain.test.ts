@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
-import { connect as tlsConnect } from "node:tls";
+import { type ConnectionOptions, connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
 // every accepted connection has ended. A connection that was mid-request
@@ -159,6 +159,38 @@ test("server.close(cb) fires once an idle keep-alive connection is reaped", asyn
     const closed = Promise.withResolvers<void>();
     server.close(() => closed.resolve());
     await closed.promise;
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+  }
+});
+
+// Over TLS too: the sweep does not wait for the answer to its close_notify. With allowHalfOpen this client reads
+// the close_notify and never answers it.
+test("https server.close(cb) fires for an idle connection whose client never answers the close_notify", async () => {
+  const server = createHttpsServer(tlsCert, (req, res) => res.end("ok"));
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const options = { port, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true };
+  const socket = tlsConnect(options as ConnectionOptions);
+  try {
+    await once(socket, "secureConnect");
+    let body = "";
+    socket.on("data", chunk => (body += chunk));
+    socket.on("error", () => {});
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    while (!body.includes("ok")) await once(socket, "data");
+    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+
+    let closeCbFired = false;
+    server.close(() => (closeCbFired = true));
+    // The server's close_notify. The client stays open behind it.
+    await once(socket, "end");
+    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+    expect(closeCbFired).toBe(true);
   } finally {
     socket.destroy();
     server.closeAllConnections();

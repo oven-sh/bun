@@ -158,6 +158,40 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     expect(proc.exitCode).toBe(0);
   });
 
+  // The response is complete, and the kernel has taken none of it: the close of the sweep waits for the kernel,
+  // and a second sweep is no reason to stop waiting.
+  test("https: closeIdleConnections() twice delivers a response that the kernel refused at first", async () => {
+    const { proc, port } = await spawnServer(
+      /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
+        tls: { key: process.env.KEY, cert: process.env.CERT },
+        fetch() {
+          fault.set({ syscall: "send", action: "zero", repeat: -1 });
+          setImmediate(() => {
+            s.closeIdleConnections();
+            s.closeIdleConnections();
+            fault.clear();
+          });
+          return new Response(Buffer.alloc(65536, 0x54));
+        } });
+      console.log(s.port);
+      process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+    `,
+      { KEY: certs.key, CERT: certs.cert },
+    );
+    try {
+      const res = await fetch(`https://127.0.0.1:${port}/`, { tls: { ca: certs.cert } });
+      const buf = await res.arrayBuffer();
+      expect({ status: res.status, length: buf.byteLength }).toEqual({ status: 200, length: 65536 });
+    } finally {
+      proc.kill("SIGTERM");
+      await proc.exited;
+    }
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
+  });
+
   test("client abort under server-side 1-byte sends: every response reaches a terminal state", async () => {
     const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");

@@ -2,6 +2,7 @@
 #include "NodeValidator.h"
 #include "KeyObject.h"
 #include "JSVerify.h"
+#include <openssl/curve25519.h>
 #include <openssl/rsa.h>
 
 using namespace JSC;
@@ -100,13 +101,29 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
 
     ClearErrorOnReturn clearError;
+    const auto& key = m_keyData->asymmetricKey;
+
+    // An Ed25519 verify with a digest still goes through verifyInit so that it
+    // fails the same way as before.
+    if (m_mode == Mode::Verify && !m_digest && key.id() == EVP_PKEY_ED25519) {
+        uint8_t publicKey[ED25519_PUBLIC_KEY_LEN];
+        size_t publicKeyLen = sizeof(publicKey);
+        if (EVP_PKEY_get_raw_public_key(key.get(), publicKey, &publicKeyLen) != 1) {
+            m_opensslError = ERR_get_error();
+            return;
+        }
+        m_verifyResult = ncrypto::ed25519Verify(
+            { publicKey, publicKeyLen },
+            { m_signature.begin(), m_signature.size() },
+            { m_data.begin(), m_data.size() });
+        return;
+    }
+
     auto context = EVPMDCtxPointer::New();
     if (!context) [[unlikely]] {
         m_opensslError = ERR_get_error();
         return;
     }
-
-    const auto& key = m_keyData->asymmetricKey;
 
     std::optional<EVP_PKEY_CTX*> ctx;
     switch (m_mode) {

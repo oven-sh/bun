@@ -179,6 +179,25 @@ function guardCallback(callback) {
   };
 }
 
+const ErrorPrototype = Error.prototype;
+const ErrorIsError = Error.isError;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+// Only a Proxy can give a prototype chain no end. No real chain has this many of them.
+const kMaxProxiesInPrototypeChain = 1000;
+
+// Node's internal isError: a native error of any realm, or an object that inherits from Error.prototype.
+function isError(e: unknown): e is Error {
+  if (ErrorIsError(e)) return true;
+  let proxies = 0;
+  // `e instanceof Error` with a bound: in JavaScriptCore it never returns for a chain that cycles through a Proxy.
+  while ($isObject(e)) {
+    if ($isProxyObject(e) && ++proxies > kMaxProxiesInPrototypeChain) return false;
+    e = ObjectGetPrototypeOf(e);
+    if (e === ErrorPrototype) return true;
+  }
+  return false;
+}
+
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 function returnStackFrames(_err: unknown, frames: unknown[]) {
@@ -435,6 +454,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  isError,
   isInsideNodeModules,
   resistStopPropagation,
 

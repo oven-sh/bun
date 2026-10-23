@@ -417,10 +417,6 @@ function assignFunctionName(name, fn, descriptor = nodeKEmptyObject) {
   });
 }
 
-function nodeIsError(e) {
-  return require("node:util/types").isNativeError(e) || e instanceof Error;
-}
-
 // node's internal WeakReference: a WeakRef that pins the target strongly
 // while its refcount is above zero.
 class WeakReference {
@@ -572,7 +568,7 @@ export const exposedInternals = {
     // Bun always has crypto support compiled in.
     assertCrypto() {},
     getCIDR,
-    isError: nodeIsError,
+    isError: require("internal/shared").isError,
     assignFunctionName,
     kEnumerableProperty: Object.freeze({ __proto__: null, enumerable: true }),
     kEmptyObject: nodeKEmptyObject,

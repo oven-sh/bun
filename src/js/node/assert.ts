@@ -23,6 +23,7 @@
 
 const { isPromise, isRegExp } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
+const { isError } = require("internal/shared");
 const { validateFunction, validateOneOf } = require("internal/validators");
 
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
@@ -143,7 +144,7 @@ ObjectDefineProperty(Assert.prototype, "constructor", {
 
 function innerFail(obj) {
   const objMessage = obj.message;
-  if (objMessage instanceof Error) throw objMessage;
+  if (isError(objMessage)) throw objMessage;
 
   if (AssertionError === undefined) loadAssertionError();
   throw new AssertionError(obj);
@@ -182,7 +183,7 @@ function fail(actual?: unknown, expected?: unknown, message?: unknown, operator?
     if (argsLen === 2) operator = "!=";
   }
 
-  if (message instanceof Error) throw message;
+  if (isError(message)) throw message;
 
   const errArgs = {
     actual,
@@ -555,7 +556,7 @@ function expectedException(actual, expected, message, fn) {
     if (!message) {
       generatedMessage = true;
       message = "The error is expected to be an instance of " + `"${expected.name}". Received `;
-      if (Error.isError(actual)) {
+      if (isError(actual)) {
         const name = actual.constructor?.name || actual.name;
         if (expected.name === name) {
           message += "an error with identical name but a different prototype.";
@@ -581,7 +582,7 @@ function expectedException(actual, expected, message, fn) {
         const inspect = lazyInspect();
         message = `The ${name}validation function is expected to return` + ` "true". Received ${inspect(res)}`;
 
-        if (Error.isError(actual)) {
+        if (isError(actual)) {
           message += `\n\nCaught error:\n\n${actual}`;
         }
       }
@@ -865,7 +866,7 @@ function internalMatch(string, regexp, message, fn) {
   }
   const match = fn === Assert.prototype.match;
   if (typeof string !== "string" || (RegExpPrototypeExec.$call(regexp, string) !== null) !== match) {
-    if (message instanceof Error) {
+    if (isError(message)) {
       throw message;
     }
 

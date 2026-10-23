@@ -5,7 +5,7 @@
 // Creates a bonded pair of writer and async iterable for push-based streaming
 // with built-in backpressure.
 
-const { isNativeError } = require("node:util/types");
+const { isError } = require("internal/shared");
 const { validateAbortSignal, validateInteger } = require("internal/validators");
 
 const { drainableProtocol, kSyncWriteAccepted, kSyncWriteAcceptedOnFalse } = require("internal/streams/iter/types");
@@ -29,10 +29,6 @@ const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const SymbolDispose = Symbol.dispose;
-
-function isError(e) {
-  return isNativeError(e) || e instanceof Error;
-}
 
 // =============================================================================
 // PushQueue - Internal Queue with Chunk-Based Backpressure

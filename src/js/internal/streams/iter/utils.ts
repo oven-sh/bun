@@ -2,6 +2,7 @@
 
 const { isUint8Array } = require("node:util/types");
 
+const { isError } = require("internal/shared");
 const { validateOneOf } = require("internal/validators");
 
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
@@ -9,8 +10,6 @@ const BufferPrototype = Buffer.prototype;
 // Node pools Buffer allocations smaller than half of Buffer.poolSize
 // (8192 >>> 1 = 4096 by default; see poolSize handling in node lib/buffer.js).
 const kBufferPoolBypassThreshold = Buffer.poolSize >>> 1;
-
-let isError;
 
 // Cached resolved promise to avoid allocating a new one on every sync fast-path.
 const kResolvedPromise = Promise.resolve();
@@ -169,7 +168,6 @@ function convertChunks(chunks) {
  * @returns {Error}
  */
 function wrapError(error) {
-  isError ??= require("node:util").isError;
   return isError(error) ? error : $ERR_OPERATION_FAILED(String(error));
 }
 

@@ -54,9 +54,7 @@ function decorateErrorStack(err) {
   return err;
 }
 
-function isError(e) {
-  return util.types.isNativeError(e) || e instanceof Error;
-}
+const { isError } = require("internal/shared");
 
 // ---- internal/util/colors ----------------------------------------------
 

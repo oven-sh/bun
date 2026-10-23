@@ -1,5 +1,7 @@
 "use strict";
 
+const { isError } = require("internal/shared");
+
 var AssertionError;
 function loadAssertionError() {
   if (AssertionError === undefined) {
@@ -17,7 +19,7 @@ export function innerOk(fn, argLen, value, message) {
     } else if (message == null) {
       generatedMessage = true;
       message = undefined;
-    } else if (Error.isError(message)) {
+    } else if (isError(message)) {
       throw message;
     }
 

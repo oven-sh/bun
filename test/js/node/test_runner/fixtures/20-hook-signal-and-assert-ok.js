@@ -30,3 +30,15 @@ test("t.assert.ok is installed separately and still counts toward the plan", t =
   assert.strictEqual(t.assert.ok.name, "ok");
   t.assert.ok(true);
 });
+
+test("t.assert.ok throws an error given as the message, also one of a class written without `class`", t => {
+  function OldError(message) {
+    this.message = message;
+  }
+  OldError.prototype = Object.create(Error.prototype);
+  const error = new OldError("m");
+  assert.throws(
+    () => t.assert.ok(false, error),
+    thrown => thrown === error,
+  );
+});

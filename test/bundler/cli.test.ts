@@ -1134,4 +1134,39 @@ describe.concurrent("diagnostic markup", () => {
     expect(stderr).not.toContain("<b>");
     expect(stderr).not.toContain("\x1b[");
   });
+
+  // A property with a row in the property table is one property under every vendor prefix.
+  test("css composes conflict counts a prefixed name as the same property", async () => {
+    using dir = tempDir("build-css-composes-prefixed", {
+      "a.module.css": '.foo {\n  composes: bar from "./b.module.css";\n  user-select: none;\n}\n',
+      "b.module.css": ".bar {\n  -webkit-user-select: text;\n}\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.module.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("The value of user-select in the class foo is undefined.");
+  });
+
+  // The properties of every rule of a class count, as for the other properties that have a row.
+  test("css composes conflict is found when the class has a second rule", async () => {
+    using dir = tempDir("build-css-composes-second-rule", {
+      "a.module.css":
+        '.btn {\n  composes: base from "./b.module.css";\n  user-select: none;\n}\n@media (max-width: 600px) {\n  .btn {\n    padding: 4px;\n  }\n}\n',
+      "b.module.css": ".base {\n  user-select: text;\n}\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.module.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("The value of user-select in the class btn is undefined.");
+  });
 });

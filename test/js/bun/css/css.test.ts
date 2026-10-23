@@ -6,6 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  blocks_up_to,
+  changed_winners,
   cssTest,
   cssTestTodo,
   indoc,
@@ -15,6 +17,7 @@ import {
   ParserFlags,
   ParserOptions,
   prefix_test,
+  prefixTest as prefix_test_output,
 } from "./util";
 
 function Some(n: number): number {
@@ -7620,6 +7623,1119 @@ describe("css tests", () => {
         firefox: Some(6 << 16),
         safari: Some(6 << 16),
       },
+    );
+  });
+
+  // lightningcss replaces the prefixes an author wrote with the ones the targets
+  // need, so it deletes `-moz-tab-size` when Firefox 94 is the target. Bun keeps
+  // what the author wrote and adds what is missing. The cases below that differ
+  // from lightningcss for that reason say "kept".
+  describe("tab-size", () => {
+    minify_test(".foo { tab-size: 8 }", ".foo{tab-size:8}");
+    minify_test(".foo { tab-size: 4px }", ".foo{tab-size:4px}");
+    minify_test(".foo { -moz-tab-size: 4px }", ".foo{-moz-tab-size:4px}");
+    minify_test(".foo { -o-tab-size: 4px }", ".foo{-o-tab-size:4px}");
+    prefix_test(
+      ".foo{ tab-size: 4 }",
+      indoc`
+      .foo {
+        -moz-tab-size: 4;
+        -o-tab-size: 4;
+        tab-size: 4;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(50 << 16),
+        opera: Some(12 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -moz-tab-size: 4;
+        -o-tab-size: 4;
+        tab-size: 4;
+      }
+      `,
+      indoc`
+      .foo {
+        -moz-tab-size: 4;
+        -o-tab-size: 4;
+        tab-size: 4;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        firefox: Some(94 << 16),
+        opera: Some(30 << 16),
+      },
+    );
+  });
+
+  describe("hyphens", () => {
+    minify_test(".foo { hyphens: manual }", ".foo{hyphens:manual}");
+    minify_test(".foo { hyphens: auto }", ".foo{hyphens:auto}");
+    minify_test(".foo { hyphens: none }", ".foo{hyphens:none}");
+    minify_test(".foo { -webkit-hyphens: manual }", ".foo{-webkit-hyphens:manual}");
+    minify_test(".foo { -moz-hyphens: manual }", ".foo{-moz-hyphens:manual}");
+    minify_test(".foo { -ms-hyphens: manual }", ".foo{-ms-hyphens:manual}");
+    prefix_test(
+      ".foo{ hyphens: manual }",
+      indoc`
+      .foo {
+        -webkit-hyphens: manual;
+        -moz-hyphens: manual;
+        -ms-hyphens: manual;
+        hyphens: manual;
+      }
+      `,
+      {
+        safari: Some(14 << 16),
+        firefox: Some(40 << 16),
+        ie: Some(10 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -webkit-hyphens: manual;
+        -moz-hyphens: manual;
+        -ms-hyphens: manual;
+        hyphens: manual;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-hyphens: manual;
+        -moz-hyphens: manual;
+        -ms-hyphens: manual;
+        hyphens: manual;
+      }
+      `,
+      {
+        safari: Some(14 << 16),
+        chrome: Some(88 << 16),
+        firefox: Some(88 << 16),
+        edge: Some(79 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -webkit-hyphens: manual;
+        -moz-hyphens: manual;
+        -ms-hyphens: manual;
+        hyphens: manual;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-hyphens: manual;
+        -moz-hyphens: manual;
+        -ms-hyphens: manual;
+        hyphens: manual;
+      }
+      `,
+      {
+        chrome: Some(88 << 16),
+        firefox: Some(88 << 16),
+        edge: Some(79 << 16),
+      },
+    );
+  });
+
+  describe("text-align-last", () => {
+    minify_test(".foo { text-align-last: left }", ".foo{text-align-last:left}");
+    minify_test(".foo { text-align-last: justify }", ".foo{text-align-last:justify}");
+    prefix_test(
+      ".foo{ text-align-last: left }",
+      indoc`
+      .foo {
+        -moz-text-align-last: left;
+        text-align-last: left;
+      }
+      `,
+      {
+        firefox: Some(40 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -moz-text-align-last: left;
+        text-align-last: left;
+      }
+      `,
+      indoc`
+      .foo {
+        -moz-text-align-last: left;
+        text-align-last: left;
+      }
+      `,
+      {
+        firefox: Some(88 << 16),
+      },
+    );
+  });
+
+  describe("text-size-adjust", () => {
+    minify_test(".foo { text-size-adjust: none }", ".foo{text-size-adjust:none}");
+    minify_test(".foo { text-size-adjust: auto }", ".foo{text-size-adjust:auto}");
+    minify_test(".foo { text-size-adjust: 80% }", ".foo{text-size-adjust:80%}");
+    prefix_test(
+      `
+      .foo {
+        text-size-adjust: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-size-adjust: none;
+        -moz-text-size-adjust: none;
+        -ms-text-size-adjust: none;
+        text-size-adjust: none;
+      }
+      `,
+      {
+        ios_saf: Some(16 << 16),
+        edge: Some(15 << 16),
+        firefox: Some(20 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -webkit-text-size-adjust: none;
+        -moz-text-size-adjust: none;
+        -ms-text-size-adjust: none;
+        text-size-adjust: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-text-size-adjust: none;
+        -moz-text-size-adjust: none;
+        -ms-text-size-adjust: none;
+        text-size-adjust: none;
+      }
+      `,
+      {
+        chrome: Some(110 << 16),
+      },
+    );
+  });
+
+  describe("text-decoration-skip-ink", () => {
+    minify_test(".foo { text-decoration-skip-ink: all }", ".foo{text-decoration-skip-ink:all}");
+    minify_test(".foo { -webkit-text-decoration-skip-ink: all }", ".foo{-webkit-text-decoration-skip-ink:all}");
+  });
+
+  describe("box-decoration-break", () => {
+    prefix_test(
+      `
+      .foo {
+        box-decoration-break: clone;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-box-decoration-break: clone;
+        box-decoration-break: clone;
+      }
+      `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+    prefix_test(
+      `
+      .foo {
+        box-decoration-break: clone;
+      }
+      `,
+      indoc`
+      .foo {
+        box-decoration-break: clone;
+      }
+      `,
+      {
+        firefox: Some(95 << 16),
+      },
+    );
+  });
+
+  describe("text-overflow", () => {
+    minify_test(".foo { text-overflow: ellipsis }", ".foo{text-overflow:ellipsis}");
+    prefix_test(
+      `
+      .foo {
+        text-overflow: ellipsis;
+      }
+      `,
+      indoc`
+      .foo {
+        -o-text-overflow: ellipsis;
+        text-overflow: ellipsis;
+      }
+      `,
+      {
+        safari: Some(4 << 16),
+        opera: Some(10 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -o-text-overflow: ellipsis;
+        text-overflow: ellipsis;
+      }
+      `,
+      indoc`
+      .foo {
+        -o-text-overflow: ellipsis;
+        text-overflow: ellipsis;
+      }
+      `,
+      {
+        safari: Some(4 << 16),
+        opera: Some(14 << 16),
+      },
+    );
+  });
+
+  describe("user-select", () => {
+    minify_test(".foo { user-select: none }", ".foo{user-select:none}");
+    minify_test(".foo { -webkit-user-select: none }", ".foo{-webkit-user-select:none}");
+    prefix_test(
+      `
+      .foo {
+        user-select: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        opera: Some(5 << 16),
+        firefox: Some(10 << 16),
+        ie: Some(10 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        opera: Some(80 << 16),
+        firefox: Some(80 << 16),
+        edge: Some(80 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      `,
+      {
+        opera: Some(80 << 16),
+        firefox: Some(80 << 16),
+        edge: Some(80 << 16),
+      },
+    );
+  });
+
+  describe("appearance", () => {
+    minify_test(".foo { appearance: None }", ".foo{appearance:none}");
+    minify_test(".foo { -webkit-appearance: textfield }", ".foo{-webkit-appearance:textfield}");
+    prefix_test(
+      `
+      .foo {
+        appearance: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        -ms-appearance: none;
+        appearance: none;
+      }
+      `,
+      {
+        safari: Some(8 << 16),
+        chrome: Some(80 << 16),
+        firefox: Some(10 << 16),
+        ie: Some(11 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        -ms-appearance: none;
+        appearance: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        -ms-appearance: none;
+        appearance: none;
+      }
+      `,
+      {
+        safari: Some(15 << 16),
+        chrome: Some(85 << 16),
+        firefox: Some(80 << 16),
+        edge: Some(85 << 16),
+      },
+    );
+    // kept
+    prefix_test(
+      `
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        -ms-appearance: none;
+        appearance: none;
+      }
+      `,
+      indoc`
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        -ms-appearance: none;
+        appearance: none;
+      }
+      `,
+      {
+        chrome: Some(85 << 16),
+        firefox: Some(80 << 16),
+        edge: Some(85 << 16),
+      },
+    );
+  });
+
+  describe("print-color-adjust", () => {
+    // `src/css/prefixes.rs` stops this prefix at Chrome 130. lightningcss 1.32.0 stops it at 135.
+    cssTestTodo(
+      ".foo { print-color-adjust: exact; }",
+      indoc`
+      .foo {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      `,
+      {
+        chrome: Some(135 << 16),
+      },
+    );
+    prefix_test(
+      ".foo { print-color-adjust: exact; }",
+      indoc`
+      .foo {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      `,
+      {
+        chrome: Some(125 << 16),
+      },
+    );
+    prefix_test(
+      ".foo { print-color-adjust: exact; }",
+      indoc`
+      .foo {
+        print-color-adjust: exact;
+      }
+      `,
+      {
+        chrome: Some(137 << 16),
+      },
+    );
+  });
+
+  describe("prefixes under the default browsers", () => {
+    // The list `bun build` uses for `--target=browser`.
+    const defaults = {
+      chrome: Some(80 << 16),
+      edge: Some(80 << 16),
+      firefox: Some(78 << 16),
+      safari: Some(14 << 16),
+      opera: Some(67 << 16),
+    };
+
+    prefix_test(
+      ".foo { user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { appearance: none }",
+      indoc`
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { hyphens: auto }",
+      indoc`
+      .foo {
+        -webkit-hyphens: auto;
+        hyphens: auto;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { backface-visibility: hidden }",
+      indoc`
+      .foo {
+        -webkit-backface-visibility: hidden;
+        backface-visibility: hidden;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { box-decoration-break: clone }",
+      indoc`
+      .foo {
+        -webkit-box-decoration-break: clone;
+        box-decoration-break: clone;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { print-color-adjust: exact }",
+      indoc`
+      .foo {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { tab-size: 4 }",
+      indoc`
+      .foo {
+        -moz-tab-size: 4;
+        tab-size: 4;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { text-size-adjust: 100% }",
+      indoc`
+      .foo {
+        -moz-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+      `,
+      defaults,
+    );
+    // These need no prefix under the default browsers.
+    prefix_test(".foo { box-sizing: border-box }", ".foo { box-sizing: border-box; }", defaults);
+    prefix_test(".foo { text-overflow: ellipsis }", ".foo { text-overflow: ellipsis; }", defaults);
+    prefix_test(".foo { transform-style: preserve-3d }", ".foo { transform-style: preserve-3d; }", defaults);
+    prefix_test(".foo { perspective: 100px }", ".foo { perspective: 100px; }", defaults);
+    prefix_test(".foo { text-align-last: center }", ".foo { text-align-last: center; }", defaults);
+    prefix_test(".foo { text-decoration-skip-ink: none }", ".foo { text-decoration-skip-ink: none; }", defaults);
+
+    // The names inside a transition get the same prefixes.
+    prefix_test(
+      ".foo { transition-property: user-select }",
+      indoc`
+      .foo {
+        transition-property: -webkit-user-select, user-select;
+      }
+      `,
+      defaults,
+    );
+
+    // A prefixed copy the author wrote is not written twice.
+    prefix_test(
+      ".foo { -webkit-user-select: none; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: none; -webkit-appearance: none; user-select: none; appearance: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-appearance: none; -moz-appearance: none; display: block; appearance: none }",
+      indoc`
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        display: block;
+      }
+      `,
+      defaults,
+    );
+    // An unknown name can be one more spelling of the property, so nothing merges across it.
+    prefix_test(
+      ".foo { -webkit-user-select: none; -khtml-user-select: text; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        -khtml-user-select: text;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    // A prefix that the block already has is not written again (the `.noselect` snippet, Bootstrap).
+    prefix_test(
+      ".foo { -webkit-touch-callout: none; -webkit-user-select: none; -khtml-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -khtml-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-print-color-adjust: exact; color-adjust: exact; print-color-adjust: exact }",
+      indoc`
+      .foo {
+        -webkit-print-color-adjust: exact;
+        color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: none; cursor: pointer; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        cursor: pointer;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { user-select: none; cursor: pointer; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: pointer;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    // An unparsed value of another property is no barrier.
+    prefix_test(
+      ".foo { -webkit-user-select: none; opacity: var(--o); user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        opacity: var(--o);
+      }
+      `,
+      defaults,
+    );
+    // lightningcss has no test for these four. The expected output is what
+    // lightningcss 1.32.0 prints, except for `preserve-3d`, which it does not parse.
+    const old = { chrome: 30 << 16, firefox: 12 << 16, safari: 8 << 16 };
+    prefix_test(
+      ".foo { box-sizing: border-box }",
+      ".foo { -webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; }",
+      { safari: 4 << 16, firefox: 20 << 16 },
+    );
+    prefix_test(".foo { box-sizing: border-box }", ".foo { box-sizing: border-box; }", {
+      safari: 6 << 16,
+      firefox: 30 << 16,
+    });
+    prefix_test(
+      ".foo { perspective: 100px }",
+      ".foo { -webkit-perspective: 100px; -moz-perspective: 100px; perspective: 100px; }",
+      old,
+    );
+    prefix_test(
+      ".foo { transform-style: flat }",
+      ".foo { -webkit-transform-style: flat; -moz-transform-style: flat; transform-style: flat; }",
+      old,
+    );
+    prefix_test(
+      ".foo { transform-style: preserve-3d }",
+      ".foo { -webkit-transform-style: preserve-3d; -moz-transform-style: preserve-3d; transform-style: preserve-3d; }",
+      old,
+    );
+    prefix_test(
+      ".foo { backface-visibility: hidden }",
+      ".foo { -webkit-backface-visibility: hidden; -moz-backface-visibility: hidden; backface-visibility: hidden; }",
+      old,
+    );
+    // A custom property cannot set `user-select`, so the declarations merge across it.
+    prefix_test(
+      ".foo { -webkit-user-select: none; --x: 1; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        --x: 1;
+      }
+      `,
+      defaults,
+    );
+    // A prefix no target needs stays when the author wrote it. The default
+    // browsers have no iOS Safari, which needs `-webkit-text-size-adjust`.
+    prefix_test(
+      ".foo { -webkit-text-size-adjust: 100%; text-size-adjust: 100% }",
+      indoc`
+      .foo {
+        -webkit-text-size-adjust: 100%;
+        -moz-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(".foo { -webkit-text-size-adjust: 100% }", ".foo { -webkit-text-size-adjust: 100%; }", defaults);
+
+    // A second value is a new declaration. lightningcss keeps only the last
+    // value here, and gives it to every prefix.
+    prefix_test(
+      ".foo { appearance: none; appearance: base-select }",
+      indoc`
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        -webkit-appearance: base-select;
+        -moz-appearance: base-select;
+        appearance: base-select;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { appearance: none; -moz-appearance: textfield }",
+      indoc`
+      .foo {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        -moz-appearance: textfield;
+      }
+      `,
+      defaults,
+    );
+    // A prefixed value that the author wrote stays the value for that prefix (parcel-bundler/lightningcss#977).
+    prefix_test(
+      ".foo { -webkit-user-select: text; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: text;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { -moz-appearance: textfield; appearance: none }",
+      indoc`
+      .foo {
+        -moz-appearance: textfield;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { user-select: none; -webkit-user-select: text; user-select: all }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-user-select: text;
+        user-select: all;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { user-select: none; user-select: text; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-user-select: text;
+        user-select: text;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+
+    // A value that did not parse gets the prefix too, so a reset reaches the browsers that read the prefixed name.
+    prefix_test(
+      ".foo { user-select: var(--x) }",
+      ".foo { -webkit-user-select: var(--x); user-select: var(--x); }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { user-select: initial }",
+      ".foo { -webkit-user-select: initial; user-select: initial; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { print-color-adjust: exact; print-color-adjust: unset }",
+      indoc`
+      .foo {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: unset;
+        print-color-adjust: unset;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: var(--x); user-select: var(--x) }",
+      ".foo { -webkit-user-select: var(--x); user-select: var(--x); }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { user-select: none; user-select: var(--x); user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-user-select: var(--x);
+        user-select: var(--x);
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+    // `all` resets the declarations before it, so the last one stays behind it.
+    prefix_test(
+      ".foo { user-select: none; all: unset; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        all: unset;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      `,
+      defaults,
+    );
+
+    prefix_test(
+      ".foo { user-select: none !important; user-select: text }",
+      indoc`
+      .foo {
+        -webkit-user-select: text;
+        user-select: text;
+        -webkit-user-select: none !important;
+        user-select: none !important;
+      }
+      `,
+      defaults,
+    );
+
+    // Two rules with one selector are merged and minified again.
+    prefix_test(
+      ".a { -webkit-text-size-adjust: 100%; text-size-adjust: 100% } .a { color: red }",
+      indoc`
+      .a {
+        -webkit-text-size-adjust: 100%;
+        -moz-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+        color: red;
+      }
+      `,
+      defaults,
+    );
+    // Each rule gets its own copies, as in autoprefixer and esbuild: the second rule does not write the prefixed name.
+    prefix_test(
+      ".a { -webkit-user-select: none } .a { user-select: text }",
+      indoc`
+      .a {
+        -webkit-user-select: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      `,
+      defaults,
+    );
+    prefix_test(
+      ".a { user-select: none } .a { user-select: text }",
+      indoc`
+      .a {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      `,
+      defaults,
+    );
+    // Merged rules are one rule for `all`: it resets the prefix that the first rule wrote, so the copy is added.
+    prefix_test(
+      ".a { -webkit-user-select: text; user-select: none !important } .a { all: unset }",
+      ".a { -webkit-user-select: text; all: unset; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    // With a rule between them they are not merged, and each one stays as written.
+    prefix_test(
+      ".a { -webkit-user-select: text; user-select: none !important } .q { top: 0 } .a { all: unset }",
+      ".a { -webkit-user-select: text; user-select: none !important; } .q { top: 0; } .a { all: unset; }",
+      defaults,
+    );
+
+    // `transform-origin` is a known name that this handler does not own, so it is no barrier.
+    prefix_test(
+      ".foo { -webkit-user-select: none; transform-origin: center; user-select: none }",
+      indoc`
+      .foo {
+        -webkit-user-select: none;
+        user-select: none;
+        transform-origin: center;
+      }
+      `,
+      defaults,
+    );
+
+    // A rule is a duplicate of a later one only when the property names are equal too.
+    minify_test(
+      ".a{user-select:none}.b{color:red}.a{appearance:none}",
+      ".a{user-select:none}.b{color:red}.a{appearance:none}",
+    );
+    minify_test(
+      ".btn{appearance:none;cursor:pointer}.q{top:0}.btn{-webkit-appearance:none;-moz-appearance:none;appearance:none;vertical-align:middle}",
+      ".btn{appearance:none;cursor:pointer}.q{top:0}.btn{-webkit-appearance:none;-moz-appearance:none;appearance:none;vertical-align:middle}",
+    );
+    minify_test(
+      ".btn{color:red;cursor:pointer}.q{top:0}.btn{color:red;vertical-align:middle}",
+      ".btn{color:red;cursor:pointer}.q{top:0}.btn{color:red;vertical-align:middle}",
+    );
+
+    // `!important` declarations are a list of their own. A prefix that the other list writes is not added.
+    prefix_test(
+      ".foo { -webkit-user-select: text; user-select: none !important }",
+      ".foo { -webkit-user-select: text; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: text !important; user-select: none }",
+      ".foo { user-select: none; -webkit-user-select: text !important; }",
+      defaults,
+    );
+    // Only that prefix of that property is not added.
+    prefix_test(
+      ".foo { -webkit-appearance: none; appearance: auto !important }",
+      ".foo { -webkit-appearance: none; -moz-appearance: auto !important; appearance: auto !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-appearance: none; user-select: none !important }",
+      ".foo { -webkit-appearance: none; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-appearance: none !important; appearance: auto }",
+      ".foo { -moz-appearance: auto; appearance: auto; -webkit-appearance: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-appearance: none !important; user-select: none }",
+      ".foo { -webkit-user-select: none; user-select: none; -webkit-appearance: none !important; }",
+      defaults,
+    );
+    // `all` resets a written prefix of its own list, and `all !important` also one of the other list.
+    prefix_test(
+      ".foo { -webkit-user-select: text; all: unset; user-select: none !important }",
+      ".foo { -webkit-user-select: text; all: unset; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: text; all: unset !important; user-select: none !important }",
+      ".foo { -webkit-user-select: text; all: unset !important; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { all: unset; -webkit-user-select: text; user-select: none !important }",
+      ".foo { all: unset; -webkit-user-select: text; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: text !important; all: unset; user-select: none }",
+      ".foo { all: unset; user-select: none; -webkit-user-select: text !important; }",
+      defaults,
+    );
+    // A normal copy cannot beat `all !important`, so none is added.
+    prefix_test(
+      ".foo { -webkit-user-select: text !important; all: unset !important; user-select: none }",
+      ".foo { user-select: none; -webkit-user-select: text !important; all: unset !important; }",
+      defaults,
+    );
+
+    // A rule is no duplicate of a rule that has the same properties with another importance.
+    minify_test(".a{color:red!important}.b{top:0}.a{color:#00f}", ".a{color:red!important}.b{top:0}.a{color:#00f}");
+    minify_test(
+      ".a{-webkit-user-select:none!important;user-select:none!important}.b{top:0}.a{user-select:text}",
+      ".a{-webkit-user-select:none!important;user-select:none!important}.b{top:0}.a{user-select:text}",
+    );
+    minify_test(
+      ".a{user-select:none}.b{top:0}.a{user-select:text!important;user-select:text!important}",
+      ".a{user-select:none}.b{top:0}.a{user-select:text!important}",
+    );
+
+    // A `@supports` condition keeps each name as written, at every place of an `and` or `or` chain.
+    test.each([
+      "(-webkit-user-select: none)",
+      "not (-webkit-user-select: none)",
+      "(display: grid) and (-webkit-user-select: none)",
+      "(user-select: none) or (-webkit-user-select: none)",
+      "(-webkit-appearance: none) and (-moz-appearance: none)",
+      "((display: grid) and (-webkit-hyphens: auto)) or (-moz-tab-size: 4)",
+    ])("@supports %s", condition => {
+      const expected = `@supports ${condition} { .a { color: red; } }`;
+      const output = prefix_test_output(`@supports ${condition} { .a { color: red } }`, expected, defaults);
+      expect(output).toEqualIgnoringWhitespace(expected);
+    });
+
+    // Three kinds of browser: one reads only `user-select`, one reads both names, one reads only `-webkit-user-select`.
+    const names = { name: "user-select", prefixed: "-webkit-user-select" };
+
+    test("two rules of one selector keep the winning declaration", () => {
+      const atoms = [
+        "user-select:none",
+        "user-select:text",
+        "user-select:none!important",
+        "user-select:text!important",
+        "-webkit-user-select:text",
+        "-webkit-user-select:text!important",
+      ];
+      const blocks = blocks_up_to(atoms, 2);
+      const pairs = [
+        ...blocks.flatMap(first => atoms.map(second => [first, [second]])),
+        ...atoms.flatMap(first => blocks.filter(second => second.length === 2).map(second => [[first], second])),
+      ];
+      expect(pairs.length).toBe(468);
+      expect(changed_winners(pairs, defaults, names)).toEqual([]);
+    });
+
+    test("the prefixes change no winning declaration", () => {
+      const atoms = [
+        "user-select:none",
+        "user-select:text",
+        "user-select:var(--v)",
+        "-webkit-user-select:text",
+        "all:unset",
+        "cursor:pointer",
+      ];
+      const blocks = blocks_up_to(atoms, 4).map(block => [block]);
+      expect(blocks.length).toBe(1554);
+      expect(changed_winners(blocks, defaults, { ...names, watch: ["cursor"] })).toEqual([]);
+    });
+
+    test("`!important` and `all` change no winning declaration", () => {
+      const atoms = ["user-select:none", "-webkit-user-select:text", "-webkit-user-select:none", "all:unset"];
+      const blocks = blocks_up_to(
+        atoms.flatMap(atom => [atom, `${atom}!important`]),
+        3,
+      ).map(block => [block]);
+      expect(blocks.length).toBe(584);
+      expect(changed_winners(blocks, defaults, names)).toEqual([]);
+    });
+
+    // No browser list (`--target=bun`): nothing is added.
+    minify_test(".foo { user-select: none }", ".foo{user-select:none}");
+    minify_test(
+      ".foo { -webkit-user-select: none; user-select: none }",
+      ".foo{-webkit-user-select:none;user-select:none}",
     );
   });
 

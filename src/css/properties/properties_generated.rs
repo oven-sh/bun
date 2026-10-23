@@ -258,10 +258,18 @@ pub enum PropertyIdTag {
     Translate,
     Rotate,
     Scale,
+    TabSize,
+    Hyphens,
+    TextAlignLast,
     TextDecorationColor,
+    TextDecorationSkipInk,
     TextEmphasisColor,
     TextShadow,
+    TextSizeAdjust,
     Direction,
+    BoxDecorationBreak,
+    UserSelect,
+    Appearance,
     Composes,
     MaskImage,
     MaskMode,
@@ -291,6 +299,7 @@ pub enum PropertyIdTag {
     MaskBoxImageOutset,
     MaskBoxImageRepeat,
     ColorScheme,
+    PrintColorAdjust,
     ViewTransitionName,
     ViewTransitionClass,
     ViewTransitionGroup,
@@ -342,8 +351,16 @@ impl PropertyIdTag {
             T::BackfaceVisibility => PrefixFeature::BackfaceVisibility,
             T::Perspective => PrefixFeature::Perspective,
             T::PerspectiveOrigin => PrefixFeature::PerspectiveOrigin,
+            T::TabSize => PrefixFeature::TabSize,
+            T::Hyphens => PrefixFeature::Hyphens,
+            T::TextAlignLast => PrefixFeature::TextAlignLast,
             T::TextDecorationColor => PrefixFeature::TextDecorationColor,
+            T::TextDecorationSkipInk => PrefixFeature::TextDecorationSkipInk,
             T::TextEmphasisColor => PrefixFeature::TextEmphasisColor,
+            T::TextSizeAdjust => PrefixFeature::TextSizeAdjust,
+            T::BoxDecorationBreak => PrefixFeature::BoxDecorationBreak,
+            T::UserSelect => PrefixFeature::UserSelect,
+            T::Appearance => PrefixFeature::Appearance,
             T::MaskImage => PrefixFeature::MaskImage,
             T::MaskRepeat => PrefixFeature::MaskRepeat,
             T::MaskPosition => PrefixFeature::MaskPosition,
@@ -351,6 +368,7 @@ impl PropertyIdTag {
             T::MaskOrigin => PrefixFeature::MaskOrigin,
             T::MaskSize => PrefixFeature::MaskSize,
             T::Mask => PrefixFeature::Mask,
+            T::PrintColorAdjust => PrefixFeature::PrintColorAdjust,
             _ => return None,
         })
     }
@@ -573,10 +591,18 @@ impl PropertyIdTag {
             PropertyIdTag::Translate => b"translate",
             PropertyIdTag::Rotate => b"rotate",
             PropertyIdTag::Scale => b"scale",
+            PropertyIdTag::TabSize => b"tab-size",
+            PropertyIdTag::Hyphens => b"hyphens",
+            PropertyIdTag::TextAlignLast => b"text-align-last",
             PropertyIdTag::TextDecorationColor => b"text-decoration-color",
+            PropertyIdTag::TextDecorationSkipInk => b"text-decoration-skip-ink",
             PropertyIdTag::TextEmphasisColor => b"text-emphasis-color",
             PropertyIdTag::TextShadow => b"text-shadow",
+            PropertyIdTag::TextSizeAdjust => b"text-size-adjust",
             PropertyIdTag::Direction => b"direction",
+            PropertyIdTag::BoxDecorationBreak => b"box-decoration-break",
+            PropertyIdTag::UserSelect => b"user-select",
+            PropertyIdTag::Appearance => b"appearance",
             PropertyIdTag::Composes => b"composes",
             PropertyIdTag::MaskImage => b"mask-image",
             PropertyIdTag::MaskMode => b"mask-mode",
@@ -606,6 +632,7 @@ impl PropertyIdTag {
             PropertyIdTag::MaskBoxImageOutset => b"mask-box-image-outset",
             PropertyIdTag::MaskBoxImageRepeat => b"mask-box-image-repeat",
             PropertyIdTag::ColorScheme => b"color-scheme",
+            PropertyIdTag::PrintColorAdjust => b"print-color-adjust",
             PropertyIdTag::ViewTransitionName => b"view-transition-name",
             PropertyIdTag::ViewTransitionClass => b"view-transition-class",
             PropertyIdTag::ViewTransitionGroup => b"view-transition-group",
@@ -841,10 +868,18 @@ pub enum PropertyId {
     Translate,
     Rotate,
     Scale,
+    TabSize(VendorPrefix),
+    Hyphens(VendorPrefix),
+    TextAlignLast(VendorPrefix),
     TextDecorationColor(VendorPrefix),
+    TextDecorationSkipInk(VendorPrefix),
     TextEmphasisColor(VendorPrefix),
     TextShadow,
+    TextSizeAdjust(VendorPrefix),
     Direction,
+    BoxDecorationBreak(VendorPrefix),
+    UserSelect(VendorPrefix),
+    Appearance(VendorPrefix),
     Composes,
     MaskImage(VendorPrefix),
     MaskMode,
@@ -874,6 +909,7 @@ pub enum PropertyId {
     MaskBoxImageOutset(VendorPrefix),
     MaskBoxImageRepeat(VendorPrefix),
     ColorScheme,
+    PrintColorAdjust(VendorPrefix),
     ViewTransitionName,
     ViewTransitionClass,
     ViewTransitionGroup,
@@ -1126,10 +1162,18 @@ impl PropertyId {
             PropertyId::Translate => PropertyIdTag::Translate,
             PropertyId::Rotate => PropertyIdTag::Rotate,
             PropertyId::Scale => PropertyIdTag::Scale,
+            PropertyId::TabSize(..) => PropertyIdTag::TabSize,
+            PropertyId::Hyphens(..) => PropertyIdTag::Hyphens,
+            PropertyId::TextAlignLast(..) => PropertyIdTag::TextAlignLast,
             PropertyId::TextDecorationColor(..) => PropertyIdTag::TextDecorationColor,
+            PropertyId::TextDecorationSkipInk(..) => PropertyIdTag::TextDecorationSkipInk,
             PropertyId::TextEmphasisColor(..) => PropertyIdTag::TextEmphasisColor,
             PropertyId::TextShadow => PropertyIdTag::TextShadow,
+            PropertyId::TextSizeAdjust(..) => PropertyIdTag::TextSizeAdjust,
             PropertyId::Direction => PropertyIdTag::Direction,
+            PropertyId::BoxDecorationBreak(..) => PropertyIdTag::BoxDecorationBreak,
+            PropertyId::UserSelect(..) => PropertyIdTag::UserSelect,
+            PropertyId::Appearance(..) => PropertyIdTag::Appearance,
             PropertyId::Composes => PropertyIdTag::Composes,
             PropertyId::MaskImage(..) => PropertyIdTag::MaskImage,
             PropertyId::MaskMode => PropertyIdTag::MaskMode,
@@ -1159,6 +1203,7 @@ impl PropertyId {
             PropertyId::MaskBoxImageOutset(..) => PropertyIdTag::MaskBoxImageOutset,
             PropertyId::MaskBoxImageRepeat(..) => PropertyIdTag::MaskBoxImageRepeat,
             PropertyId::ColorScheme => PropertyIdTag::ColorScheme,
+            PropertyId::PrintColorAdjust(..) => PropertyIdTag::PrintColorAdjust,
             PropertyId::ViewTransitionName => PropertyIdTag::ViewTransitionName,
             PropertyId::ViewTransitionClass => PropertyIdTag::ViewTransitionClass,
             PropertyId::ViewTransitionGroup => PropertyIdTag::ViewTransitionGroup,
@@ -1234,8 +1279,16 @@ impl PropertyId {
             | PropertyId::BackfaceVisibility(p)
             | PropertyId::Perspective(p)
             | PropertyId::PerspectiveOrigin(p)
+            | PropertyId::TabSize(p)
+            | PropertyId::Hyphens(p)
+            | PropertyId::TextAlignLast(p)
             | PropertyId::TextDecorationColor(p)
+            | PropertyId::TextDecorationSkipInk(p)
             | PropertyId::TextEmphasisColor(p)
+            | PropertyId::TextSizeAdjust(p)
+            | PropertyId::BoxDecorationBreak(p)
+            | PropertyId::UserSelect(p)
+            | PropertyId::Appearance(p)
             | PropertyId::MaskImage(p)
             | PropertyId::MaskRepeat(p)
             | PropertyId::MaskPosition(p)
@@ -1249,6 +1302,7 @@ impl PropertyId {
             | PropertyId::MaskBoxImageSlice(p)
             | PropertyId::MaskBoxImageWidth(p)
             | PropertyId::MaskBoxImageOutset(p)
+            | PropertyId::PrintColorAdjust(p)
             | PropertyId::MaskBoxImageRepeat(p) => Some(p),
             _ => None,
         }
@@ -1508,10 +1562,18 @@ impl PropertyId {
                 b"translate" => (VendorPrefix::NONE, |_| PropertyId::Translate),
                 b"rotate" => (VendorPrefix::NONE, |_| PropertyId::Rotate),
                 b"scale" => (VendorPrefix::NONE, |_| PropertyId::Scale),
+                b"tab-size" => (VendorPrefix::NONE.union(VendorPrefix::MOZ).union(VendorPrefix::O), PropertyId::TabSize),
+                b"hyphens" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::Hyphens),
+                b"text-align-last" => (VendorPrefix::NONE.union(VendorPrefix::MOZ), PropertyId::TextAlignLast),
                 b"text-decoration-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TextDecorationColor),
+                b"text-decoration-skip-ink" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextDecorationSkipInk),
                 b"text-emphasis-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisColor),
                 b"text-shadow" => (VendorPrefix::NONE, |_| PropertyId::TextShadow),
+                b"text-size-adjust" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::TextSizeAdjust),
                 b"direction" => (VendorPrefix::NONE, |_| PropertyId::Direction),
+                b"box-decoration-break" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::BoxDecorationBreak),
+                b"user-select" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::UserSelect),
+                b"appearance" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::Appearance),
                 b"composes" => (VendorPrefix::NONE, |_| PropertyId::Composes),
                 b"mask-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskImage),
                 b"mask-mode" => (VendorPrefix::NONE, |_| PropertyId::MaskMode),
@@ -1541,6 +1603,7 @@ impl PropertyId {
                 b"mask-box-image-outset" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageOutset),
                 b"mask-box-image-repeat" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageRepeat),
                 b"color-scheme" => (VendorPrefix::NONE, |_| PropertyId::ColorScheme),
+                b"print-color-adjust" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::PrintColorAdjust),
                 b"view-transition-name" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionName),
                 b"view-transition-class" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionClass),
                 b"view-transition-group" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionGroup),
@@ -1831,10 +1894,18 @@ pub enum Property {
     Translate(transform::Translate),
     Rotate(transform::Rotate),
     Scale(transform::Scale),
+    TabSize((css::css_values::length::LengthOrNumber, VendorPrefix)),
+    Hyphens((text::Hyphens, VendorPrefix)),
+    TextAlignLast((text::TextAlignLast, VendorPrefix)),
     TextDecorationColor((css::css_values::color::CssColor, VendorPrefix)),
+    TextDecorationSkipInk((text::TextDecorationSkipInk, VendorPrefix)),
     TextEmphasisColor((css::css_values::color::CssColor, VendorPrefix)),
     TextShadow(SmallList<text::TextShadow, 1>),
+    TextSizeAdjust((text::TextSizeAdjust, VendorPrefix)),
     Direction(text::Direction),
+    BoxDecorationBreak((text::BoxDecorationBreak, VendorPrefix)),
+    UserSelect((ui::UserSelect, VendorPrefix)),
+    Appearance((ui::Appearance, VendorPrefix)),
     Composes(css_modules::Composes),
     MaskImage((SmallList<css::css_values::image::Image, 1>, VendorPrefix)),
     MaskMode(SmallList<masking::MaskMode, 1>),
@@ -1874,6 +1945,7 @@ pub enum Property {
     ),
     MaskBoxImageRepeat((border_image::BorderImageRepeat, VendorPrefix)),
     ColorScheme(ui::ColorScheme),
+    PrintColorAdjust((ui::PrintColorAdjust, VendorPrefix)),
     ViewTransitionName(transition::ViewTransitionName),
     ViewTransitionClass(css::css_values::ident::NoneOrCustomIdentList),
     ViewTransitionGroup(transition::ViewTransitionGroup),
@@ -2111,10 +2183,18 @@ impl Property {
             Property::Translate(..) => PropertyId::Translate,
             Property::Rotate(..) => PropertyId::Rotate,
             Property::Scale(..) => PropertyId::Scale,
+            Property::TabSize(v) => PropertyId::TabSize(v.1),
+            Property::Hyphens(v) => PropertyId::Hyphens(v.1),
+            Property::TextAlignLast(v) => PropertyId::TextAlignLast(v.1),
             Property::TextDecorationColor(v) => PropertyId::TextDecorationColor(v.1),
+            Property::TextDecorationSkipInk(v) => PropertyId::TextDecorationSkipInk(v.1),
             Property::TextEmphasisColor(v) => PropertyId::TextEmphasisColor(v.1),
             Property::TextShadow(..) => PropertyId::TextShadow,
+            Property::TextSizeAdjust(v) => PropertyId::TextSizeAdjust(v.1),
             Property::Direction(..) => PropertyId::Direction,
+            Property::BoxDecorationBreak(v) => PropertyId::BoxDecorationBreak(v.1),
+            Property::UserSelect(v) => PropertyId::UserSelect(v.1),
+            Property::Appearance(v) => PropertyId::Appearance(v.1),
             Property::Composes(..) => PropertyId::Composes,
             Property::MaskImage(v) => PropertyId::MaskImage(v.1),
             Property::MaskMode(..) => PropertyId::MaskMode,
@@ -2144,6 +2224,7 @@ impl Property {
             Property::MaskBoxImageOutset(v) => PropertyId::MaskBoxImageOutset(v.1),
             Property::MaskBoxImageRepeat(v) => PropertyId::MaskBoxImageRepeat(v.1),
             Property::ColorScheme(..) => PropertyId::ColorScheme,
+            Property::PrintColorAdjust(v) => PropertyId::PrintColorAdjust(v.1),
             Property::ViewTransitionName(..) => PropertyId::ViewTransitionName,
             Property::ViewTransitionClass(..) => PropertyId::ViewTransitionClass,
             Property::ViewTransitionGroup(..) => PropertyId::ViewTransitionGroup,
@@ -2383,10 +2464,18 @@ impl Property {
             Property::Translate(v) => css::generic::to_css(v, dest),
             Property::Rotate(v) => css::generic::to_css(v, dest),
             Property::Scale(v) => css::generic::to_css(v, dest),
+            Property::TabSize(v) => css::generic::to_css(&v.0, dest),
+            Property::Hyphens(v) => css::generic::to_css(&v.0, dest),
+            Property::TextAlignLast(v) => css::generic::to_css(&v.0, dest),
             Property::TextDecorationColor(v) => css::generic::to_css(&v.0, dest),
+            Property::TextDecorationSkipInk(v) => css::generic::to_css(&v.0, dest),
             Property::TextEmphasisColor(v) => css::generic::to_css(&v.0, dest),
             Property::TextShadow(v) => css::generic::to_css(v, dest),
+            Property::TextSizeAdjust(v) => css::generic::to_css(&v.0, dest),
             Property::Direction(v) => css::generic::to_css(v, dest),
+            Property::BoxDecorationBreak(v) => css::generic::to_css(&v.0, dest),
+            Property::UserSelect(v) => css::generic::to_css(&v.0, dest),
+            Property::Appearance(v) => css::generic::to_css(&v.0, dest),
             Property::Composes(v) => css::generic::to_css(v, dest),
             Property::MaskImage(v) => css::generic::to_css(&v.0, dest),
             Property::MaskMode(v) => css::generic::to_css(v, dest),
@@ -2416,6 +2505,7 @@ impl Property {
             Property::MaskBoxImageOutset(v) => css::generic::to_css(&v.0, dest),
             Property::MaskBoxImageRepeat(v) => css::generic::to_css(&v.0, dest),
             Property::ColorScheme(v) => css::generic::to_css(v, dest),
+            Property::PrintColorAdjust(v) => css::generic::to_css(&v.0, dest),
             Property::ViewTransitionName(v) => css::generic::to_css(v, dest),
             Property::ViewTransitionClass(v) => css::generic::to_css(v, dest),
             Property::ViewTransitionGroup(v) => css::generic::to_css(v, dest),
@@ -3664,9 +3754,31 @@ impl Property {
                     return Ok(Property::Scale(c));
                 }
             }
+            PropertyId::TabSize(pre) => {
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthOrNumber>(input, options)
+                {
+                    return Ok(Property::TabSize((c, pre)));
+                }
+            }
+            PropertyId::Hyphens(pre) => {
+                if let Some(c) = parse_value::<text::Hyphens>(input, options) {
+                    return Ok(Property::Hyphens((c, pre)));
+                }
+            }
+            PropertyId::TextAlignLast(pre) => {
+                if let Some(c) = parse_value::<text::TextAlignLast>(input, options) {
+                    return Ok(Property::TextAlignLast((c, pre)));
+                }
+            }
             PropertyId::TextDecorationColor(pre) => {
                 if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
                     return Ok(Property::TextDecorationColor((c, pre)));
+                }
+            }
+            PropertyId::TextDecorationSkipInk(pre) => {
+                if let Some(c) = parse_value::<text::TextDecorationSkipInk>(input, options) {
+                    return Ok(Property::TextDecorationSkipInk((c, pre)));
                 }
             }
             PropertyId::TextEmphasisColor(pre) => {
@@ -3679,9 +3791,29 @@ impl Property {
                     return Ok(Property::TextShadow(c));
                 }
             }
+            PropertyId::TextSizeAdjust(pre) => {
+                if let Some(c) = parse_value::<text::TextSizeAdjust>(input, options) {
+                    return Ok(Property::TextSizeAdjust((c, pre)));
+                }
+            }
             PropertyId::Direction => {
                 if let Some(c) = parse_value::<text::Direction>(input, options) {
                     return Ok(Property::Direction(c));
+                }
+            }
+            PropertyId::BoxDecorationBreak(pre) => {
+                if let Some(c) = parse_value::<text::BoxDecorationBreak>(input, options) {
+                    return Ok(Property::BoxDecorationBreak((c, pre)));
+                }
+            }
+            PropertyId::UserSelect(pre) => {
+                if let Some(c) = parse_value::<ui::UserSelect>(input, options) {
+                    return Ok(Property::UserSelect((c, pre)));
+                }
+            }
+            PropertyId::Appearance(pre) => {
+                if let Some(c) = parse_value::<ui::Appearance>(input, options) {
+                    return Ok(Property::Appearance((c, pre)));
                 }
             }
             PropertyId::Composes => {
@@ -3855,6 +3987,11 @@ impl Property {
             PropertyId::ColorScheme => {
                 if let Some(c) = parse_value::<ui::ColorScheme>(input, options) {
                     return Ok(Property::ColorScheme(c));
+                }
+            }
+            PropertyId::PrintColorAdjust(pre) => {
+                if let Some(c) = parse_value::<ui::PrintColorAdjust>(input, options) {
+                    return Ok(Property::PrintColorAdjust((c, pre)));
                 }
             }
             PropertyId::ViewTransitionName => {
@@ -4386,14 +4523,34 @@ impl Property {
             Property::Translate(v) => Property::Translate(css::generic::deep_clone(v, arena)),
             Property::Rotate(v) => Property::Rotate(css::generic::deep_clone(v, arena)),
             Property::Scale(v) => Property::Scale(css::generic::deep_clone(v, arena)),
+            Property::TabSize(v) => Property::TabSize((css::generic::deep_clone(&v.0, arena), v.1)),
+            Property::Hyphens(v) => Property::Hyphens((css::generic::deep_clone(&v.0, arena), v.1)),
+            Property::TextAlignLast(v) => {
+                Property::TextAlignLast((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::TextDecorationColor(v) => {
                 Property::TextDecorationColor((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::TextDecorationSkipInk(v) => {
+                Property::TextDecorationSkipInk((css::generic::deep_clone(&v.0, arena), v.1))
             }
             Property::TextEmphasisColor(v) => {
                 Property::TextEmphasisColor((css::generic::deep_clone(&v.0, arena), v.1))
             }
             Property::TextShadow(v) => Property::TextShadow(css::generic::deep_clone(v, arena)),
+            Property::TextSizeAdjust(v) => {
+                Property::TextSizeAdjust((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::Direction(v) => Property::Direction(css::generic::deep_clone(v, arena)),
+            Property::BoxDecorationBreak(v) => {
+                Property::BoxDecorationBreak((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::UserSelect(v) => {
+                Property::UserSelect((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::Appearance(v) => {
+                Property::Appearance((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::Composes(v) => Property::Composes(css::generic::deep_clone(v, arena)),
             Property::MaskImage(v) => {
                 Property::MaskImage((css::generic::deep_clone(&v.0, arena), v.1))
@@ -4469,6 +4626,9 @@ impl Property {
                 Property::MaskBoxImageRepeat((css::generic::deep_clone(&v.0, arena), v.1))
             }
             Property::ColorScheme(v) => Property::ColorScheme(css::generic::deep_clone(v, arena)),
+            Property::PrintColorAdjust(v) => {
+                Property::PrintColorAdjust((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::ViewTransitionName(v) => {
                 Property::ViewTransitionName(css::generic::deep_clone(v, arena))
             }
@@ -4931,14 +5091,38 @@ impl Property {
             (Property::Translate(a), Property::Translate(b)) => css::generic::eql(a, b),
             (Property::Rotate(a), Property::Rotate(b)) => css::generic::eql(a, b),
             (Property::Scale(a), Property::Scale(b)) => css::generic::eql(a, b),
+            (Property::TabSize(a), Property::TabSize(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::Hyphens(a), Property::Hyphens(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::TextAlignLast(a), Property::TextAlignLast(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::TextDecorationColor(a), Property::TextDecorationColor(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::TextDecorationSkipInk(a), Property::TextDecorationSkipInk(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::TextEmphasisColor(a), Property::TextEmphasisColor(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::TextShadow(a), Property::TextShadow(b)) => css::generic::eql(a, b),
+            (Property::TextSizeAdjust(a), Property::TextSizeAdjust(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::Direction(a), Property::Direction(b)) => css::generic::eql(a, b),
+            (Property::BoxDecorationBreak(a), Property::BoxDecorationBreak(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::UserSelect(a), Property::UserSelect(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::Appearance(a), Property::Appearance(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::Composes(a), Property::Composes(b)) => css::generic::eql(a, b),
             (Property::MaskImage(a), Property::MaskImage(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
@@ -5002,6 +5186,9 @@ impl Property {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::ColorScheme(a), Property::ColorScheme(b)) => css::generic::eql(a, b),
+            (Property::PrintColorAdjust(a), Property::PrintColorAdjust(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::ViewTransitionName(a), Property::ViewTransitionName(b)) => {
                 css::generic::eql(a, b)
             }

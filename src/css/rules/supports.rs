@@ -193,7 +193,8 @@ impl SupportsCondition {
                 .copied()
                 .filter(|f| prefix.contains(*f)),
             |d| d.write_str(b") or ("),
-            |d, _flag| {
+            |d, flag| {
+                flag.to_css(d)?;
                 d.serialize_name(name)?;
                 d.delim(b':', false)?;
                 // Raw parser-input slice: may span newlines.

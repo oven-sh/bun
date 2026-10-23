@@ -1,8 +1,198 @@
 use crate as css;
-use crate::css_properties::custom::UnparsedProperty;
-use crate::css_properties::{Property, PropertyIdTag};
+use crate::VendorPrefix;
+use crate::css_properties::custom::{CustomPropertyName, UnparsedProperty};
+use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::generics::{DeepClone as _, IsCompatible as _};
+use crate::prefixes::Feature;
 use bun_alloc::ArenaVecExt as _;
+use bun_core::strings;
+
+macro_rules! define_prefixes {
+    ($($name:ident,)+) => {
+        #[derive(Clone, Copy)]
+        enum Slot {
+            $($name,)+
+        }
+
+        const SLOT_COUNT: usize = [$(Slot::$name,)+].len();
+
+        $(const _: () = assert!(matches!(
+            PropertyIdTag::$name.prefix_feature(),
+            Some(Feature::$name)
+        ));)+
+
+        /// The slot of a declaration of these properties, the prefixes it is written with, its feature.
+        fn slot_of(property: &Property) -> Option<(Slot, VendorPrefix, Feature)> {
+            match property {
+                $(Property::$name(value) => Some((Slot::$name, value.1, Feature::$name)),)+
+                Property::Unparsed(unparsed) => match unparsed.property_id {
+                    $(PropertyId::$name(prefix) => Some((Slot::$name, prefix.or_none(), Feature::$name)),)+
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
+        fn prefixes_mut(property: &mut Property) -> Option<&mut VendorPrefix> {
+            match property {
+                $(Property::$name(value) => Some(&mut value.1),)+
+                Property::Unparsed(unparsed) => unparsed.property_id.prefix_slot_mut(),
+                _ => None,
+            }
+        }
+
+        /// Whether two declarations of one property have the same value. The prefixes can differ.
+        fn same_value(a: &Property, b: &Property) -> bool {
+            match (a, b) {
+                $((Property::$name(a), Property::$name(b)) => css::generic::eql(&a.0, &b.0),)+
+                (Property::Unparsed(a), Property::Unparsed(b)) => {
+                    a.property_id.tag() == b.property_id.tag() && css::generic::eql(&a.value, &b.value)
+                }
+                _ => false,
+            }
+        }
+    };
+}
+
+// Not here yet: `ClipPath` has no row. `TransformOrigin` and `PerspectiveOrigin` parse no valid value.
+define_prefixes! {
+    TransformStyle,
+    BackfaceVisibility,
+    Perspective,
+    BoxSizing,
+    TabSize,
+    Hyphens,
+    TextAlignLast,
+    TextDecorationSkipInk,
+    TextOverflow,
+    UserSelect,
+    Appearance,
+    BoxDecorationBreak,
+    TextSizeAdjust,
+    PrintColorAdjust,
+}
+
+/// Writes the prefixes that the targets need for properties whose prefixed names take the same value.
+#[derive(Default)]
+pub struct PrefixHandler {
+    /// The index in `dest` of the first declaration written since `all`.
+    start: Option<usize>,
+    /// A declaration only merges into one at or after this index. An unknown name is before it.
+    floor: usize,
+    /// The index in `dest` of the last declaration of each property.
+    last: [usize; SLOT_COUNT],
+    /// The prefixes that the author wrote for each property and that no `all` has reset.
+    written: [VendorPrefix; SLOT_COUNT],
+    /// The prefixes that the `!important` list of the block writes. `all` in the normal list keeps them.
+    important: [VendorPrefix; SLOT_COUNT],
+}
+
+impl PrefixHandler {
+    pub(crate) fn handle_property(
+        &mut self,
+        property: &Property,
+        dest: &mut css::DeclarationList,
+        context: &mut css::PropertyHandlerContext,
+    ) -> bool {
+        let Some((slot, written, feature)) = slot_of(property) else {
+            self.see_other(property, dest.len());
+            return false;
+        };
+        let slot = slot as usize;
+        let previous = self
+            .start
+            .filter(|start| self.last[slot] >= *start)
+            .map(|_| self.last[slot]);
+        let equal = previous.filter(|index| same_value(&dest[*index], property));
+
+        // Unlike lightningcss: a written prefix stays, and a prefix the block already has is not added.
+        let mut covered = self.written[slot] | self.important[slot];
+        if let Some(index) = equal {
+            covered |=
+                slot_of(&dest[index]).map_or(VendorPrefix::empty(), |(_, prefixes, _)| prefixes);
+        }
+        let prefixes = written
+            | context
+                .targets
+                .prefixes(written, feature)
+                .difference(covered);
+        self.written[slot] |= written.difference(VendorPrefix::NONE);
+
+        if let Some(index) = equal.filter(|index| *index >= self.floor)
+            && let Some(merged) = prefixes_mut(&mut dest[index])
+        {
+            *merged |= prefixes;
+            return true;
+        }
+
+        let mut declaration = property.deep_clone(dest.bump());
+        if let Some(own) = prefixes_mut(&mut declaration) {
+            *own = prefixes;
+        }
+        self.last[slot] = dest.len();
+        self.start.get_or_insert(dest.len());
+        dest.push(declaration);
+        true
+    }
+
+    /// For the normal list's handler: what the `!important` list writes. That, or an `all` after it, beats a copy here.
+    pub(crate) fn see_important_list(&mut self, important: &css::DeclarationList) {
+        for declaration in important.iter() {
+            if let Some((slot, prefixes, _)) = slot_of(declaration) {
+                self.important[slot as usize] |= prefixes.difference(VendorPrefix::NONE);
+            }
+        }
+    }
+
+    /// For the `!important` list's handler: what the normal list writes after its last `all`. `all` here resets it.
+    pub(crate) fn see_normal_list(&mut self, normal: &css::DeclarationList) {
+        for declaration in normal.iter() {
+            if is_all(declaration) {
+                self.written = Default::default();
+            } else if let Some((slot, prefixes, _)) = slot_of(declaration) {
+                self.written[slot as usize] |= prefixes.difference(VendorPrefix::NONE);
+            }
+        }
+    }
+
+    /// `all` sets every property. An unknown name can be one more spelling (`-khtml-user-select`).
+    fn see_other(&mut self, property: &Property, index: usize) {
+        if is_all(property) {
+            self.close();
+        } else if let Property::Custom(custom) = property
+            && matches!(custom.name, CustomPropertyName::Unknown(_))
+        {
+            self.floor = index + 1;
+        }
+    }
+
+    fn close(&mut self) {
+        *self = Self {
+            important: self.important,
+            ..Self::default()
+        };
+    }
+
+    pub(crate) fn finalize(
+        &mut self,
+        _dest: &mut css::DeclarationList,
+        _context: &mut css::PropertyHandlerContext,
+    ) {
+        *self = Self::default();
+    }
+}
+
+fn is_all(property: &Property) -> bool {
+    match property {
+        Property::All(_) => true,
+        Property::Unparsed(unparsed) => unparsed.property_id.tag() == PropertyIdTag::All,
+        Property::Custom(custom) => {
+            matches!(custom.name, CustomPropertyName::Unknown(_))
+                && strings::eql_case_insensitive_ascii_check_length(custom.name.as_str(), b"all")
+        }
+        _ => false,
+    }
+}
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]

@@ -5,14 +5,14 @@ description: Bun's bundler has built-in support for CSS with modern features
 
 Bun's bundler has built-in support for CSS with the following features:
 
-- Transpiling modern/future features to work on all browsers (including vendor prefixing)
+- Transpiling modern and future features for the [target browsers](#browser-compatibility), with [vendor prefixes](#vendor-prefixes) for a set of properties
 - Minification
 - CSS Modules
 - Tailwind (through a native bundler plugin)
 
 ## Transpiling
 
-Transpiling and vendor prefixing are enabled by default, so you can use modern and future CSS features without worrying about browser compatibility.
+Transpiling and vendor prefixing are enabled by default. Bun lowers modern syntax for the [target browsers](#browser-compatibility) and adds the [vendor prefixes](#vendor-prefixes) that they need for a set of properties.
 
 Bun's CSS parser and bundler is a direct port of LightningCSS, with a bundling approach inspired by esbuild. The transpiler converts modern CSS syntax into backwards-compatible equivalents that work across browsers.
 
@@ -27,6 +27,44 @@ By default, Bun's CSS bundler targets the following browsers:
 - Chrome 80+
 - Safari 14+
 - Opera 67+
+
+## Vendor Prefixes
+
+Bun adds the vendor-prefixed form of a declaration when a target browser needs it.
+
+```css title="styles.css" icon="file-code"
+.modal {
+  user-select: none;
+}
+```
+
+```css title="output.css" icon="file-code"
+.modal {
+  -webkit-user-select: none;
+  user-select: none;
+}
+```
+
+With the default browsers, Bun writes a prefix for these properties:
+
+- `user-select`, `appearance`, `hyphens`
+- `backface-visibility`, `box-decoration-break`, `background-clip`
+- `print-color-adjust`, `tab-size`, `text-size-adjust`
+
+Bun also prefixes these names inside `transition`, the size keywords `stretch` and `fit-content`, and `image-set()` in `background` and `border-image`.
+
+Bun keeps a prefixed declaration that you write, and does not add that prefix a second time. The exception is a prefixed declaration that a later `all` in the same rule resets.
+
+Bun does not add prefixes for the following yet. Write the prefixed form yourself if your browsers need it:
+
+- `mask`, `mask-border`, and their longhands
+- `backdrop-filter`
+- `text-decoration`, `text-emphasis`, and their longhands
+- `image-set()` in `list-style-image`
+- `color-adjust`, the name that Firefox before 97 reads for `print-color-adjust`
+- the `:autofill` selector
+- `@supports` conditions
+- `resolution` media features
 
 ## Syntax Lowering
 

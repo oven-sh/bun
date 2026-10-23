@@ -7189,6 +7189,9 @@ describe("css tests", () => {
     // and drops the default `auto` timeline.
     minify_test(".foo { animation: 1s spin --my-timeline }", ".foo{animation:1s spin --my-timeline}");
     minify_test(".foo { animation: 1s spin auto }", ".foo{animation:1s spin}");
+    // Outside a CSS module, a value with no typed form prints as written.
+    minify_test('.foo { animation: "spin" var(--d) }', '.foo{animation:"spin" var(--d)}');
+    minify_test(".foo { animation-name: spin, var(--x) }", ".foo{animation-name:spin,var(--x)}");
 
     // animation-name longhand.
     minify_test(".foo { animation-name: foo }", ".foo{animation-name:foo}");

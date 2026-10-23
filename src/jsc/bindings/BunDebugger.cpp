@@ -33,7 +33,7 @@ static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
 static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<RefPtr<BunInspectorConnection>, 8>>* inspectorConnections = nullptr;
 
-// When the inspected JS thread is paused at a breakpoint (inside runWhilePaused),
+// When the inspected JS thread is in runWhilePaused (a breakpoint) or in drainOrPark (a wait for a frontend),
 // it waits on this condition for the debugger thread to deliver new messages or
 // for a connection status change. This replaces a busy spin loop that would pin
 // one core at 100% CPU while paused. Wrapped in a function-local static so it
@@ -57,6 +57,8 @@ static bool bunControllerInstalled = false;
 // connection has since disconnected and been removed from inspectorConnections.
 static bool bunControllerHasEverConnected = false;
 extern "C" void Debugger__didConnect();
+extern "C" void Debugger__willRunWhilePaused();
+extern "C" void Debugger__didRunWhilePaused();
 
 class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
 public:
@@ -188,6 +190,7 @@ public:
 
     void disconnect()
     {
+        this->disconnectRequested = true;
         notifyPausedThread();
 
         switch (this->status) {
@@ -200,30 +203,36 @@ public:
         }
 
         ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
-            if (connection->status == ConnectionStatus::Disconnected)
-                return;
-
-            connection->status = ConnectionStatus::Disconnected;
-
-            // Do not call .disconnect() if we never actually connected.
-            if (connection->hasEverConnected) {
-                connection->inspector().disconnect(connection.get());
-            }
-
-            if (connection->unrefOnDisconnect) {
-                connection->unrefOnDisconnect = false;
-                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
-            }
-
-            {
-                Locker<Lock> locker(inspectorConnectionsLock);
-                if (inspectorConnections) {
-                    auto it = inspectorConnections->find(connection->scriptExecutionContextIdentifier);
-                    if (it != inspectorConnections->end())
-                        it->value.removeFirstMatching([&](auto& c) { return c.get() == connection.ptr(); });
-                }
-            }
+            connection->finishDisconnectOnContextThread(context);
         });
+    }
+
+    // The inspected thread's half of disconnect(). The caller holds a reference: the map entry removed here can be the last other one.
+    void finishDisconnectOnContextThread(ScriptExecutionContext& context)
+    {
+        if (this->status == ConnectionStatus::Disconnected)
+            return;
+
+        this->status = ConnectionStatus::Disconnected;
+
+        // Do not call .disconnect() if we never actually connected.
+        if (this->hasEverConnected) {
+            this->inspector().disconnect(*this);
+        }
+
+        if (this->unrefOnDisconnect) {
+            this->unrefOnDisconnect = false;
+            Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
+        }
+
+        {
+            Locker<Lock> locker(inspectorConnectionsLock);
+            if (inspectorConnections) {
+                auto it = inspectorConnections->find(this->scriptExecutionContextIdentifier);
+                if (it != inspectorConnections->end())
+                    it->value.removeFirstMatching([&](auto& c) { return c.get() == this; });
+            }
+        }
     }
 
     JSC::JSGlobalObjectDebuggable& inspector()
@@ -241,6 +250,7 @@ public:
 
     static void runWhilePaused(JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
     {
+        Debugger__willRunWhilePaused();
         Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(&globalObject);
         Vector<RefPtr<BunInspectorConnection>, 8> connections;
         {
@@ -295,6 +305,15 @@ public:
                 }
             }
         }
+
+        // The loop above does not read the queue of a frontend that left, and the last thing in it can be a waitForDebugger().
+        for (auto& connection : connections) {
+            if (connection->hasEverConnected && connection->disconnectRequested.load())
+                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, false);
+        }
+
+        // A waitForDebugger() that a frontend evaluated at this pause runs now, until Runtime.runIfWaitingForDebugger.
+        Debugger__didRunWhilePaused();
     }
 
     static bool anyConnectionHasPendingWork(const Vector<RefPtr<BunInspectorConnection>, 8>& connections, size_t previousClosedCount)
@@ -319,13 +338,81 @@ public:
         return closedCount != previousClosedCount;
     }
 
-    // Wake the inspected thread if it is blocked inside runWhilePaused.
+    // Wake the inspected thread if it is blocked inside runWhilePaused or drainOrPark.
     // Safe to call from any thread; cheap when nobody is waiting.
     static void notifyPausedThread()
     {
         auto& wait = pausedWait();
         Locker<Lock> locker(wait.lock);
         wait.condition.notifyAll();
+    }
+
+    static bool contextHasWorkForInspectedThread(ScriptExecutionContextIdentifier identifier)
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        if (!inspectorConnections)
+            return false;
+        auto it = inspectorConnections->find(identifier);
+        if (it == inspectorConnections->end())
+            return false;
+        for (auto& connection : it->value) {
+            if (connection->hasWorkForInspectedThread())
+                return true;
+        }
+        return false;
+    }
+
+    // Work is a connection to attach, a disconnect to finish, or queued messages.
+    bool hasWorkForInspectedThread()
+    {
+        ConnectionStatus current = this->status.load();
+        if (current == ConnectionStatus::Disconnected)
+            return false;
+        if (current != ConnectionStatus::Connected || this->disconnectRequested.load())
+            return true;
+        Locker<Lock> locker(jsThreadMessagesLock);
+        return !jsThreadMessages.isEmpty();
+    }
+
+    // One step of a wait that does not run the event loop: deliver what the debugger thread queued, or park until it queues more.
+    static void drainOrPark(Zig::GlobalObject* global)
+    {
+        auto& context = *global->scriptExecutionContext();
+
+        // Copied on every pass: a frontend can attach after the wait began.
+        Vector<RefPtr<BunInspectorConnection>, 8> connections;
+        {
+            Locker<Lock> locker(inspectorConnectionsLock);
+            if (inspectorConnections) {
+                auto it = inspectorConnections->find(context.identifier());
+                if (it != inspectorConnections->end())
+                    connections.appendVector(it->value);
+            }
+        }
+
+        bool foundWork = false;
+        for (auto& connection : connections) {
+            if (!connection->hasWorkForInspectedThread())
+                continue;
+            foundWork = true;
+
+            connection->receiveMessagesOnInspectorThread(context, global, true);
+
+            // The frontend left: deliver what it queued meanwhile (its resume, for one), then finish its disconnect, in that order.
+            if (connection->disconnectRequested.load()) {
+                connection->receiveMessagesOnInspectorThread(context, global, false);
+                connection->finishDisconnectOnContextThread(context);
+            }
+        }
+
+        if (foundWork)
+            return;
+
+        // No timeout: every producer changes what this check reads before it calls notifyPausedThread(), which takes wait.lock.
+        auto& wait = pausedWait();
+        Locker<Lock> waitLocker(wait.lock);
+        if (!contextHasWorkForInspectedThread(context.identifier()))
+            wait.condition.wait(wait.lock);
     }
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
@@ -474,6 +561,8 @@ public:
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
+    // doConnect() can store Connected over Disconnecting: drainOrPark learns from this flag that the frontend left.
+    std::atomic<bool> disconnectRequested { false };
 
     bool unrefOnDisconnect = false;
 
@@ -625,6 +714,12 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     }
 }
 
+extern "C" void BunDebugger__drainOrPark(ScriptExecutionContextIdentifier scriptId)
+{
+    auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
+    BunInspectorConnection::drainOrPark(static_cast<Zig::GlobalObject*>(globalObject));
+}
+
 extern "C" void BunDebugger__willHotReload()
 {
     if (debuggerScriptExecutionContext == nullptr) {
@@ -738,6 +833,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
 
 extern "C" bool Debugger__startNodeInspectorServer(BunString* url, bool waitForConnection);
 extern "C" void Debugger__waitForNodeInspectorConnection();
+extern "C" bool Debugger__writeNodeInspectorLine(const BunString* line);
 extern "C" void Debugger__abandonNodeInspectorWait();
 
 // Posts a control message to the node-inspector server's debugger thread
@@ -862,6 +958,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_waitForNodeInspectorConnection, (JSGlobalObj
     return JSValue::encode(jsUndefined());
 }
 
+// Writes a line of inspector.open() to stderr. False: the caller writes it.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_writeNodeInspectorLine, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String line = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    BunString lineString = Bun::toString(line);
+    return JSValue::encode(jsBoolean(Debugger__writeNodeInspectorLine(&lineString)));
+}
+
 // Forwards a control message (close, breakpoint forwarded from the in-process
 // Session, ...) from the main thread to the node-inspector server running on
 // the debugger thread. Returns false when no server is active.
@@ -891,9 +1000,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_postNodeInspectorControl, (JSGlobalObject * 
 // the debugger thread's acknowledgement here is required, not just tidy.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFrame*))
 {
-    // close() called from a callback that runs inside waitForDebugger()'s
-    // event-loop tick must disarm the Rust-side wait (wait_for_connection /
-    // poll_ref), or the wait loop spins forever against a stopped server.
+    // close() inside waitForDebugger() ends the wait: no frontend can reach a stopped server. Node stays in it: https://github.com/nodejs/node/blob/v26.3.0/src/inspector_agent.cc#L923-L925
     Debugger__abandonNodeInspectorWait();
 
     auto& state = nodeInspectorState();

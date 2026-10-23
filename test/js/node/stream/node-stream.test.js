@@ -2,6 +2,7 @@ import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
@@ -1590,6 +1591,102 @@ describe("node v26 stream semantics", () => {
     await new Promise(resolve => setImmediate(resolve));
     expect(r.read()).toBe("abcde");
     expect(r.read()).toBeNull();
+  });
+
+  // Upstream: nodejs/node#63973 (test-stream-readable-setEncoding-existing-buffers.js), in Node v26.4.0.
+  describe("setEncoding() on a stream that already holds its data and its end", () => {
+    const text = async stream => {
+      let out = "";
+      for await (const chunk of stream) out += chunk;
+      return out;
+    };
+    // push(null) ran. 'end' is not emitted while the data is unread.
+    // The deadline is below the default test timeout, so a stream with no end reports what it holds.
+    const holdsItsEnd = async (stream, name) => {
+      const deadline = Date.now() + 4000;
+      while (!stream._readableState.ended) {
+        if (Date.now() > deadline) throw new Error(`${name} holds ${stream.readableLength} bytes and no end`);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    };
+    const listen = server =>
+      new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+      });
+    // 17 bytes: a base64 decoder keeps the last 2 until end().
+    const body = Buffer.from("0123456789abcdef!");
+
+    it.each(["utf8", "utf16le", "latin1", "ascii", "hex", "base64", "base64url"])(
+      "%s: the text is the same as with setEncoding() before the data",
+      async encoding => {
+        // Multi-byte characters and a surrogate pair, cut at every byte.
+        const bytes = Buffer.from("ab€🎉yz", encoding === "utf16le" ? "utf16le" : "utf8");
+        const different = [];
+        for (let length = 0; length <= bytes.length; length++) {
+          const cut = bytes.subarray(0, length);
+          const early = new Readable({ read() {} });
+          early.setEncoding(encoding);
+          early.push(cut);
+          early.push(null);
+          const late = new Readable({ read() {} });
+          late.push(cut);
+          late.push(null);
+          late.setEncoding(encoding);
+          const [expected, actual] = [await text(early), await text(late)];
+          if (actual !== expected) different.push({ length, expected, actual });
+        }
+        expect(different).toEqual([]);
+      },
+    );
+
+    it("a body shorter than one base64 group is not lost", async () => {
+      const r = new Readable({ read() {} });
+      r.push(Buffer.from("01"));
+      r.push(null);
+      r.setEncoding("base64");
+      expect(r.readableLength).toBe(4);
+      expect(await text(r)).toBe("MDE=");
+    });
+
+    it("PassThrough: end(body), then setEncoding('base64')", async () => {
+      const stream = new PassThrough();
+      stream.end(body);
+      await holdsItsEnd(stream, "the PassThrough");
+      stream.setEncoding("base64");
+      expect(await text(stream)).toBe(body.toString("base64"));
+    });
+
+    it("http client: await the response, then setEncoding('base64')", async () => {
+      await using server = http.createServer((req, res) => res.end(body));
+      const port = await listen(server);
+      const res = await new Promise((resolve, reject) => {
+        http.get({ port, host: "127.0.0.1", agent: false }, resolve).on("error", reject);
+      });
+      await holdsItsEnd(res, "the response");
+      res.setEncoding("base64");
+      expect(await text(res)).toBe(body.toString("base64"));
+    });
+
+    it("http server: await in the request handler, then setEncoding('base64')", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      await using server = http.createServer(async (req, res) => {
+        try {
+          await holdsItsEnd(req, "the request");
+          req.setEncoding("base64");
+          resolve(await text(req));
+        } catch (err) {
+          reject(err);
+        }
+        res.end();
+      });
+      const port = await listen(server);
+      http
+        .request({ port, host: "127.0.0.1", method: "POST", agent: false }, res => res.resume())
+        .on("error", reject)
+        .end(body);
+      expect(await promise).toBe(body.toString("base64"));
+    });
   });
 
   // Upstream: nodejs/node#62557 (test-stream-destroy.js).

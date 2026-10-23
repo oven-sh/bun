@@ -213,7 +213,7 @@ describe("pipeline stack edge cases", () => {
 
     TestBuilder.command`basename | echo after 2>/dev/null`
       .stdout("after\n")
-      .stderr("usage: basename string\n")
+      .stderr("usage: basename string [suffix]\n")
       .runAsTest("basename (no args) | echo");
   });
 

@@ -1274,6 +1274,43 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
   }
 });
 
+test("headersSent and setHeader() agree when the response ends on a closed socket", async () => {
+  async function endAfterSocketClose(chunk: string | undefined) {
+    const { promise: sampled, resolve } = Promise.withResolvers<unknown>();
+    const server = createServer((req, res) => {
+      req.socket.on("close", () => {
+        res.end(chunk);
+        let setHeader = "ok";
+        try {
+          res.setHeader("X-Late", "1");
+        } catch (e) {
+          setHeader = (e as NodeJS.ErrnoException).code!;
+        }
+        resolve({ headersSent: res.headersSent, finished: res.finished, setHeader });
+      });
+      client.destroy();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    try {
+      return await sampled;
+    } finally {
+      server.close();
+    }
+  }
+
+  // Node.js drops the chunk of a destroyed response before it renders the head.
+  expect(await endAfterSocketClose("late")).toEqual({ headersSent: false, finished: true, setHeader: "ok" });
+  expect(await endAfterSocketClose(undefined)).toEqual({
+    headersSent: true,
+    finished: true,
+    setHeader: "ERR_HTTP_HEADERS_SENT",
+  });
+});
+
 // Like Node.js's net.Socket: the connection socket (req.socket) emits 'end' for
 // the peer's FIN and 'error' (read ECONNRESET, routed to 'clientError') for the
 // peer's RST, each before 'close'. A close the server starts emits only 'close'.
@@ -1379,4 +1416,62 @@ describe("req.socket reports how the client closed the connection", () => {
       clientErrors: [],
     });
   });
+
+  // The request was complete and its listener ended the connection, so the FIN of the client
+  // ends no message. Over TLS the connection is still open when that FIN arrives.
+  async function finAfterTheListenerEndedTheSocket(reads: 1 | 2) {
+    const clientErrors: string[] = [];
+    const socketClosed = Promise.withResolvers<void>();
+    const server = createHttpsServer(tlsOptions, (req, res) => {
+      if (req.url === "/barrier") return void res.end();
+      req.socket.on("close", () => socketClosed.resolve());
+      req.socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+    server.on("clientError", (e: NodeJS.ErrnoException, socket: Socket) => {
+      clientErrors.push(String(e.code));
+      socket.destroy();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const open = (options = {}) => tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...options });
+
+    const client = open({ allowHalfOpen: true });
+    try {
+      client.on("error", () => {});
+      await once(client, "secureConnect");
+      let response = "";
+      client.on("data", chunk => (response += chunk));
+      const serverEnded = once(client, "end");
+      const head = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+      if (reads === 2) {
+        client.write(head.slice(0, 20));
+        // A whole request on another connection: the server has read the first part by then.
+        const barrier = open();
+        barrier.on("error", () => {});
+        barrier.resume();
+        barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await once(barrier, "close");
+        client.write(head.slice(20));
+      } else {
+        client.write(head);
+      }
+      await serverEnded;
+      client.end();
+      await socketClosed.promise;
+      return { response: response.slice(-2), clientErrors };
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  for (const reads of [1, 2] as const) {
+    test.concurrent(
+      `https: FIN after the listener ended the socket is no parse error, request head in ${reads} read(s)`,
+      async () => {
+        expect(await finAfterTheListenerEndedTheSocket(reads)).toEqual({ response: "ok", clientErrors: [] });
+      },
+    );
+  }
 });

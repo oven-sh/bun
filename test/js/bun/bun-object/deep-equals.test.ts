@@ -148,6 +148,139 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
+// The object fast path settles primitive values while it walks the keys, and
+// collects objects and unresolved ropes to compare after the walk. These
+// objects hold more of both than the collecting buffer has inline slots.
+describe.each([true, false])("objects with many keys (strict: %p)", strict => {
+  // `reverse` inserts the keys in the opposite order, which gives the object a
+  // different Structure and takes the mixed-structure walk.
+  function wide(value: unknown, reverse = false) {
+    const keys = Array.from({ length: 50 }, (_, i) => "k" + i);
+    if (reverse) keys.reverse();
+    const o: Record<string, unknown> = {};
+    for (const key of keys) o[key] = key === "k25" ? value : key.endsWith("3") ? { key } : key;
+    return o;
+  }
+  // Non-literal strings, so the two sides never share a JSString cell.
+  const fresh = (s: string) => s.split("").join("");
+  const rope = (a: string, b: string) => fresh(a) + fresh(b);
+  const shared = Symbol("shared");
+
+  const equal: [string, () => unknown, () => unknown][] = [
+    ["numbers", () => 1.5, () => 1.5],
+    ["NaN", () => NaN, () => 0 / 0],
+    ["strings", () => fresh("abc"), () => fresh("abc")],
+    ["a rope and a string", () => rope("ab", "c"), () => fresh("abc")],
+    ["two ropes", () => rope("ab", "c"), () => rope("a", "bc")],
+    ["16-bit strings", () => fresh("abc\u1234"), () => rope("abc", "\u1234")],
+    ["bigints", () => 10n ** 30n, () => 10n ** 30n],
+    ["the same symbol", () => shared, () => shared],
+    ["null", () => null, () => null],
+    ["undefined", () => undefined, () => undefined],
+    ["booleans", () => true, () => true],
+    ["nested objects", () => ({ a: [1, { b: 2 }] }), () => ({ a: [1, { b: 2 }] })],
+  ];
+  const unequal: [string, () => unknown, () => unknown][] = [
+    ["numbers", () => 1, () => 2],
+    ["0 and -0", () => 0, () => -0],
+    ["strings", () => fresh("abc"), () => fresh("abd")],
+    ["a rope and a string", () => rope("ab", "c"), () => fresh("abd")],
+    ["two ropes", () => rope("ab", "c"), () => rope("ab", "d")],
+    ["bigints", () => 10n ** 30n, () => 10n ** 30n + 1n],
+    ["symbols with the same description", () => Symbol("a"), () => Symbol("a")],
+    ["null and undefined", () => null, () => undefined],
+    ["a number and a numeric string", () => 1, () => "1"],
+    ["a number and a Number object", () => 1, () => new Number(1)],
+    ["a string and a String object", () => fresh("abc"), () => new String("abc")],
+    ["a string and an object", () => fresh("abc"), () => ({})],
+    ["nested objects", () => ({ a: [1, { b: 2 }] }), () => ({ a: [1, { b: 3 }] })],
+  ];
+
+  describe.each([false, true])("other side inserted in reverse: %p", reverse => {
+    it.each(equal)("equal %s", (_, left, right) => {
+      expect(Bun.deepEquals(wide(left()), wide(right(), reverse), strict)).toBe(true);
+      expect(Bun.deepEquals(wide(right(), reverse), wide(left()), strict)).toBe(true);
+    });
+
+    it.each(unequal)("unequal %s", (_, left, right) => {
+      expect(Bun.deepEquals(wide(left()), wide(right(), reverse), strict)).toBe(false);
+      expect(Bun.deepEquals(wide(right(), reverse), wide(left()), strict)).toBe(false);
+    });
+
+    it("a key that only one side has", () => {
+      const more = wide(1, reverse);
+      more.extra = 1;
+      expect(Bun.deepEquals(wide(1), more, strict)).toBe(false);
+      expect(Bun.deepEquals(more, wide(1), strict)).toBe(false);
+    });
+  });
+
+  it("asymmetric matchers against primitive values", () => {
+    const matchers = wide(expect.any(Number));
+    matchers.k1 = expect.stringContaining("k");
+    matchers.k13 = expect.objectContaining({ key: "k13" });
+    expect(wide(1)).toEqual(matchers);
+    expect(wide("1")).not.toEqual(matchers);
+  });
+
+  // What runs before a mismatch is observable through getters. node and jest
+  // compare the values in key order, and so does the fast path.
+  describe("order of comparisons", () => {
+    // k3 comes before k30, k43 comes after it.
+    function probed(log: string[], k30: unknown, reverse = false) {
+      const probe = (name: string) => ({
+        get x() {
+          log.push(name);
+          return 1;
+        },
+      });
+      const o = wide(0, reverse);
+      o.k3 = probe("k3");
+      o.k30 = k30;
+      o.k43 = probe("k43");
+      return o;
+    }
+
+    it.each([false, true])(
+      "nested objects before unequal primitives are compared, later ones are not (other side in reverse: %p)",
+      reverse => {
+        const log: string[] = [];
+        expect(Bun.deepEquals(probed(log, 1), probed(log, 2, reverse), strict)).toBe(false);
+        expect(log).toEqual(["k3", "k3"]);
+      },
+    );
+
+    it("the key order of the first argument decides", () => {
+      const log: string[] = [];
+      expect(Bun.deepEquals(probed(log, 1, true), probed(log, 2), strict)).toBe(false);
+      expect(log).toEqual(["k43", "k43"]);
+    });
+
+    it("an error thrown from an earlier property wins over a later mismatch", () => {
+      const make = (k30: number) => {
+        const o = wide(0);
+        o.k3 = {
+          get x() {
+            throw new Error("from the getter");
+          },
+        };
+        o.k30 = k30;
+        return o;
+      };
+      expect(() => Bun.deepEquals(make(1), make(2), strict)).toThrow("from the getter");
+    });
+
+    it("a key that only one side has is reported before any nested object is compared", () => {
+      const log: string[] = [];
+      const more = probed(log, 1, true);
+      more.extra = 1;
+      expect(Bun.deepEquals(probed(log, 1), more, strict)).toBe(false);
+      expect(Bun.deepEquals(more, probed(log, 1), strict)).toBe(false);
+      expect(log).toEqual([]);
+    });
+  });
+});
+
 // The object fast path used to recurse into nested values while walking the
 // structure's PropertyTable; a getter on a nested object that added or removed
 // properties on the parent rehashed that table and freed the vector being
@@ -219,6 +352,16 @@ describe.skipIf(!isASAN)("object mutated from a getter during comparison", () =>
         console.log('gc churn strict:', Bun.deepEquals(p1, p2, true));
       }
       {
+        // Every frame keeps its collected pairs on one shared buffer. The nested
+        // frames grow (and reallocate) it while the outer frames still read theirs.
+        const tree = depth => {
+          const o = {};
+          for (let i = 0; i < 6; i++) o['n' + i] = depth ? tree(depth - 1) : { leaf: i };
+          return o;
+        };
+        console.log('shared pair buffer growth:', Bun.deepEquals(tree(3), tree(3), true));
+      }
+      {
         const [p1, p2] = make(addMany);
         assert.deepStrictEqual(p1, p2);
         console.log('assert.deepStrictEqual: true');
@@ -256,6 +399,7 @@ describe.skipIf(!isASAN)("object mutated from a getter during comparison", () =>
         "delete strict: true",
         "mixed-structure strict: true",
         "gc churn strict: true",
+        "shared pair buffer growth: true",
         "assert.deepStrictEqual: true",
         "util.isDeepStrictEqual: true",
         "expect.toEqual: true",

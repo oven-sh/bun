@@ -2082,6 +2082,109 @@ test("after an empty list item and a blank line in a block quote, indentation is
   expect(Markdown.html("> > -\n> >\n> >     a")).toBe(quote(quote(`${list}<pre><code>a\n</code></pre>\n`)));
 });
 
+// "A list item can begin with at most one blank line." The blank line ends the
+// item, not its list. The HTML is what commonmark.js 0.31.2 gives.
+describe("an empty list item and the blank line behind it", () => {
+  test.each([
+    [
+      "> 1.\n>\n>     let a = 1;\n",
+      "<blockquote>\n<ol>\n<li></li>\n</ol>\n<pre><code>let a = 1;\n</code></pre>\n</blockquote>\n",
+    ],
+    ["> -\n>\n>    some text\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n"],
+    [">  -\n>\n>    some text\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n"],
+    [
+      ">-\n>\n>     let a = 1;\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>let a = 1;\n</code></pre>\n</blockquote>\n",
+    ],
+    [
+      ">  -\n>\n>     let a = 1;\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>let a = 1;\n</code></pre>\n</blockquote>\n",
+    ],
+    [
+      "   > -\n>\n>     let a = 1;\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>let a = 1;\n</code></pre>\n</blockquote>\n",
+    ],
+    [
+      "> -\n>\n   >     let a = 1;\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>let a = 1;\n</code></pre>\n</blockquote>\n",
+    ],
+    ["> -\n >\n >    some text\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n"],
+    [">\t-\n>\n>\t  foo\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>foo\n</code></pre>\n</blockquote>\n"],
+    ["> -\n>\n>\n>    some text\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n"],
+    [
+      "> - a\n> -\n>\n>    some text\n",
+      "<blockquote>\n<ul>\n<li>a</li>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n",
+    ],
+  ])("the next line is measured from the block quote around the list: %j", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
+  });
+
+  test.each([
+    [
+      ">> -\n>>\n>>   some text\n",
+      "<blockquote>\n<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n</blockquote>\n",
+    ],
+    [
+      "> > -\n> >\n> >   some text\n",
+      "<blockquote>\n<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n</blockquote>\n",
+    ],
+    [
+      "> - -\n>\n>     some text\n",
+      "<blockquote>\n<ul>\n<li>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</li>\n</ul>\n</blockquote>\n",
+    ],
+    [
+      "- > -\n  >\n  >   some text\n",
+      "<ul>\n<li>\n<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</blockquote>\n</li>\n</ul>\n",
+    ],
+    [
+      "- 1. -\n\n       some text\n",
+      "<ul>\n<li>\n<ol>\n<li>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</li>\n</ol>\n</li>\n</ul>\n",
+    ],
+    [
+      "> > > > -\n> > > >\n> > > >\n> > > >   b\n",
+      "<blockquote>\n<blockquote>\n<blockquote>\n<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>b</p>\n</blockquote>\n</blockquote>\n</blockquote>\n</blockquote>\n",
+    ],
+  ])("the next line is measured from the innermost of several containers: %j", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
+  });
+
+  test.each([
+    ["> -\n>\n>    - b\n", "<blockquote>\n<ul>\n<li></li>\n<li>\n<p>b</p>\n</li>\n</ul>\n</blockquote>\n"],
+    ["> -\n>\n>    # h\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n<h1>h</h1>\n</blockquote>\n"],
+    ["> -\n>\n>    ---\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n<hr />\n</blockquote>\n"],
+    [
+      "> -\n>\n>    > q\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<blockquote>\n<p>q</p>\n</blockquote>\n</blockquote>\n",
+    ],
+    [
+      "> -\n>\n>    ```\n>    a\n>    ```\n",
+      "<blockquote>\n<ul>\n<li></li>\n</ul>\n<pre><code>a\n</code></pre>\n</blockquote>\n",
+    ],
+    ["> -\n>\n>   <div>\n", "<blockquote>\n<ul>\n<li></li>\n</ul>\n  <div>\n</blockquote>\n"],
+  ])("the next line starts the block that it would start without the item: %j", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
+  });
+
+  test.each([
+    ["-\n\n    let a = 1;\n", "<ul>\n<li></li>\n</ul>\n<pre><code>let a = 1;\n</code></pre>\n"],
+    ["-\n\n- b\n", "<ul>\n<li></li>\n<li>\n<p>b</p>\n</li>\n</ul>\n"],
+    ["> -\n>     let a = 1;\n", "<blockquote>\n<ul>\n<li>let a = 1;</li>\n</ul>\n</blockquote>\n"],
+    [
+      "> - x\n>\n>     let a = 1;\n",
+      "<blockquote>\n<ul>\n<li>\n<p>x</p>\n<p>let a = 1;</p>\n</li>\n</ul>\n</blockquote>\n",
+    ],
+    // A reference definition is something behind the marker, so the item is not empty.
+    ["-\n  [ref]: /url\n\n\n  b\n", "<ul>\n<li>\n<p>b</p>\n</li>\n</ul>\n"],
+    // The blank line is not in the block quote, so it ends the quote and not the outer item.
+    [
+      "- > -\n\n  some text\n",
+      "<ul>\n<li>\n<blockquote>\n<ul>\n<li></li>\n</ul>\n</blockquote>\n<p>some text</p>\n</li>\n</ul>\n",
+    ],
+  ])("the list goes on, and an item that is not over keeps its lines: %j", (markdown, html) => {
+    expect(Markdown.html(markdown)).toBe(html);
+  });
+});
+
 // What some scan once started again for each repetition, and what is like it, weighed against as many bytes of prose by
 // the time of the processor: that holds on a busy machine and in a debug build.
 test.each([

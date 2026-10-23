@@ -1235,4 +1235,176 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // The getters that __toESM, __reExport and __toCommonJS define are ordinary
+  // functions, and each helper has its own. No engine inlines a getter that is
+  // a bound function, and V8 reads one through the runtime on every access.
+  // ============================================================================
+
+  // The source text of a bound function is native code.
+  const isBoundGetter = /* js */ `
+    function isBoundGetter(object, key) {
+      const { get } = Object.getOwnPropertyDescriptor(object, key);
+      return Function.prototype.toString.call(get).includes("[native code]");
+    }
+  `;
+  // The body is inside a function, so the module keeps its __commonJS wrapper.
+  const wrappedLib = /* js */ `
+    (function () {
+      exports.count = 1;
+      exports.label = "label";
+      exports.bump = function () {
+        exports.count++;
+      };
+    })();
+  `;
+
+  for (const backend of ["api", "cli"] as const) {
+    for (const minify of [false, true]) {
+      const variant = `${backend}${minify ? "_minify" : ""}`;
+      const minifyOptions = { minifySyntax: minify, minifyIdentifiers: minify, minifyWhitespace: minify };
+
+      for (const format of ["esm", "cjs"] as const) {
+        // Test 63: __toESM, for a namespace and for a named import, and the
+        // first target of __reExport. Two importers get one namespace.
+        itBundled(`cjs/interop_getters_toESM_and_reExport_${format}_${variant}`, {
+          files: {
+            "/entry.mjs": /* js */ `
+              import * as ns from "./lib.cjs";
+              import { count, bump } from "./lib.cjs";
+              import * as star from "./star.mjs";
+              import { isSameNamespace } from "./other.mjs";
+              ${isBoundGetter}
+              const before = [ns.count, count, star.count, ns.label, star.label];
+              bump();
+              console.log(JSON.stringify({
+                boundGetters: { toESM: isBoundGetter(ns, "count"), reExport: isBoundGetter(star, "count") },
+                isSameNamespace: isSameNamespace(ns),
+                before,
+                after: [ns.count, count, star.count, ns.label, star.label],
+              }));
+            `,
+            "/lib.cjs": wrappedLib,
+            "/star.mjs": /* js */ `export * from "./lib.cjs";`,
+            "/other.mjs": /* js */ `
+              import * as ns from "./lib.cjs";
+              export const isSameNamespace = other => other === ns;
+            `,
+          },
+          backend,
+          format,
+          ...minifyOptions,
+          run: {
+            stdout: JSON.stringify({
+              boundGetters: { toESM: false, reExport: false },
+              isSameNamespace: true,
+              before: [1, 1, 1, "label", "label"],
+              after: [2, 2, 2, "label", "label"],
+            }),
+          },
+        });
+      }
+
+      // Test 64: what require() of a CommonJS-format bundle gives. `first` and
+      // `second` come from __toCommonJS, `count` and `label` from the second
+      // target of __reExport. Each getter reads its own key.
+      itBundled(`cjs/interop_getters_toCommonJS_and_reExport_second_target_${variant}`, {
+        files: {
+          "/entry.js": /* js */ `
+            export * from "./lib.cjs";
+            export const first = "first";
+            export let second = "second";
+            export function setSecond(value) {
+              second = value;
+            }
+          `,
+          "/lib.cjs": wrappedLib,
+        },
+        runtimeFiles: {
+          "/consumer.cjs": /* js */ `
+            const lib = require("./out.js");
+            ${isBoundGetter}
+            const before = [lib.first, lib.second, lib.count, lib.label];
+            lib.setSecond("changed");
+            lib.bump();
+            console.log(JSON.stringify({
+              boundGetters: { toCommonJS: isBoundGetter(lib, "first"), reExport: isBoundGetter(lib, "count") },
+              before,
+              after: [lib.first, lib.second, lib.count, lib.label],
+            }));
+          `,
+        },
+        backend,
+        format: "cjs",
+        ...minifyOptions,
+        run: {
+          file: "/consumer.cjs",
+          stdout: JSON.stringify({
+            boundGetters: { toCommonJS: false, reExport: false },
+            before: ["first", "second", 1, "label"],
+            after: ["first", "changed", 2, "label"],
+          }),
+        },
+      });
+
+      // Test 65: each helper defines its getters with its own function
+      // literal, so the `obj[key]` of each helper has its own profile. A
+      // throwing export getter puts the helper getters on the stack, and their
+      // source positions tell them apart.
+      itBundled(`cjs/interop_getters_one_function_per_helper_${variant}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import * as ns from "./lib.cjs";
+            import * as star from "./star.mjs";
+            export { boom as named } from "./lib.cjs";
+            export { ns, star };
+          `,
+          "/star.mjs": /* js */ `export * from "./lib.cjs";`,
+          "/lib.cjs": /* js */ `
+            (function () {
+              Object.defineProperty(exports, "boom", {
+                enumerable: true,
+                get() {
+                  throw new Error("boom");
+                },
+              });
+            })();
+          `,
+        },
+        runtimeFiles: {
+          "/consumer.cjs": /* js */ `
+            const lib = require("./out.js");
+            // The "line:column" of each frame of the bundle between the throwing getter and this file.
+            function helperFrames(read) {
+              try {
+                read();
+              } catch (error) {
+                return error.stack
+                  .split("\\n")
+                  .filter(line => /^\\s+at /.test(line) && line.includes("out.js"))
+                  .slice(1)
+                  .map(line => /:(\\d+:\\d+)\\)?$/.exec(line)[1]);
+              }
+              throw new Error("did not throw");
+            }
+            const viaToESM = helperFrames(() => lib.ns.boom);
+            const viaReExport = helperFrames(() => lib.star.boom);
+            const viaToCommonJS = helperFrames(() => lib.named);
+            console.log(JSON.stringify({
+              frames: [viaToESM.length, viaReExport.length, viaToCommonJS.length],
+              getterFunctions: new Set([viaToESM[0], viaReExport.at(-1), viaToCommonJS.at(-1)]).size,
+            }));
+          `,
+        },
+        backend,
+        format: "cjs",
+        ...minifyOptions,
+        run: {
+          file: "/consumer.cjs",
+          stdout: JSON.stringify({ frames: [1, 2, 3], getterFunctions: 3 }),
+        },
+      });
+    }
+  }
 });

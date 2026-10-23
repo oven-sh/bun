@@ -12,12 +12,12 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 
-// Shared getter/setter functions: .bind(obj, key) avoids creating a closure
-// and JSLexicalEnvironment per property. BoundFunction is much cheaper.
-// Must be regular functions (not arrows) so .bind() can set `this`.
+// Only the unused __exportValue still binds this for a getter.
 function __accessProp(key) {
   return this[key];
 }
+
+// Arrow getters below, one literal per helper: no engine inlines a bound getter, and a shared literal has one obj[key] profile (bench/cjs-interop).
 
 // This is used to implement "export * from" statements. It copies properties
 // from the imported module to the current module's ESM export object. If the
@@ -31,7 +31,7 @@ export var __reExport = (target, mod, secondTarget) => {
   for (let key of keys)
     if (!__hasOwnProp.call(target, key) && key !== "default")
       __defProp(target, key, {
-        get: __accessProp.bind(mod, key),
+        get: () => mod[key],
         enumerable: true,
       });
 
@@ -39,7 +39,7 @@ export var __reExport = (target, mod, secondTarget) => {
     for (let key of keys)
       if (!__hasOwnProp.call(secondTarget, key) && key !== "default")
         __defProp(secondTarget, key, {
-          get: __accessProp.bind(mod, key),
+          get: () => mod[key],
           enumerable: true,
         });
 
@@ -70,13 +70,16 @@ export var __toESM = (mod, isNodeMode, target) => {
 
   // A CommonJS module may legitimately set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
-  if ((mod && typeof mod === "object") || typeof mod === "function")
-    for (let key of __getOwnPropNames(mod))
+  if ((mod && typeof mod === "object") || typeof mod === "function") {
+    // Block-scoped so a cache hit returns without allocating a scope.
+    const from = mod;
+    for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key))
         __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
+          get: () => from[key],
           enumerable: true,
         });
+  }
 
   if (canCache) cache.set(mod, to);
   return to;
@@ -90,13 +93,16 @@ export var __toCommonJS = from => {
     desc;
   if (entry) return entry;
   entry = __defProp({}, "__esModule", { value: true });
-  if ((from && typeof from === "object") || typeof from === "function")
-    for (var key of __getOwnPropNames(from))
+  if ((from && typeof from === "object") || typeof from === "function") {
+    // Block-scoped so a cache hit returns without allocating a scope.
+    const mod = from;
+    for (let key of __getOwnPropNames(mod))
       if (!__hasOwnProp.call(entry, key))
         __defProp(entry, key, {
-          get: __accessProp.bind(from, key),
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+          get: () => mod[key],
+          enumerable: !(desc = __getOwnPropDesc(mod, key)) || desc.enumerable,
         });
+  }
   __moduleCache.set(from, entry);
   return entry;
 };

@@ -49,7 +49,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. `https.Server` extends `http.Server` rather than `tls.Server`, and has `setSecureContext()`, `addContext()`, `getTicketKeys()`, `setTicketKeys()` and `SNICallback`. Client sockets and request sockets (`req.socket`) are `tls.TLSSocket`s. On a request socket, `getSession()`, `getTLSTicket()` and `getSharedSigalgs()` return nothing. The server does not negotiate ALPN, so `ALPNProtocols` and `ALPNCallback` have no effect and `req.socket.alpnProtocol` is `false`. `handshakeTimeout` and the `'keylog'` event are not supported, and `'tlsClientError'` is only emitted for an `SNICallback` error.
+🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. `https.Server` extends `http.Server` rather than `tls.Server`, and has `setSecureContext()`, `addContext()`, `getTicketKeys()`, `setTicketKeys()` and `SNICallback`. Client sockets and request sockets (`req.socket`) are `tls.TLSSocket`s. The server does not negotiate ALPN, so `ALPNProtocols` and `ALPNCallback` have no effect and `req.socket.alpnProtocol` is `false`. The `'keylog'` event is not supported, and `'tlsClientError'` is only emitted for an `SNICallback` error and for a handshake that takes longer than `handshakeTimeout`.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

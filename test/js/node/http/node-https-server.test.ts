@@ -1394,6 +1394,8 @@ describe.concurrent("an https connection before its TLS handshake", () => {
           server.listen(0, "127.0.0.1");
           const accepted = once(server, "connection");
           await once(server, "listening");
+          // A sweep runs every 4 seconds. The timeout is set right after this one, so it's due at the first that comes no earlier.
+          sweepSocketTimers(1);
           const client = net.connect(server.address().port, "127.0.0.1");
           // The close finds an unread byte, so the client may see a reset.
           client.on("error", () => {});
@@ -1402,8 +1404,7 @@ describe.concurrent("an https connection before its TLS handshake", () => {
           // With a byte to read, TCP_DEFER_ACCEPT doesn't delay the accept.
           client.write(Buffer.from([0x16]));
           await accepted;
-          // A sweep runs every 4 seconds. The first one can come right after the accept, so it doesn't count.
-          sweepSocketTimers(Math.ceil((handshakeTimeout ?? 120_000) / 4000));
+          sweepSocketTimers(Math.floor((handshakeTimeout ?? 120_000) / 4000));
           const early = events.length;
           sweepSocketTimers(1);
           await closed;
@@ -1575,4 +1576,99 @@ test.skipIf(!isLinux)("every request of one read is dispatched when the client l
   await connectionClosed.promise;
   await new Promise<void>(resolve => server.close(() => resolve()));
   expect({ requests, closed }).toEqual({ requests: 20, closed: 20 });
+});
+
+describe("https.Server reads its TLS options the way Node does", () => {
+  const keysDir = join(import.meta.dir, "../test/fixtures/keys");
+  const keys = (file: string) => readFileSync(join(keysDir, file));
+  const agent1 = { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") }; // issued by ca1
+  const agent3 = { key: keys("agent3-key.pem"), cert: keys("agent3-cert.pem") }; // issued by ca2
+  const agent3Files = { keyFile: join(keysDir, "agent3-key.pem"), certFile: join(keysDir, "agent3-cert.pem") };
+  const asksForCertificate = { requestCert: true, rejectUnauthorized: false };
+
+  const createServer = (options: object) =>
+    https
+      .createServer(options, (req, res) => res.end(String((req.socket as tls.TLSSocket).authorized)))
+      .on("tlsClientError", () => {});
+
+  // The name in the server's certificate, and whether the server trusts the issuer of the client's.
+  async function request(server: https.Server, client: { key: Buffer; cert: Buffer }) {
+    const port = server.listening ? (server.address() as AddressInfo).port : await listen(server);
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const req = https.get({ port, host: "127.0.0.1", ca: [keys("ca1-cert.pem"), keys("ca2-cert.pem")], checkServerIdentity: () => undefined, agent: false, ...client }, res => {
+      const name = (res.socket as tls.TLSSocket).getPeerCertificate().subject.CN;
+      res.setEncoding("utf8").on("data", authorized => resolve(`${name}, client authorized: ${authorized}`));
+    }); // prettier-ignore
+    req.on("error", () => resolve("refused"));
+    return promise;
+  }
+
+  test("ca isn't replaced by caFile", async () => {
+    const options = {
+      ...agent1,
+      ...asksForCertificate,
+      ca: keys("ca1-cert.pem"),
+      caFile: join(keysDir, "ca2-cert.pem"),
+    };
+    const server = createServer(options);
+    try {
+      expect(await request(server, agent1)).toBe("agent1, client authorized: true");
+      expect(await request(server, agent3)).toBe("agent1, client authorized: false");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("key and cert aren't replaced by keyFile and certFile", async () => {
+    const server = createServer({ ...agent1, ...agent3Files });
+    try {
+      expect(await request(server, agent1)).toBe("agent1, client authorized: false");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a certFile that doesn't match key is ignored", async () => {
+    const server = createServer({ ...agent1, certFile: agent3Files.certFile });
+    try {
+      expect(await request(server, agent1)).toBe("agent1, client authorized: false");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("keyFile and certFile alone are no certificate", async () => {
+    const server = createServer(agent3Files);
+    try {
+      expect(await request(server, agent1)).toBe("refused");
+    } finally {
+      server.close();
+    }
+  });
+
+  const given = { ...agent3, ca: keys("ca2-cert.pem") };
+  test.each([
+    ["inherited", () => Object.create(given)],
+    [
+      "class getters",
+      () => {
+        class Options {}
+        for (const [name, value] of Object.entries(given)) Object.defineProperty(Options.prototype, name, { get: () => value }); // prettier-ignore
+        return new Options();
+      },
+    ],
+    [
+      "non-enumerable",
+      () => Object.defineProperties({}, Object.fromEntries(Object.entries(given).map(([name, value]) => [name, { value }]))), // prettier-ignore
+    ],
+  ])("setSecureContext() takes options that are %s", async (_, options) => {
+    const server = createServer({ ...agent1, ...asksForCertificate });
+    try {
+      expect(await request(server, agent3)).toBe("agent1, client authorized: false");
+      server.setSecureContext(options());
+      expect(await request(server, agent3)).toBe("agent3, client authorized: true");
+    } finally {
+      server.close();
+    }
+  });
 });

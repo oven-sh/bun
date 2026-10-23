@@ -153,9 +153,6 @@ static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_rare_ex_idx = -1;
 /* BIO type of the loop's shared BIO: tells a us_socket_t's SSL from an SSLWrapper's. */
 static int us_ssl_bio_type = 0;
-/* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
- * entry — see us_ssl_ctx_set_sni_policy. Absent on node:tls SecureContexts,
- * whose policy is server-level. */
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
@@ -256,6 +253,8 @@ static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 }
 static struct us_server_names_t *us_server_names_ref(struct us_listen_socket_t *ls);
 static void us_server_names_unref(struct us_server_names_t *names);
+static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                             const unsigned char *in, unsigned int inlen, void *arg);
 static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                              int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
@@ -1155,8 +1154,7 @@ static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsi
 }
 
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
-  /* Always continue; the user inspects via us_socket_verify_error after
-   * on_handshake. Returning 1 defers the decision to JS without aborting
+  /* Always continue; on_handshake hands the owner the verdict. Returning 1 defers the decision to JS without aborting
    * mid-handshake - the same model as Node (crypto_tls.cc VerifyCallback). */
   return 1;
 }
@@ -1333,6 +1331,8 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Register the live-count free_func first thing so every exit (including
    * build_fail) balances. The packed reneg policy reuses the same slot. */
   SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);
+
+  SSL_CTX_set_alpn_select_cb(ssl_context, us_alpn_select_cb, NULL);
 
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
@@ -1744,41 +1744,6 @@ void us_internal_ssl_ctx_unref(SSL_CTX *p) {
   if (p) SSL_CTX_free(p);
 }
 
-/* ── HTTP/2 ALPN ─────────────────────────────────────────────────────────── */
-
-static int us_alpn_select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
-                             const unsigned char *in, unsigned int inlen, void *arg) {
-  (void) ssl;
-  int allow_http1 = arg != NULL;
-  const unsigned char *http1 = NULL;
-  for (unsigned int i = 0; i + 1 <= inlen;) {
-    unsigned int len = in[i];
-    if (i + 1 + len > inlen) break;
-    const unsigned char *proto = &in[i + 1];
-    if (len == 2 && proto[0] == 'h' && proto[1] == '2') {
-      *out = proto;
-      *outlen = 2;
-      return SSL_TLSEXT_ERR_OK;
-    }
-    if (len == 8 && memcmp(proto, "http/1.1", 8) == 0) http1 = proto;
-    i += 1 + len;
-  }
-  if (http1 && allow_http1) {
-    *out = http1;
-    *outlen = 8;
-    return SSL_TLSEXT_ERR_OK;
-  }
-  /* The client offered ALPN but not h2 (this callback doesn't run at all for
-   * a client that sends no ALPN extension; that one completes the handshake
-   * and is answered at the HTTP layer). Proceed without ALPN when HTTP/1 is
-   * allowed; otherwise refuse the handshake with no_application_protocol. */
-  return allow_http1 ? SSL_TLSEXT_ERR_NOACK : SSL_TLSEXT_ERR_ALERT_FATAL;
-}
-
-void us_ssl_ctx_enable_http2_alpn(SSL_CTX *ctx, int allow_http1) {
-  SSL_CTX_set_alpn_select_cb(ctx, us_alpn_select_h2, allow_http1 ? (void *) 1 : NULL);
-}
-
 int us_socket_alpn_is_h2(struct us_socket_t *s) {
   if (!s->ssl) return 0;
   const unsigned char *proto = NULL;
@@ -1799,10 +1764,10 @@ static void ssl_client_verify_defaults(SSL *ssl, SSL_CTX *ctx) {
   if (roots) SSL_set0_verify_cert_store(ssl, roots);
 }
 
-/* An SSL in its role, for either engine. The caller gives it a BIO. NULL if out of memory. */
+/* An SSL in its role, for either engine. The caller gives it a BIO. */
 SSL *us_ssl_new(SSL_CTX *ctx, int is_client) {
   SSL *ssl = SSL_new(ctx);
-  if (!ssl) return NULL;
+  if (!ssl) Bun__outOfMemory();
 
   /* renegotiation: ssl_renegotiate_explicit lets us bound it on the client
    * (issues #6197/#5363); never on the server (DoS vector). */
@@ -1829,7 +1794,6 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   SSL *ssl = us_ssl_new(ctx, is_client);
-  if (!ssl) Bun__outOfMemory();
   SSL_set_bio(ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
   BIO_up_ref(loop_ssl_data->shared_rbio);
   BIO_up_ref(loop_ssl_data->shared_wbio);
@@ -1853,7 +1817,6 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_pending_close_code = 0;
   s->ssl_first_flight_before_fin = 0;
   s->ssl_shutdown_after_first_flight = 0;
-  s->ssl_is_server = is_client ? 0 : 1;
 }
 
 void us_internal_ssl_detach(struct us_socket_t *s) {
@@ -2497,7 +2460,7 @@ struct us_socket_t *us_internal_ssl_close_after_rejected_send(struct us_socket_t
   if ((SSL_get_shutdown(s_ssl(s)) & both_ended) == both_ended) {
     return us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
   }
-  return us_internal_socket_close_raw(s, us_socket_rejected_send_error(s), NULL);
+  return us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
 }
 
 struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
@@ -3175,6 +3138,10 @@ struct us_server_names_t {
    * (the caller does not cache it), or NULL to keep the default one. The tree isn't consulted while this is set. */
   struct ssl_ctx_st *(*on_server_name)(void *user, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
   void *on_server_name_user;
+  /* See us_listen_socket_set_alpn. NULL leaves the selection to us_dispatch_alpn_select. */
+  unsigned char *alpn;
+  unsigned int alpn_length;
+  int alpn_required;
 };
 
 static struct us_server_names_t *us_listen_socket_server_names(struct us_listen_socket_t *ls) {
@@ -3196,7 +3163,31 @@ static struct us_server_names_t *us_server_names_ref(struct us_listen_socket_t *
 static void us_server_names_unref(struct us_server_names_t *names) {
   if (--names->refs) return;
   if (names->tree) sni_free(names->tree, sni_node_destructor);
+  us_free(names->alpn);
   us_free(names);
+}
+
+void us_listen_socket_set_alpn(struct us_listen_socket_t *ls, const unsigned char *protocols, unsigned int length, int required) {
+  struct us_server_names_t *names = us_listen_socket_server_names(ls);
+  us_free(names->alpn);
+  names->alpn = us_malloc(length);
+  if (!names->alpn) Bun__outOfMemory();
+  memcpy(names->alpn, protocols, length);
+  names->alpn_length = length;
+  names->alpn_required = required;
+}
+
+/* On every SSL_CTX. Listeners share contexts, so what a server selects hangs off the connection. */
+static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                             const unsigned char *in, unsigned int inlen, void *arg) {
+  (void)arg;
+  struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
+  struct us_server_names_t *names = rare ? rare->server_names : NULL;
+  if (!names || !names->alpn) return us_dispatch_alpn_select(ssl, out, outlen, in, inlen);
+  if (SSL_select_next_proto((unsigned char **)out, outlen, names->alpn, names->alpn_length, in, inlen) == OPENSSL_NPN_NEGOTIATED) {
+    return SSL_TLSEXT_ERR_OK;
+  }
+  return names->alpn_required ? SSL_TLSEXT_ERR_ALERT_FATAL : SSL_TLSEXT_ERR_NOACK;
 }
 
 static struct sni_node_t *us_server_names_find(struct us_server_names_t *names, const char *hostname) {
@@ -3511,6 +3502,10 @@ int us_ssl_sni_resolve(SSL *ssl, SSL_CTX *ctx, int error) {
   return 1;
 }
 
+unsigned int us_ssl_sni_held_max(void) {
+  return US_SSL_SNI_HELD_MAX;
+}
+
 int us_ssl_sni_waiting(const SSL *ssl) {
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   return rare && rare->sni_pending == US_SNI_WAITING;
@@ -3547,11 +3542,6 @@ int us_ssl_set_key_cert(SSL *ssl, SSL_CTX *ctx, const unsigned char *sid_ctx, si
   /* After the ServerHello the new session already has the old session id context, but the client is verified against `ctx`'s CAs. */
   SSL_SESSION *session = SSL_in_init(ssl) && !SSL_session_reused(ssl) ? SSL_get_session(ssl) : NULL;
   return session == NULL || SSL_SESSION_set1_id_context(session, sid_ctx, sid_ctx_length);
-}
-
-const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {
-  if (!s->ssl || !s_ssl(s)) return NULL;
-  return SSL_get_servername(s_ssl(s), TLSEXT_NAMETYPE_host_name);
 }
 
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {

@@ -71,6 +71,17 @@ pub(crate) struct Entry {
 }
 
 impl SSLContextCache {
+    /// Runs `f` on this thread's cache. A callback, because two callers could hold a `&'static mut` at once.
+    pub(crate) fn with<R>(f: impl FnOnce(&mut Self) -> R) -> R {
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(
+            !state.is_null(),
+            "runtime_state() before init_runtime_state"
+        );
+        // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, and only the JS thread gets here, so this `&mut` is unique while `f` runs.
+        f(unsafe { &mut (*state).ssl_ctx_cache })
+    }
+
     /// The map itself holds no ref.
     pub(crate) fn get_or_create(
         &mut self,

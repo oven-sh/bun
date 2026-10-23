@@ -39,6 +39,7 @@ import {
   // @ts-expect-error legacy alias
   Stream,
 } from "node:net";
+import os from "node:os";
 import { join } from "node:path";
 import { Duplex, duplexPair } from "node:stream";
 import { connect as tlsConnect, TLSSocket } from "node:tls";
@@ -1515,7 +1516,7 @@ describe("Socket fd adoption", () => {
         socket.end("hello");
       });
       expect(drain(rfd)).toBe("hello");
-      // Sync fd writes must feed the byte counters (no native handle to do it).
+      // The handle of an adopted pipe feeds the byte counters like any other.
       expect((socket as any)._bytesDispatched).toBe(5);
       // The adopted fd must be released on destroy (node closes the wrapping
       // libuv handle in the equivalent path).
@@ -1562,9 +1563,151 @@ describe("Socket fd adoption", () => {
         socket.destroy();
         await once(socket, "close");
         expect(events).toEqual(["write ECANCELED"]);
+        // Like Node, the reader gets what the pipe had taken and nothing of what was still queued.
+        expect(drain(rfd).length).toBe(65_536);
       } finally {
         fs.closeSync(rfd);
       }
+    });
+
+    it("fails a queued write with EPIPE when the reader goes away", async () => {
+      const { rfd, wfd } = openFifo("reader-gone.fifo", nonBlocking);
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.message}`));
+      socket.write(Buffer.alloc(300_000), (err: any) => events.push(`write ${err?.code} ${err?.syscall}`));
+      fs.closeSync(rfd);
+      await new Promise(resolve => socket.on("close", resolve));
+      expect({ events, fd: fstatCode(wfd) }).toEqual({
+        events: ["write EPIPE write", "error write EPIPE"],
+        fd: "EBADF",
+      });
+    });
+  });
+
+  it.skipIf(isWindows)("fails a write to a pipe without a reader the way node does", async () => {
+    const { rfd, wfd } = openFifo("no-reader.fifo");
+    fs.closeSync(rfd);
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
+    const [error] = (await Promise.all([once(socket, "error"), socket.write("x")]))[0] as [NodeJS.ErrnoException];
+    expect({ message: error.message, code: error.code, syscall: error.syscall, errno: error.errno }).toEqual({
+      message: "write EPIPE",
+      code: "EPIPE",
+      syscall: "write",
+      errno: -os.constants.errno.EPIPE,
+    });
+  });
+
+  // Whoever adopts a descriptor closes it, so a descriptor has one owner.
+  describe.skipIf(isWindows)("a descriptor that a socket of this process owns", () => {
+    const refusal = (fd: number) => {
+      try {
+        new Socket({ fd, readable: false, writable: true });
+      } catch (e) {
+        const { message, code, syscall } = e as NodeJS.ErrnoException;
+        return { message, code, syscall, fd: fstatCode(fd) };
+      }
+    };
+    const refused = { message: "open EEXIST", code: "EEXIST", syscall: "open", fd: "open" };
+
+    it("is refused for a connected socket, which keeps working", async () => {
+      const server = createServer(socket => socket.pipe(socket));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      try {
+        await once(client, "connect");
+        expect(refusal((client as any)._handle.fd)).toEqual(refused);
+        client.write("ping");
+        expect(String((await once(client, "data"))[0])).toBe("ping");
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    it("is refused for a second socket over the same pipe", async () => {
+      const { rfd, wfd } = openFifo("one-owner.fifo");
+      const owner = new Socket({ fd: wfd, readable: false, writable: true });
+      try {
+        expect(refusal(wfd)).toEqual(refused);
+        await new Promise<void>((resolve, reject) => owner.write("mine", err => (err ? reject(err) : resolve())));
+        expect(drain(rfd)).toBe("mine");
+        owner.destroy();
+        await once(owner, "close");
+        expect(fstatCode(wfd)).toBe("EBADF");
+      } finally {
+        owner.destroy();
+        fs.closeSync(rfd);
+      }
+    });
+  });
+
+  // stdin, stdout and stderr are never closed, so they have no owner.
+  it("two sockets can write to stdout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          const sockets = [1, 2].map(() => new net.Socket({ fd: 1, readable: false, writable: true }));
+          for (const socket of sockets) socket.on("error", err => console.error(err.code));
+          sockets[0].write("a");
+          sockets[1].write("b");
+          sockets[0].destroy();
+          sockets[1].write("c");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "abc", stderr: "", exitCode: 0 });
+  });
+
+  // A write to a blocking descriptor returns once the kernel has every byte, so nothing is left to lose.
+  it("what was written before process.exit() reaches the reader", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          new net.Socket({ fd: 1, readable: false, writable: true }).write(Buffer.alloc(1_000_000, "x"));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ bytes: stdout.length, exitCode }).toEqual({ bytes: 1_000_000, exitCode: 0 });
+  });
+
+  // Nothing is read from it, so only a pending write may keep the process alive.
+  it("an open write-only socket doesn't keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          const socket = new net.Socket({ fd: 1, readable: false, writable: true });
+          socket.write("done");
+          process.on("exit", () => console.error(JSON.stringify({ destroyed: socket.destroyed })));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "done",
+      stderr: '{"destroyed":false}',
+      exitCode: 0,
     });
   });
 
@@ -1609,8 +1752,8 @@ describe("Socket fd adoption", () => {
         events,
         destroyed: socket.destroyed,
         fd: fstatCode(wfd),
-        flags: [socket.readable, socket.readableEnded, socket.writable],
-      }).toEqual({ events: [], destroyed: false, fd: "open", flags: [false, true, true] });
+        flags: [socket.readable, socket.readableEnded, socket.writable, socket.pending],
+      }).toEqual({ events: [], destroyed: false, fd: "open", flags: [false, true, true, false] });
 
       await new Promise<void>((resolve, reject) => socket.write("late", err => (err ? reject(err) : resolve())));
       expect(drain(rfd)).toBe("late");
@@ -1766,8 +1909,7 @@ describe("Socket fd adoption", () => {
     expect({ destroyed: socket.destroyed, pending: socket.pending }).toEqual({ destroyed: false, pending: true });
   });
 
-  // node's _writeGeneric restarts the idle timer before every write; the
-  // synchronous fd write path has no handle doing that for it.
+  // node's _writeGeneric restarts the idle timer before every write.
   it.concurrent.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
     const { rfd, wfd } = openFifo("timeout.fifo");
     const socket = new Socket({ fd: wfd, readable: false, writable: true });
@@ -3786,6 +3928,79 @@ describe("net.Server.listen({ fd })", () => {
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  it.skipIf(isWindows)(
+    "every way to adopt a descriptor reports one that's in use as EEXIST and leaves it alone",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--no-deprecation",
+          "-e",
+          `
+        const dgram = require("dgram"), net = require("net"), { once } = require("events");
+        const server = net.createServer(socket => socket.on("data", () => socket.write("owner"))).listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const client = net.connect(server.address().port, "127.0.0.1");
+        await once(client, "connect");
+        const udp = dgram.createSocket("udp4").bind(0, "127.0.0.1");
+        await once(udp, "listening");
+
+        const ask = async socket => (socket.write("x"), String((await once(socket, "data"))[0]));
+        const codeOf = async adopt => {
+          try {
+            const adopted = await adopt();
+            return adopted instanceof net.Socket ? (await once(adopted, "error"))[0].code : "adopted";
+          } catch (err) {
+            return err.code;
+          }
+        };
+        const socket = { data() {} };
+        for (const [owner, fd] of [["listener", server._handle.fd], ["connection", client._handle.fd]]) {
+          const second = net.createServer().listen({ fd });
+          console.log(owner, "net.Server:", (await once(second, "error"))[0].code);
+          console.log(owner, "Bun.listen:", await codeOf(() => Bun.listen({ fd, socket })));
+          console.log(owner, "Bun.connect:", await codeOf(() => Bun.connect({ fd, socket })));
+          console.log(owner, "net.Socket:", await codeOf(() => new net.Socket({ fd })));
+        }
+        console.log("datagram socket dgram.Socket:", await codeOf(() => dgram.createSocket("udp4").bind({ fd: udp._handle.fd })));
+        console.log("datagram socket Bun.udpSocket:", await codeOf(() => Bun.udpSocket({ fd: udp._handle.fd })));
+
+        console.log("the connection answers:", await ask(client));
+        const later = net.connect(server.address().port, "127.0.0.1");
+        await once(later, "connect");
+        console.log("the listener accepts:", await ask(later));
+        dgram.createSocket("udp4").send("owner", udp.address().port, "127.0.0.1");
+        console.log("the datagram socket receives:", String((await once(udp, "message"))[0]));
+        process.exit(0);
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+        stdout: [
+          "listener net.Server: EEXIST",
+          "listener Bun.listen: EEXIST",
+          "listener Bun.connect: EEXIST",
+          "listener net.Socket: EEXIST",
+          "connection net.Server: EEXIST",
+          "connection Bun.listen: EEXIST",
+          "connection Bun.connect: EEXIST",
+          "connection net.Socket: EEXIST",
+          "datagram socket dgram.Socket: EEXIST",
+          "datagram socket Bun.udpSocket: EEXIST",
+          "the connection answers: owner",
+          "the listener accepts: owner",
+          "the datagram socket receives: owner",
+        ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // A throw from a user listener invoked synchronously from a native socket
@@ -4022,6 +4237,8 @@ describe("setTimeout() with a queued write", () => {
   it("fires when the peer stops reading", async () => {
     using pair = await connectToPausedPeer();
     writeUntilQueued(pair.socket);
+    // More than the kernel's buffers grow by, on macOS and Windows, while the peer reads nothing.
+    pair.socket.write(Buffer.alloc(64 << 20));
     pair.socket.setTimeout(10);
     await once(pair.socket, "timeout");
     expect(pair.socket.writableLength).toBeGreaterThan(0);
@@ -4475,33 +4692,32 @@ describe.skipIf(!isLinux)("a peer that replied and closed mid-upload", () => {
     });
   });
 
-  it.each([
-    ["nothing", ["data", "close EPIPE write"]],
-    ["terminate", ["data", "close"]],
-    ["end", ["data", "close"]],
-  ] as const)("Bun.connect: close() reports the failed send when data() calls %s", async (method, expected) => {
-    using server = await listen();
-    const events: string[] = [];
-    const closed = Promise.withResolvers<void>();
-    await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port,
-      socket: {
-        open: socket => void socket.end(Buffer.alloc(8 << 20)),
-        data(socket) {
-          if (!events.includes("data")) events.push("data");
-          if (method !== "nothing") socket[method]();
+  it.each(["nothing", "terminate", "end"] as const)(
+    "Bun.connect: close() reports the failed send when data() calls %s",
+    async method => {
+      using server = await listen();
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open: socket => void socket.end(Buffer.alloc(8 << 20)),
+          data(socket) {
+            if (!events.includes("data")) events.push("data");
+            if (method !== "nothing") socket[method]();
+          },
+          error: (socket, err: any) => void events.push(`error ${err.code}`),
+          close(socket, err: any) {
+            events.push(err ? `close ${err.code} ${err.syscall}` : "close");
+            closed.resolve();
+          },
         },
-        error: (socket, err: any) => void events.push(`error ${err.code}`),
-        close(socket, err: any) {
-          events.push(err ? `close ${err.code} ${err.syscall}` : "close");
-          closed.resolve();
-        },
-      },
-    });
-    await closed.promise;
-    expect(events).toEqual([...expected]);
-  });
+      });
+      await closed.promise;
+      expect(events).toEqual(["data", "close EPIPE write"]);
+    },
+  );
 });
 
 it("runs a queued write's callback and the 'drain' after it in the async context of write()", async () => {
@@ -4530,8 +4746,8 @@ it.each(["accepted", "client"] as const)(
     try {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const client = connect({ port: (server.address() as any).port, host: "127.0.0.1", allowHalfOpen: true });
-      const [socket, peer] = side === "accepted" ? [await accepted.promise, client] : [client, await accepted.promise];
-      if (side === "client") await once(client, "connect");
+      const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
       peer.on("error", () => {});
       const events: string[] = [];
       for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
@@ -4539,12 +4755,47 @@ it.each(["accepted", "client"] as const)(
       peer.resetAndDestroy();
       // Not events.once(), which adds an 'error' listener.
       await new Promise(resolve => socket.once("close", resolve));
-      expect(events).toEqual(["end", "close"]);
+      expect(events).toEqual(["end", "finish", "close"]);
     } finally {
       server.close();
     }
   },
 );
+
+describe.each(["tcp", "unix"] as const)("a half-open socket over %s whose peer closed both directions", transport => {
+  it.skipIf(isWindows && transport === "unix").each(["accepted", "client"] as const)(
+    "stays open until the program ends it (%s)",
+    async side => {
+      const accepted = Promise.withResolvers<Socket>();
+      const server = createServer({ allowHalfOpen: true }, accepted.resolve);
+      try {
+        if (transport === "unix") server.listen(join(tmpdirSync(), "half-open.sock"));
+        else server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const address = server.address() as any;
+        const client = connect({
+          ...(transport === "unix" ? { path: address } : { port: address.port, host: "127.0.0.1" }),
+          allowHalfOpen: true,
+        });
+        const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
+        const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
+        const events: string[] = [];
+        for (const event of ["end", "finish", "close", "error"]) socket.on(event, () => events.push(event));
+        socket.resume();
+        peer.destroy();
+        await once(socket, "end");
+        // A close that followed 'end' by itself would come within a turn or two.
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        expect(events).toEqual(["end"]);
+        socket.end();
+        await once(socket, "close");
+        expect(events).toEqual(["end", "finish", "close"]);
+      } finally {
+        server.close();
+      }
+    },
+  );
+});
 
 describe("destroy()", () => {
   const code = (name: string, events: string[]) => (err?: any) => void events.push(`${name} ${err?.code}`);

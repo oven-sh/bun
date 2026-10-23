@@ -402,11 +402,16 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
+    if (bsd_adopt_socket(fd, SOCK_STREAM)) {
+        *error = LIBUS_ERR;
+        return 0;
+    }
     /* Validate with listen(2) before touching the descriptor's flags: on failure the caller keeps
      * the fd (it may be its stdio), and a non-socket must come back untouched. */
     if (listen(fd, backlog > 0 ? backlog : 512)) {
         int listen_err = LIBUS_ERR;
         if (!bsd_socket_listen_error_is_benign(fd)) {
+            bsd_disown_socket(fd);
             *error = listen_err;
             return 0;
         }
@@ -418,6 +423,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
         int saved_errno = LIBUS_ERR;
+        bsd_disown_socket(fd);
         us_poll_free(p, group->loop);
         *error = saved_errno;
         return 0;
@@ -502,7 +508,7 @@ void us_listen_socket_set_shared(struct us_listen_socket_t *ls) {
 struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, local_addr, options);
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, local_addr);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
     }
@@ -624,7 +630,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *server_path, size_t pathlen, int options, int socket_ext_size) {
     int connected = 0;
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options, &connected);
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, &connected);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -659,7 +665,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
         /* The deferred-DNS path does not carry a local binding. */
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             c->last_candidate_error = LIBUS_ERR;
             continue;
@@ -753,7 +759,11 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     /* The probe only says the socket is not connected
                      * (WSAENOTCONN); SO_ERROR has why the connect failed. */
                     int so_error = us_socket_get_error(s);
-                    error = so_error > 0 ? so_error : LIBUS_ECONNREFUSED;
+                    if (so_error > 0) {
+                        error = so_error;
+                    } else if (error == WSAENOTCONN) {
+                        error = LIBUS_ECONNREFUSED;
+                    }
                     break;
                 }
             }
@@ -809,13 +819,4 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             us_dispatch_open(s, 1, 0, 0);
         }
     }
-}
-
-/* ── Misc ───────────────────────────────────────────────────────────────── */
-
-const char *us_socket_sni_servername(struct us_socket_t *s) {
-    if (s->ssl) {
-        return us_internal_ssl_sni_servername(s);
-    }
-    return NULL;
 }

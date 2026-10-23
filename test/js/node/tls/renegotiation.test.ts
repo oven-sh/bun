@@ -1165,6 +1165,26 @@ it("fetch through a CONNECT proxy sends the client certificate a renegotiation a
   }
 });
 
+// The server renegotiates once for each request, which the default budget (3 in 600 s) allows. A limit of 0 counts
+// only next to a window, since 0 for both means the default. Direct is the path of a socket, the proxy is the path of
+// a tunnel.
+it.each(["direct", "through a CONNECT proxy"])(
+  "fetch (%s) refuses a renegotiation when the tls options allow none",
+  async route => {
+    using proxy = route === "direct" ? undefined : await startRecordingProxy();
+    const outcome = await fetch(url, {
+      keepalive: false,
+      tls: { ca: tls.cert, ...agent3, clientRenegotiationLimit: 0, clientRenegotiationWindow: 600 },
+      // The environment must not choose the route.
+      proxy: proxy ? { url: `http://127.0.0.1:${proxy.port}`, respectNoProxy: false } : false,
+    }).then(
+      res => `status ${res.status}`,
+      (err: NodeJS.ErrnoException) => `${err.name} ${err.code}`,
+    );
+    expect(outcome).toBe("TypeError EPROTO");
+  },
+);
+
 it("Bun.connect sends the client certificate a renegotiation asks for", async () => {
   const response = Promise.withResolvers<string>();
   let received = "";

@@ -873,7 +873,7 @@ fn use_system_ca() -> bool {
         || crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false)
 }
 
-/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if they conflict.
+/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if more than one is passed.
 pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
     let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
     let passed = flags.map(has_flag);
@@ -886,12 +886,6 @@ pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
     }
     USE_SYSTEM_CA.store(passed[0], Ordering::Relaxed);
     USE_OPENSSL_CA.store(passed[1], Ordering::Relaxed);
-    if passed[1] && use_system_ca() {
-        crate::pretty_errorln!(
-            "<r><red>error<r>: either --use-openssl-ca or --use-system-ca can be used, not both"
-        );
-        exit(1);
-    }
 }
 
 /// The roots in the default certificate store, besides `NODE_EXTRA_CA_CERTS` and OpenSSL's default paths.
@@ -903,6 +897,7 @@ struct DefaultCASources {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__defaultCASources() -> DefaultCASources {
+    // The flag wins over `NODE_USE_SYSTEM_CA`, where Node exits with an error.
     let openssl_only = USE_OPENSSL_CA.load(Ordering::Relaxed);
     DefaultCASources {
         bundled: !openssl_only,

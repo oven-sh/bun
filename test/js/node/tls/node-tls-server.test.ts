@@ -1473,7 +1473,8 @@ it("destroying the connection while an asynchronous SNICallback is pending does 
   expect(true).toBe(true);
 });
 
-describe("bytes after the ClientHello while an SNICallback is pending", () => {
+// A socket and a stream have a TLS engine each.
+describe.each(["a socket", "a stream"])("bytes after the ClientHello while an SNICallback is pending, over %s", via => {
   // The first flight of `openssl s_client -tls1_3 -servername tenant.test -sess_in <ticket> -early_data <file>` with
   // another server's ticket: a ClientHello that offers early data, a ChangeCipherSpec and one record of early data.
   const earlyDataFlight = Buffer.from(
@@ -1490,8 +1491,15 @@ describe("bytes after the ClientHello while an SNICallback is pending", () => {
     const asked = Promise.withResolvers<(err: null) => void>();
     const server: Server = createServer({ ...COMMON_CERT, SNICallback: (_, cb) => asked.resolve(cb) });
     server.on("tlsClientError", () => {});
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    let raw: Duplex;
+    if (via === "a socket") {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    } else {
+      const [near, far] = duplexPair();
+      server.emit("connection", far);
+      raw = near;
+    }
     try {
       const answered = Promise.withResolvers<string>();
       let received = Buffer.alloc(0);
@@ -1500,6 +1508,7 @@ describe("bytes after the ClientHello while an SNICallback is pending", () => {
         if (received.length >= 6) answered.resolve(received[0] === 0x16 && received[5] === 0x02 ? "ServerHello" : "?");
       });
       raw.on("error", () => {});
+      raw.on("end", () => answered.resolve("closed"));
       raw.on("close", () => answered.resolve("closed"));
       raw.write(flight);
       (await asked.promise)(null);
@@ -1514,9 +1523,20 @@ describe("bytes after the ClientHello while an SNICallback is pending", () => {
     expect(await answerTo(earlyDataFlight)).toBe("ServerHello");
   });
 
+  // The flight already has 27 bytes of early data behind its ChangeCipherSpec. 16384 bytes may wait there.
+  const earlyData = (wireLength: number) => {
+    const record = Buffer.alloc(wireLength);
+    record.set([0x17, 0x03, 0x03]);
+    record.writeUInt16BE(wireLength - 5, 3);
+    return record;
+  };
+
+  it("holds as much as BoringSSL would skip", async () => {
+    expect(await answerTo(Buffer.concat([earlyDataFlight, earlyData(16384 - 27)]))).toBe("ServerHello");
+  });
+
   it("closes a client that sends more than BoringSSL would skip", async () => {
-    const record = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x40, 0x00]), Buffer.alloc(16384)]);
-    expect(await answerTo(Buffer.concat([earlyDataFlight, record]))).toBe("closed");
+    expect(await answerTo(Buffer.concat([earlyDataFlight, earlyData(16384 - 27 + 1)]))).toBe("closed");
   });
 });
 
@@ -4455,7 +4475,8 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names on a TLS socket ove
     client.on("error", () => {});
     try {
       await asked.promise;
-      transport!.push(Buffer.alloc(16385));
+      // One more than may wait there: a ChangeCipherSpec record and the early data BoringSSL would skip.
+      transport!.push(Buffer.alloc(6 + 16384 + 1));
       expect((await clientError)[0]).toMatchObject({ code: "ECONNRESET" });
     } finally {
       client.destroy();
@@ -5384,7 +5405,6 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("accepted and injected connection
   });
 });
 
-// The kernel rejects a send() to a peer that is gone. That ends the writes, not the reads.
 describe("session ticket keys", () => {
   it.each(["TLSv1.2", "TLSv1.3"] as const)(
     "servers with the same keys resume each other's sessions (%s)",
@@ -5467,6 +5487,7 @@ describe("session ticket keys", () => {
   });
 });
 
+// The kernel rejects a send() to a peer that is gone. That ends the writes, not the reads.
 describe("a send that the kernel rejects", () => {
   const turns = async (count: number) => {
     for (let i = 0; i < count; i++) await new Promise(setImmediate);
@@ -5655,32 +5676,65 @@ describe("reads each option the way Node does", () => {
   const agent3 = { key: keys("agent3-key.pem"), cert: keys("agent3-cert.pem") }; // issued by ca2
   const ca1 = keys("ca1-cert.pem");
   const ca2 = keys("ca2-cert.pem");
+  const agent3Revoked = keys("ca2-crl-agent3.pem");
   const clientCertificates = { requestCert: true, rejectUnauthorized: true };
   const aes128 = "ECDHE-RSA-AES128-GCM-SHA256";
   const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+  const tls12 = { maxVersion: "TLSv1.2" };
 
-  // option, its value, the server's other options, the client's options
-  const cases: [string, unknown, Record<string, unknown>, tls.ConnectionOptions][] = [
+  // option, its value, the other options next to it, the peer's options
+  type Case = [string, unknown, Record<string, unknown>, Record<string, unknown>];
+  const identity: Case[] = [
     ["key", agent1.key, { cert: agent1.cert }, {}],
     ["cert", agent1.cert, { key: agent1.key }, {}],
     ["ca", ca2, { ...agent1, ...clientCertificates }, agent3],
-    ["crl", keys("ca2-crl-agent3.pem"), { ...agent1, ...clientCertificates, ca: ca2 }, agent3],
-    ["secureOptions", crypto.constants.SSL_OP_NO_TLSv1_2, agent1, { maxVersion: "TLSv1.2" }],
-    ["ecdhCurve", "P-384", agent1, {}],
-    ["sigalgs", "ecdsa_secp256r1_sha256", agent1, {}],
-    ["honorCipherOrder", false, { ...agent1, ciphers: `${aes256}:${aes128}` }, { maxVersion: "TLSv1.2", ciphers: `${aes128}:${aes256}` }], // prettier-ignore
-    ["minVersion", "TLSv1.3", agent1, { maxVersion: "TLSv1.2" }],
-    ["maxVersion", "TLSv1.2", agent1, {}],
-    ["secureProtocol", "TLSv1_2_method", agent1, {}],
-    ["ciphers", aes256, agent1, { maxVersion: "TLSv1.2" }],
+    ["crl", agent3Revoked, { ...agent1, ...clientCertificates, ca: ca2 }, agent3],
     ["passphrase", "password", { key: passKey, cert }, { ca: cert, checkServerIdentity: () => undefined }],
     ["pfx", keys("agent1.pfx"), { passphrase: "sample" }, {}],
-    ["ticketKeys", Buffer.alloc(48, 7), agent1, {}],
+  ];
+  const rejected: Case[] = [
     ["sessionTimeout", -1, agent1, {}],
     ["dhparam", "auto", agent1, {}],
     ["clientCertEngine", "engine", agent1, {}],
     ["privateKeyIdentifier", "id", { cert: agent1.cert, privateKeyEngine: "engine" }, {}],
     ["privateKeyEngine", "engine", { cert: agent1.cert, privateKeyIdentifier: "id" }, {}],
+  ];
+  const server: Case[] = [
+    ...identity,
+    ["secureOptions", crypto.constants.SSL_OP_NO_TLSv1_2, agent1, tls12],
+    ["ecdhCurve", "P-384", agent1, {}],
+    ["sigalgs", "ecdsa_secp256r1_sha256", agent1, {}],
+    [
+      "honorCipherOrder",
+      false,
+      { ...agent1, ciphers: `${aes256}:${aes128}` },
+      { ...tls12, ciphers: `${aes128}:${aes256}` },
+    ],
+    ["minVersion", "TLSv1.3", agent1, tls12],
+    ["maxVersion", "TLSv1.2", agent1, {}],
+    ["secureProtocol", "TLSv1_2_method", agent1, {}],
+    ["ciphers", aes256, agent1, tls12],
+    ["ticketKeys", Buffer.alloc(48, 7), agent1, {}],
+    ...rejected,
+  ];
+  // The peer is a server that asks for a certificate and says if ca2 issued it.
+  const asksForCertificate = { ...agent1, ca: ca2, requestCert: true, rejectUnauthorized: false };
+  const client: Case[] = [
+    ["ca", ca1, {}, asksForCertificate],
+    ["key", agent3.key, { ca: ca1, cert: agent3.cert }, asksForCertificate],
+    ["cert", agent3.cert, { ca: ca1, key: agent3.key }, asksForCertificate],
+    ["crl", agent3Revoked, { ca: ca2 }, agent3],
+    ["passphrase", "sample", { ca: ca1, pfx: keys("agent1.pfx") }, { ...asksForCertificate, ca: ca1 }],
+    ["pfx", keys("agent1.pfx"), { ca: ca1, passphrase: "sample" }, { ...asksForCertificate, ca: ca1 }],
+    ["allowPartialTrustChain", true, { ca: agent1.cert }, agent1],
+    ["secureOptions", crypto.constants.SSL_OP_NO_TLSv1_3, { ca: ca1 }, agent1],
+    ["ecdhCurve", "P-384", { ca: ca1 }, agent1],
+    ["sigalgs", "ecdsa_secp256r1_sha256", { ca: ca1 }, agent1],
+    ["minVersion", "TLSv1.3", { ca: ca1 }, { ...agent1, ...tls12 }],
+    ["maxVersion", "TLSv1.2", { ca: ca1 }, agent1],
+    ["secureProtocol", "TLSv1_2_method", { ca: ca1 }, agent1],
+    ["ciphers", aes256, { ca: ca1, ...tls12 }, agent1],
+    ...rejected,
   ];
 
   const shapes: Record<string, (base: object, name: string, value: unknown) => object> = {
@@ -5695,30 +5749,15 @@ describe("reads each option the way Node does", () => {
     "non-enumerable": (base, name, value) => Object.defineProperty({ ...base }, name, { value, enumerable: false }),
   };
 
-  const servers: Record<string, (options: object, base: Record<string, unknown>) => Server> = {
-    "tls.createServer()": options => createServer(options),
-    "server.setSecureContext()": (options, { requestCert, rejectUnauthorized }) => {
-      const server = createServer({ ...COMMON_CERT, requestCert, rejectUnauthorized } as tls.TlsOptions);
-      server.setSecureContext(options);
-      return server;
-    },
-  };
-
-  // What a verifying client sees of a server with `options`.
-  async function outcome(api: string, options: object, base: Record<string, unknown>, client: tls.ConnectionOptions) {
-    let server: Server;
-    try {
-      server = servers[api](options, base);
-    } catch (error) {
-      return `throws ${(error as NodeJS.ErrnoException).code}`;
-    }
+  // What a verifying client sees of `server`.
+  async function dial(server: Server, options: tls.ConnectionOptions) {
     try {
       server.on("tlsClientError", () => {});
-      server.on("secureConnection", socket => socket.on("error", () => {}).end("served"));
+      server.on("secureConnection", socket => socket.on("error", () => {}).end(`served ${socket.authorized}`));
       server.listen(0, "127.0.0.1");
       await once(server, "listening");
       const { port } = server.address() as AddressInfo;
-      const socket = connect({ port, host: "127.0.0.1", servername: "agent1", ca: ca1, ...client });
+      const socket = connect({ port, host: "127.0.0.1", checkServerIdentity: () => undefined, ...options });
       let negotiated = "";
       let received = "";
       socket.on("secureConnect", () => {
@@ -5728,29 +5767,63 @@ describe("reads each option the way Node does", () => {
       socket.on("error", () => {});
       await new Promise(resolve => socket.on("close", resolve));
       // A TLS 1.3 server refuses a client certificate after the client's own handshake is done.
-      if (received !== "served") return "refused";
-      return `${negotiated} ${server.getTicketKeys().toString("hex", 0, 4)}`.replace(/ (?!07070707)[0-9a-f]{8}$/, "");
+      if (!received) return "refused";
+      const ticketKeys = server.getTicketKeys().toString("hex", 0, 4);
+      return `${received} ${negotiated}${ticketKeys === "07070707" ? " with the ticket keys" : ""}`;
     } finally {
       server.close();
     }
   }
 
+  const otherIdentity = ({ requestCert, rejectUnauthorized }: Record<string, unknown>) =>
+    createServer({ ...COMMON_CERT, requestCert, rejectUnauthorized } as tls.TlsOptions);
+
+  type Run = (options: object, base: Record<string, unknown>, peer: Record<string, unknown>) => Promise<string>;
+  const apis: Record<string, [Case[], Run]> = {
+    "tls.createServer()": [server, (options, _, peer) => dial(createServer(options), { ca: ca1, ...peer })],
+    "server.setSecureContext()": [
+      server,
+      (options, base, peer) => {
+        const server = otherIdentity(base);
+        server.setSecureContext(options);
+        return dial(server, { ca: ca1, ...peer });
+      },
+    ],
+    "server.addContext()": [
+      [...identity, ...rejected],
+      (options, base, peer) => {
+        const server = otherIdentity(base);
+        server.addContext("agent1", options);
+        return dial(server, { ca: ca1, servername: "agent1", ...peer });
+      },
+    ],
+    "tls.createSecureContext()": [
+      client,
+      (options, _, peer) => {
+        const secureContext = tls.createSecureContext(options);
+        return dial(createServer(peer), { secureContext });
+      },
+    ],
+  };
+
   const outcomes = (api: string, shape: string) =>
     Promise.all(
-      cases.map(async ([name, value, base, client]) => [
+      apis[api][0].map(async ([name, value, base, peer]) => [
         name,
-        await outcome(api, shapes[shape](base, name, value), base, client),
+        await (async () => apis[api][1](shapes[shape](base, name, value), base, peer))().catch(
+          error => `throws ${error.code}`,
+        ),
       ]),
     ).then(Object.fromEntries);
 
-  describe.each(Object.keys(servers))("%s", api => {
+  describe.each(Object.keys(apis))("%s", api => {
     let controls: Promise<Record<string, string>[]> | undefined;
 
     it.each(["inherited", "a class getter", "non-enumerable"])("an option that is %s counts", async shape => {
       controls ??= Promise.all([outcomes(api, "absent"), outcomes(api, "own")]);
       const [[absent, own], shaped] = await Promise.all([controls, outcomes(api, shape)]);
       // Every option changes what the client sees.
-      for (const [name] of cases) expect([name, own[name]]).not.toEqual([name, absent[name]]);
+      for (const [name] of apis[api][0]) expect([name, own[name]]).not.toEqual([name, absent[name]]);
       expect(shaped).toEqual(own);
     });
   });

@@ -54,9 +54,6 @@ pub struct SSLConfig {
     pub(crate) cached_hash: AtomicU64,
 }
 
-/// Casing alias for callers that snake_cased the type name.
-pub type SslConfig = SSLConfig;
-
 /// Atomic shared pointer with weak support. Refcounting and allocation are
 /// managed non-intrusively by `Arc`; the `SSLConfig` struct itself has no
 /// refcount field.
@@ -299,16 +296,6 @@ impl SSLConfig {
         opts.request_cert = 1;
         opts.reject_unauthorized = 0;
         opts
-    }
-
-    /// Returns a copy of this config for client-side TLS with manual verification.
-    /// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
-    /// (to handle verification manually in handshake callback).
-    pub fn for_client_verification(&self) -> SSLConfig {
-        let mut copy = self.clone();
-        copy.request_cert = 1;
-        copy.reject_unauthorized = 0;
-        copy
     }
 
     pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {

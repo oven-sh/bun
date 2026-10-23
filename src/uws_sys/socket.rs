@@ -8,6 +8,7 @@
 //!
 //! Shape: `InternalSocket` is a `Copy` tagged raw pointer, passed by value, and all `NewSocketHandler` methods take `&self`.
 
+use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -15,9 +16,8 @@ use core::ptr::NonNull;
 use bun_core::{Fd, ZStr};
 
 use crate::{
-    CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t,
-    us_socket_t,
+    CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup,
+    SocketKind, SslCtx, us_bun_verify_error_t, us_socket_t,
 };
 
 bun_core::declare_scope!(uws, visible);
@@ -49,7 +49,20 @@ pub enum InternalSocket {
     Connected(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
     Detached,
-    Transport(*const dyn Transport),
+    Transport(*const TransportHandle),
+}
+
+const _: () = assert!(size_of::<InternalSocket>() == 2 * size_of::<usize>());
+
+/// A field of every [`Transport`]: the wide pointer to the transport it sits in. A socket handle points here, which keeps it at two words.
+#[derive(Default)]
+pub struct TransportHandle(Cell<Option<NonNull<dyn Transport>>>);
+
+impl TransportHandle {
+    /// `transport` is the heap allocation that holds `self`.
+    pub fn set(&self, transport: *mut dyn Transport) {
+        self.0.set(NonNull::new(transport));
+    }
 }
 
 /// What a socket handle drives when it isn't a `us_socket_t`: TLS over a JS stream, a Windows named pipe, a pipe descriptor. `bun_runtime::socket` has the implementors.
@@ -93,9 +106,7 @@ impl PartialEq for InternalSocket {
             (InternalSocket::Connected(a), InternalSocket::Connected(b)) => core::ptr::eq(a, b),
             (InternalSocket::Connecting(a), InternalSocket::Connecting(b)) => core::ptr::eq(a, b),
             (InternalSocket::Detached, InternalSocket::Detached) => true,
-            (InternalSocket::Transport(a), InternalSocket::Transport(b)) => {
-                core::ptr::addr_eq(a, b)
-            }
+            (InternalSocket::Transport(a), InternalSocket::Transport(b)) => core::ptr::eq(a, b),
             _ => false,
         }
     }
@@ -137,9 +148,9 @@ fn conn<'a>(p: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
 }
 /// Reborrow the `InternalSocket::Transport` payload.
 #[inline(always)]
-fn transport<'a>(p: *const dyn Transport) -> &'a dyn Transport {
-    // SAFETY: a transport detaches the handle of its owner before it frees itself.
-    unsafe { &*p }
+fn transport<'a>(p: *const TransportHandle) -> &'a dyn Transport {
+    // SAFETY: a transport sets its handle before it gives it out, and detaches its owner before it frees itself.
+    unsafe { (*p).0.get().unwrap_unchecked().as_ref() }
 }
 
 /// `match self.socket` with each arm bound to the deref'd payload, so method bodies are one-liners.
@@ -299,7 +310,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Gives up on a send that `write_check_error` failed with `error`: no more writes, and once the peer's bytes are read the loop closes with `error`.
+    /// Gives up on a send that `write_check_error` failed with `error`: no more writes, and once the peer's bytes are read the loop closes the socket. `rejected_send_error()` answers `error` from then on.
     pub fn reject_send(&self, error: i32) {
         on_socket!(self.socket;
             connected s => s.reject_send(error),
@@ -712,7 +723,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         Self { socket }
     }
     #[inline]
-    pub fn from_transport(transport: *const dyn Transport) -> Self {
+    pub fn from_transport(transport: *const TransportHandle) -> Self {
         Self {
             socket: InternalSocket::Transport(transport),
         }
@@ -760,13 +771,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         raw_host: &[u8],
         port: c_int,
         owner: *mut Owner,
-        allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open {
-            LIBUS_SOCKET_ALLOW_HALF_OPEN
-        } else {
-            0
-        };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
         // leaves them in (`[::1]`).
         let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
@@ -792,7 +797,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // layout — NOT `Option<*mut Owner>` (16 bytes, discriminant-first),
         // which would hand the trampoline `1` instead of the owner pointer.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
-        match g.connect(kind, ssl_ctx, host_z, port, None, opts, ext_size) {
+        match g.connect(kind, ssl_ctx, host_z, port, None, 0, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
                 *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
@@ -815,16 +820,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
         owner: *mut Owner,
-        allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open {
-            LIBUS_SOCKET_ALLOW_HALF_OPEN
-        } else {
-            0
-        };
         // See connect_group above for the ext-slot layout rationale.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
-        let s = g.connect_unix(kind, ssl_ctx, path, opts, ext_size);
+        let s = g.connect_unix(kind, ssl_ctx, path, 0, ext_size);
         if s.is_null() {
             return Err(ConnectError::FailedToOpenSocket);
         }

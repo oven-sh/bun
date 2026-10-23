@@ -6,6 +6,8 @@ use bun_jsc::JsResult;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::ThisPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
+#[cfg(not(windows))]
+use bun_uws::udp::raw;
 use bun_uws::{SocketTCP, Transport};
 
 use super::TCPSocket;
@@ -13,6 +15,7 @@ use crate::dispatch::fold;
 
 /// Writes with `write(2)` at once, in the descriptor's own blocking mode, so what a program wrote before `process.exit()` is out. It keeps no bytes: its socket queues what a full pipe refused.
 pub(crate) struct FdPipe {
+    handle: bun_uws::TransportHandle,
     fd: Fd,
     /// `None` once closed. `connect_finish` took the connection's ref on it, and `on_close` releases that ref.
     socket: Cell<Option<ThisPtr<TCPSocket>>>,
@@ -32,13 +35,19 @@ bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
 });
 
 impl FdPipe {
-    /// Makes `fd` the transport of `socket` and reports it open.
+    /// Makes `fd` the transport of `socket` and reports it open. `Err`: another socket of this process owns `fd`, and `socket` has had no event.
     pub(crate) fn open(
         socket: ThisPtr<TCPSocket>,
         fd: Fd,
         context: &bun_jsc::ScriptExecutionContext,
-    ) -> JsResult<()> {
+    ) -> Result<JsResult<()>, sys::SystemErrno> {
+        // uSockets keeps its table of owned descriptors on POSIX only.
+        #[cfg(not(windows))]
+        if Self::closes(fd) && raw::bsd_adopt_socket(fd.native(), 0) != 0 {
+            return Err(sys::SystemErrno::from_raw(sys::last_error() as u16));
+        }
         let this = bun_core::heap::into_raw(Box::new(Self {
+            handle: Default::default(),
             fd,
             socket: Cell::new(Some(socket)),
             is_shutdown: Cell::new(false),
@@ -48,11 +57,19 @@ impl FdPipe {
             #[cfg(not(windows))]
             poll: Cell::new(None),
         }));
-        // SAFETY: fully initialised and heap-pinned; `Drop` leaves the context.
+        // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
-        let handle = SocketTCP::from_transport(this);
+        // SAFETY: just allocated, and freed only by the task that `close` queues.
+        let pipe = unsafe { &*this };
+        pipe.handle.set(this);
+        let handle = SocketTCP::from_transport(&pipe.handle);
         socket.socket.set(handle);
-        TCPSocket::on_open(socket, handle)
+        Ok(TCPSocket::on_open(socket, handle))
+    }
+
+    /// Other streams share stdin, stdout and stderr, so they stay open and nobody owns them.
+    fn closes(fd: Fd) -> bool {
+        !fd.is_stdio()
     }
 
     /// Returns true if `on_poll` will report that the descriptor takes bytes again.
@@ -83,7 +100,7 @@ impl FdPipe {
         if let Some(socket) = self.socket.get() {
             fold(TCPSocket::on_writable(
                 socket,
-                SocketTCP::from_transport(self),
+                SocketTCP::from_transport(&self.handle),
             ));
         }
     }
@@ -149,10 +166,15 @@ impl Transport for FdPipe {
             // SAFETY: this pipe's live hive slot, given back here.
             unsafe { (*poll).deinit() };
         }
-        // Leaves stdin, stdout and stderr open, which other streams share. The program may have closed the descriptor itself.
-        let _ = self.fd.close_allowing_bad_file_descriptor(None);
+        if Self::closes(self.fd) {
+            // Before the close: afterwards the number can already be another thread's.
+            #[cfg(not(windows))]
+            raw::bsd_disown_socket(self.fd.native());
+            // The program may have closed the descriptor itself.
+            let _ = self.fd.close_allowing_bad_file_descriptor(None);
+        }
         self.enqueue();
-        let handle = SocketTCP::from_transport(self);
+        let handle = SocketTCP::from_transport(&self.handle);
         fold(TCPSocket::on_close(
             socket,
             handle,
@@ -181,12 +203,6 @@ impl Transport for FdPipe {
 
     fn rejected_send_error(&self) -> i32 {
         self.rejected_send_error.get()
-    }
-}
-
-impl Drop for FdPipe {
-    fn drop(&mut self) {
-        self.abort_handle.leave();
     }
 }
 

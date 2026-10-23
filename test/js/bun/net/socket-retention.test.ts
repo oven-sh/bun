@@ -445,7 +445,7 @@ test("node:net socket nothing references still connects when GC runs during the 
   }
 });
 
-// Windows routes `unix:` through WindowsNamedPipeContext. A connect that fails
+// Windows routes `unix:` through WindowsNamedPipe. A connect that fails
 // before libuv queues it (here: a TLS config that cannot build a context)
 // reports the error through `handle_connect_error` while the socket is still
 // detached, so that path releases nothing. The attempt ref taken in

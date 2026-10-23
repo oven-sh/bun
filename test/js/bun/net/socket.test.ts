@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, setSocketOptions, socketFaultInjection, sweepSocketTimers } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { generateKeyPairSync, randomFillSync } from "crypto";
@@ -389,10 +389,11 @@ describe.concurrent("socket", () => {
       },
     });
     client.timeout(1);
-    // The timeout sweep runs every few seconds, so this waits for the next sweep.
+    // A sweep runs every 4 seconds, and the first one after the call may come too early.
+    sweepSocketTimers(2);
     expect(await promise).toBe("I have timed out!");
     expect(timeouts).toBe(1);
-  }, 60_000);
+  });
 
   // Runs in a child because the sweeps also advance every other socket's timeout on the thread.
   it("socket.timeout() fires once and never early, for any number of seconds", async () => {
@@ -409,19 +410,28 @@ describe.concurrent("socket", () => {
           port: 0,
           socket: { open: accepted.resolve, timeout: () => void timeouts++, data() {} },
         });
+        // A sweep runs every 4 seconds. Each timeout below is set a moment after one.
+        sweepSocketTimers(1);
         using client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
         const socket = await accepted.promise;
-        // A sweep runs every 4 seconds. The first one can come right after the call, so it doesn't count.
-        for (const seconds of ["accepted", 1, 4, 5, 240, 241, 300, 960, 964, 86400]) {
+        for (const seconds of ["accepted", 1, 3, 4, 5, 240, 241, 300, 960, 964, 86400]) {
           timeouts = 0;
           if (seconds !== "accepted") socket.timeout(seconds);
-          sweepSocketTimers(Math.ceil((seconds === "accepted" ? 120 : seconds) / 4));
+          sweepSocketTimers(Math.floor((seconds === "accepted" ? 120 : seconds) / 4));
           const early = timeouts;
           sweepSocketTimers(1);
           const due = timeouts;
           sweepSocketTimers(500);
           console.log(seconds, early, due, timeouts);
         }
+        // More than a second into the 4, the next sweep comes too early for 3 seconds.
+        await Bun.sleep(1100);
+        timeouts = 0;
+        socket.timeout(3);
+        sweepSocketTimers(1);
+        const early = timeouts;
+        sweepSocketTimers(1);
+        console.log("3 late in the period", early, timeouts);
         `,
       ],
       env: bunEnv,
@@ -431,6 +441,7 @@ describe.concurrent("socket", () => {
     expect(stdout.trim().split("\n")).toEqual([
       "accepted 0 1 1",
       "1 0 1 1",
+      "3 0 1 1",
       "4 0 1 1",
       "5 0 1 1",
       "240 0 1 1",
@@ -439,6 +450,7 @@ describe.concurrent("socket", () => {
       "960 0 1 1",
       "964 0 1 1",
       "86400 0 1 1",
+      "3 late in the period 0 1",
     ]);
     expect(exitCode).toBe(0);
   });
@@ -1899,7 +1911,7 @@ it.each([
 });
 
 // A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
-// it. The owner has let go by then: only the deadline (10 s, checked every 4 s) ends the wait for such a peer.
+// it. The owner has let go by then: only the deadline (10 s, so the third sweep) ends the wait for such a peer.
 it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", async () => {
   const step = Buffer.alloc(1024 * 1024, "a");
   const probeStep = Buffer.alloc(64 * 1024, "p");
@@ -1952,7 +1964,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     });
   let timeouts = 0;
   const reported: number[] = [0];
-  const endedAt: number[] = [];
+  let sweeps = 0;
   const fill = (socket: Socket) => {
     let total = 0;
     for (let wrote = step.length; wrote === step.length; total += Math.max(wrote, 0)) wrote = socket.write(step);
@@ -1962,7 +1974,6 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     // The owner's own timeout is over with its close.
     socket.timeout(1);
     socket.end();
-    endedAt.push(performance.now());
   };
   // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
   const fillAndEnd = (socket: Socket) => {
@@ -1973,11 +1984,13 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   const probeReady = Promise.withResolvers<Socket>();
   await connected(probeReady.resolve);
   const probe = await probeReady.promise;
+  // The next sweep that isn't run from here is 4 s away now, and every wait below starts early in those 4 s.
+  sweepSocketTimers(1);
   const closed: Promise<number>[] = [];
   for (const _peer of [SILENT, DRIPPING, UNANSWERING]) {
     const { promise, resolve } = Promise.withResolvers<number>();
     closed.push(promise);
-    await connected(fillAndEnd, () => resolve(performance.now()));
+    await connected(fillAndEnd, () => resolve(sweeps));
   }
   const lateClosed = Promise.withResolvers<number>();
   closed.push(lateClosed.promise);
@@ -1987,7 +2000,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       fill(socket);
       lateFilled.resolve(socket);
     },
-    () => lateClosed.resolve(performance.now()),
+    () => lateClosed.resolve(sweeps),
   );
   const late = await lateFilled.promise;
   const destroyed = tlsConnect({ port: server.port, host: "127.0.0.1", ca: tls.cert });
@@ -2006,20 +2019,25 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   for (let tries = 0; tries < 200 && late.write("a") !== 1; tries++) await Bun.sleep(10);
   // With no timeout of the owner's that could end the wait by chance.
   late.end();
-  endedAt.push(performance.now());
 
-  // Three reads of at most 512 KiB ahead of the deadline: progress that does not put it off, and well short of what is left.
-  const drip = setInterval(() => {
-    peers[DRIPPING].resume();
-    // Nor does what a peer sends in place of its close_notify.
-    peers[LATE].write("still here");
-  }, 3000);
   try {
     const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
-    const waitedFrom = performance.now();
-    const closedAfterMs = (await Promise.all(closed)).map((at, i) => Math.round(at - endedAt[i]));
-    // Its own deadline: the other closes end early where their peers' kernel buffers took everything.
-    while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 20_000) await Bun.sleep(100);
+    // Its peer reads everything, so this close needs no deadline.
+    await closed[UNANSWERING - 1];
+    while (sweeps < 6) {
+      // A read of at most 512 KiB ahead of each of the first three sweeps, well short of what is left. Once they let the
+      // unsent ciphertext out, the wait for that peer's close_notify is a second one. What a peer sends in place of its
+      // close_notify puts nothing off.
+      if (sweeps < 3) {
+        const received = peers[DRIPPING].data.received;
+        peers[DRIPPING].resume();
+        peers[LATE].write("still here");
+        for (let tries = 0; tries < 1000 && peers[DRIPPING].data.received === received; tries++) await Bun.sleep(1);
+      }
+      sweeps++;
+      sweepSocketTimers(1);
+    }
+    const closedAtSweep = await Promise.all(closed);
     const after = { fdIsOpen: fdIsOpen(destroyedFd), wrote: probeBatching(probe) };
     const batches = socketFaultInjection.available();
     const missing = (peer: number) => reported[peer] - peers[peer].data.received;
@@ -2027,7 +2045,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     const measured = {
       reported,
       received: peers.map(peer => peer.data.received),
-      closedAfterMs,
+      closedAtSweep,
     };
     expect(
       {
@@ -2035,11 +2053,11 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         after,
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
-        // A timeout is never early and a sweep runs every 4 s, so 10 s is 12 to 16 s after the end().
-        atTheDeadline: [SILENT, DRIPPING, LATE].map(peer => {
-          const ms = closedAfterMs[peer - 1];
-          return ms > 10_000 && ms < 20_000;
-        }),
+        atTheDeadline: [
+          closedAtSweep[SILENT - 1] === 3,
+          closedAtSweep[DRIPPING - 1] >= 3 && closedAtSweep[DRIPPING - 1] <= 6,
+          closedAtSweep[LATE - 1] === 3,
+        ],
         missing: missing(UNANSWERING),
       },
       JSON.stringify(measured),
@@ -2054,7 +2072,6 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       missing: 0,
     });
   } finally {
-    clearInterval(drip);
     probe.terminate();
     for (const peer of peers) peer.terminate();
   }
@@ -6525,6 +6542,81 @@ it.concurrent("concurrent end() on two allowHalfOpen TLS peers closes both socke
   expect(closes).toEqual({ server: 1, client: 1 });
 });
 
+it("a socket without a TLS session answers each TLS member the same way, whether it is TCP or closed TLS", async () => {
+  function members(socket: Socket) {
+    return {
+      alpnProtocol: socket.alpnProtocol,
+      disableRenegotiation: socket.disableRenegotiation(),
+      exportKeyingMaterial: socket.exportKeyingMaterial(16, "label"),
+      getCertificate: socket.getCertificate(),
+      getCipher: socket.getCipher(),
+      getEphemeralKeyInfo: socket.getEphemeralKeyInfo(),
+      getPeerCertificate: socket.getPeerCertificate(),
+      // @ts-expect-error
+      getPeerCertificateOfAString: socket.getPeerCertificate("x"),
+      getPeerX509Certificate: socket.getPeerX509Certificate(),
+      getServername: socket.getServername(),
+      getSession: socket.getSession(),
+      getSharedSigalgs: socket.getSharedSigalgs(),
+      getTLSFinishedMessage: socket.getTLSFinishedMessage(),
+      getTLSPeerFinishedMessage: socket.getTLSPeerFinishedMessage(),
+      getTLSTicket: socket.getTLSTicket(),
+      getTLSVersion: socket.getTLSVersion(),
+      getX509Certificate: socket.getX509Certificate(),
+      isSessionReused: socket.isSessionReused(),
+      setMaxSendFragment: socket.setMaxSendFragment(1024),
+      // @ts-expect-error
+      setMaxSendFragmentOfAString: socket.setMaxSendFragment("x"),
+    };
+  }
+  const answers: ReturnType<typeof members>[] = [];
+  for (const options of [undefined, tls]) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: options, socket: { data() {} } });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: options && { ca: options.cert },
+      socket: {
+        data() {},
+        open(socket) {
+          if (!options) answers.push(members(socket));
+          socket.end();
+        },
+        close(socket) {
+          if (options) answers.push(members(socket));
+          resolve();
+        },
+        error: (_socket, error) => reject(error),
+      },
+    });
+    await promise;
+  }
+  expect(answers[0]).toEqual(answers[1]);
+  expect(answers[0]).toEqual({
+    alpnProtocol: false,
+    disableRenegotiation: undefined,
+    exportKeyingMaterial: undefined,
+    getCertificate: undefined,
+    getCipher: undefined,
+    getEphemeralKeyInfo: null,
+    getPeerCertificate: null,
+    getPeerCertificateOfAString: null,
+    getPeerX509Certificate: undefined,
+    getServername: undefined,
+    getSession: undefined,
+    getSharedSigalgs: null,
+    getTLSFinishedMessage: undefined,
+    getTLSPeerFinishedMessage: undefined,
+    getTLSTicket: undefined,
+    getTLSVersion: null,
+    getX509Certificate: undefined,
+    isSessionReused: false,
+    setMaxSendFragment: false,
+    setMaxSendFragmentOfAString: false,
+  });
+});
+
 // In a process of its own: BoringSSL's SSL_set_session abort()s once the handshake has started.
 // `finished` separates a finished handshake from one in flight; `reused` is true only if the offer reached the wire.
 it("setSession() after the handshake started is ignored on every Bun socket door", async () => {
@@ -7252,7 +7344,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           },
         });
         await ended.promise;
-        // An accepted socket starts with a 120 second timeout. One sweep is 4 seconds, and the first doesn't count.
+        // An accepted socket starts with a 120 second timeout. One sweep is 4 seconds, and the 30th may come a moment too early.
         sweepSocketTimers(31);
         await closed.promise;
         `,
@@ -7268,9 +7360,21 @@ describe.concurrent("end(data) larger than the send buffer", () => {
   );
 
   // In its own process, and not on Windows, for the same reasons.
-  it.skipIf(isWindows).each(["tcp", "tls"] as const)(
-    "%s end() in the timeout handler closes a socket whose peer stopped reading the tail",
-    async transport => {
+  const timeoutHandlers = {
+    "a timeout() that calls end()": `socket => (console.log("timeout"), void socket.end())`,
+    "an async timeout() that calls end() later": `async socket => (console.log("timeout"), await 0, void socket.end())`,
+    "a timeout() that does nothing": `() => console.log("timeout")`,
+    "no timeout()": "undefined",
+  };
+  it
+    .skipIf(isWindows)
+    .each(
+      (["tcp", "tls"] as const).flatMap(transport =>
+        Object.keys(timeoutHandlers).map(handler => [transport, handler as keyof typeof timeoutHandlers] as const),
+      ),
+    )(
+    "%s with %s: the timeout closes an ended socket whose peer stopped reading the tail",
+    async (transport, handler) => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -7285,8 +7389,8 @@ describe.concurrent("end(data) larger than the send buffer", () => {
             tls: key ? { key, cert } : undefined,
             socket: {
               data: socket => (console.log("end", socket.end(Buffer.alloc(16 << 20))), queued.resolve()),
-              timeout: socket => (console.log("timeout"), void socket.end()),
-              close: () => console.log("close"),
+              timeout: ${timeoutHandlers[handler]},
+              close: (socket, error) => console.log("close", error?.code, error?.syscall),
             },
           });
           function sendRequest(socket) {
@@ -7302,7 +7406,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           });
           await queued.promise;
           // An accepted socket starts with a 120 second timeout, and a TLS close waits 10 more for unsent records.
-          // One sweep is 4 seconds, and a timeout's first sweep doesn't count.
+          // One sweep is 4 seconds, and a timeout is due at the first sweep that isn't early: 31 and 4 at most.
           sweepSocketTimers(31 + 4);
           console.log("done");
           `,
@@ -7312,7 +7416,116 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: `end ${16 << 20}\ntimeout\nclose\ndone\n`, stderr: "" });
+      const timeout = handler === "no timeout()" ? "" : "timeout\n";
+      expect({ stdout, stderr }).toEqual({
+        stdout: `end ${16 << 20}\n${timeout}close ETIMEDOUT write\ndone\n`,
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.skipIf(isWindows)("the timeout set before upgradeTLS() bounds the tail of the TLS socket", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const { key, cert } = JSON.parse(process.env.TEST_TLS);
+        const queued = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key, cert },
+          socket: { data: socket => socket.pause() },
+        });
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data() {},
+            open(socket) {
+              socket.timeout(20);
+              socket.upgradeTLS({
+                tls: { ca: cert },
+                socket: {
+                  data() {},
+                  handshake: socket => (socket.end(Buffer.alloc(16 << 20)), queued.resolve()),
+                  close: (socket, error) => console.log("close", error?.code, error?.syscall),
+                },
+              });
+            },
+          },
+        });
+        await queued.promise;
+        // 20 seconds, then the 10 a TLS close waits for unsent records. One sweep is 4 seconds, and a timeout is due at the first sweep that isn't early: 6 and 4 at most.
+        sweepSocketTimers(6 + 4);
+        console.log("done");
+        `,
+      ],
+      env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tls.key, cert: tls.cert }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "close ETIMEDOUT write\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)(
+    "starts the timeout of an ended socket again each time the peer takes some of the tail",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const queued = Promise.withResolvers();
+        const tookHalf = Promise.withResolvers();
+        let received = 0;
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data: socket => (socket.end(Buffer.alloc(64 << 20)), queued.resolve()),
+            close: (socket, error) => console.log("close", error?.code),
+          },
+        });
+        using peer = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(socket) {
+              socket.write("request");
+              socket.pause();
+            },
+            data(socket, chunk) {
+              // More than the kernel held when the peer stopped reading, so the server has sent since.
+              if ((received += chunk.length) < 32 << 20) return;
+              socket.pause();
+              tookHalf.resolve();
+            },
+          },
+        });
+        await queued.promise;
+        // 100 of the accepted socket's 120 seconds. One sweep is 4 seconds.
+        sweepSocketTimers(25);
+        peer.resume();
+        await tookHalf.promise;
+        sweepSocketTimers(25);
+        console.log("open after 200 seconds");
+        sweepSocketTimers(7);
+        console.log("done");
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "open after 200 seconds\nclose ETIMEDOUT\ndone\n", stderr: "" });
       expect(exitCode).toBe(0);
     },
   );

@@ -288,12 +288,9 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(p.client.destroyed).toBe(true);
   });
 
-  // Server-side twin of the above. On kqueue the fatal flush from on_writable
-  // runs before the read dispatch (EV_EOF sets eof, not error), and its close
-  // short-circuits the read-error path, so ServerHandlers.error is the only
-  // place the errno is visible. With the plain-TCP delegation swallowing it,
-  // the server socket's 'error' never fired and 'close' was stuck behind an
-  // un-failed pending write (test-net-stream.js timeout on darwin).
+  // Server-side twin of the above. On kqueue the failed flush from the writable event
+  // runs before the read dispatch (EV_EOF sets eof, not error), so the pending
+  // write's completion is the only place the errno is visible (test-net-stream.js on darwin).
   test("server: send → sustained fatal flush surfaces 'error' + 'close' on the accepted socket", async () => {
     using p = await connectedPair();
     const fd = (p.serverSock as any)._handle.fd as number;

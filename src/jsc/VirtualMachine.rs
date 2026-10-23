@@ -729,6 +729,7 @@ impl VMHolder {
         None
     }
 
+    /// WebKit's `WTF::RunLoop` calls this through a weak symbol, so nothing in this repository names it. Without it a Worker's run loop isn't Bun's.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__thisThreadHasVM() -> bool {
         VM.get().is_some()

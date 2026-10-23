@@ -564,26 +564,6 @@ fn format_base_uri(tls: bool, hostname: &[u8], port: u16, pathname: &[u8]) -> Bo
     buf.into_boxed_slice()
 }
 
-/// The `SSL_CTX` of `tls.secureContext`. Only node:http passes one, so no other server reads the key.
-fn node_http_ssl_ctx(
-    global: &JSGlobalObject,
-    is_node_http_server: bool,
-    tls: JSValue,
-) -> JsResult<Option<bun_boringssl_sys::OwnedSslCtx>> {
-    if !is_node_http_server || !tls.is_object() {
-        return Ok(None);
-    }
-    let Some(value) = tls.get_truthy(global, "secureContext")? else {
-        return Ok(None);
-    };
-    match value.as_class_ref::<SecureContext>() {
-        Some(secure_context) => Ok(Some(secure_context.ctx.clone())),
-        None => {
-            Err(global.throw_invalid_argument_type_value(b"secureContext", b"SecureContext", value))
-        }
-    }
-}
-
 impl ServerConfig {
     pub(crate) fn from_js(
         global: &JSGlobalObject,
@@ -1002,12 +982,10 @@ impl ServerConfig {
         };
         if let Some(websocket_object) = websocket_object {
             if !websocket_object.is_object() {
-                // ssl_config drops with args
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected websocket to be an object")));
             }
 
-            // `ssl_config` drops with args on error.
             args.websocket = Some(super::web_socket_server_context::on_create(
                 global,
                 websocket_object,
@@ -1218,7 +1196,10 @@ impl ServerConfig {
                     }
                     server_names.push(ssl_config);
                 }
-            } else if let Some(ctx) = node_http_ssl_ctx(global, args.is_node_http_server, tls)? {
+            } else if args.is_node_http_server
+                && let Some(ctx) = SecureContext::ctx_from_options(global, tls)?
+            {
+                // Only node:http passes a `secureContext`, so no other server reads the key.
                 args.tls = ServerTls::Context(ctx);
             } else if let Some(ssl_config) = ParsedTls::from_js(vm, global, tls, true)?.or_none() {
                 args.tls = from_options(ssl_config);

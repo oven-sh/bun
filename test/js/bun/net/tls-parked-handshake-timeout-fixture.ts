@@ -25,8 +25,9 @@ const BUDGET = 5;
 const N = 4 * BUDGET;
 // MAX_LOW_PRIO_TICKS in packages/bun-usockets/src/loop.c.
 const MAX_PARKED_TICKS = 30;
-// A timeout of 1 to 4 seconds is due at the second sweep after it's armed.
-const SHORTEST_TIMEOUT_TICKS = 2;
+// A sweep runs every 4 seconds, so 4 seconds set a moment after one are due at the second sweep.
+const TIMEOUT_SECONDS = 4;
+const TIMEOUT_TICKS = 2;
 // Well inside the test's own timeout, so a stalled step still prints the summary.
 const STEP_DEADLINE_MS = 20_000;
 // A handshake record that announces 512 more bytes.
@@ -37,7 +38,7 @@ const iteration = () => getEventLoopStats().iteration;
 // Each entry counts the `timeout` handlers that ran at one point of a step.
 const summary = {
   opened: 0,
-  // The shortest timeout: [while 15 sockets were parked, one sweep early after the queue let them go, when due].
+  // [while 15 sockets were parked, one sweep early after the queue let them go, when due].
   shortest: [] as number[],
   // No timeout armed: [while parked, after].
   unarmed: [] as number[],
@@ -99,6 +100,7 @@ const clients: Socket[] = [];
 async function park(seconds: number) {
   for (const s of accepted) s.resume();
   await afterIterations(1);
+  sweepSocketTimers(1);
   for (const s of accepted) s.timeout(seconds);
   takeTimeouts();
 }
@@ -132,11 +134,11 @@ try {
   // One more turn and every record head is in the server's receive queue.
   await afterIterations(2);
 
-  await park(1);
+  await park(TIMEOUT_SECONDS);
   sweepSocketTimers(20);
   summary.shortest.push(takeTimeouts());
   await release();
-  sweepSocketTimers(SHORTEST_TIMEOUT_TICKS - 1);
+  sweepSocketTimers(TIMEOUT_TICKS - 1);
   summary.shortest.push(takeTimeouts());
   sweepSocketTimers(1);
   summary.shortest.push(takeTimeouts());
@@ -148,7 +150,7 @@ try {
   sweepSocketTimers(20);
   summary.unarmed.push(takeTimeouts());
 
-  await park(1);
+  await park(TIMEOUT_SECONDS);
   sweepSocketTimers(MAX_PARKED_TICKS - 5);
   summary.parkedTooLong.push(takeTimeouts());
   sweepSocketTimers(10);

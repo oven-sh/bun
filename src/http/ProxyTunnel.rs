@@ -11,7 +11,7 @@ use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::{HTTPStage, Stage};
 use crate::ssl_config::SSLConfig;
-use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
+use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, SSLWrapper, WriteDataError};
 use crate::{AlpnOffer, HTTPClient};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
@@ -44,7 +44,6 @@ pub struct ProxyTunnel {
     pub(crate) shutdown_err: Cell<Error>,
     /// active socket is the socket that is currently being used
     pub(crate) socket: Socket,
-    pub(crate) write_buffer: bun_io::StreamBuffer,
     /// Property of the inner TLS session, not the owning client. Captured from
     /// the client in detachOwner() and restored to the next client in adopt()
     /// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
@@ -66,7 +65,6 @@ impl Default for ProxyTunnel {
             wrapper: None,
             shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
-            write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
             verification: PeerVerification::None,
             ref_count: Cell::new(1),
@@ -76,7 +74,7 @@ impl Default for ProxyTunnel {
 
 impl Drop for ProxyTunnel {
     fn drop(&mut self) {
-        // `wrapper` / `write_buffer` are handled by their own Drop impls;
+        // `wrapper` is handled by its own Drop impl;
         // just clear the socket tag.
         self.socket = Socket::None;
     }
@@ -104,13 +102,6 @@ impl ProxyTunnel {
     fn set_socket(this: NonNull<Self>, s: Socket) {
         // SAFETY: see [`Self::socket_of`].
         unsafe { *addr_of_mut!((*this.as_ptr()).socket) = s };
-    }
-
-    /// Mutable access to `write_buffer` (disjoint from `wrapper`).
-    #[inline]
-    fn write_buffer_of<'a>(this: NonNull<Self>) -> &'a mut bun_io::StreamBuffer {
-        // SAFETY: see [`Self::socket_of`].
-        unsafe { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
     }
 
     /// Shared access to `shutdown_err` (a `Cell<Error>`; disjoint from
@@ -446,7 +437,7 @@ fn on_handshake(
     }
 }
 
-pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
+pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) -> usize {
     // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic;
     // the call chains that reach here (e.g. on_handshake → on_writable → flush,
     // on_open → flush) each NLL-end their `client_from_ctx`/`*ctx` borrow
@@ -456,33 +447,18 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // tunnel pointer. The pointee is alive: this client holds a
     // strong ref to the tunnel for the duration of tunneling.
     let Some(proxy_nn) = client_from_ctx(ctx).proxy_tunnel_ptr() else {
-        return;
+        return encoded_data.len();
     };
-    // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
+    // Live intrusive-refcounted tunnel. Access `socket` via
     // disjoint field accessors only — never form `&mut ProxyTunnel`, because
     // the caller (flush/handle_traffic) holds `&SSLWrapper` which IS
     // `(*proxy).wrapper`; a whole-struct `&mut` would overlap it.
-    let write_buffer = ProxyTunnel::write_buffer_of(proxy_nn);
-    // Preserve TLS record ordering: if any encrypted bytes are buffered,
-    // enqueue new bytes and flush them in FIFO via onWritable.
-    if write_buffer.is_not_empty() {
-        if write_buffer.write(encoded_data).is_err() {
-            bun_core::out_of_memory();
-        }
-        return;
-    }
     let written = match ProxyTunnel::socket_of(proxy_nn) {
         &Socket::Ssl(socket) => socket.write(encoded_data),
         &Socket::Tcp(socket) => socket.write(encoded_data),
         Socket::None => 0,
     };
-    let pending = &encoded_data[usize::try_from(written).expect("int cast")..];
-    if !pending.is_empty() {
-        // lets flush when we are truly writable
-        if write_buffer.write(pending).is_err() {
-            bun_core::out_of_memory();
-        }
-    }
+    usize::try_from(written).expect("int cast")
 }
 
 fn on_close(ctx: *mut HTTPClient) {
@@ -605,7 +581,7 @@ impl ProxyTunnel {
             this.close_and_fail::<IS_SSL>(error, socket);
             return;
         };
-        let wrapper = match ProxyTunnelWrapper::init_with_ctx(
+        let wrapper = ProxyTunnelWrapper::init_with_ctx(
             ssl_ctx,
             true,
             SSLWrapperHandlers {
@@ -616,18 +592,7 @@ impl ProxyTunnel {
                 write: write_encrypted,
                 ctx: this.as_erased_ptr().as_ptr(),
             },
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                if e == InitError::OutOfMemory {
-                    bun_core::out_of_memory();
-                }
-
-                // invalid TLS Options
-                this.close_and_fail::<IS_SSL>(crate::Error::FailedToOpenSocket, socket);
-                return;
-            }
-        };
+        );
         wrapper.set_server_identity_check(server_identity);
         // The inner connection's form of the `set_inline_reject` call in `HTTPClient::configure_tls`.
         if this.flags.reject_unauthorized {
@@ -693,33 +658,13 @@ impl ProxyTunnel {
     /// handle (see [`Self::ref_guard`]): the flush below can complete or fail
     /// the request, which releases that handle, leaving the guard's ref as the
     /// last one. A `&mut self` receiver would then be freed while still live.
-    pub(crate) fn on_writable<const IS_SSL: bool>(this: NonNull<Self>, socket: HTTPSocket<IS_SSL>) {
+    pub(crate) fn on_writable(this: NonNull<Self>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
         let _guard = Self::ref_guard(this);
-        // flush() must run AFTER the body but BEFORE the guard's deref; that
-        // order is written out explicitly at the single exit below.
-        // flush() → handle_traffic → write_encrypted reenters and touches
-        // `write_buffer`/`socket` via raw projection; we must not hold a
-        // `&mut ProxyTunnel` (or any borrow overlapping those fields) across it.
-        {
-            let write_buffer = ProxyTunnel::write_buffer_of(this);
-            let encoded_data = write_buffer.slice();
-            if !encoded_data.is_empty() {
-                let written = socket.write(encoded_data);
-                let written = usize::try_from(written).expect("int cast");
-                if written == encoded_data.len() {
-                    write_buffer.reset();
-                } else {
-                    write_buffer.cursor += written;
-                }
-            }
-        } // drop &mut write_buffer before flush() reborrows it inside write_encrypted
-        // Refcount > 0 until _guard drops. The reentrant write_encrypted
-        // touches only `write_buffer`/`socket` via accessors, disjoint from
-        // the `&wrapper` returned by `wrapper_ref`.
+        // The reentrant write_encrypted touches only `socket`, disjoint from the `&wrapper` returned by `wrapper_ref`.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
-            // Cycle to through the SSL state machine
-            let _ = wrapper.flush();
+            // Sends what the socket refused, then cycles through the SSL state machine.
+            wrapper.flush();
         }
         // _guard derefs here.
     }
@@ -805,11 +750,6 @@ impl ProxyTunnel {
         // writes; nothing re-enters the tunnel until the client's next socket
         // event, after this borrow has ended.
         let this = raw_as_mut(tunnel.as_ptr());
-        // Discard any stale encrypted bytes from the previous request. A clean
-        // request boundary should leave this empty, but an early server response
-        // (e.g. HTTP 413) with Connection: keep-alive before the full body was
-        // consumed could leave unsent bytes that would corrupt the next request.
-        this.write_buffer.reset();
         if let Some(wrapper) = &this.wrapper {
             let mut handlers = wrapper.handlers.get();
             handlers.ctx = client.as_erased_ptr().as_ptr();

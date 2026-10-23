@@ -6883,7 +6883,7 @@ declare module "bun" {
      *
      * Reads and writes don't restart the timer. To reset the timeout, call this function again. `0` cancels it.
      *
-     * Bun checks socket timeouts every 4 seconds, so the handler can run up to 8 seconds late. It never runs early.
+     * Bun checks socket timeouts every 4 seconds, so the handler can run up to 4 seconds late. It never runs early.
      */
     timeout(seconds: number): void;
 
@@ -9166,7 +9166,7 @@ declare module "bun" {
           /**
            * Seconds an idle connection stays in the pool before it is closed.
            * Bun checks socket timers every 4 seconds, so a connection is never
-           * closed before `idleTimeout` and can stay open up to 8 seconds longer.
+           * closed before `idleTimeout` and can stay open up to 4 seconds longer.
            *
            * @default 300
            */

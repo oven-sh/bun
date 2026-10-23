@@ -68,10 +68,6 @@ pub type NTSTATUS = i32;
 /// `Option<SOCKET>` an unwanted niche (None ↔ 0 collides with socket 0) and
 /// force int-to-ptr provenance for `INVALID_SOCKET`.
 pub type SOCKET = usize;
-type LPFN_ACCEPTEX = *const c_void;
-type LPFN_CONNECTEX = *const c_void;
-type LPFN_WSARECV = *const c_void;
-type LPFN_WSARECVFROM = *const c_void;
 pub type uv_mutex_t = CRITICAL_SECTION;
 
 // Socket address types (ws2def.h). The canonical `#[repr(C)]` definitions live
@@ -280,7 +276,6 @@ pub fn uv_guess_handle(file: uv_file) -> uv_handle_type {
         HandleType::Unknown
     }
 }
-pub const UV_HANDLE_TYPE_MAX: c_int = 18;
 
 /// `RunMode` — `uv_run` mode argument.
 #[repr(C)]
@@ -312,9 +307,6 @@ pub(crate) type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut 
 pub type uv_fs_cb = Option<unsafe extern "C" fn(*mut fs_t)>;
 pub type uv_fs_event_cb =
     Option<unsafe extern "C" fn(*mut uv_fs_event_t, *const c_char, c_int, ReturnCode)>;
-pub type uv_udp_send_cb = Option<unsafe extern "C" fn(*mut uv_udp_send_t, c_int)>;
-pub type uv_udp_recv_cb =
-    Option<unsafe extern "C" fn(*mut uv_udp_t, isize, *const uv_buf_t, *const sockaddr, c_uint)>;
 pub type uv_getaddrinfo_cb =
     Option<unsafe extern "C" fn(*mut uv_getaddrinfo_t, c_int, *mut addrinfo)>;
 pub type uv_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t)>;
@@ -716,9 +708,7 @@ pub unsafe trait UvHandle: Sized {
 unsafe impl UvHandle for Handle {}
 unsafe impl UvHandle for uv_stream_t {}
 unsafe impl UvHandle for Pipe {}
-unsafe impl UvHandle for uv_tcp_t {}
 unsafe impl UvHandle for uv_tty_t {}
-unsafe impl UvHandle for uv_udp_t {}
 unsafe impl UvHandle for Timer {}
 unsafe impl UvHandle for uv_async_t {}
 unsafe impl UvHandle for uv_prepare_t {}
@@ -728,10 +718,9 @@ unsafe impl UvHandle for uv_poll_t {}
 unsafe impl UvHandle for uv_signal_t {}
 unsafe impl UvHandle for Process {}
 unsafe impl UvHandle for uv_fs_event_t {}
-unsafe impl UvHandle for uv_fs_poll_t {}
 
 /// Marker for `#[repr(C)]` structs prefixed with `UV_STREAM_FIELDS`
-/// (`uv_stream_t`, `Pipe`, `uv_tcp_t`, `uv_tty_t`).
+/// (`uv_stream_t`, `Pipe`, `uv_tty_t`).
 pub unsafe trait UvStream: UvHandle {
     #[inline]
     fn as_stream(&mut self) -> *mut uv_stream_t {
@@ -851,7 +840,6 @@ pub trait StreamReader: Sized {
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
 unsafe impl UvStream for uv_stream_t {}
 unsafe impl UvStream for Pipe {}
-unsafe impl UvStream for uv_tcp_t {}
 unsafe impl UvStream for uv_tty_t {}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -996,104 +984,6 @@ pub struct uv_connect_t {
     pub next_req: *mut uv_req_t,
     pub cb: uv_connect_cb,
     pub handle: *mut uv_stream_t,
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `uv_tcp_t`.
-// ──────────────────────────────────────────────────────────────────────────
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct uv_tcp_accept_t {
-    pub data: *mut c_void,
-    pub type_: uv_req_type,
-    pub reserved: [*mut c_void; 6],
-    pub u: req_u,
-    pub next_req: *mut uv_req_t,
-    pub accept_socket: SOCKET,
-    pub accept_buffer: [u8; 288],
-    pub event_handle: HANDLE,
-    pub wait_handle: HANDLE,
-    pub next_pending: *mut uv_tcp_accept_t,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct tcp_serv {
-    accept_reqs: *mut uv_tcp_accept_t,
-    processed_accepts: c_uint,
-    pending_accepts: *mut uv_tcp_accept_t,
-    func_acceptex: LPFN_ACCEPTEX,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct tcp_conn {
-    read_buffer: uv_buf_t,
-    func_connectex: LPFN_CONNECTEX,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-union tcp_u {
-    serv: tcp_serv,
-    conn: tcp_conn,
-}
-#[repr(C)]
-pub struct uv_tcp_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub write_queue_size: usize,
-    pub alloc_cb: uv_alloc_cb,
-    pub read_cb: uv_read_cb,
-    pub reqs_pending: c_uint,
-    pub activecnt: c_int,
-    pub read_req: uv_read_t,
-    stream: stream_conn_serv,
-    pub socket: SOCKET,
-    pub delayed_error: c_int,
-    tcp: tcp_u,
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `uv_udp_t`.
-// ──────────────────────────────────────────────────────────────────────────
-#[repr(C)]
-pub struct uv_udp_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub send_queue_size: usize,
-    pub send_queue_count: usize,
-    pub socket: SOCKET,
-    pub reqs_pending: c_uint,
-    pub activecnt: c_int,
-    pub recv_req: uv_req_t,
-    pub recv_buffer: uv_buf_t,
-    pub recv_from: sockaddr_storage,
-    pub recv_from_len: c_int,
-    pub recv_cb: uv_udp_recv_cb,
-    pub alloc_cb: uv_alloc_cb,
-    pub func_wsarecv: LPFN_WSARECV,
-    pub func_wsarecvfrom: LPFN_WSARECVFROM,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct uv_udp_send_t {
-    pub data: *mut c_void,
-    pub type_: uv_req_type,
-    pub reserved: [*mut c_void; 6],
-    pub u: req_u,
-    pub next_req: *mut uv_req_t,
-    pub handle: *mut uv_udp_t,
-    pub cb: uv_udp_send_cb,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1662,7 +1552,7 @@ pub struct uv_process_options_t {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `uv_fs_event_t` / `uv_fs_poll_t` / `uv_signal_t`.
+// `uv_fs_event_t` / `uv_signal_t`.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1715,18 +1605,6 @@ impl uv_fs_event_t {
         hasher.update(&status.0.to_ne_bytes());
         hasher.final_()
     }
-}
-#[repr(C)]
-pub struct uv_fs_poll_t {
-    pub data: *mut c_void,
-    pub loop_: *mut Loop,
-    pub type_: HandleType,
-    pub close_cb: uv_close_cb,
-    pub handle_queue: uv__queue,
-    pub u: handle_u,
-    pub endgame_next: *mut uv_handle_t,
-    pub flags: c_uint,
-    pub poll_ctx: *mut c_void,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -3054,7 +2932,6 @@ const _: () = {
     assert_size!(uv_connect_t, 128);
     assert_size!(uv_write_t, 176);
     assert_size!(uv_process_exit_t, 112);
-    assert_size!(uv_udp_send_t, 128);
 
     // `UV_HANDLE_FIELDS` header.
     assert_size!(handle_u, 32);
@@ -3086,7 +2963,6 @@ const _: () = {
     assert_size!(uv_check_t, 120);
     assert_size!(uv_idle_t, 120);
     assert_size!(uv_async_t, 224);
-    assert_size!(uv_fs_poll_t, 104);
     assert_offset!(Loop, active_handles, 8);
     assert_offset!(Loop, iocp, 56);
     assert_offset!(Loop, wq_async, 248);
@@ -3105,12 +2981,10 @@ const _: () = {
 
     // `UvHandle` trait invariant: every implementor has `data` at offset 0.
     assert_offset!(Pipe, data, 0);
-    assert_offset!(uv_tcp_t, data, 0);
     assert_offset!(uv_tty_t, data, 0);
     assert_offset!(Timer, data, 0);
     assert_offset!(uv_async_t, data, 0);
     assert_offset!(Process, data, 0);
     assert_offset!(uv_signal_t, data, 0);
     assert_offset!(uv_poll_t, data, 0);
-    assert_offset!(uv_udp_t, data, 0);
 };

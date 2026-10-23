@@ -195,6 +195,10 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
+/* Takes ownership of a descriptor opened elsewhere without touching it. EINVAL: not a socket of `type` (0 allows anything). EEXIST: a socket in this process owns it. */
+int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type);
+/* Gives up ownership without closing. */
+void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket_read(LIBUS_SOCKET_DESCRIPTOR fd);
@@ -242,10 +246,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr);
 
 /* Sets *connected to 1 if connect() itself returned 0, so the connection is already established. */
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options, int *connected);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int *connected);
 
 int bsd_socket_export_size(void);
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);

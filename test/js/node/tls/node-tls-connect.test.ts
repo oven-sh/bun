@@ -1045,9 +1045,7 @@ it("tls.DEFAULT_MAX_VERSION is honored by contexts built without explicit versio
 });
 
 it("'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls.connect({ socket }))", async () => {
-  // The TLS-over-duplex wrapper has no us_socket_t, so its parked
-  // new-session/keylog queues are drained by the Rust SSLWrapper instead of
-  // us_dispatch_session/us_dispatch_keylog - this covers that path end to end.
+  // The TLS engine over a stream has no us_socket_t: its own read loop has to hand over what the SSL parked.
   const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
     socket.on("data", () => socket.end());
   });

@@ -387,7 +387,6 @@ template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
     size_t any_server,
     Zig::GlobalObject* globalObject,
-    JSValue thisValue,
     JSValue callback,
     JSValue methodString,
     uWS::HttpRequest* request,
@@ -399,7 +398,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
 
     JSObject* callbackObject = uncheckedDowncast<JSObject>(callback);
     MarkedArgumentBuffer args;
-    args.append(thisValue);
 
     // Typical request header sections are a few hundred bytes; the inline
     // capacity keeps the capture heap-allocation-free for the common case.
@@ -831,7 +829,6 @@ extern "C" void NodeHTTPServer__writeHead_https(
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     size_t any_server,
     Zig::GlobalObject* globalObject,
-    EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
@@ -841,7 +838,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     return NodeHTTPServer__onRequest<false>(
         any_server,
         globalObject,
-        JSValue::decode(thisValue),
         JSValue::decode(callback),
         JSValue::decode(methodString),
         request,
@@ -852,7 +848,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     size_t any_server,
     Zig::GlobalObject* globalObject,
-    EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
@@ -862,7 +857,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     return NodeHTTPServer__onRequest<true>(
         any_server,
         globalObject,
-        JSValue::decode(thisValue),
         JSValue::decode(callback),
         JSValue::decode(methodString),
         request,

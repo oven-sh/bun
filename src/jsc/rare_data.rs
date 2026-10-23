@@ -1109,7 +1109,12 @@ pub fn set_default_ca(certs: Vec<bun_core::Utf8Bytes<'static>>) {
     VirtualMachine::get()
         .as_mut()
         .rare_data()
-        .set_tls_default_ca(certs.iter().map(|cert| cert.slice().into()).collect());
+        .set_tls_default_ca(
+            certs
+                .into_iter()
+                .map(|cert| cert.into_vec().into())
+                .collect(),
+        );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

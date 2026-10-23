@@ -18,6 +18,7 @@ use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
+use crate::api::SSLContextCache::SSLContextCache;
 use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::listener::{TLSListener, js_Listener as js};
 use crate::socket::SSLConfig;
@@ -26,7 +27,7 @@ use crate::socket::{
 };
 
 #[cfg(windows)]
-use crate::socket::WindowsNamedPipeContext;
+use crate::socket::WindowsNamedPipe;
 
 #[cfg(windows)]
 use core::ptr::NonNull;
@@ -43,23 +44,6 @@ use bun_node_path as node_path;
 use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
-
-/// Runs `f` against this thread's `SSL_CTX` cache. Takes a callback rather than
-/// handing out a `&'static mut`, which two callers could hold at once.
-#[inline]
-fn with_ssl_ctx_cache<R>(
-    f: impl FnOnce(&mut crate::api::SSLContextCache::SSLContextCache) -> R,
-) -> R {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(
-        !state.is_null(),
-        "runtime_state() before init_runtime_state"
-    );
-    // SAFETY: `state` is the per-thread `RuntimeState` boxed in
-    // `init_runtime_state`, address-stable until VM teardown, and only the JS
-    // thread reaches here — so this `&mut` is unique for `f`'s duration.
-    f(unsafe { &mut (*state).ssl_ctx_cache })
-}
 
 /// `HotMapEntry::tag` of a `Listener`. `crate::server::AnyServerTag` owns 0..=3.
 const HOT_MAP_TAG_LISTENER: u8 = 4;
@@ -148,23 +132,13 @@ fn prebuilt_ssl_ctx(
     let Some(tls_js) = opts.get_truthy(global, "tls")? else {
         return Ok(None);
     };
-    if !tls_js.is_object() {
+    let Some(ctx) = SecureContext::ctx_from_options(global, tls_js)? else {
         return Ok(None);
-    }
-    let Some(sc_js) = tls_js.get_truthy(global, "secureContext")? else {
-        return Ok(None);
-    };
-    let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
-        return Err(global.throw_invalid_argument_type_value(
-            b"secureContext",
-            b"SecureContext",
-            sc_js,
-        ));
     };
     // The context is served as it is: its trust store would not be the `ca` written next to `requestCert`.
     if is_server
         && config.ssl.as_ref().is_some_and(|ssl| ssl.request_cert != 0)
-        && !crate::socket::server_ctx_requests_cert(Some(sc.ctx.as_ptr()))
+        && !crate::socket::server_ctx_requests_cert(Some(ctx.as_ptr()))
     {
         return Err(global
             .err(
@@ -178,7 +152,7 @@ fn prebuilt_ssl_ctx(
     if config.ssl.is_none() {
         config.ssl = Some(vm.tls_config(Default::default(), is_server));
     }
-    Ok(Some(sc.ctx.clone()))
+    Ok(Some(ctx))
 }
 
 #[derive(Clone)]
@@ -331,9 +305,8 @@ impl Listener {
         let secure_ctx = match (prebuilt_ctx, socket_config.ssl.as_ref()) {
             (None, Some(ssl_cfg)) => {
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                let ctx_opts = ssl_cfg.as_usockets();
                 let ctx =
-                    ctx_opts.create_ssl_context_with_digest(&ctx_opts.digest(), &mut create_err);
+                    SSLContextCache::with(|cache| cache.get_or_create(ssl_cfg, &mut create_err));
                 if ctx.is_none() {
                     return Err(cx.global().throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(
@@ -744,6 +717,7 @@ impl Listener {
                 uws_sys::SocketKind::BunSocketTcp
             });
         }
+        this_socket.timeout_seconds.set(120);
         if !listener.handlers.on_timeout().is_empty() {
             socket.set_timeout(120);
         }
@@ -915,6 +889,20 @@ impl Listener {
 
         let port = socket_config.port;
         let mut owned_ssl_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, false)?;
+        // Without a SecureContext, the context is built from the config, for a socket and for a named pipe alike.
+        if owned_ssl_ctx.is_none()
+            && let Some(ssl_cfg) = socket_config.ssl.as_ref()
+        {
+            // Identical configs share one `SSL_CTX*`. servername and ALPNProtocols are applied per SSL, so they aren't compared.
+            let mut create_err = uws::create_bun_socket_error_t::none;
+            owned_ssl_ctx =
+                SSLContextCache::with(|cache| cache.get_or_create(ssl_cfg, &mut create_err));
+            if owned_ssl_ctx.is_none() {
+                return Err(cx.global().throw_value(
+                    crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, cx.global()),
+                ));
+            }
+        }
         let ssl_enabled = socket_config.ssl.is_some();
         let default_data = socket_config.default_data;
 
@@ -933,216 +921,6 @@ impl Listener {
         };
         let local_binding = socket_config.local_binding.take();
 
-        #[cfg(windows)]
-        let mut connection = connection;
-        #[cfg(windows)]
-        {
-            use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
-            use bun_sys::FdExt as _;
-
-            let mut buf = bun_paths::path_buffer_pool::get();
-            // Note: reshaped for borrowck — `normalize_pipe_name` borrows
-            // `buf` for the returned slice; store length and re-borrow after the
-            // `connection` match drops.
-            let mut pipe_name_len: Option<usize> = None;
-            let is_named_pipe = match &mut connection {
-                // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                UnixOrHost::Unix(slice) => match normalize_pipe_name(slice, buf.as_mut_slice()) {
-                    Some(name) => {
-                        pipe_name_len = Some(name.len());
-                        true
-                    }
-                    None => false,
-                },
-                UnixOrHost::Fd(_) if socket_config.fd_is_write_only => false,
-                UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => false,
-                UnixOrHost::Fd(fd) => {
-                    let uvfd = fd.uv();
-                    let fd_type = uv::uv_guess_handle(uvfd);
-                    if fd_type == uv::HandleType::NamedPipe {
-                        true
-                    } else if fd_type == uv::HandleType::Unknown {
-                        // is not a libuv fd, check if it's a named pipe
-                        let osfd: uv::uv_os_fd_t = uvfd as usize as uv::uv_os_fd_t;
-                        if bun_sys::windows::GetFileType(osfd) == bun_sys::windows::FILE_TYPE_PIPE {
-                            // yay its a named pipe lets make it a libuv fd
-                            *fd = Fd::from_system(osfd)
-                                .make_lib_uv_owned()
-                                .unwrap_or_else(|_| panic!("failed to allocate file descriptor"));
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            };
-            if is_named_pipe {
-                default_data.ensure_still_alive();
-
-                let mut ssl_taken = socket_config.ssl.take();
-
-                let promise = jsc::JSPromise::create(cx.global());
-                let promise_value = promise.to_js();
-                handlers.set_promise(cx.global(), promise_value);
-
-                if ssl_enabled {
-                    let tls: bun_ptr::ThisPtr<TLSSocket> = if let Some(prev_ptr) = prev_maybe_tls {
-                        // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
-                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
-                        debug_assert!(!prev.this_value.get().is_empty());
-                        prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
-                        debug_assert!(matches!(
-                            prev.socket.get().socket,
-                            uws::InternalSocket::Detached
-                        ));
-                        prev
-                    } else {
-                        TLSSocket::new(Some(Rc::clone(&handlers)))
-                    };
-                    tls.connection.set(Some(connection));
-                    tls.local_binding.set(local_binding.clone());
-                    tls.protos
-                        .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
-                    tls.server_name
-                        .set(ssl_taken.as_mut().and_then(|s| s.take_server_name()));
-                    let tls_ref = tls;
-                    tls_ref.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
-                        vm,
-                        ssl_taken.as_ref(),
-                        false,
-                    ));
-                    tls_ref.update_flags(|f| {
-                        f.set(
-                            SocketFlags::PAUSE_ON_CONNECT,
-                            socket_config.pause_on_connect,
-                        )
-                    });
-                    TLSSocket::data_set_cached(
-                        tls_ref.this_value_for_connect(cx.global()),
-                        cx.global(),
-                        default_data,
-                    );
-                    tls_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-                    tls_ref.ref_();
-
-                    let ctx_for_pipe = owned_ssl_ctx.take();
-                    // Note: re-borrow connection from the socket field — `connection`
-                    // was moved into `tls` above.
-                    let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
-                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
-                            cx,
-                            &buf[..pipe_name_len.unwrap()],
-                            ssl_taken.take(),
-                            ctx_for_pipe,
-                            PipeSocketType::Tls(tls_ref),
-                        ),
-                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
-                            cx,
-                            *fd,
-                            ssl_taken.take(),
-                            ctx_for_pipe,
-                            PipeSocketType::Tls(tls_ref),
-                        ),
-                        _ => unreachable!(),
-                    };
-                    let named_pipe = match named_pipe_result {
-                        Ok(p) => p,
-                        Err(_) => {
-                            // The context's guard already ran `handle_connect_error`
-                            // on the still-detached socket, which releases nothing.
-                            // Balance the attempt `tls_ref.ref_()` above.
-                            TLSSocket::deref(&tls_ref);
-                            return Ok(promise_value);
-                        }
-                    };
-                    tls_ref.socket.set(uws::NewSocketHandler {
-                        socket: uws::InternalSocket::Transport(named_pipe),
-                    });
-                } else {
-                    let tcp: bun_ptr::ThisPtr<TCPSocket> = if let Some(prev_ptr) = prev_maybe_tcp {
-                        // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
-                        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
-                        debug_assert!(!prev.this_value.get().is_empty());
-                        prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
-                        debug_assert!(matches!(
-                            prev.socket.get().socket,
-                            uws::InternalSocket::Detached
-                        ));
-                        debug_assert!(prev.protos.get().is_none());
-                        debug_assert!(prev.server_name.get().is_none());
-                        prev
-                    } else {
-                        TCPSocket::new(Some(Rc::clone(&handlers)))
-                    };
-                    tcp.connection.set(Some(connection));
-                    tcp.local_binding.set(local_binding.clone());
-                    let tcp_ref = tcp;
-                    tcp_ref.update_flags(|f| {
-                        f.set(
-                            SocketFlags::PAUSE_ON_CONNECT,
-                            socket_config.pause_on_connect,
-                        )
-                    });
-                    tcp_ref.ref_();
-                    TCPSocket::data_set_cached(
-                        tcp_ref.this_value_for_connect(cx.global()),
-                        cx.global(),
-                        default_data,
-                    );
-                    tcp_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-
-                    let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
-                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
-                            cx,
-                            &buf[..pipe_name_len.unwrap()],
-                            None,
-                            None,
-                            PipeSocketType::Tcp(tcp_ref),
-                        ),
-                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
-                            cx,
-                            *fd,
-                            None,
-                            None,
-                            PipeSocketType::Tcp(tcp_ref),
-                        ),
-                        _ => unreachable!(),
-                    };
-                    let named_pipe = match named_pipe_result {
-                        Ok(p) => p,
-                        Err(_) => {
-                            // Balance the attempt `tcp_ref.ref_()` above; see the TLS arm.
-                            TCPSocket::deref(&tcp_ref);
-                            return Ok(promise_value);
-                        }
-                    };
-                    tcp_ref.socket.set(uws::NewSocketHandler {
-                        socket: uws::InternalSocket::Transport(named_pipe),
-                    });
-                }
-                return Ok(promise_value);
-            }
-        }
-
-        // A SecureContext's ctx was already cloned above; build the SSL_CTX from
-        // SSLConfig only if no SecureContext was passed. doConnect hands
-        // `socket.owned_ssl_ctx` to the per-VM connect group.
-        if owned_ssl_ctx.is_none()
-            && let Some(ssl_cfg) = socket_config.ssl.as_ref()
-        {
-            // Identical configs share one `SSL_CTX*`. servername and ALPNProtocols are applied per SSL, so they aren't compared.
-            let mut create_err = uws::create_bun_socket_error_t::none;
-            owned_ssl_ctx =
-                with_ssl_ctx_cache(|cache| cache.get_or_create(ssl_cfg, &mut create_err));
-            if owned_ssl_ctx.is_none() {
-                return Err(cx.global().throw_value(
-                    crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, cx.global()),
-                ));
-            }
-        }
         default_data.ensure_still_alive();
 
         let allow_half_open = socket_config.allow_half_open;
@@ -1203,42 +981,14 @@ impl Listener {
         }
 
         let mut buf = [0u8; 64];
-        let mut text_buf = [0u8; 512];
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
         let socket_ref = bun_opaque::opaque_deref_mut(socket);
-        let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
-            Ok(b) => b,
-            Err(_) => return Ok(()),
-        };
-        let is_ipv6 = match address_bytes.len() {
-            4 => false,
-            16 => true,
-            _ => return Ok(()),
-        };
-        // Format with `SocketAddrV{4,6}` so `format_ip`'s strip logic sees the
-        // expected `addr:port` / `[addr]:port` shape.
-        let formatted: &[u8] = match address_bytes.len() {
-            4 => bun_core::fmt::format_ip(
-                &std::net::SocketAddrV4::new(
-                    std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
-                    0,
-                ),
-                &mut text_buf,
-            )
-            .unwrap(),
-            16 => bun_core::fmt::format_ip(
-                &std::net::SocketAddrV6::new(
-                    std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()),
-                    0,
-                    0,
-                    0,
-                ),
-                &mut text_buf,
-            )
-            .unwrap(),
-            _ => return Ok(()),
-        };
-        let address_js = EncodedSlice::latin1(formatted).to_js(global);
+        let address_bytes = socket_ref.get_local_address(&mut buf).ok();
+        let is_ipv6 = address_bytes.is_some_and(|bytes| bytes.len() == 16);
+        let address_js = super::socket_body::ip_address_to_js(global, address_bytes)?;
+        if address_js.is_undefined() {
+            return Ok(());
+        }
         let port_js = match socket_ref.get_local_port() {
             Some(p) => JSValue::js_number(p as f64),
             None => JSValue::UNDEFINED,
@@ -1353,15 +1103,9 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref
         .poll_ref
         .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-    // Note: `do_connect` reads `self.connection` directly so no second
-    // borrow is needed here.
-    // An already-open fd socket runs `on_open` synchronously; what settling
-    // the connect promise there left pending is not a connect failure.
-    let opened_err = match socket_ref.do_connect(cx.context()) {
-        Ok(()) => None,
-        Err(crate::Error::Js(err)) => Some(err),
-        Err(_) => {
-            let errno = bun_sys::SystemErrno::from_raw(bun_sys::last_error() as u16);
+    let opened = match socket_ref.do_connect(cx) {
+        Ok(opened) => opened,
+        Err(errno) => {
             let is_unix = port.is_none();
             // Winsock's AF_UNIX connect doesn't report a missing path as ENOENT, which is what Node reports.
             #[cfg(windows)]
@@ -1391,11 +1135,8 @@ fn connect_finish<const IS_SSL: bool>(
         }
     };
 
-    // What settling the connect promise in `on_open` left pending (allocation
-    // failure, a terminating VM).
-    if let Some(err) = opened_err {
-        return Err(err);
-    }
+    // What settling the connect promise in `on_open` left pending: an allocation failure, a terminating VM.
+    opened?;
     Ok(promise_value)
 }
 
@@ -1422,7 +1163,6 @@ pub(crate) fn add_server_name(listener: TLSListener<'_>, hostname: &[u8], contex
     let Some(listen_socket) = tls_listen_socket(&listener) else {
         return;
     };
-    super::socket_body::install_sni_alpn_selector(context.ctx.as_ptr());
     let hostname = bun_core::ZBox::from_bytes(hostname);
     listen_socket.add_server_name(hostname.as_zstr().as_cstr(), context.ctx.as_ptr());
 }
@@ -1481,6 +1221,48 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
     Some(&buffer[0..pipe_name.len()])
 }
 
+/// What a connection dials if it's a named pipe.
+#[cfg(windows)]
+pub(crate) enum NamedPipe<'a> {
+    Path(&'a [u8]),
+    Fd(Fd),
+}
+
+/// Writes a pipe's normalized name to `buffer`.
+#[cfg(windows)]
+pub(crate) fn named_pipe<'a>(
+    connection: &UnixOrHost,
+    buffer: &'a mut [u8],
+) -> Option<NamedPipe<'a>> {
+    use bun_sys::FdExt as _;
+    match connection {
+        // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
+        UnixOrHost::Unix(path) => normalize_pipe_name(path, buffer).map(NamedPipe::Path),
+        UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => None,
+        UnixOrHost::Fd(fd) => {
+            let uvfd = fd.uv();
+            let fd_type = uv::uv_guess_handle(uvfd);
+            if fd_type == uv::HandleType::NamedPipe {
+                return Some(NamedPipe::Fd(*fd));
+            }
+            // is not a libuv fd, check if it's a named pipe
+            let osfd: uv::uv_os_fd_t = uvfd as usize as uv::uv_os_fd_t;
+            if fd_type != uv::HandleType::Unknown
+                || bun_sys::windows::GetFileType(osfd) != bun_sys::windows::FILE_TYPE_PIPE
+            {
+                return None;
+            }
+            // yay its a named pipe lets make it a libuv fd
+            Some(NamedPipe::Fd(
+                Fd::from_system(osfd)
+                    .make_lib_uv_owned()
+                    .unwrap_or_else(|_| panic!("failed to allocate file descriptor")),
+            ))
+        }
+        UnixOrHost::Host { .. } => None,
+    }
+}
+
 #[cfg(windows)]
 pub(crate) struct WindowsNamedPipeListeningContext {
     pub(crate) uv_pipe: uv::Pipe,
@@ -1520,7 +1302,7 @@ impl WindowsNamedPipeListeningContext {
         let listener: &Listener = listener_ref.get();
         // An accepted pipe is the listening script's.
         let entered = this_ref.vm.enter_context(listener.context);
-        use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
+        use crate::socket::windows_named_pipe::SocketType as PipeSocketType;
         // Owned for the whole accept: JS below can replace the slot through setSecureContext().
         let ssl_ctx = listener.secure_ctx.get().clone();
         let socket: PipeSocketType = if ssl_ctx.is_some() {
@@ -1529,28 +1311,22 @@ impl WindowsNamedPipeListeningContext {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
         };
 
-        let client = WindowsNamedPipeContext::create(
-            &this_ref.global_this.js_thread(entered.context()),
-            socket,
-        );
+        let client =
+            WindowsNamedPipe::create(&this_ref.global_this.js_thread(entered.context()), socket);
 
         // SAFETY: `client` was just heap-allocated by `create()`; exclusive
         // here. The `&mut` to `uv_pipe` comes from the root pointer, scoped to
         // this call — `this_ref` (shared) never touches `uv_pipe`.
-        let result = unsafe {
-            (*client)
-                .named_pipe
-                .get_accepted_by(&mut (*this).uv_pipe, ssl_ctx.as_ref())
-        };
+        let result = unsafe { (*client).get_accepted_by(&mut (*this).uv_pipe, ssl_ctx.as_ref()) };
         if result.is_err() {
             // connection dropped
-            // Release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
+            // Release the only ref, which goes 1→0 → queue_free → next-tick free. The
             // deferred path is required because `get_accepted_by` may have already `uv_pipe_init`'d
             // the client's inner handle on the loop; freeing the backing storage in-callback
             // before `uv_close` completes is the exact pattern libuv forbids.
-            // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
+            // SAFETY: `client` was just allocated via `WindowsNamedPipe::create`
             // with refcount==1; releasing the only ref schedules deinit.
-            unsafe { WindowsNamedPipeContext::deref(client) };
+            unsafe { WindowsNamedPipe::deref(client) };
         }
     }
 
@@ -1710,11 +1486,7 @@ impl ServerNameAnswer {
             return Self::Default;
         }
         match result.as_class_ref::<SecureContext>() {
-            Some(sc) => {
-                let ctx = sc.ctx.clone();
-                super::socket_body::install_sni_alpn_selector(ctx.as_ptr());
-                Self::Context(ctx)
-            }
+            Some(sc) => Self::Context(sc.ctx.clone()),
             // Node treats anything else as an invalid SNI context.
             None => Self::Refused,
         }
@@ -1764,7 +1536,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_server_name(
 /// Asks the `serverName` handler of a server-side socket.
 fn ask_server_name(tls: bun_ptr::ThisPtr<TLSSocket>, name: &core::ffi::CStr) -> ServerNameAnswer {
     // An idle socket can drop its Handlers while the us_socket_t lives on;
-    // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
+    // `get_handlers()` would panic. Same guard as `us_dispatch_alpn_select`.
     if !tls.has_handlers() {
         return ServerNameAnswer::Default;
     }

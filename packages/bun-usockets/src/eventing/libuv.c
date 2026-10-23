@@ -585,6 +585,13 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
   }
 }
 
+void us_timer_again(struct us_timer_t *t) {
+  uv_timer_t *uv_timer = (uv_timer_t *)((struct us_internal_callback_t *)t + 1);
+  // uv_timer_again() counts from the loop's cached time.
+  uv_update_time(uv_timer->loop);
+  uv_timer_again(uv_timer);
+}
+
 struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
   struct us_internal_callback_t *internal_cb =
       (struct us_internal_callback_t *)t;

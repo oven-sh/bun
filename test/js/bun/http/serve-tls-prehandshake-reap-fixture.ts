@@ -7,6 +7,7 @@
 // Prints one JSON line: { opened, held } where held is the count the server
 // had not closed by the deadline.
 
+import { sweepSocketTimers } from "bun:internal-for-testing";
 import net from "node:net";
 
 const N = Number(process.env.N || 300);
@@ -22,7 +23,6 @@ const server = Bun.serve({
 let opened = 0;
 let settled = 0;
 const held = new Set<net.Socket>();
-const allSettled = Promise.withResolvers<void>();
 const socks: net.Socket[] = [];
 for (let i = 0; i < N; i++) {
   const s = net.connect(server.port as number, "127.0.0.1", () => {
@@ -33,16 +33,21 @@ for (let i = 0; i < N; i++) {
   s.on("close", () => {
     held.delete(s);
     settled++;
-    if (settled === N) allSettled.resolve();
   });
   socks.push(s);
 }
 
-// The idle timeout is 10s and the sweep granularity is 4s, so a correctly
-// behaving server closes every connection by ~16s; the deadline leaves margin
-// for debug builds. The race here is won or lost at a single sweep tick, so a
-// server that has not reaped them all by the deadline never will.
-await Promise.race([allSettled.promise, Bun.sleep(DEADLINE_MS)]);
+// The idle timeout is 10s, which is due at the third or fourth sweep after the accept, and
+// nothing reports the accept: on Linux the kernel holds the burst back for about a
+// second. So this runs the sweep by hand until the first connection is closed. A
+// parked connection's timeout is held back for 30 sweeps, so a server that has
+// not reaped the rest a few sweeps later has parked them.
+const deadline = performance.now() + DEADLINE_MS;
+for (let sweepsSinceFirstClose = 0; settled < N && sweepsSinceFirstClose < 8 && performance.now() < deadline; ) {
+  await Bun.sleep(20);
+  sweepSocketTimers(1);
+  if (settled > 0) sweepsSinceFirstClose++;
+}
 
 console.log(JSON.stringify({ opened, held: held.size }));
 

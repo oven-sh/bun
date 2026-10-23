@@ -1936,3 +1936,49 @@ it("tls.SecureContext is the class of what createSecureContext() returns", () =>
   expect(new (tls as any).SecureContext()).toBeInstanceOf((tls as any).SecureContext);
   expect((tls as any).SecureContext()).toBeInstanceOf((tls as any).SecureContext);
 });
+
+describe("an option of the wrong type", () => {
+  const apis: Record<string, (options: object) => unknown> = {
+    "tls.createSecureContext()": options => tls.createSecureContext(options),
+    "server.addContext()": options => tls.createServer().addContext("a.test", options),
+    "tls.createServer()": options => tls.createServer(options),
+    "tls.connect()": options =>
+      tls
+        .connect({ port: 1, host: "127.0.0.1", ...options })
+        .on("error", () => {})
+        .destroy(),
+    "new tls.TLSSocket()": options => new tls.TLSSocket(undefined as any, options).destroy(),
+  };
+
+  it.each(Object.keys(apis))("%s words servername and secureOptions like every other option", api => {
+    expect(() => apis[api]({ servername: 5 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.servername" property must be of type string. Received type number (5)',
+      }),
+    );
+    expect(() => apis[api]({ secureOptions: "x" })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "The \"options.secureOptions\" property must be of type number. Received type string ('x')",
+      }),
+    );
+  });
+
+  const noList = [true, 1, {}, () => {}];
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L150-L163: convertALPNProtocols() leaves them alone
+  it.each(["tls.createSecureContext()", "server.addContext()", "tls.createServer()"])(
+    "%s ignores an ALPNProtocols that is no list, as in Node",
+    api => {
+      for (const ALPNProtocols of [...noList, "h2", false, 0]) expect(() => apis[api]({ ALPNProtocols })).not.toThrow();
+    },
+  );
+
+  it.each(["tls.connect()", "new tls.TLSSocket()"])("%s refuses an ALPNProtocols that is no list, as in Node", api => {
+    for (const ALPNProtocols of noList) {
+      expect(() => apis[api]({ ALPNProtocols })).toThrow(new TypeError("Must give a Buffer as first argument"));
+    }
+    // Node refuses a string too. 1.4.4 connected without ALPN.
+    for (const ALPNProtocols of ["h2", false, 0, "", null]) expect(() => apis[api]({ ALPNProtocols })).not.toThrow();
+  });
+});

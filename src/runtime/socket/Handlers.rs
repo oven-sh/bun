@@ -547,29 +547,19 @@ impl SocketConfig {
                 } else {
                     generated.data.to_js()
                 },
-                exclusive: false,
-                allow_half_open: false,
-                reuse_port: false,
-                ipv6_only: false,
-                pause_on_connect: false,
+                exclusive: generated.exclusive,
+                allow_half_open: generated.allow_half_open,
+                reuse_port: generated.reuse_port,
+                ipv6_only: generated.ipv6_only,
+                pause_on_connect: generated.pause_on_connect,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no
         // manual error-path cleanup needed.
 
-        result.exclusive = generated.exclusive;
-        result.allow_half_open = generated.allow_half_open;
-        result.reuse_port = generated.reuse_port;
-        result.ipv6_only = generated.ipv6_only;
-        result.pause_on_connect = generated.pause_on_connect;
-
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if let Some(unix) = generated.unix_ {
-            if unix.length() == 0 {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
-            }
             result.hostname_or_unix = unix.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if slice.starts_with(b"file://")

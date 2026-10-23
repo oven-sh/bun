@@ -169,9 +169,9 @@ pub use bun_core::Timespec;
 pub mod ssl {
     use super::{SslCtx, us_bun_verify_error_t};
     use bun_boringssl_sys::{SSL, SSL_SESSION};
-    use core::ffi::{c_char, c_int, c_void};
+    use core::ffi::{c_char, c_int, c_uint, c_void};
     unsafe extern "C" {
-        /// `SSL_new` and the setup of a client or a server. Null if out of memory.
+        /// `SSL_new` and the setup of a client or a server. Never null.
         pub fn us_ssl_new(ctx: *mut SslCtx, is_client: c_int) -> *mut SSL;
         /// `requestCert` / `rejectUnauthorized` as BoringSSL's verify mode.
         pub safe fn us_ssl_set_verify_mode(
@@ -209,6 +209,8 @@ pub mod ssl {
         pub safe fn us_ssl_on_server_name(ssl: &SSL);
         /// Takes the reference `ctx` carries. 1 if the handshake waited for this answer: drive it again.
         pub fn us_ssl_sni_resolve(ssl: &SSL, ctx: *mut SslCtx, error: c_int) -> c_int;
+        /// How many bytes may wait behind the ClientHello of a suspended handshake.
+        pub safe fn us_ssl_sni_held_max() -> c_uint;
         /// 1 while an asynchronous SNICallback has the handshake suspended.
         pub safe fn us_ssl_sni_waiting(ssl: &SSL) -> c_int;
         /// 1 once the SNICallback refused the server name.
@@ -355,7 +357,7 @@ pub mod fault_inject {
 }
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
-    Transport,
+    Transport, TransportHandle,
 };
 
 // ───────────────────────────── re-exports ────────────────────────────────────

@@ -215,7 +215,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    if !message.is_object() || !ipc_data.internal_msg_queue.get().is_ready() {
         return Ok(());
     }
 
@@ -419,19 +419,11 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             atype = 4;
         }
 
-        fn close_fd(fd: c_int) {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
-
-        fn set_cloexec_nonblock(fd: c_int) {
-            let fd = bun_sys::Fd::from_native(fd);
-            let _ = bun_sys::set_close_on_exec(fd);
-            let _ = bun_sys::set_nonblocking(fd);
-        }
+        use bun_uws::udp::raw::{bsd_close_socket, bsd_create_socket};
 
         if atype == -1 {
             if !address.is_string() {
-                return Err(global.throw_invalid_argument_type_value("address", "string", address));
+                return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
             }
             let path_view = address.to_js_string_view(global)?;
             let path_slice = path_view.to_utf8();
@@ -500,11 +492,11 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         ) -> Result<c_int, i32> {
             // SAFETY: socket/setsockopt/bind FFI on a freshly created fd with
             unsafe {
-                let fd = libc::socket(family, socktype, 0);
+                let mut err: c_int = 0;
+                let fd = bsd_create_socket(family, socktype, 0, &mut err);
                 if fd < 0 {
-                    return Err(-bun_core::ffi::errno());
+                    return Err(-err);
                 }
-                set_cloexec_nonblock(fd);
 
                 let one: c_int = 1;
                 let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
@@ -557,7 +549,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
                 if libc::bind(fd, core::ptr::from_ref(ss).cast(), ss_len) != 0 {
                     let e = -bun_core::ffi::errno();
-                    close_fd(fd);
+                    bsd_close_socket(fd);
                     return Err(e);
                 }
                 Ok(fd)
@@ -696,8 +688,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 }
 
-/// Returns 0 if `fd` is an unconnected socket of the wanted type, or a negative errno.
-pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
+/// Takes ownership of `fd`, an unconnected socket of the wanted type that nothing in this process owns. Returns 0 or a negative errno.
+pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
         let number = fd;
@@ -714,23 +706,15 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         } else {
             libc::SOCK_STREAM
         };
-        let mut ty: libc::c_int = 0;
-        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
-        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_TYPE,
-                (&raw mut ty).cast(),
-                &raw mut len,
-            )
-        };
-        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if rc != 0 || ty != wanted {
-            return -bun_sys::UV_E::INVAL;
+        if bun_uws::udp::raw::bsd_adopt_socket(fd, wanted) != 0 {
+            // node's createServerHandle: EINVAL for anything that cannot listen, fd left untouched.
+            return if bun_core::ffi::errno() == libc::EEXIST {
+                -bun_sys::UV_E::EXIST
+            } else {
+                -bun_sys::UV_E::INVAL
+            };
         }
-        if ty == libc::SOCK_STREAM {
+        if !want_dgram {
             // SAFETY: sockaddr_storage is plain data; getpeername only writes within `peer_len`.
             let connected = unsafe {
                 let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
@@ -739,6 +723,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
             };
             if connected {
+                bun_uws::udp::raw::bsd_disown_socket(fd);
                 return -bun_sys::UV_E::INVAL;
             }
         }
@@ -752,19 +737,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
 }
 
 pub(crate) fn cluster_close_handle(fd: f64) {
-    #[cfg(windows)]
-    {
-        if fd.is_finite() && fd >= 0.0 {
-            bun_uws::socket_transfer::bsd_close_socket(
-                fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
-            );
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let fd = fd as i32;
-        if fd >= 0 {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
+    if fd.is_finite() && fd >= 0.0 {
+        bun_uws::socket_transfer::bsd_close_socket(fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR);
     }
 }

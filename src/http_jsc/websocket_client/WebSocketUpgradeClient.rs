@@ -47,12 +47,6 @@ use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
 use crate::websocket_client::ErrorCode;
 
-// LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
-// bun_http::ssl_config (data + as_usockets/for_client_verification). The
-// JSC-dependent `from_js` constructor stays in bun_runtime; the C-ABI
-// `Bun__WebSocket__parseSSLConfig` export therefore lives in
-// bun_runtime::socket::SSLConfig and bridges to this lower-tier type via
-// `into_http()`.
 use bun_http::ssl_config::SSLConfig;
 
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
@@ -490,7 +484,6 @@ where
                 secure_ptr,
                 path.slice(),
                 client.as_ptr(),
-                false,
             ),
             None => Socket::<SSL>::connect_group(
                 group,
@@ -499,7 +492,6 @@ where
                 display_host,
                 c_int::from(connect_port),
                 client.as_ptr(),
-                false,
             ),
         }
         .inspect_err(|_| *connect_error_code = last_connect_error_code())
@@ -1165,26 +1157,28 @@ where
             return;
         };
 
-        // Use ssl_config if available, otherwise use defaults
-        let ssl_options: SSLConfig = match this.ssl_config.get().as_deref() {
-            Some(config) => config.clone(),
-            None => bun_jsc::virtual_machine::VirtualMachine::get()
-                .tls_config(Default::default(), false),
+        // The handshake completes whatever the chain is: `CppWebSocket::accepts_tls_peer` judges it.
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+        let mut err = uws::create_bun_socket_error_t::none;
+        let ctx = match this.ssl_config.get().as_deref() {
+            Some(config) => vm.ssl_ctx_cache_get_or_create(
+                &config.as_usockets_for_client_verification(),
+                &mut err,
+            ),
+            None => vm.ssl_ctx_cache_get_or_create(
+                &vm.tls_config(Default::default(), false)
+                    .as_usockets_for_client_verification(),
+                &mut err,
+            ),
         };
 
         // Start TLS handshake
-        if WebSocketProxyTunnel::start(
-            tunnel.this_ptr(),
-            &ssl_options,
-            reject_unauthorized,
-            initial_data,
-        )
-        .is_err()
-        {
+        let Some(ctx) = ctx else {
             drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
-        }
+        };
+        WebSocketProxyTunnel::start(tunnel.this_ptr(), ctx, reject_unauthorized, initial_data);
 
         // Re-check proxy state: `start` dispatches SSLWrapper callbacks that
         // can fail the client and take `proxy`.

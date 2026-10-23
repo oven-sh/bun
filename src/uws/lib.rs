@@ -215,14 +215,16 @@ pub mod ssl_wrapper {
     const MAX_RECORD_PLAINTEXT: usize = 16384;
     /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`
     const MAX_RECORD_OVERHEAD: usize = 5 + 88;
-    /// `kMaxEarlyDataSkipped` in BoringSSL's tls_record.cc: the rejected early data a server skips.
-    const MAX_EARLY_DATA_SKIPPED: usize = 16384;
 
     /// What the one BIO of the `SSL` reads and writes. No borrow spans an `SSL_*` call or a handler.
     #[derive(Default)]
     struct Ciphertext {
-        /// Sealed, not yet given to `Handlers::write`.
+        /// Sealed, not yet taken by `Handlers::write`.
         outgoing: RefCell<Vec<u8>>,
+        /// How much of `outgoing` the transport has taken.
+        sent: Cell<usize>,
+        /// The transport took less than it was given. `flush` tries again.
+        blocked: Cell<bool>,
         /// From the peer, not yet read by BoringSSL.
         incoming: RefCell<VecDeque<u8>>,
     }
@@ -334,9 +336,6 @@ pub mod ssl_wrapper {
         /// A callback of the running pass called `handle_traffic` again.
         RerunRequested,
     }
-
-    /// CamelCase alias for callers that use the alternate spelling
-    /// (e.g. `http_jsc`).
 
     #[repr(transparent)]
     #[derive(Default)]
@@ -459,15 +458,10 @@ pub mod ssl_wrapper {
         pub ctx: T,
         pub on_open: fn(T),
         pub on_handshake: fn(T, bool, us_bun_verify_error_t),
-        pub write: fn(T, &[u8]),
+        /// Returns how many bytes the transport took. The wrapper keeps the rest until `flush`.
+        pub write: fn(T, &[u8]) -> usize,
         pub on_data: fn(T, &[u8]),
         pub on_close: fn(T),
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-    pub enum InitError {
-        OutOfMemory,
-        InvalidOptions,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -478,16 +472,15 @@ pub mod ssl_wrapper {
     }
 
     impl<T: Copy> SSLWrapper<T> {
-        /// Takes ownership of `ctx` (dropped on `Err`).
         pub fn init_with_ctx(
             ctx: boring_sys::OwnedSslCtx,
             is_client: bool,
             handlers: Handlers<T>,
-        ) -> Result<Self, InitError> {
+        ) -> Self {
             bun_boringssl::load();
-            // SAFETY: ctx is a live SSL_CTX; null means out of memory.
-            let ssl = NonNull::new(unsafe { us_ssl_new(ctx.as_ptr(), c_int::from(is_client)) })
-                .ok_or(InitError::OutOfMemory)?;
+            // SAFETY: ctx is a live SSL_CTX, and `us_ssl_new` never returns null.
+            let ssl =
+                unsafe { NonNull::new_unchecked(us_ssl_new(ctx.as_ptr(), c_int::from(is_client))) };
             // SAFETY: the method lives as long as the process; BIO_new returns null on OOM.
             let bio = NonNull::new(unsafe { boring_sys::BIO_new(bio_method()) })
                 .unwrap_or_else(|| bun_core::out_of_memory());
@@ -514,26 +507,7 @@ pub mod ssl_wrapper {
                 boring_sys::BIO_set_init(bio.as_ptr(), 1);
                 boring_sys::SSL_set_bio(ssl.as_ptr(), bio.as_ptr(), bio.as_ptr());
             };
-            Ok(this)
-        }
-
-        /// Tier-neutral constructor.
-        /// Higher-tier callers convert their `SSLConfig` via `.as_usockets()` and pass the
-        /// resulting `BunSocketContextOptions` here, so this crate stays free of the
-        /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
-        /// an extension in the higher tier.
-        pub fn init_from_options(
-            ctx_opts: &crate::SocketContext::BunSocketContextOptions,
-            is_client: bool,
-            handlers: Handlers<T>,
-        ) -> Result<Self, InitError> {
-            bun_boringssl::load();
-
-            let mut err = crate::create_bun_socket_error_t::none;
-            let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err) else {
-                return Err(InitError::InvalidOptions);
-            };
-            Self::init_with_ctx(ssl_ctx, is_client, handlers)
+            this
         }
 
         /// As in `us_socket_adopt_tls`, a server's own `requestCert` / `rejectUnauthorized` replace the mode of the shared `SSL_CTX`. No-op for clients.
@@ -706,9 +680,17 @@ pub mod ssl_wrapper {
         }
 
         /// flush buffered data and returns amount of pending data to write
-        pub fn flush(&self) -> usize {
+        pub fn flush(&self) {
+            self.ciphertext.blocked.set(false);
             self.handle_traffic();
-            self.ciphertext.outgoing.borrow().len()
+        }
+
+        /// Ciphertext behind a refusal of the transport. What a running pass hasn't offered yet doesn't count.
+        pub fn refused_ciphertext(&self) -> usize {
+            if !self.ciphertext.blocked.get() {
+                return 0;
+            }
+            self.ciphertext.outgoing.borrow().len() - self.ciphertext.sent.get()
         }
 
         /// Ciphertext is queued in either direction, or the SSL holds the rest of a partially-returned record.
@@ -867,13 +849,13 @@ pub mod ssl_wrapper {
             (handlers.on_handshake)(handlers.ctx, success, result);
         }
 
-        fn trigger_wanna_write_callback(&self, data: &[u8]) {
+        fn trigger_wanna_write_callback(&self, data: &[u8]) -> usize {
             if self.flags.closed_notified() {
-                return;
+                return data.len();
             }
             // trigger the write callback
             let handlers = self.handlers.get();
-            (handlers.write)(handlers.ctx, data);
+            (handlers.write)(handlers.ctx, data)
         }
 
         fn trigger_data_callback(&self, data: &[u8]) {
@@ -987,8 +969,7 @@ pub mod ssl_wrapper {
                     return false;
                 }
                 if err == boring_sys::SSL_ERROR_PENDING_CERTIFICATE {
-                    // BoringSSL fails a handshake that has to skip more early data than this.
-                    if self.ciphertext.incoming.borrow().len() > MAX_EARLY_DATA_SKIPPED {
+                    if self.ciphertext.incoming.borrow().len() > us_ssl_sni_held_max() as usize {
                         self.abandon_handshake(HandshakeOutcome::PeerClosed);
                     }
                     // Suspended: a read would drive the handshake again.
@@ -1029,6 +1010,7 @@ pub mod ssl_wrapper {
             boring_sys::ERR_clear_error();
             // Not only skipped by the caller: a re-entered `handle_traffic` flushes the queue.
             self.ciphertext.outgoing.borrow_mut().clear();
+            self.ciphertext.sent.set(0);
             self.flags.set_fatal_error(true);
             self.flags
                 .set_handshake_state(HandshakeState::HandshakeCompleted);
@@ -1175,15 +1157,24 @@ pub mod ssl_wrapper {
 
         /// This frame owns what it hands out: a write made from inside `write` queues behind it.
         fn handle_writing(&self) {
-            if self.ssl.get().is_none() {
+            if self.ssl.get().is_none() || self.ciphertext.blocked.get() {
                 return;
             }
             let mut pending = self.ciphertext.outgoing.take();
-            if !pending.is_empty() {
-                self.trigger_wanna_write_callback(&pending);
-                pending.clear();
+            let mut sent = self.ciphertext.sent.take();
+            if sent < pending.len() {
+                sent += self.trigger_wanna_write_callback(&pending[sent..]);
             }
             let mut outgoing = self.ciphertext.outgoing.borrow_mut();
+            if sent < pending.len() {
+                // What a re-entrant call sealed meanwhile goes behind what the transport refused.
+                pending.extend_from_slice(&outgoing);
+                *outgoing = pending;
+                self.ciphertext.sent.set(sent);
+                self.ciphertext.blocked.set(true);
+                return;
+            }
+            pending.clear();
             if outgoing.capacity() == 0 && pending.capacity() <= QUEUE_RETAIN_LIMIT {
                 *outgoing = pending;
             }
@@ -1362,7 +1353,7 @@ pub type CloseKind = CloseCode;
 // deleted.
 pub use bun_uws_sys::socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
-    Transport,
+    Transport, TransportHandle,
 };
 
 /// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"

@@ -3370,7 +3370,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if let Some(proxy) = self.proxy_tunnel_ptr() {
-            ProxyTunnel::on_writable::<IS_SSL>(proxy, socket);
+            ProxyTunnel::on_writable(proxy);
             // ProxyTunnel::on_writable → SSLWrapper::flush → handle_traffic
             // may process a TLS alert or close_notify that was buffered
             // alongside the handshake flight, firing on_close →
@@ -4294,8 +4294,7 @@ impl<'a> HTTPClient<'a> {
             // with keep-alive while request_stage is still .proxy_body or the
             // tunnel still has buffered encrypted writes. Pooling that tunnel
             // would leave the connection mid-request on the inner TLS stream;
-            // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
-            // boundary. Only pool a tunnel whose request side is fully drained.
+            // only pool a tunnel whose request side is fully drained.
             //
             // Also check wrapper liveness: a close-delimited body (no
             // Content-Length, no Transfer-Encoding — RFC 7230 §3.3.3 rule 7)
@@ -4303,13 +4302,9 @@ impl<'a> HTTPClient<'a> {
             // socket is still alive. Pooling that dead wrapper would hang the
             // next request (proxy.write() → error.ConnectionClosed, swallowed).
             let tunnel_poolable = if let Some(t) = self.proxy_tunnel.as_deref() {
-                t.write_buffer.is_empty()
-                    && t.wrapper
-                        .as_ref()
-                        .map(|w| {
-                            !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
-                        })
-                        .unwrap_or(false)
+                t.wrapper.as_ref().is_some_and(|w| {
+                    !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
+                })
             } else {
                 true
             };

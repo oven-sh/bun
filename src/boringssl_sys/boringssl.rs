@@ -882,7 +882,6 @@ pub const OPENSSL_NPN_NEGOTIATED: c_int = 1;
 /// `enum ssl_renegotiate_mode_t` — passed to `SSL_set_renegotiate_mode`.
 pub type ssl_renegotiate_mode_t = c_uint;
 pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
-pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
 
 /// `SSL_OP_LEGACY_SERVER_CONNECT` — BoringSSL defines this as 0 (no-op flag);
 /// kept so callers can mirror the OpenSSL clear/set dance verbatim.
@@ -983,8 +982,6 @@ unsafe extern "C" {
     // ── SSL ──────────────────────────────────────────────────────────────
     pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
     pub fn SSL_free(ssl: *mut SSL);
-    pub fn SSL_set_connect_state(ssl: *mut SSL);
-    pub fn SSL_set_accept_state(ssl: *mut SSL);
     pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
     pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
     pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
@@ -1034,8 +1031,6 @@ unsafe extern "C" {
     );
     pub fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: c_int);
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
-    pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
-    pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
     pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);

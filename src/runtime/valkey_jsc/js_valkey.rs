@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 
+use crate::api::SSLContextCache::SSLContextCache;
 use crate::socket::ssl_config::ParsedTls;
 use bun_boringssl as boringssl;
 use bun_core::{String as BunString, strings};
@@ -1471,12 +1472,9 @@ impl JSValkeyClient {
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
-                let state = crate::jsc_hooks::runtime_state();
-                debug_assert!(!state.is_null(), "RuntimeState not installed");
-                // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
-                // stable address for the VM's lifetime, JS-thread-only.
-                let cache = unsafe { &mut (*state).ssl_ctx_cache };
-                self._secure.set(cache.get_or_create(custom, &mut err));
+                self._secure.set(SSLContextCache::with(|cache| {
+                    cache.get_or_create(custom, &mut err)
+                }));
             }
             self._secure.get().is_none()
         } else {

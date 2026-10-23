@@ -55,10 +55,17 @@ void sweep_timer_cb(struct us_internal_callback_t *cb);
 // when the sweep timer is disabled, we don't need to do anything
 void sweep_timer_noop(struct us_timer_t *timer) {}
 
+/* The coarse reading comes first, so the next sweep is no less than a period after it. */
+static void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_time_ms = us_internal_coarse_ms();
+    us_timer_again(loop->data.sweep_timer);
+}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
         us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
+        us_internal_restart_sweep_timer(loop);
         Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
 }
@@ -80,10 +87,16 @@ uint64_t us_internal_monotonic_ns(void) {
     return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
 }
 
+/* The coarse reading comes first, so the next sweep is no less than a period after it. */
+static void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_time_ms = us_internal_coarse_ms();
+    loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
+}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
-        loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
+        us_internal_restart_sweep_timer(loop);
         Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
 }
@@ -106,15 +119,9 @@ long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
 }
 
 void us_internal_sweep_if_due(struct us_loop_t *loop) {
-    if (loop->data.sweep_next_tick_ns < 0) {
+    if (loop->data.sweep_next_tick_ns < 0 || (long long) us_internal_monotonic_ns() < loop->data.sweep_next_tick_ns) {
         return;
     }
-    long long now = (long long) us_internal_monotonic_ns();
-    if (now < loop->data.sweep_next_tick_ns) {
-        return;
-    }
-    /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
-    loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
     us_internal_timer_sweep(loop);
 }
 
@@ -244,13 +251,16 @@ static const int MAX_LOW_PRIO_TICKS = 120 / LIBUS_TIMEOUT_GRANULARITY;
 /* This functions should never run recursively */
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
+    /* The next sweep is a whole period after this one. First, because a timeout handler may unlink the last socket and disarm. */
+    if (loop_data->sweep_timer_count) {
+        us_internal_restart_sweep_timer(loop);
+    }
+    const uint32_t tick = ++loop_data->sweep_tick;
     /* For all socket groups in this loop */
     loop_data->iterator = loop_data->head;
     while (loop_data->iterator) {
 
         struct us_socket_group_t *group = loop_data->iterator;
-
-        uint32_t tick = ++group->global_tick;
 
         /* Begin at head */
         struct us_socket_t *s = group->head_sockets;
@@ -309,7 +319,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             if (s->timeout != LIBUS_NO_TIMEOUT) {
                 s->timeout++;
             }
-        } else if (s->group->global_tick >= s->timeout) {
+        } else if (tick >= s->timeout) {
             s->timeout = LIBUS_NO_TIMEOUT;
             us_internal_ssl_on_timeout(s);
             if (loop_data->low_prio_iterator != s) continue;
@@ -386,7 +396,7 @@ void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void*
     us_wakeup_loop(loop);
 }
 
-void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
+static void us_internal_drain_pending_dns_resolve(struct us_connecting_socket_t *s) {
     while (s) {
         struct us_connecting_socket_t *next = s->next;
         us_internal_socket_after_resolve(s);
@@ -399,7 +409,7 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
     struct us_connecting_socket_t *s = loop->data.dns_ready_head;
     loop->data.dns_ready_head = NULL;
     Bun__unlock(&loop->data.mutex);
-    us_internal_drain_pending_dns_resolve(loop, s);
+    us_internal_drain_pending_dns_resolve(s);
     return s != NULL;
 }
 
@@ -467,7 +477,10 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 
 #ifdef LIBUS_USE_LIBUV
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
-    us_internal_timer_sweep(cb->loop);
+    /* libuv's timer keeps running without sockets (us_timer_set), and a sweep then would break what us_internal_timeout_tick counts on. */
+    if (cb->loop->data.sweep_timer_count) {
+        us_internal_timer_sweep(cb->loop);
+    }
 }
 #endif
 
@@ -505,12 +518,6 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     }
     loop->data.post_cb(loop);
 }
-
-#ifdef WIN32
-#define us_ioctl ioctlsocket
-#else
-#define us_ioctl ioctl
-#endif
 
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
@@ -980,7 +987,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     /* We got FIN back after sending it */
                     if (s->send_rejected && unsent_is_lost) {
                         /* This owner reads nothing until the lost bytes drain: left open for what is queued, its hangup would fire for ever. */
-                        s = us_internal_socket_close_raw(s, us_socket_rejected_send_error(s), NULL);
+                        s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
                         return;
                     }
                     s = s->send_rejected ? us_internal_socket_close_after_rejected_send(s)
@@ -1198,5 +1205,3 @@ void us_loop_integrate(struct us_loop_t *loop) {
 __attribute__((always_inline)) void *us_loop_ext(struct us_loop_t *loop) {
     return loop + 1;
 }
-
-#undef us_ioctl

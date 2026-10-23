@@ -438,6 +438,40 @@ describe.skipIf(!isLinux).concurrent("tls.getCACertificates('default') lists wha
     });
     expect(exitCode).toBe(0);
   });
+
+  test("NODE_USE_SYSTEM_CA=true and a compiled executable, which parses no flags", async () => {
+    using dir = tempDir("default-ca-sources-compiled", {
+      "certs/ca1.pem": readFileSync(join(keys, "ca1-cert.pem"), "utf8"),
+      "run.js": script,
+    });
+    await using build = spawn({
+      cmd: [bunExe(), "build", "--compile", "run.js", "--outfile", "app"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await build.exited).toBe(0);
+    await using proc = spawn({
+      cmd: [join(String(dir), "app")],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        NODE_USE_SYSTEM_CA: "true",
+        NODE_EXTRA_CA_CERTS: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: join(String(dir), "certs"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ listed: true, trusted: true }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("--use-openssl-ca", () => {
@@ -510,13 +544,15 @@ describe.concurrent("--use-openssl-ca", () => {
     }
   });
 
-  test.each([undefined, "0"])("excludes bundled and system roots (NODE_USE_SYSTEM_CA=%s)", async systemCA => {
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "--use-openssl-ca",
-        "-e",
-        `
+  test.each([undefined, "0", "1", "true"])(
+    "excludes bundled and system roots (NODE_USE_SYSTEM_CA=%s)",
+    async systemCA => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "--use-openssl-ca",
+          "-e",
+          `
         const assert = require("node:assert/strict");
         const tls = require("node:tls");
         assert.ok(tls.rootCertificates.length > 0);
@@ -524,27 +560,28 @@ describe.concurrent("--use-openssl-ca", () => {
         assert.equal(tls.getCACertificates("default").length, 0);
         console.log("OK");
       `,
-      ],
-      env: {
-        ...bunEnv,
-        NODE_USE_SYSTEM_CA: systemCA,
-        NODE_EXTRA_CA_CERTS: undefined,
-        SSL_CERT_FILE: "",
-        SSL_CERT_DIR: "",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
-  });
+        ],
+        env: {
+          ...bunEnv,
+          NODE_USE_SYSTEM_CA: systemCA,
+          NODE_EXTRA_CA_CERTS: undefined,
+          SSL_CERT_FILE: "",
+          SSL_CERT_DIR: "",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+    },
+  );
 
   test.each([
     ["--use-openssl-ca", "-e", 'console.log("executed")'],
     ["--use-openssl-ca", "install"],
     ["install", "--use-openssl-ca"],
-  ])("rejects NODE_USE_SYSTEM_CA=1 before executing %j", async (...args) => {
-    using dir = tempDir("openssl-ca-conflict", { "package.json": "{}" });
+  ])("runs with NODE_USE_SYSTEM_CA=1, as on 1.4.4: %j", async (...args) => {
+    using dir = tempDir("openssl-ca-and-variable", { "package.json": "{}" });
     await using proc = spawn({
       cmd: [bunExe(), ...args],
       cwd: String(dir),
@@ -552,12 +589,9 @@ describe.concurrent("--use-openssl-ca", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "",
-      stderr: "error: either --use-openssl-ca or --use-system-ca can be used, not both\n",
-      exitCode: 1,
-    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (args.includes("-e")) expect(stdout).toBe("executed\n");
+    expect(exitCode).toBe(0);
   });
 
   test("doesn't list the certificates of $SSL_CERT_FILE, as in Node", async () => {

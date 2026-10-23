@@ -57,9 +57,6 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterDuplex);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished);
-JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterServername);
-JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAuthorizationError);
-JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasQueuedTunnelReads);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosedWithUnsentData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterCloseError);
@@ -98,9 +95,6 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "closeWhenDrained"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseWhenDrained, 0 } },
     { "closeIfIdle"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseIfIdle, 0 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
-    { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
-    { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
-    { "peerCertVerified"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterPeerCertVerified, noOpSetter } },
     { "hasQueuedTunnelReads"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterHasQueuedTunnelReads, noOpSetter } },
     { "closedWithUnsentData"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosedWithUnsentData, noOpSetter } },
     { "closeError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterCloseError, noOpSetter } },
@@ -339,35 +333,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished, (JSC::
     return JSValue::encode(JSC::jsBoolean(thisObject->isAuthorized()));
 }
 
-// SNI hostname the client sent, as a string; null when not TLS / no SNI.
-JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterServername, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    const char* servername = thisObject->sniServername();
-    if (!servername || !*servername) {
-        return JSValue::encode(JSC::jsNull());
-    }
-    return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String::fromUTF8(servername)));
-}
-
-// X.509 verification error code for the peer certificate; null when verified
-// (or when there is nothing to verify).
-JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAuthorizationError, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    const char* code = thisObject->peerCertificateVerificationError();
-    if (!code) {
-        return JSValue::encode(JSC::jsNull());
-    }
-    return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String::fromLatin1(code)));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasQueuedTunnelReads, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
@@ -386,15 +351,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosedWithUnsentData, (JSC:
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsBoolean(*thisObject->closedWithUnsentData));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    return JSValue::encode(JSC::jsBoolean(thisObject->isPeerCertificateVerified()));
 }
 
 // The error of the read that closed the connection (`read ECONNRESET` for a peer RST), or undefined.

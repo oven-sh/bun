@@ -141,7 +141,6 @@ function isInt32(value) {
 // COMPILING HOST's <errno.h> value, so on Windows it reports -9/-22/-105
 // where Node/libuv report the synthetic -4083/-4071/-4081.
 const UV_EBADF = process.platform === "win32" ? -4083 : -9;
-const UV_EEXIST = process.platform === "win32" ? -4075 : -17;
 const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 // Unlike the codes above, ECANCELED's number differs across the POSIX
 // platforms (Linux 125, Darwin 89, FreeBSD 85) and is a libuv-synthetic
@@ -153,10 +152,6 @@ const UV_ECANCELED = $bindgen("node_util_binding.bind.ts", "ecanceledErrorCode")
 const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
 
 const getFdFn = $bindgen("udp_socket.bind.ts", "getFd");
-// Read-only query of the process-wide DGRAM_FDS registry the native layer
-// already maintains, so bind({ fd }) can synchronously report EEXIST like
-// libuv's uv_udp_open() without keeping a second per-VM copy of the same fact.
-const isFdAdoptedFn = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
 // Fresh getsockname on a live socket's descriptor: the cached `.address`
 // getter can be stale for an adopted-but-unbound fd once the kernel
 // auto-binds on first sendto(); Node calls getsockname on every address().
@@ -603,11 +598,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
     if (type !== "UDP") {
       throw $ERR_INVALID_FD_TYPE(type);
     }
-    // Query the native registry so bind({ fd }) throws synchronously like
-    // uv_udp_open (startBunSocket routes the same failure to emit('error')).
-    if (isFdAdoptedFn(fd)) {
-      throw new ErrnoException(UV_EEXIST, "open");
-    }
     startBunSocket(this, state, { fd });
     return this;
   }
@@ -813,6 +803,8 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
   } catch (err) {
     state.bindState = BIND_STATE_UNBOUND;
     if (sharedHandle) releaseSharedHandle(state, sharedHandle);
+    // bind({ fd }) is the caller, and node throws what handle.open(fd) returns.
+    else if (createOptions.fd !== undefined) throw err;
     self.emit("error", err);
   }
 }

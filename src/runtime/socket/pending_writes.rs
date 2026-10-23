@@ -1,5 +1,5 @@
 use bun_io::StreamBuffer;
-use core::ffi::c_int;
+use bun_sys::SystemErrno;
 
 /// Bytes a write accepted and the socket hasn't taken yet. A partial send advances a cursor instead of moving the rest.
 #[derive(Default)]
@@ -8,14 +8,15 @@ pub(crate) struct PendingWrites {
     completion: Completion,
 }
 
-/// What `$write` still owes node:net: one `writeComplete` call for a write it answered "queued".
+/// How the queued bytes end, which their owner hears once.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Completion {
     #[default]
     None,
+    /// `$write` answered "queued", so node:net waits for one `writeComplete` call.
     Owed,
-    /// The send failed for good. This status waits for the close, behind what the peer sent.
-    Failed(c_int),
+    /// The bytes are lost. The error waits for the close, behind what the peer sent.
+    Failed(SystemErrno),
 }
 
 impl PendingWrites {
@@ -53,6 +54,12 @@ impl PendingWrites {
         }
     }
 
+    /// Frees the bytes.
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.bytes = StreamBuffer::default();
+    }
+
     #[inline]
     pub(crate) fn completion(&self) -> Completion {
         self.completion
@@ -67,16 +74,16 @@ impl PendingWrites {
     }
 
     /// Frees the bytes, which no send can deliver any more. The first failure is the one reported.
-    pub(crate) fn fail(&mut self, status: c_int) {
-        self.bytes = StreamBuffer::default();
-        if self.completion == Completion::Owed {
-            self.completion = Completion::Failed(status);
+    pub(crate) fn fail(&mut self, errno: SystemErrno) {
+        self.clear();
+        if !matches!(self.completion, Completion::Failed(_)) {
+            self.completion = Completion::Failed(errno);
         }
     }
 
     /// Frees the bytes and hands the completion to the caller, who delivers it.
     pub(crate) fn take(&mut self) -> Completion {
-        self.bytes = StreamBuffer::default();
+        self.clear();
         core::mem::take(&mut self.completion)
     }
 }

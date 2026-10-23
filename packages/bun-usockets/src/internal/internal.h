@@ -90,6 +90,7 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define LIBUS_ECANCELED WSAEINTR
 #else
 #include <errno.h>
+#include <time.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #define LIBUS_ECONNRESET ECONNRESET
@@ -158,6 +159,8 @@ extern struct ssl_ctx_st *us_dispatch_server_name(void *bun_socket, const char *
 /* The ALPN protocols a ClientHello offers, as entries of (u8 length, bytes). Only for an SSL that called us_ssl_on_alpn_offer.
  * Returns 0 if the owner refuses them all. */
 extern int us_dispatch_alpn_offer(struct ssl_st *ssl, const unsigned char *protocols, unsigned int length);
+/* BoringSSL's ALPN select callback, for a server-side SSL whose listen socket has no us_listen_socket_set_alpn list. */
+extern int us_dispatch_alpn_select(struct ssl_st *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 /* crypto/sni_tree.cpp: the one place server names are compared. */
 void *sni_new();
@@ -283,7 +286,6 @@ int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int coun
 int us_internal_ssl_fatal_write_error(us_socket_r s);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
-const char *us_internal_ssl_sni_servername(us_socket_r s);
 /* Drops the listen socket's references to ls->ssl_ctx and ls->server_names. Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
@@ -304,12 +306,42 @@ int us_internal_handle_dns_results(us_loop_r loop);
 
 #define LIBUS_NO_TIMEOUT UINT32_MAX
 
-/* The tick in progress may be about to end, so it doesn't count: a timeout never fires early. */
-static inline uint32_t us_internal_timeout_tick(struct us_socket_group_t *group, unsigned int seconds) {
+/* More than us_internal_coarse_ms() can lag behind the time: a jiffy at HZ=100 is 10 ms, a Windows tick 16 ms. */
+#define LIBUS_COARSE_CLOCK_LAG_MS 50
+
+/* Cheap enough to read whenever a timeout is set. Only differences over a few seconds mean anything. */
+static inline uint64_t us_internal_coarse_ms(void) {
+#if defined(_WIN32)
+    return GetTickCount64();
+#elif defined(__APPLE__)
+    return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW_APPROX) / 1000000;
+#else
+    struct timespec ts;
+#if defined(CLOCK_MONOTONIC_COARSE)
+    clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+#elif defined(CLOCK_MONOTONIC_FAST)
+    clock_gettime(CLOCK_MONOTONIC_FAST, &ts);
+#else
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
+    return (uint64_t) ts.tv_sec * 1000 + (uint64_t) ts.tv_nsec / 1000000;
+#endif
+}
+
+/* Sweeps are at least a period apart, so the n-th from now comes no earlier than n periods after the last one: a timeout never fires early. */
+static inline uint32_t us_internal_timeout_tick(struct us_loop_t *loop, unsigned int seconds) {
     if (!seconds) {
         return LIBUS_NO_TIMEOUT;
     }
-    return group->global_tick + (uint32_t) (((uint64_t) seconds + LIBUS_TIMEOUT_GRANULARITY - 1) / LIBUS_TIMEOUT_GRANULARITY) + 1;
+    const uint64_t period = LIBUS_TIMEOUT_GRANULARITY * 1000;
+    uint64_t ms = (uint64_t) seconds * 1000;
+    /* With no socket there are no sweeps, and the first socket starts a whole period. */
+    if (loop->data.sweep_timer_count) {
+        uint64_t since_sweep = us_internal_coarse_ms() - loop->data.sweep_time_ms + LIBUS_COARSE_CLOCK_LAG_MS;
+        /* A sweep that is overdue still comes after this call, and the next a whole period after that one. */
+        ms += since_sweep < period ? since_sweep : period;
+    }
+    return loop->data.sweep_tick + (uint32_t) ((ms + period - 1) / period);
 }
 
 /* Sockets are polls */
@@ -349,7 +381,6 @@ struct us_socket_t {
    * sets it. */
   unsigned char ssl_write_parked : 1;
   unsigned char ssl_fatal_error : 1;
-  unsigned char ssl_is_server : 1;
   /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted
    * bytes via us_dispatch_ssl_raw_tap() before feeding them to SSL_read.
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's

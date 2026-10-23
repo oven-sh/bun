@@ -402,7 +402,7 @@ class ProxyConfig {
   bypassList;
   proxyConnectionOptions;
 
-  constructor(proxyUrl, keepAlive, noProxyList) {
+  constructor(proxyUrl, noProxyList) {
     let parsedURL;
     try {
       parsedURL = new URL(proxyUrl);
@@ -500,7 +500,7 @@ function parseProxyUrl(env, protocol) {
   return proxyUrl;
 }
 
-function parseProxyConfigFromEnv(env, protocol, keepAlive) {
+function parseProxyConfigFromEnv(env, protocol) {
   // We only support proxying for HTTP and HTTPS requests.
   if (protocol !== "http:" && protocol !== "https:") return null;
   const proxyUrl = parseProxyUrl(env, protocol);
@@ -508,7 +508,7 @@ function parseProxyConfigFromEnv(env, protocol, keepAlive) {
 
   // Only http:// and https:// proxies are supported. Ignore instead of throw, in case other protocols are supposed to be handled by the user land.
   if (!proxyUrl.startsWith("http://") && !proxyUrl.startsWith("https://")) return null;
-  return new ProxyConfig(proxyUrl, keepAlive, env.no_proxy || env.NO_PROXY);
+  return new ProxyConfig(proxyUrl, env.no_proxy || env.NO_PROXY);
 }
 
 function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {

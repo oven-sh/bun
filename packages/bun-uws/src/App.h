@@ -101,9 +101,6 @@ public:
     /* Server name. See us_listen_socket_add_server_name for ownClientAuth. */
     TemplatedApp &&addServerName(const std::string &hostname_pattern, struct ssl_ctx_st *domainCtx, bool ownClientAuth) {
         static_assert(SSL);
-        if (httpContext->getSocketContextData()->http2Context) {
-            us_ssl_ctx_enable_http2_alpn(domainCtx, httpContext->getSocketContextData()->allowHttp1);
-        }
         forEachListenSocket([&](us_listen_socket_t *ls) {
             us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, ownClientAuth);
         });
@@ -285,12 +282,9 @@ public:
     void attachHttp2(Http2Context *ctx, bool allowHttp1) {
         ctx->attach(httpContext->getSocketContextData(), allowHttp1);
         if constexpr (SSL) {
-            us_ssl_ctx_enable_http2_alpn(sslCtx, allowHttp1);
-            /* Bun attaches before addServerName(), which enables ALPN itself;
-             * this covers embedders that add names first. */
-            for (auto &p : pendingServerNames) {
-                us_ssl_ctx_enable_http2_alpn(p.ctx, allowHttp1);
-            }
+            forEachListenSocket([&](us_listen_socket_t *ls) {
+                offerHttp2(ls);
+            });
         }
     }
 
@@ -615,8 +609,17 @@ private:
             for (auto &p : pendingServerNames) {
                 us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.ownClientAuth);
             }
+            offerHttp2(ls);
         }
         return ls;
+    }
+
+    /* With an HTTP/2 context attached, TLS connections prefer "h2", then "http/1.1" if HTTP/1 is allowed. */
+    void offerHttp2(us_listen_socket_t *ls) {
+        auto *data = httpContext->getSocketContextData();
+        if (data->http2Context) {
+            us_listen_socket_set_alpn(ls, (const unsigned char *) "\x02h2\x08http/1.1", data->allowHttp1 ? 12 : 3, !data->allowHttp1);
+        }
     }
 
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }

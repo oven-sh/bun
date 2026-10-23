@@ -125,7 +125,7 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   return result;
 }
 
-function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
+function establishTunnel(agent, socket, tunnelConfig, afterSocket) {
   const { proxyTunnelPayload } = tunnelConfig;
   // Once the tunnel outcome is decided the raw socket belongs to the TLS
   // wrap; stop reading from it and never re-register the readable listener.
@@ -345,7 +345,7 @@ function createConnection(...args) {
     });
     function onProxyConnection() {
       socket.removeListener("error", onError);
-      establishTunnel(agent, socket, options, tunnelConfig, cleanupAndPropagate);
+      establishTunnel(agent, socket, tunnelConfig, cleanupAndPropagate);
     }
     if (this[kProxyConfig].protocol === "http:") {
       socket = require("node:net").connect(connectOptions, onProxyConnection);
@@ -631,8 +631,8 @@ Server.prototype.addContext = function addContext(hostname, context) {
 Server.prototype.setSecureContext = function setSecureContext(options) {
   validateObject(options, "options");
   const tlsServer = this[tlsSymbol];
-  // BoringSSL has no DHE suites to apply dhparam to.
-  tlsServer.setSecureContext({ ...options, dhparam: undefined });
+  // Inherits, because tls.Server reads each option by name: one that is inherited, a getter or non-enumerable counts, as in Node.
+  tlsServer.setSecureContext({ __proto__: options, ...require("internal/tls").ignoredByHttpsServer });
   const handle = this[serverSymbol];
   if (handle) setListenerSecureContext(handle, tlsServer._sharedCreds.context);
 };

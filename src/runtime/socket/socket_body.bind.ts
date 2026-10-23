@@ -110,7 +110,11 @@ export const NodeHTTPServerSocketTLS = b.class({
   rustTraits,
   construct: { args: { socket: b.any }, capability: "js", passStructure: true },
   internalFields: ["socket"],
-  proto: tlsHandle,
+  proto: {
+    ...tlsHandle,
+    /** The X.509 error code of the client's certificate chain. `null` if it verified. */
+    verifyErrorCode: { ...js, getter: b.any },
+  },
 });
 
 export const BunSocket = b.union({ tcp: TCPSocket, tls: TLSSocket });
@@ -119,6 +123,12 @@ export const SocketHandle = b.union({ tcp: TCPSocket, tls: TLSSocket, ignored: b
 
 export const upgradeTLSDeferred = b.fn({
   args: { socket: BunSocket, options: b.any },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+});
+export const upgradeDuplexToTLS = b.fn({
+  args: { duplex: b.any, options: b.any },
   returns: b.any,
   capability: "js",
   throws: true,

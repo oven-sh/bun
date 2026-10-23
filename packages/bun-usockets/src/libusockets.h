@@ -147,6 +147,7 @@ enum {
     /* Setting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
     LIBUS_SOCKET_IPV6_ONLY = 8,
     LIBUS_LISTEN_REUSE_ADDR = 16,
+    LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
     /* Ask the kernel to defer accept() until the client has sent data (TCP_DEFER_ACCEPT on
      * Linux, SO_ACCEPTFILTER "dataready" on FreeBSD). When set, accepted sockets are
      * dispatched as readable immediately, skipping a round-trip through the event loop
@@ -310,7 +311,6 @@ struct us_socket_group_t {
     struct us_listen_socket_t *head_listen_sockets;
     struct us_socket_t *iterator;
     struct us_socket_group_t *prev, *next;
-    uint32_t global_tick;
     /* Sockets currently parked in loop->data.low_prio_head with s->group == this.
      * They are NOT in head_sockets while queued, so close_all/deinit must
      * account for them separately. */
@@ -435,6 +435,8 @@ int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 void us_ssl_on_server_name(struct ssl_st *ssl);
 /* us_socket_sni_resolve for whoever else drives `ssl`. Returns 1 if the handshake waited for the answer: drive it again. */
 int us_ssl_sni_resolve(struct ssl_st *ssl, struct ssl_ctx_st *ctx, int error);
+/* How many bytes may wait behind the ClientHello of a suspended handshake. A peer that sends more is dropped. */
+unsigned int us_ssl_sni_held_max(void);
 /* 1 while the handshake is suspended for an asynchronous SNICallback. */
 int us_ssl_sni_waiting(const struct ssl_st *ssl);
 /* 1 once the resolver refused the name: the connection is dropped without a TLS alert. */
@@ -480,11 +482,6 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnul
 
 /* The X509 verdict on the peer's chain, as it stands now. */
 struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(struct ssl_st *ssl);
-
-/* SNI hostname the peer sent in its ClientHello (server-side TLS sockets), or
- * NULL when the socket is not TLS or no SNI extension was sent. The returned
- * pointer is owned by the SSL object and only valid while the socket lives. */
-const char *us_socket_sni_servername(struct us_socket_t *s);
 
 /* ── SSL_CTX construction ─────────────────────────────────────────────────
  * The expensive bit (cert/key/CA parse, cipher list, DH params) is decoupled
@@ -556,9 +553,9 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
-/* Install an ALPN selector that prefers "h2", then "http/1.1" (when
- * allow_http1). Used by uWS when an App has an HTTP/2 context attached. */
-void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
+/* ALPN for the connections `ls` accepts. `protocols` is entries of (u8 length, bytes) in the server's order of preference, copied.
+ * A client that offers ALPN but none of them goes on without it, or gets no_application_protocol if `required`. */
+void us_listen_socket_set_alpn(struct us_listen_socket_t *ls, const unsigned char *protocols, unsigned int length, int required) nonnull_fn_decl;
 /* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
 int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
@@ -703,7 +700,7 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
  * from one the peer has already written to or closed. */
 int us_socket_queued_input(us_socket_r s) nonnull_fn_decl;
 
-/* Why the kernel rejected a send for good (LIBUS_ERR numbering), or 0. The socket reads on and then closes by itself. */
+/* Why the kernel rejected a send for good (LIBUS_ERR numbering), or 0. The socket reads on, then closes by itself with ECONNRESET. */
 int us_socket_rejected_send_error(us_socket_r s) nonnull_fn_decl;
 
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;

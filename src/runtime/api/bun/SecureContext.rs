@@ -13,6 +13,7 @@
 //! allocates one of these and one `SSL_CTX` total — `tls.ts` no longer hashes
 //! in JS.
 
+use crate::api::SSLContextCache::SSLContextCache;
 use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::SSLConfig;
 use crate::socket::ssl_config::ParsedTls;
@@ -54,6 +55,27 @@ impl SecureContext {
         let global = cx.global();
         let config = Self::config_from_js(global, options.to_js())?;
         SecureContext::create(global, &config)
+    }
+
+    /// The `SSL_CTX` of `options.secureContext`. `None` if `options` isn't an object or names none.
+    pub(crate) fn ctx_from_options(
+        global: &JSGlobalObject,
+        options: JSValue,
+    ) -> JsResult<Option<boringssl::OwnedSslCtx>> {
+        if !options.is_object() {
+            return Ok(None);
+        }
+        let Some(value) = options.get_truthy(global, "secureContext")? else {
+            return Ok(None);
+        };
+        match value.as_class_ref::<SecureContext>() {
+            Some(context) => Ok(Some(context.ctx.clone())),
+            None => Err(global.throw_invalid_argument_type_value(
+                b"secureContext",
+                b"SecureContext",
+                value,
+            )),
+        }
     }
 
     fn config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<SSLConfig> {
@@ -271,19 +293,9 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<SecureContext> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
-        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
-        // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
-        // on this crate's `RuntimeState` (one per JS thread, same lifetime as
-        // `RareData`). Reach it via the thread-local — same instance
-        // `Bun__RareData__sslCtxCache` hands out over FFI.
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
-        // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
-        // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
-        let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
+        let Some(ctx) =
+            SSLContextCache::with(|cache| cache.get_or_create_digest(ctx_opts, d, &mut err))
+        else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of

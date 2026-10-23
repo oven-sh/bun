@@ -3,7 +3,7 @@
 // configs (including `{servername}`-only and inline-CA configs) allocate one
 // CTX, not one per connection. The cache holds zero refs — when the last
 // real owner drops, BoringSSL's ex_data free callback tombstones the entry.
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import tls from "node:tls";
@@ -514,6 +514,142 @@ test("Listener.stop() releases its SSL_CTX without waiting for GC", () => {
     peak: 1,
     listeners: 5,
   });
+});
+
+test("Bun.serve() and Bun.listen() servers with the same tls options share one SSL_CTX", () => {
+  Bun.gc(true);
+  const before = sslCtxLiveCount();
+  const servers: { stop(closeActiveConnections?: boolean): unknown }[] = [];
+  try {
+    for (let i = 0; i < 5; i++) {
+      servers.push(Bun.serve({ port: 0, tls: tlsCerts, fetch: () => new Response("ok") }));
+      servers.push(Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsCerts, socket: { data() {} } }));
+    }
+    expect(sslCtxLiveCount() - before).toBe(1);
+  } finally {
+    for (const server of servers) server.stop(true);
+  }
+});
+
+describe("servers that share an SSL_CTX", () => {
+  const key = (name: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", name), "utf8");
+  // ca1 signs agent1, ca2 signs agent3. agent2 is self-signed.
+  const agent1 = { key: key("agent1-key.pem"), cert: key("agent1-cert.pem") };
+  const agent2 = { key: key("agent2-key.pem"), cert: key("agent2-cert.pem") };
+  const agent3 = { key: key("agent3-key.pem"), cert: key("agent3-cert.pem") };
+  const ca = [key("ca1-cert.pem"), agent2.cert];
+  const fetch = () => new Response("ok");
+
+  // Resolves with what the handshake settled, or with the error code.
+  function hello(port: number, options: tls.ConnectionOptions = {}) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = tls.connect(
+      { port, host: "127.0.0.1", ca, checkServerIdentity: () => undefined, ...options },
+      () => {
+        const settled = `${socket.getPeerCertificate().subject.CN} ${socket.alpnProtocol} ${socket.isSessionReused()}`;
+        // A TLS 1.3 server refuses the client's certificate after the client's handshake has ended.
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        socket.once("data", () => resolve(settled));
+        socket.once("close", () => resolve("closed"));
+      },
+    );
+    socket.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
+    return promise.finally(() => socket.destroy());
+  }
+
+  test("each select their own ALPN protocol", async () => {
+    using http2 = Bun.serve({ port: 0, tls: agent1, http2: true, fetch });
+    using http2Only = Bun.serve({ port: 0, tls: agent1, http2: true, http1: false, fetch });
+    using http1 = Bun.serve({ port: 0, tls: agent1, fetch });
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { ...agent1, ALPNProtocols: "\x03foo" },
+      socket: { data: socket => void socket.end("ok") },
+    });
+    const ALPNProtocols = ["foo", "http/1.1", "h2"];
+    // Twice, because a selector on the shared context would be that of the server that accepted last.
+    for (let round = 0; round < 2; round++) {
+      expect({
+        http2: await hello(http2.port!, { ALPNProtocols }),
+        http2Only: await hello(http2Only.port!, { ALPNProtocols }),
+        http1: await hello(http1.port!, { ALPNProtocols }),
+        listener: await hello(listener.port, { ALPNProtocols }),
+      }).toEqual({
+        http2: "agent1 h2 false",
+        http2Only: "agent1 h2 false",
+        http1: "agent1 false false",
+        listener: "agent1 foo false",
+      });
+    }
+    expect({
+      http2: await hello(http2.port!, { ALPNProtocols: ["foo"] }),
+      http2Only: await hello(http2Only.port!, { ALPNProtocols: ["foo"] }),
+    }).toEqual({ http2: "agent1 false false", http2Only: "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL" });
+  });
+
+  test("each have their own server names", async () => {
+    using named = Bun.serve({ port: 0, tls: [agent1, { ...agent2, serverName: "two.test" }], fetch });
+    using sameDefault = Bun.serve({ port: 0, tls: agent1, fetch });
+    using sameAsTheName = Bun.serve({ port: 0, tls: agent2, fetch });
+    const rows = {};
+    for (const [name, server] of Object.entries({ named, sameDefault, sameAsTheName })) {
+      rows[name] = [
+        await hello(server.port!, { servername: "two.test" }),
+        await hello(server.port!, { servername: "other.test" }),
+      ];
+    }
+    expect(rows).toEqual({
+      named: ["agent2 false false", "agent1 false false"],
+      sameDefault: ["agent1 false false", "agent1 false false"],
+      sameAsTheName: ["agent2 false false", "agent2 false false"],
+    });
+  });
+
+  test("ask for a client certificate only where their own options say so", async () => {
+    const mutual = { ...agent2, ca: key("ca2-cert.pem"), requestCert: true, rejectUnauthorized: true };
+    using perName = Bun.serve({ port: 0, tls: [agent1, { ...mutual, serverName: "mutual.test" }], fetch });
+    using whole = Bun.serve({ port: 0, tls: mutual, fetch });
+    const servername = "mutual.test";
+    const refused = "ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED";
+    expect({
+      perName: [
+        await hello(perName.port!),
+        await hello(perName.port!, { servername }),
+        await hello(perName.port!, { servername, ...agent3 }),
+        await hello(perName.port!, { servername, ...agent1 }),
+      ],
+      whole: [
+        await hello(whole.port!),
+        await hello(whole.port!, { servername }),
+        await hello(whole.port!, { servername, ...agent3 }),
+        await hello(whole.port!, { servername, ...agent1 }),
+      ],
+    }).toEqual({
+      perName: ["agent1 false false", refused, "agent2 false false", "closed"],
+      whole: [refused, refused, "agent2 false false", "closed"],
+    });
+  });
+
+  test.each(["TLSv1.2", "TLSv1.3"] as const)(
+    "resume each other's %s sessions, and no other server's",
+    async maxVersion => {
+      using first = Bun.serve({ port: 0, tls: agent1, fetch });
+      using sameOptions = Bun.serve({ port: 0, tls: agent1, fetch });
+      using otherOptions = Bun.serve({ port: 0, tls: { ...agent1, ciphers: "ECDHE-RSA-AES256-GCM-SHA384" }, fetch });
+      const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+      const socket = tls.connect({ port: first.port!, host: "127.0.0.1", ca, servername: "agent1", maxVersion });
+      socket.on("session", resolve).on("error", reject);
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      const session = await promise;
+      socket.destroy();
+      expect({
+        first: await hello(first.port!, { session, maxVersion }),
+        sameOptions: await hello(sameOptions.port!, { session, maxVersion }),
+        otherOptions: await hello(otherOptions.port!, { session, maxVersion }),
+      }).toEqual({ first: "agent1 false true", sameOptions: "agent1 false true", otherOptions: "agent1 false false" });
+    },
+  );
 });
 
 // Releasing at close() must not pull the CTX out from under a socket the

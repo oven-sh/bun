@@ -261,11 +261,14 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
 
         const failed = Promise.withResolvers();
         let early = true;
+        // Keeps the sweeps going, so that the timeout is set a moment after one.
+        using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        sweepSocketTimers(1);
         const ws = new WebSocket("ws://" + host + ":" + port);
         ws.onerror = event => failed.resolve({ early, message: event.message.split(" failed: ")[1] });
         // The next loop iteration dials both addresses.
         await new Promise(resolve => setImmediate(resolve));
-        // A sweep runs every 4 seconds, and the first doesn't count.
+        // A sweep runs every 4 seconds, and the 250th comes a moment too early.
         sweepSocketTimers(1000 / 4);
         early = false;
         sweepSocketTimers(1);

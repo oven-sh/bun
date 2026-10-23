@@ -98,11 +98,11 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
-    s->timeout = us_internal_timeout_tick(s->group, seconds);
+    s->timeout = us_internal_timeout_tick(s->group->loop, seconds);
 }
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {
-    c->timeout = us_internal_timeout_tick(c->group, seconds);
+    c->timeout = us_internal_timeout_tick(c->loop, seconds);
 }
 
 __attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
@@ -394,7 +394,7 @@ struct us_socket_t *us_internal_socket_close_after_rejected_send(struct us_socke
     if (s->ssl) {
         return us_internal_ssl_close_after_rejected_send(s, unread);
     }
-    return unread ? s : us_internal_socket_close_raw(s, us_socket_rejected_send_error(s), NULL);
+    return unread ? s : us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
 }
 
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
@@ -444,11 +444,15 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
+    if (bsd_adopt_socket(fd, 0)) {
+        return 0;
+    }
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
     int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
+        bsd_disown_socket(fd);
         us_poll_free(p1, group->loop);
         return 0;
     }
@@ -567,10 +571,8 @@ static int us_internal_classify_failed_send(struct us_socket_t *s) {
     }
     return errno;
 #else
-    /* Windows: report the raw (positive) WSA code. The JS layer already
-     * traffics in raw negative WSA values on this platform (see
-     * SocketEmitEndNT / failWrite, which shape unnameable ones as
-     * ECONNRESET), and a real code keeps fatal sends distinguishable from
+    /* Windows: report the raw (positive) WSA code, which SocketGroup::errno
+     * decodes. A real code keeps fatal sends distinguishable from
      * the legacy -1 closed/shutdown sentinel so the h2 parser can latch
      * them (flood tests hung on Windows because a fatal send looked like
      * backpressure). Keep 1 as the floor for a zero/garbage WSA value.

@@ -28,6 +28,7 @@ import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
+import { sweepSocketTimers } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
@@ -1647,7 +1648,7 @@ it("reload() of a node:http-backed server keeps the 'connection' event firing", 
 });
 
 // Under --hot the module re-evaluates and listen() runs again against the same
-// native server from the hot map, re-invoking Server__setOnConnection. The JS
+// native server from the hot map, setting its onConnection callback again. The JS
 // onServerConnection callback dedupes on socketHandle.duplex, so this asserts
 // the user-visible contract (exactly one 'connection' per accept) holds across
 // hot reloads, not the native filter-vector size.
@@ -3404,148 +3405,109 @@ it.concurrent("we should always send date", async () => {
   }
 });
 
-it.concurrent.each([
-  ["never answers the close_notify", 1],
-  ["stopped reading the response", 64 * 1024 * 1024],
-])(
-  "idle timeout closes a tls connection whose client %s",
-  async (_name, size) => {
-    const aborted = Promise.withResolvers<void>();
-    using server = Bun.serve({
-      port: 0,
-      tls,
-      idleTimeout: 1,
-      async fetch(req) {
-        req.signal.addEventListener("abort", () => aborted.resolve());
-        if (size > 1) return new Response(Buffer.alloc(size, "x"));
-        await aborted.promise;
-        return new Response();
-      },
-    });
-    const client = nodeTls.connect({
-      port: server.port,
-      host: "127.0.0.1",
-      ca: tls.cert,
-      allowHalfOpen: true,
-    } as nodeTls.ConnectionOptions);
-    client.on("error", aborted.reject);
-    try {
-      await once(client, "secureConnect");
-      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-      await aborted.promise;
-    } finally {
-      client.destroy();
-    }
-  },
-  15_000,
-);
+// uSockets sweeps for timed-out sockets every 4 seconds (LIBUS_TIMEOUT_GRANULARITY), and a timeout is never
+// early. So idleTimeout 4 outlives the first sweep after a connection's last byte and ends at the second.
+// The tests that call this aren't concurrent: a forced sweep moves every socket in this process 4 seconds closer
+// to its timeout.
+async function sweep() {
+  // A promise resolved in a request handler continues before uWS has armed that request's timer.
+  await new Promise(setImmediate);
+  sweepSocketTimers(1);
+}
 
-// uSockets sweeps for timed-out sockets every 4 seconds (LIBUS_TIMEOUT_GRANULARITY) and rounds timeouts
-// up to whole sweeps. idleTimeout 1..4 closes an idle connection at the next sweep, 5..8 at the one after.
-// The three timeout tests below wait for the server to close an unanswered request instead of sleeping.
-it.concurrent(
-  "should allow use of custom timeout",
-  async () => {
-    const stalledRequestAborted = Promise.withResolvers<void>();
-    using server = Bun.serve({
-      port: 0,
-      idleTimeout: 1,
-      fetch(req) {
-        const stall = new URL(req.url).pathname === "/timeout";
-        if (stall) req.signal.addEventListener("abort", () => stalledRequestAborted.resolve(), { once: true });
-        return new Response(
-          new ReadableStream({
-            async pull(controller) {
-              controller.enqueue("Hello,");
-              // Never writes again, so only the idle timeout can close it.
-              if (stall) return stalledRequestAborted.promise;
-              await Bun.sleep(10);
-              controller.enqueue(" World!");
-              controller.close();
-            },
-          }),
-          { headers: { "Content-Type": "text/plain" } },
-        );
-      },
-    });
-
-    const stalled = await fetch(new URL("/timeout", server.url));
-    expect(stalled.status).toBe(200);
-    await expect(stalled.text()).rejects.toMatchObject({ code: "ECONNRESET" });
-    await stalledRequestAborted.promise;
-
-    // A sweep just ran, so this request has 4 seconds to finish before the next one.
-    const ok = await fetch(new URL("/ok", server.url));
-    expect({ status: ok.status, body: await ok.text() }).toEqual({ status: 200, body: "Hello, World!" });
-  },
-  15_000,
-);
-
-it.concurrent(
-  "should reset timeout after writes",
-  async () => {
-    const payload = Buffer.from("data: tick\n\n");
-    let chunksWritten = 0;
-    let streamAborted = false;
-    const streamStarted = Promise.withResolvers<void>();
-    const stopStreaming = Promise.withResolvers<void>();
-    using server = Bun.serve({
-      // Needs two sweeps. A one-sweep timeout fires at the next sweep even if a write just reset it.
-      idleTimeout: 5,
-      port: 0,
-      fetch(req) {
-        if (new URL(req.url).pathname === "/canary") {
-          // Never answered, so the idle timeout closes it.
-          return new Promise<Response>(() => {});
-        }
-        req.signal.addEventListener("abort", () => (streamAborted = true), { once: true });
-        let interval: ReturnType<typeof setInterval>;
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              streamStarted.resolve();
-              interval = setInterval(() => {
-                controller.enqueue(payload);
-                chunksWritten++;
-              }, 100);
-              stopStreaming.promise.then(() => {
-                clearInterval(interval);
-                if (!streamAborted) controller.close();
-              });
-            },
-            cancel() {
-              clearInterval(interval);
-            },
-          }),
-          {
-            headers: {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-            },
+it("should allow use of custom timeout", async () => {
+  let stalledRequestAborted = false;
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 4,
+    fetch(req) {
+      const stall = new URL(req.url).pathname === "/timeout";
+      const aborted = Promise.withResolvers<void>();
+      req.signal.addEventListener("abort", () => aborted.resolve(), { once: true });
+      if (stall) aborted.promise.then(() => (stalledRequestAborted = true));
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue("Hello,");
+            // Never writes again, so only the idle timeout can close it.
+            if (stall) return aborted.promise;
+            await Bun.sleep(10);
+            controller.enqueue(" World!");
+            controller.close();
           },
-        );
-      },
-    });
+        }),
+        { headers: { "Content-Type": "text/plain" } },
+      );
+    },
+  });
 
-    const streaming = fetch(server.url);
-    await streamStarted.promise;
-    // The canary's timeout starts after the stream's. Once the canary is closed, the stream has
-    // outlived a sweep that would have closed it without the resets.
-    const canaryError = await fetch(new URL("/canary", server.url)).catch(e => e);
-    stopStreaming.resolve();
-    expect(canaryError).toMatchObject({ code: "ECONNRESET" });
-    expect(streamAborted).toBe(false);
+  const stalled = await fetch(new URL("/timeout", server.url));
+  expect(stalled.status).toBe(200);
+  while (!stalledRequestAborted) await sweep();
+  await expect(stalled.text()).rejects.toMatchObject({ code: "ECONNRESET" });
 
-    const response = await streaming;
-    const body = await response.text();
-    expect({ status: response.status, chunksReceived: body.length / payload.byteLength }).toEqual({
-      status: 200,
-      chunksReceived: chunksWritten,
-    });
-    expect(chunksWritten).toBeGreaterThan(0);
-  },
-  20_000,
-);
+  const ok = await fetch(new URL("/ok", server.url));
+  expect({ status: ok.status, body: await ok.text() }).toEqual({ status: 200, body: "Hello, World!" });
+});
+
+it("should reset timeout after writes", async () => {
+  const payload = Buffer.from("data: tick\n\n");
+  let streamAborted = false;
+  let canaryAborted = false;
+  const canaryArrived = Promise.withResolvers<void>();
+  const streamStarted = Promise.withResolvers<ReadableStreamDefaultController>();
+  using server = Bun.serve({
+    idleTimeout: 4,
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname === "/canary") {
+        req.signal.addEventListener("abort", () => (canaryAborted = true), { once: true });
+        canaryArrived.resolve();
+        // Never answered, so the idle timeout closes it.
+        return new Promise<Response>(() => {});
+      }
+      req.signal.addEventListener("abort", () => (streamAborted = true), { once: true });
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(payload);
+            streamStarted.resolve(controller);
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        },
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  const reader = response.body!.getReader();
+  const controller = await streamStarted.promise;
+  let chunksWritten = 1;
+  let received = 0;
+  const canary = fetch(new URL("/canary", server.url)).catch(e => e);
+  await canaryArrived.promise;
+  // The canary's timeout starts after the stream's. The stream writes ahead of every sweep, and the client has the
+  // bytes before the sweep runs. Without the resets the stream would be closed no later than the canary.
+  while (!canaryAborted) {
+    controller.enqueue(payload);
+    chunksWritten++;
+    while (received < chunksWritten * payload.byteLength) received += (await reader.read()).value!.byteLength;
+    await sweep();
+  }
+  expect(await canary).toMatchObject({ code: "ECONNRESET" });
+  expect(streamAborted).toBe(false);
+
+  controller.close();
+  expect({ status: response.status, end: await reader.read() }).toEqual({
+    status: 200,
+    end: { done: true, value: undefined },
+  });
+});
 
 it.concurrent("allow requestIP after async operation", async () => {
   using server = Bun.serve({
@@ -3563,43 +3525,86 @@ it.concurrent("allow requestIP after async operation", async () => {
   expect(ip.family).toBeString();
 });
 
-it.concurrent(
-  "allow custom timeout per request",
-  async () => {
-    const longRequestArmed = Promise.withResolvers<void>();
-    const releaseLongRequest = Promise.withResolvers<void>();
-    let longRequestAborted = false;
+it("allow custom timeout per request", async () => {
+  const longRequestArmed = Promise.withResolvers<void>();
+  const canaryArrived = Promise.withResolvers<void>();
+  const releaseLongRequest = Promise.withResolvers<void>();
+  let longRequestAborted = false;
+  let canaryAborted = false;
+  using server = Bun.serve({
+    idleTimeout: 4,
+    port: 0,
+    async fetch(req, server) {
+      if (new URL(req.url).pathname === "/canary") {
+        req.signal.addEventListener("abort", () => (canaryAborted = true), { once: true });
+        canaryArrived.resolve();
+        // Never answered, so the server-wide idleTimeout closes it.
+        return new Promise<Response>(() => {});
+      }
+      server.timeout(req, 60);
+      req.signal.addEventListener("abort", () => (longRequestAborted = true), { once: true });
+      longRequestArmed.resolve();
+      await releaseLongRequest.promise;
+      return new Response("Hello, World!");
+    },
+  });
+  expect(server.timeout).toBeFunction();
+
+  const longRequest = fetch(new URL("/long-timeout", server.url));
+  await longRequestArmed.promise;
+  // The canary's timeout starts after the long request raised its own. Once the canary is closed,
+  // the long request has outlived a sweep that the server-wide idleTimeout would have closed it at.
+  const canary = fetch(new URL("/canary", server.url)).catch(e => e);
+  await canaryArrived.promise;
+  while (!canaryAborted) await sweep();
+  releaseLongRequest.resolve();
+  expect(await canary).toMatchObject({ code: "ECONNRESET" });
+  expect(longRequestAborted).toBe(false);
+
+  const res = await longRequest;
+  expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "Hello, World!" });
+});
+
+describe("idle timeout with a forced sweep", () => {
+  it.each([
+    ["never answers the close_notify", 1],
+    ["stopped reading the response", 64 * 1024 * 1024],
+  ])("idle timeout closes a tls connection whose client %s", async (_name, size) => {
+    const received = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
     using server = Bun.serve({
-      idleTimeout: 1,
       port: 0,
-      async fetch(req, server) {
-        if (new URL(req.url).pathname === "/canary") {
-          // Never answered, so the server-wide idleTimeout closes it at the next sweep.
-          return new Promise<Response>(() => {});
-        }
-        server.timeout(req, 60);
-        req.signal.addEventListener("abort", () => (longRequestAborted = true), { once: true });
-        longRequestArmed.resolve();
-        await releaseLongRequest.promise;
-        return new Response("Hello, World!");
+      tls,
+      idleTimeout: 4,
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        received.resolve();
+        if (size > 1) return new Response(Buffer.alloc(size, "x"));
+        await aborted.promise;
+        return new Response();
       },
     });
-    expect(server.timeout).toBeFunction();
-
-    const longRequest = fetch(new URL("/long-timeout", server.url));
-    await longRequestArmed.promise;
-    // The canary's timeout starts after the long request raised its own. Once the canary is closed,
-    // the long request has outlived a sweep that the server-wide idleTimeout would have closed it at.
-    const canaryError = await fetch(new URL("/canary", server.url)).catch(e => e);
-    releaseLongRequest.resolve();
-    expect(canaryError).toMatchObject({ code: "ECONNRESET" });
-    expect(longRequestAborted).toBe(false);
-
-    const res = await longRequest;
-    expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "Hello, World!" });
-  },
-  20_000,
-);
+    const client = nodeTls.connect({
+      port: server.port,
+      host: "127.0.0.1",
+      ca: tls.cert,
+      allowHalfOpen: true,
+    } as nodeTls.ConnectionOptions);
+    client.on("error", aborted.reject);
+    try {
+      await once(client, "secureConnect");
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await received.promise;
+      let closed = false;
+      aborted.promise.finally(() => (closed = true)).catch(() => {});
+      // A client that still takes bytes is slow, not idle, so this lasts until the kernel's buffers are full.
+      while (!closed) await sweep();
+      await aborted.promise;
+    } finally {
+      client.destroy();
+    }
+  });
+});
 
 it.concurrent(
   "TLS: reaps every zero-byte pre-handshake connection in a burst",

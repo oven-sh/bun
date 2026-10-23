@@ -247,8 +247,8 @@ describe.skipIf(isWindows)("cluster", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
-  // Multi-worker traffic + close: exercises the DGRAM_FDS Owned/Adopted state
-  // machine and SharedHandle teardown. A regression removing the double-close
+  // Multi-worker traffic + close: every worker adopts the primary's descriptor,
+  // and SharedHandle closes it once. A regression removing the double-close
   // guard would EBADF an IPC pipe and hang this fixture.
   test("multi-worker shared socket adopts and tears down cleanly", async () => {
     // Assert the success line, not just exit 0: the fixture has bail-out paths

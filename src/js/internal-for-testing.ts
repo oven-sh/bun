@@ -785,7 +785,7 @@ export const namedPipeInternals = {
    * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
    * one per accepted pipe client. Always 0 on other platforms.
    */
-  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeLiveCount", 0) as () => number,
 };
 
 export const duplexTLSInternals = {

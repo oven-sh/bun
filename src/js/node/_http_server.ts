@@ -368,9 +368,10 @@ function Server(options, callback): void {
   storeHTTPOptions.$call(this, options);
   // Node's http.Server always allows half-open sockets. https.Server takes the option, like tls.Server.
   this.allowHalfOpen = this[isTlsSymbol] ? !!options.allowHalfOpen : true;
-  // This tls.Server never listens. It validates the TLS options and owns the SecureContext, like the one Node's https.Server extends. BoringSSL has no DHE suites, so dhparam is dropped.
+  // This tls.Server never listens. It validates the TLS options and owns the SecureContext, like the one Node's https.Server extends.
   if (isTLS) {
-    const tlsServer = (this[tlsSymbol] = new (require("node:tls").Server)({ ...options, dhparam: undefined }));
+    const { ignoredByHttpsServer } = require("internal/tls");
+    const tlsServer = (this[tlsSymbol] = new (require("node:tls").Server)({ ...options, ...ignoredByHttpsServer }));
     tlsServer.on("secureConnection", socket => this.emit("secureConnection", socket));
     tlsServer.on("tlsClientError", (err, socket) => this.emit("tlsClientError", err, socket));
     this.on("secureConnection", secureConnectionListener);
@@ -576,7 +577,7 @@ Server.prototype.listen = function () {
   const argc = arguments.length;
   if (argc > 0) {
     const arg0 = arguments[0];
-    if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
+    if ($isObject(arg0)) {
       // (options[...][, cb])
       addServerAbortSignalOption(this, arg0);
       port = arg0.port;
@@ -584,7 +585,7 @@ Server.prototype.listen = function () {
       socketPath = arg0.path;
 
       const otherTLS = arg0.tls;
-      if (otherTLS && $isObject(otherTLS)) {
+      if ($isObject(otherTLS)) {
         tls = normalizeServerTls({ __proto__: null, ...otherTLS, secureContext: undefined });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
@@ -680,7 +681,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
 
       onNodeHTTPRequest(
-        bunServer,
         url: string,
         method: string,
         // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and
@@ -1112,12 +1112,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       );
     }
 
-    if (this?._unref) {
-      this[serverSymbol]?.unref?.();
-    }
+    if (this._unref) handle.unref();
 
     // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
-    process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+    process.nextTick(emitListeningNextTick, this, handle.hostname, handle.port);
   }
 };
 
@@ -1217,6 +1215,14 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle, secu
     const socket = socketHandle.duplex;
     socket[kHandshaking] = false;
     socket._secureEstablished = true;
+    // Own properties, as in Node: what the handshake settled stays readable once the connection has closed.
+    const tlsHandle = socket[kTLSHandle];
+    socket.servername = tlsHandle.getServername() ?? false;
+    socket.alpnProtocol = tlsHandle.alpnProtocol;
+    if (listenerGeneration.tls.requestCert) {
+      socket.authorizationError = tlsHandle.verifyErrorCode;
+      socket.authorized = socket.authorizationError === null;
+    }
     socket.on("timeout", onNodeHTTPServerSocketTimeout);
     // Keep a shorter timeout that a 'connection' listener armed. It may have fired during the handshake, so restart it.
     const serverTimeout = this.timeout;
@@ -1724,9 +1730,6 @@ function getNodeHTTPServerSocket() {
       if (!handle) return;
       this.#peer = {
         remoteAddress: handle.remoteAddress,
-        servername: handle.servername,
-        peerCertVerified: handle.peerCertVerified,
-        authorizationError: handle.authorizationError,
       };
     }
 
@@ -2082,6 +2085,9 @@ function getNodeHTTPServerSocket() {
         encrypted = true;
         isServer = true;
         alpnProtocol = false;
+        servername = false;
+        authorized = false;
+        authorizationError = null;
         _secureEstablished = !!this[kHandle].secureEstablished;
         #tlsHandle: $Bindgen.NodeHTTPServerSocketTLS | undefined;
 
@@ -2089,24 +2095,6 @@ function getNodeHTTPServerSocket() {
         get [kTLSHandle]() {
           const handle = this[kHandle];
           return handle ? (this.#tlsHandle ??= new NodeHTTPServerSocketTLS(handle)) : null;
-        }
-
-        // The SNI hostname from the ClientHello, or false when the client sent none, like Node's server-side TLSSocket.
-        get servername() {
-          const name = (this[kHandle] ?? this.#peer)?.servername;
-          return typeof name === "string" && name.length > 0 ? name : false;
-        }
-
-        // Like Node's server-side TLSSocket: true only when the server requested a client certificate and it verified.
-        get authorized() {
-          if (!this.#listenerGeneration.tls.requestCert) return false;
-          return (this[kHandle] ?? this.#peer)?.peerCertVerified === true;
-        }
-
-        // The X.509 error code when the requested client certificate failed verification.
-        get authorizationError() {
-          if (!this.#listenerGeneration.tls.requestCert) return null;
-          return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
         }
       };
     }

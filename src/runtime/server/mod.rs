@@ -296,11 +296,11 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) user_routes: JsCell<Vec<UserRoute<SSL, DEBUG>>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_client_error`.
+    /// `JSValue::ZERO` when unset; written by `set_on_client_error`.
     pub(crate) on_clienterror: core::cell::Cell<JSValue>,
 
     /// Raw shadow of the wrapper's `m_onConnection` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_connection`.
+    /// `JSValue::ZERO` when unset; written by `set_on_connection`.
     pub(crate) on_connection: core::cell::Cell<JSValue>,
 
     /// node:https `SNICallback`. Raw shadow of the `onServerName` internal field, `JSValue::ZERO` when unset.
@@ -1352,7 +1352,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp.timeout(this_ref.config.get().idle_timeout);
 
         let global = this_ref.global_this();
-        let this_object = this_ref.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
 
         // Compute the JS method-name string up front so the FFI closure
         // doesn't need to reborrow `req` (it's already `&mut`-borrowed below).
@@ -1397,7 +1396,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             on_request_ffi(
                 any_server_packed,
                 global,
-                this_object,
                 callback,
                 method_string,
                 req,
@@ -3509,7 +3507,6 @@ mod ffi {
         pub(super) safe fn NodeHTTPServer__onRequest_http(
             any_server: usize,
             global: &jsc::JSGlobalObject,
-            this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
@@ -3520,7 +3517,6 @@ mod ffi {
         pub(super) safe fn NodeHTTPServer__onRequest_https(
             any_server: usize,
             global: &jsc::JSGlobalObject,
-            this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
@@ -3530,12 +3526,14 @@ mod ffi {
     }
 }
 
-/// `None` leaves BoringSSL's error queued for `throw_ssl_error_if_necessary`.
+/// Servers with the same options share a context. `None` leaves BoringSSL's error queued for `throw_ssl_error_if_necessary`.
 fn create_ssl_ctx(
     options: &uws_sys::BunSocketContextOptions,
 ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
     let mut err = uws::create_bun_socket_error_t::none;
-    options.create_ssl_context_with_digest(&options.digest(), &mut err)
+    crate::api::SSLContextCache::SSLContextCache::with(|cache| {
+        cache.get_or_create_opts(options, &mut err)
+    })
 }
 
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on

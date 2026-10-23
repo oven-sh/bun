@@ -4892,6 +4892,7 @@ impl Resolver {
                 // the socket is now closed. We must free the data associated with
                 // socket.
                 if let Some(value) = self.polls.with_mut(|p| p.remove(&fd)) {
+                    bun_uws::udp::raw::bsd_disown_socket(fd);
                     // SAFETY: `value` is the heap-allocated FilePoll for this fd.
                     unsafe { (*value).deinit_with_vm(ctx) };
                 }
@@ -4910,6 +4911,8 @@ impl Resolver {
             let poll_entry = polls.get_or_put(fd).expect("unreachable");
 
             if !poll_entry.found_existing {
+                // c-ares opens its own sockets, so record here that this one is in use.
+                let _ = bun_uws::udp::raw::bsd_adopt_socket(fd, 0);
                 *poll_entry.value_ptr =
                     FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
             }

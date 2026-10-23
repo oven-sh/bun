@@ -147,7 +147,7 @@ pub mod task_tag {
         UvLoopDispatch,           // an addon's uv_async_send (posix)
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
-        WindowsNamedPipeContext,
+        WindowsNamedPipe,
         Write,
         Writev,
     }

@@ -198,23 +198,6 @@ pub(super) mod ffi {
         // Swaps the cert/key/chain (and session-related state) this connection
         // serves to those of `ctx`; takes its own reference to `ctx`.
         pub(crate) fn SSL_set_SSL_CTX(ssl: *mut SSL, ctx: *mut SSL_CTX) -> *mut SSL_CTX;
-        // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
-        // outside the callback). Opaque-ZST `&SSL_CTX` + by-value fn-ptr +
-        // opaque `*mut c_void` ⇒ no caller-side precondition.
-        pub(crate) safe fn SSL_CTX_set_alpn_select_cb(
-            ctx: &SSL_CTX,
-            cb: Option<
-                unsafe extern "C" fn(
-                    ssl: *mut SSL,
-                    out: *mut *const u8,
-                    out_len: *mut u8,
-                    in_: *const u8,
-                    in_len: c_uint,
-                    arg: *mut c_void,
-                ) -> c_int,
-            >,
-            arg: *mut c_void,
-        );
         // Returns the borrowed cert store of a live `SSL_CTX*`.
         pub(crate) safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
         // The process-wide default root store; up-refs before returning, so
@@ -247,10 +230,55 @@ use super::NewSocket;
 use crate::generated_bindgen::socket_body::js_NodeHTTPServerSocketTLS;
 use crate::node::StringOrBuffer;
 
+/// Declares each member as a call of its body in `impl Members`, which is compiled once, not once per implementor.
+macro_rules! members {
+    ($(fn $name:ident(&self $(, $arg:ident: $ty:ty)*) $(-> $ret:ty)?;)*) => {$(
+        fn $name(&self $(, $arg: $ty)*) $(-> $ret)?
+        where
+            Self: Sized,
+        {
+            Members(self).$name($($arg),*)
+        }
+    )*};
+}
+
 /// The members of a native socket object that only use the connection's TLS state. `tlsHandle` in socket_body.bind.ts lists them.
 pub(crate) trait TlsHandle {
     /// Detached if the connection has closed or has no TLS. Ask again after anything that can run JS.
     fn tls_socket(&self) -> uws::SocketTLS;
+
+    members! {
+        fn get_servername(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_peer_x509_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_x509_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_tls_version(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn set_max_send_fragment(&self, cx: &mut JsScope<'_>, size: JsLocal<'_>) -> JsResult<JSValue>;
+        fn get_peer_certificate(&self, cx: &mut JsScope<'_>, abbreviated: JsLocal<'_>) -> JsResult<JSValue>;
+        fn get_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_tls_finished_message(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_shared_sigalgs(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_cipher(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_tls_peer_finished_message(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn set_key_cert(&self, cx: &mut JsScope<'_>, context: JsLocal<'_>) -> JsResult<()>;
+        fn export_keying_material(&self, cx: &mut JsScope<'_>, length: JsLocal<'_>, label: JsLocal<'_>, context: JsLocal<'_>) -> JsResult<JSValue>;
+        fn get_ephemeral_key_info(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_alpn_protocol(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn get_session(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn set_session(&self, cx: &mut JsScope<'_>, session: JsLocal<'_>) -> JsResult<()>;
+        fn get_tls_ticket(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+        fn renegotiate(&self, cx: &mut JsScope<'_>) -> JsResult<()>;
+        fn disable_renegotiation(&self);
+        fn is_session_reused(&self) -> bool;
+        fn resume_sni(&self, cx: &mut JsScope<'_>, context: Option<&SecureContext>, is_error: bool);
+    }
+}
+
+struct Members<'a>(&'a dyn TlsHandle);
+
+impl Members<'_> {
+    fn tls_socket(&self) -> uws::SocketTLS {
+        self.0.tls_socket()
+    }
 
     fn get_servername(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let Some(ssl_ptr) = self.tls_socket().ssl() else {
@@ -1066,7 +1094,6 @@ pub(crate) trait TlsHandle {
             Some(context) if !is_error => context.ctx.clone().into_raw(),
             _ => core::ptr::null_mut(),
         };
-        super::install_sni_alpn_selector(ctx);
         self.tls_socket().sni_resolve(ctx, is_error);
     }
 }
@@ -1111,6 +1138,14 @@ impl NodeHTTPServerSocketTLS {
         let this_value = structure.create(&cx.heap, Self { socket });
         js_NodeHTTPServerSocketTLS::socket_set_cached(this_value.to_js(), cx.global(), socket);
         this_value
+    }
+
+    pub(crate) fn get_verify_error_code(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let error = self.tls_socket().get_verify_error();
+        if error.error_no == 0 {
+            return Ok(JSValue::NULL);
+        }
+        bun_string_jsc::create_utf8_for_js(cx.global(), error.code_bytes())
     }
 }
 

@@ -1040,7 +1040,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .cast::<HTTPClient<'static>>(),
             )
             .ptr(),
-            false, // dont allow half-open sockets
         )
         .inspect_err(|_| client.record_socket_open_errno())?;
         client.allow_retry = false;
@@ -1202,7 +1201,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .cast::<HTTPClient<'static>>(),
             )
             .ptr(),
-            false,
         )
         .inspect_err(|_| client.record_socket_open_errno())?;
         client.allow_retry = false;

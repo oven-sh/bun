@@ -12,17 +12,17 @@
 //! and queues its start and its free on Bun's event loop. It maintains
 //! JavaScript callbacks for handling connection events and errors.
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
 use bun_ptr::{RefPtr, ThisPtr};
+use bun_uws::ssl_wrapper::{self, SSLWrapper};
 use bun_uws::{Transport, us_bun_verify_error_t};
 
-use super::ssl_wrapper::SSLWrapper;
-use super::{SSLConfig, TLSSocket};
+use super::TLSSocket;
 use crate::dispatch::fold;
 use crate::generated_bindgen::socket_body::js_TLSSocket;
 
@@ -36,6 +36,7 @@ pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub(crate) struct UpgradedDuplex {
     /// One ref for the open connection and one per entry point on the stack ([`Self::keep_alive`]). At zero the `Close` hop frees `self`.
     ref_count: Cell<u32>,
+    handle: bun_uws::TransportHandle,
     /// The connection's ref is still held. Cleared by [`Self::take_connection_ref`].
     connection_ref: Cell<bool>,
     /// The socket that hears this engine's events. `None` once it heard its close or its connect error.
@@ -44,7 +45,7 @@ pub(crate) struct UpgradedDuplex {
     /// A `task_event` hop is in the VM's queue. It holds `self` by pointer, so at most one may exist.
     queued: Cell<bool>,
     /// Taken by the `StartTLS` hop.
-    source: JsCell<Option<TlsSource>>,
+    ctx: JsCell<Option<bun_boringssl_sys::OwnedSslCtx>>,
     is_open: Cell<bool>,
     is_client: bool,
     server_verify: ServerVerify,
@@ -52,7 +53,8 @@ pub(crate) struct UpgradedDuplex {
     abort_handle: bun_jsc::AbortHandle,
     /// That context.
     context: bun_jsc::ContextId,
-    pub wrapper: JsCell<Option<WrapperType>>,
+    /// Set by `start_tls` and freed with `self`: a `handle_traffic` frame can be on the stack when the connection closes.
+    wrapper: OnceCell<WrapperType>,
     /// The owning `JSTLSSocket` wrapper. Its `internalFields` root `origin` and
     /// the three listener thunks; the `JSValue` fields below are read-side
     /// shadows of those slots.
@@ -67,7 +69,7 @@ pub(crate) struct UpgradedDuplex {
     pub on_close_callback: Cell<JSValue>,
     /// Transport bytes that arrived before the TLS engine existed.
     ///
-    /// `js_upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
+    /// `upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
     /// `on_open` cannot re-enter JS before the caller holds the handle), but the
     /// JS caller attaches its `data` listener as soon as that function returns.
     /// When both ends of a `duplexPair()` are wrapped in-process, the peer's
@@ -88,7 +90,7 @@ pub(crate) struct UpgradedDuplex {
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
 /// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
-/// `js_upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
+/// `UpgradeOptions::server_verify` and applied via `SSLWrapper::set_server_verify`.
 /// Ignored for client upgrades.
 #[derive(Clone, Copy)]
 pub(crate) struct ServerVerify {
@@ -96,14 +98,6 @@ pub(crate) struct ServerVerify {
     pub request_cert: bool,
     /// `rejectUnauthorized` — only meaningful when `request_cert` is set.
     pub reject_unauthorized: bool,
-}
-
-/// What the `SSL` is made from.
-pub(crate) enum TlsSource {
-    /// `tls.secureContext`.
-    Context(bun_boringssl_sys::OwnedSslCtx),
-    /// `{ ca, cert, key, ... }`.
-    Config(SSLConfig),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -143,7 +137,7 @@ impl UpgradedDuplex {
 
     #[inline]
     fn wrapper_ref(&self) -> Option<&WrapperType> {
-        self.wrapper.get().as_ref()
+        self.wrapper.get()
     }
 
     /// Holds a ref on `self` until the returned guard drops.
@@ -177,7 +171,7 @@ impl UpgradedDuplex {
 
     /// `self` as the socket handle its `TLSSocket` holds.
     pub(crate) fn socket(&self) -> bun_uws::SocketTLS {
-        bun_uws::SocketTLS::from_transport(self)
+        bun_uws::SocketTLS::from_transport(&self.handle)
     }
 
     /// The socket to dispatch an event to. Every dispatch runs under an entry point's [`Self::keep_alive`].
@@ -365,9 +359,10 @@ impl UpgradedDuplex {
         Ok(ended.is_some_and(|ended| ended.to_boolean()))
     }
 
-    fn internal_write(this: *mut Self, encoded_data: &[u8]) {
+    fn internal_write(this: *mut Self, encoded_data: &[u8]) -> usize {
         // SAFETY: see handler note above.
         unsafe { &*this }.write_encrypted(encoded_data);
+        encoded_data.len()
     }
 
     fn write_encrypted(&self, encoded_data: &[u8]) {
@@ -507,28 +502,10 @@ impl UpgradedDuplex {
             return self.finish_close();
         }
         let handlers = self.wrapper_handlers();
-        let wrapper = match self.source.take() {
-            Some(TlsSource::Context(ctx)) => {
-                WrapperType::init_with_ctx(ctx, self.is_client, handlers)
-                    .map_err(crate::Error::from)
-            }
-            Some(TlsSource::Config(config)) => {
-                super::ssl_wrapper::init(&config, self.is_client, handlers)
-            }
-            None => unreachable!("StartTLS ran twice"),
-        };
-        let wrapper = match wrapper {
-            Ok(wrapper) => wrapper,
-            Err(crate::Error::Alloc(_)) => bun_core::out_of_memory(),
-            Err(_) => {
-                if let Some(tls) = self.tls.replace(None) {
-                    self.fail_connect(tls);
-                }
-                return self.release_connection();
-            }
-        };
-        self.wrapper.set(Some(wrapper));
-        let w = self.wrapper_ref().unwrap();
+        let ctx = self.ctx.take().expect("StartTLS ran twice");
+        let w = self
+            .wrapper
+            .get_or_init(|| WrapperType::init_with_ctx(ctx, self.is_client, handlers));
         w.set_server_verify(
             self.server_verify.request_cert,
             self.server_verify.reject_unauthorized,
@@ -544,18 +521,19 @@ impl UpgradedDuplex {
         origin: JSValue,
         tls: RefPtr<TLSSocket>,
         js_wrapper: JSValue,
-        source: TlsSource,
+        ctx: bun_boringssl_sys::OwnedSslCtx,
         is_client: bool,
         server_verify: ServerVerify,
     ) -> ThisPtr<Self> {
         js_TLSSocket::duplex_origin_set_cached(js_wrapper, global, origin);
         let this = bun_core::heap::into_raw(Box::new(UpgradedDuplex {
             ref_count: Cell::new(1),
+            handle: Default::default(),
             connection_ref: Cell::new(true),
             tls: JsCell::new(Some(tls)),
             task_event: Cell::new(EventState::StartTLS),
             queued: Cell::new(false),
-            source: JsCell::new(Some(source)),
+            ctx: JsCell::new(Some(ctx)),
             is_open: Cell::new(false),
             is_client,
             server_verify,
@@ -565,7 +543,7 @@ impl UpgradedDuplex {
             js_wrapper,
             origin: Cell::new(origin),
             global: GlobalRef::from(global),
-            wrapper: JsCell::new(None),
+            wrapper: OnceCell::new(),
             on_data_callback: Cell::new(JSValue::ZERO),
             on_end_callback: Cell::new(JSValue::ZERO),
             on_close_callback: Cell::new(JSValue::ZERO),
@@ -577,13 +555,14 @@ impl UpgradedDuplex {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: nothing frees `this` before the hop queued below runs.
         let engine = unsafe { ThisPtr::new(this) };
+        engine.handle.set(this);
         if let Some(tls) = engine.tls.get() {
             tls.ref_();
             tls.socket.set(engine.socket());
             // No poll ref: the stream's events drive this engine, so like node's TLSWrap over a JS stream it doesn't hold the loop open.
             tls.mark_active();
         }
-        // SAFETY: fully initialised and heap-pinned; `Drop` leaves the context.
+        // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
         engine.enqueue(EventState::StartTLS);
         engine
@@ -635,8 +614,8 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    fn wrapper_handlers(&self) -> super::ssl_wrapper::Handlers<*mut UpgradedDuplex> {
-        super::ssl_wrapper::Handlers {
+    fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut UpgradedDuplex> {
+        ssl_wrapper::Handlers {
             ctx: std::ptr::from_ref(self).cast_mut(),
             on_open: Self::on_open,
             on_handshake: Self::on_handshake,
@@ -646,31 +625,14 @@ impl UpgradedDuplex {
         }
     }
 
-    /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).
-    /// Idempotent: resets to empty state. Also invoked by
-    /// [`Self::fail_connect`] so the listener thunks
-    /// are neutered while the wrapper is still strongly reachable.
+    /// Runs when the connection closes or fails to open, and again in `Drop`. Idempotent.
     fn teardown(&self) {
         bun_output::scoped_log!(UpgradedDuplex, "deinit");
-        // Neuter in place rather than `self.wrapper.set(None)`: `teardown()`
-        // can run re-entrantly from `on_close` while a
-        // `SSLWrapper::handle_traffic` frame is still on the stack with a
-        // `&SSLWrapper` into the `Some` payload. Assigning `None` runs `Drop`
-        // (fine - `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
-        // `Option::None` value over the slot, whose payload bytes are stack
-        // garbage - the in-flight frame's `self.ssl` then reads junk and
-        // `flush_pending_events` UAFs into BoringSSL. `deinit()` alone leaves
-        // `ssl == None` / `closed_notified` readable so those guards work; the
-        // `Option` is dropped for real when `self`
-        // is freed, by the hop it queues once no entry point holds it. See
-        // WindowsNamedPipe's WRAPPER_BUSY for the sibling pattern.
         if let Some(w) = self.wrapper_ref() {
             w.deinit();
         }
 
-        // Neuter the listener thunks so a late `origin` event sees null
-        // function data instead of a freed `*mut Self`. GC-root clearing is
-        // left to the wrapper's own collection.
+        // A late event of `origin` finds no function data instead of a freed `*mut Self`.
         self.origin.set(JSValue::ZERO);
         for cb in [
             &self.on_data_callback,
@@ -695,7 +657,7 @@ impl Transport for UpgradedDuplex {
         self.wrapper_ref().is_some_and(|w| w.is_closed())
     }
 
-    /// `None` means `start_tls` has not run yet (teardown never clears the slot), not shut down.
+    /// `None` means `start_tls` has not run yet, not shut down.
     fn is_shutdown(&self) -> bool {
         self.wrapper_ref().is_some_and(|w| w.is_shutdown())
     }
@@ -760,7 +722,7 @@ impl Transport for UpgradedDuplex {
     fn flush(&self) {
         let _keep_alive = self.keep_alive();
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.flush();
+            w.flush();
         }
     }
 
@@ -784,7 +746,6 @@ impl Drop for UpgradedDuplex {
     fn drop(&mut self) {
         debug_assert_eq!(self.ref_count.get(), 0);
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
-        self.abort_handle.leave();
         self.teardown();
     }
 }

@@ -1632,6 +1632,7 @@ impl JSValue {
     }
 
     /// Makes the async context `self` was stored with current until the guard drops. `None`: `self` carries none.
+    #[must_use = "dropping immediately leaves the async context; bind to a local"]
     #[inline]
     pub fn enter_async_context(self, global: &JSGlobalObject) -> Option<AsyncContextScope<'_>> {
         unsafe extern "C" {

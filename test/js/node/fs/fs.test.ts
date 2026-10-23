@@ -9,7 +9,9 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -55,8 +57,9 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
+import net from "node:net";
 import * as os from "node:os";
-import path, { dirname, relative, resolve } from "node:path";
+import path, { basename, dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -7369,6 +7372,103 @@ it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the
     "ENAMETOOLONG realpath",
     "ENAMETOOLONG realpath",
   ]);
+  expect(exitCode).toBe(0);
+});
+
+// macOS has no O_PATH, so realpath opened the file for reading. open(2) refuses
+// a unix socket (EOPNOTSUPP) and a file with no read permission (EACCES), while
+// realpath(3) and node resolve both.
+it.if(isPosix)("realpath resolves a unix socket and a file that cannot be opened for reading", async () => {
+  using dir = tempDir("rp-noopen", { "noread.txt": "x" });
+  const realDir = fs.realpathSync(String(dir));
+  const sock = join(String(dir), "s");
+  const noread = join(String(dir), "noread.txt");
+  fs.chmodSync(noread, 0o000);
+
+  const server = net.createServer();
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    server.once("error", reject).listen(sock, resolve);
+    await promise;
+    expect(fs.lstatSync(sock).isSocket()).toBe(true);
+
+    // root can open a mode-0 file, so only the socket proves the fallback there.
+    const paths = isRoot ? [sock] : [sock, noread];
+    for (const impl of [fs.realpathSync, fs.realpathSync.native]) {
+      for (const p of paths) expect(impl(p)).toBe(join(realDir, basename(p)));
+    }
+    for (const impl of [fs.promises.realpath, promisify(fs.realpath), promisify(fs.realpath.native)]) {
+      for (const p of paths) expect(await impl(p)).toBe(join(realDir, basename(p)));
+    }
+  } finally {
+    server.close();
+    fs.chmodSync(noread, 0o644);
+  }
+});
+
+// The same open(2) fails with EMFILE once the process is out of fds. realpath(3)
+// needs none, so node still resolves the path. The fixture loads every module it
+// needs before it exhausts the fds: a debug build reads built-in modules from disk.
+it.if(isPosix)("realpath resolves a path when the process is out of file descriptors", async () => {
+  using dir = tempDir("rp-emfile", {});
+  const realDir = fs.realpathSync(String(dir));
+  const script = `
+    const fs = require("node:fs");
+    const { realpath } = require("node:fs/promises");
+    const target = process.env.RP_TARGET;
+    const held = [];
+    try {
+      for (;;) held.push(fs.openSync("/dev/null", "r"));
+    } catch (e) {
+      if (e.code !== "EMFILE") throw e;
+    }
+    const out = {};
+    for (const [name, impl] of [["sync", fs.realpathSync], ["native", fs.realpathSync.native]]) {
+      try {
+        out[name] = impl(target);
+      } catch (e) {
+        out[name] = e.code;
+      }
+    }
+    realpath(target)
+      .then(r => (out.promises = r), e => (out.promises = e.code))
+      .then(() => {
+        // LeakSanitizer reads /proc/self/task at exit, which needs a free fd.
+        for (const fd of held) fs.closeSync(fd);
+        console.log(JSON.stringify(out));
+      });
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", `ulimit -n 64; exec "$0" -e "$1"`, bunExe(), script],
+    env: { ...bunEnv, RP_TARGET: String(dir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ sync: realDir, native: realDir, promises: realDir });
+  expect(exitCode).toBe(0);
+});
+
+// On macOS, open("/dev/stdin") hands back a dup of fd 0, and F_GETPATH fails with
+// EBADF when fd 0 is a pipe. realpath(3) walks the devfs entries and returns
+// "/dev/fd/0", as node does. Linux resolves /proc/self/fd/0 to "pipe:[N]" instead.
+it.if(isMacOS)("realpath of /dev/stdin behind a pipe", async () => {
+  const script = `
+    const fs = require("node:fs");
+    console.log(JSON.stringify([fs.realpathSync("/dev/stdin"), fs.realpathSync.native("/dev/stdin")]));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  proc.stdin.end();
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["/dev/fd/0", "/dev/fd/0"]);
   expect(exitCode).toBe(0);
 });
 

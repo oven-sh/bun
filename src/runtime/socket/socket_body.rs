@@ -991,7 +991,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // The TLS layer couldn't send records it still held.
         let send_error = this.socket.get().rejected_send_error();
         if send_error != 0 {
-            this.fail_queued_writes(send_error);
+            if this.buffered_data_for_node_net.get().is_pending() {
+                this.fail_queued_writes(send_error);
+            }
             return Ok(());
         }
         let callback = handlers.on_writable();
@@ -1097,7 +1099,13 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn close_if_flushed(&self) {
         if self.can_end_after_flush() {
             self.mark_inactive();
-        } else if self.timeout_seconds.get() > 0 && self.waits_to_send_tail() {
+        } else {
+            self.arm_tail_timeout();
+        }
+    }
+
+    fn arm_tail_timeout(&self) {
+        if self.timeout_seconds.get() > 0 && self.waits_to_send_tail() {
             self.socket.get().set_timeout(self.timeout_seconds.get());
         }
     }
@@ -1372,7 +1380,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if self.flags.get().contains(Flags::SENDING_QUEUE) {
             return None;
         }
-        if send_error != 0 {
+        if send_error != 0 && self.buffered_data_for_node_net.get().is_pending() {
             self.buffered_data_for_node_net
                 .with_mut(|b| b.fail(send_errno(send_error)));
         }
@@ -3035,7 +3043,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 } else if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = self.internal_flush();
                 } else {
-                    self.close_if_flushed();
+                    self.arm_tail_timeout();
                 }
                 if queues_tail && wrote >= 0 {
                     JSValue::js_number(total as f64)

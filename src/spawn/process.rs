@@ -1531,8 +1531,7 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
-        #[allow(unused_labels)]
-        'outer: loop {
+        loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
             this.js_process.loop_();
@@ -1551,7 +1550,7 @@ pub mod waiter_thread_posix {
                 // Consume the pending eventfd
                 let mut buf = [0u8; 8];
                 if bun_sys::read(efd, &mut buf).unwrap_or(0) > 0 {
-                    continue 'outer;
+                    continue;
                 }
 
                 // SAFETY: valid pollfd array.

@@ -153,6 +153,38 @@ test.concurrent.each([
   },
 );
 
+test.concurrent.each(["http", "https"])(
+  "fetch.preconnect() opens the %s connection that fetch() then takes",
+  async scheme => {
+    const result = await run(`
+    let connections = 0;
+    const opened = Promise.withResolvers();
+    const origin = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: ${scheme === "https" ? "{ key, cert: good }" : "undefined"},
+      socket: {
+        open() {
+          connections++;
+          if (${scheme === "http"}) opened.resolve();
+        },
+        handshake: opened.resolve,
+        data: socket => void socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok"),
+      },
+    });
+    const url = "${scheme}://localhost:" + origin.port + "/";
+    tls.setDefaultCACertificates([good]);
+    fetch.preconnect(url);
+    await opened.promise;
+    // A whole request to another origin: the HTTP thread has pooled the new socket by the end of it.
+    await viaFetch();
+    const body = await (await fetch(url)).text();
+    console.log(JSON.stringify({ body, connections }));
+  `);
+    expect(result).toEqual({ body: "ok", connections: 1 });
+  },
+);
+
 test.concurrent("sets error.cause.code on a certificate failure", async () => {
   const result = await run(`
     const error = await fetch(server.url).catch(e => e);

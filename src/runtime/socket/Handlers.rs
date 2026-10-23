@@ -477,6 +477,7 @@ pub(crate) struct SocketConfig {
     pub(crate) ipv6_only: bool,
     /// node:net's `pauseOnConnect`: the socket, or every accepted one, opens paused.
     pub(crate) pause_on_connect: bool,
+    pub(crate) default_timeout: bool,
 }
 
 impl SocketConfig {
@@ -552,6 +553,7 @@ impl SocketConfig {
                 reuse_port: generated.reuse_port,
                 ipv6_only: generated.ipv6_only,
                 pause_on_connect: generated.pause_on_connect,
+                default_timeout: generated.default_timeout,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no

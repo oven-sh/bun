@@ -92,8 +92,6 @@ pub(crate) use any_request_context::AnyRequestContext;
 /// a closure because the two apps are different types.
 macro_rules! for_each_mux_app {
     ($self:expr, |$mux:ident| $body:block) => {{
-        #[allow(unused_imports)]
-        use server_config::MuxApp as _;
         if Self::HAS_H3 {
             if let Some(app) = $self.h3_app.get() {
                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.

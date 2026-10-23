@@ -67,6 +67,7 @@ pub(crate) struct Listener {
     pub(crate) reject_unauthorized: bool,
     /// Accepted sockets carry `Flags::PAUSE_ON_CONNECT` (see `NewSocket::on_open`).
     pub(crate) pause_on_connect: bool,
+    default_timeout: bool,
     /// Unless set, accepted sockets carry `Flags::ENDS_ON_PEER_FIN`.
     pub(crate) allow_half_open: bool,
     /// The `SocketConfig::socket_flags()` this listener was opened with.
@@ -185,6 +186,7 @@ impl Listener {
                 true,
             ),
             pause_on_connect: config.pause_on_connect,
+            default_timeout: config.default_timeout,
             allow_half_open: config.allow_half_open,
             socket_flags: config.socket_flags(),
             strong_data: JsCell::new(Strong::empty()),
@@ -277,6 +279,7 @@ impl Listener {
                 && !previous.ssl
                 && previous.socket_flags == socket_flags
                 && previous.allow_half_open == allow_half_open
+                && previous.default_timeout == socket_config.default_timeout
                 && previous.context == cx.context().id();
             if let Some(this_value) = previous.this_value.get().try_get().filter(|_| unchanged) {
                 previous
@@ -717,8 +720,9 @@ impl Listener {
                 uws_sys::SocketKind::BunSocketTcp
             });
         }
-        this_socket.timeout_seconds.set(120);
-        if !listener.handlers.on_timeout().is_empty() {
+        // Whether or not there is a `timeout` handler yet: `reload()` and `--hot` can bring one.
+        if listener.default_timeout {
+            this_socket.timeout_seconds.set(120);
             socket.set_timeout(120);
         }
         this_socket

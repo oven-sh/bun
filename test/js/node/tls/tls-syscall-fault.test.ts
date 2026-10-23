@@ -457,6 +457,30 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect(exitCode).toBe(0);
   });
 
+  // What macOS says for a send to a peer that reset. No write of the program's is lost, so the failed read is the report, as in Node.
+  test("send → EPIPE for the server's flight to a client that reset is a 'tlsClientError' ECONNRESET", async () => {
+    const clientHello = Promise.withResolvers<Buffer>();
+    await using recorder = net.createServer(socket => socket.on("error", () => {}).once("data", clientHello.resolve));
+    await once(recorder.listen(0, "127.0.0.1"), "listening");
+    const recorded = tls.connect({ host: "127.0.0.1", port: (recorder.address() as AddressInfo).port, ca: certs.cert });
+    recorded.on("error", () => {});
+    const hello = await clientHello.promise;
+    recorded.destroy();
+
+    await using resetting = tls.createServer({ key: certs.key, cert: certs.cert });
+    const reported = once(resetting, "tlsClientError");
+    await once(resetting.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((resetting.address() as AddressInfo).port, "127.0.0.1", () => {
+      raw.write(hello, () => {
+        fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });
+        raw.resetAndDestroy();
+      });
+    });
+    raw.on("error", () => {});
+    const [error] = await reported;
+    expect(error.code).toBe("ECONNRESET");
+  });
+
   test("send → EPIPE for the ClientHello fails connect with an error (no hang)", async () => {
     fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });
     const c = connect();
@@ -509,7 +533,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
           connectError: (_socket, error) => closed.reject(error),
         },
       });
-      expect(await closed.promise).toMatchObject({ code: "EPIPE" });
+      expect(await closed.promise).toMatchObject({ code: "ECONNRESET" });
       expect(writes).toEqual([-1, -1]);
       (await accepted)[0].destroy();
     });

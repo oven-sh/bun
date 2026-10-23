@@ -65,6 +65,12 @@ impl PendingWrites {
         self.completion
     }
 
+    /// The owner handed over bytes and hasn't heard how they ended. The TLS layer's own records (a handshake flight, an alert) aren't the owner's.
+    #[inline]
+    pub(crate) fn is_pending(&self) -> bool {
+        self.len() > 0 || self.completion == Completion::Owed
+    }
+
     /// `$write` answers "queued".
     #[inline]
     pub(crate) fn owe_completion(&mut self) {

@@ -3549,6 +3549,7 @@ Server.prototype[kRealListen] = function (
     socket: serverHandlersFor(this),
     data: this,
     pauseOnConnect: this.pauseOnConnect,
+    defaultTimeout: false,
   };
   if (path) this._handle = Bun.listen({ unix: path, ...listenOptions });
   else if (fd != null) this._handle = Bun.listen({ fd, hostname, ...listenOptions });

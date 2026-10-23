@@ -1052,7 +1052,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * (see us_internal_libuv_peer_reset_probe), so it is taken
                  * there, and the CRT's ECONNRESET reached JS as ESHUTDOWN. */
                 int socket_error = us_socket_get_error(s);
-                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : LIBUS_ECONNRESET, NULL);
+                int code = socket_error > 2 ? socket_error : LIBUS_ECONNRESET;
+#ifdef LIBUS_USE_KQUEUE
+                /* A unix peer that closed both directions is flagged like a reset. Its FIN was read and the socket has no error: epoll's hangup. */
+                if (socket_error <= 2 && s->read_eof) code = LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN;
+#endif
+                s = us_internal_socket_close_raw(s, code, NULL);
                 return;
             }
             break;

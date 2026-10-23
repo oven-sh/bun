@@ -255,16 +255,25 @@ static struct us_server_names_t *us_server_names_ref(struct us_listen_socket_t *
 static void us_server_names_unref(struct us_server_names_t *names);
 static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
                              const unsigned char *in, unsigned int inlen, void *arg);
+
+/* Events parked by this thread's SSLs and not freed yet. Nearly always 0, and then a read event doesn't walk from its SSL to its us_ssl_rare_t. */
+static _Thread_local unsigned int ssl_parked_events;
+
+static void ssl_free_events(struct us_ssl_pending_event_t *events) {
+  while (events) {
+    struct us_ssl_pending_event_t *next = events->next;
+    us_free(events);
+    ssl_parked_events--;
+    events = next;
+  }
+}
+
 static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                              int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
   struct us_ssl_rare_t *rare = ptr;
   if (!rare) return;
-  while (rare->pending_head) {
-    struct us_ssl_pending_event_t *next = rare->pending_head->next;
-    us_free(rare->pending_head);
-    rare->pending_head = next;
-  }
+  ssl_free_events(rare->pending_head);
   SSL_SESSION_free(rare->latest_session);
   if (rare->session_sink_free) rare->session_sink_free(rare->session_sink);
   if (rare->server_names) us_server_names_unref(rare->server_names);
@@ -306,6 +315,7 @@ static struct us_ssl_pending_event_t *ssl_park_event(struct us_ssl_rare_t *rare,
     rare->pending_head = event;
   }
   rare->pending_tail = event;
+  ssl_parked_events++;
   return event;
 }
 
@@ -353,8 +363,7 @@ static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
   return 0;
 }
 
-/* Runs JS, which may close the connection and free `ssl`: call it after the SSL_* call returned, then check that the SSL is still there. */
-void us_ssl_flush_pending_events(SSL *ssl) {
+static void ssl_hand_over_events(SSL *ssl) {
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   if (!rare || !rare->pending_head) {
     return;
@@ -370,15 +379,16 @@ void us_ssl_flush_pending_events(SSL *ssl) {
       is_open = us_dispatch_tls_event(bun_socket, is_keylog, event->data, event->length);
     }
   }
-  while (events) {
-    struct us_ssl_pending_event_t *next = events->next;
-    us_free(events);
-    events = next;
-  }
+  ssl_free_events(events);
+}
+
+/* Runs JS, which may close the connection and free `ssl`: call it after the SSL_* call returned, then check that the SSL is still there. */
+void us_ssl_flush_pending_events(SSL *ssl) {
+  if (ssl_parked_events) ssl_hand_over_events(ssl);
 }
 
 static void ssl_flush_pending_events(struct us_socket_t *s) {
-  if (s->ssl) us_ssl_flush_pending_events(s_ssl(s));
+  if (ssl_parked_events && s->ssl) ssl_hand_over_events(s_ssl(s));
 }
 
 /* Defined in `src/runtime/api/bun/SSLContextCache.rs`: tombstones the cache entry on

@@ -359,7 +359,8 @@ impl Preconnect {
     }
 }
 
-pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
+/// `tls_props` is what the request this is for will pass: a pooled socket is only taken by a request with the same one.
+pub fn preconnect(url: URL<'static>, is_url_owned: bool, tls_props: Option<SSLConfigSharedPtr>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         if is_url_owned {
             // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
@@ -396,7 +397,10 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
             b"",
             HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
             FetchRedirect::Manual,
-            Options::default(),
+            Options {
+                tls_props,
+                ..Default::default()
+            },
         ));
         async_http.client.flags.is_preconnect_only = true;
 

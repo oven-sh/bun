@@ -4797,7 +4797,8 @@ describe.each(["tcp", "unix"] as const)("a half-open socket over %s whose peer c
         const [theAccepted] = await Promise.all([accepted.promise, once(client, "connect")]);
         const [socket, peer] = side === "accepted" ? [theAccepted, client] : [client, theAccepted];
         const events: string[] = [];
-        for (const event of ["end", "finish", "close", "error"]) socket.on(event, () => events.push(event));
+        for (const event of ["end", "finish", "close"]) socket.on(event, () => events.push(event));
+        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
         socket.resume();
         peer.destroy();
         await once(socket, "end");

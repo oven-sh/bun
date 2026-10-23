@@ -455,6 +455,47 @@ describe.concurrent("socket", () => {
     expect(exitCode).toBe(0);
   });
 
+  // In a child, for the same reason.
+  it("a timeout handler that reload() adds runs for the sockets accepted before it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const timedOut = [];
+        let accepted;
+        const open = socket => accepted.resolve(socket);
+        const timeout = socket => void timedOut.push(socket.data);
+        async function connect(server, name) {
+          accepted = Promise.withResolvers();
+          const client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+          (await accepted.promise).data = name;
+          return client;
+        }
+        using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open, data() {} } });
+        // What node:net listens with.
+        using untimed = Bun.listen({ hostname: "127.0.0.1", port: 0, defaultTimeout: false, socket: { open, timeout, data() {} } });
+        // A sweep runs every 4 seconds. Every socket below is accepted a moment after this one, with 120 seconds.
+        sweepSocketTimers(1);
+        using before = await connect(server, "before reload()");
+        server.reload({ socket: { open, timeout, data() {} } });
+        using after = await connect(server, "after reload()");
+        using never = await connect(untimed, "defaultTimeout: false");
+        sweepSocketTimers(30);
+        console.log(JSON.stringify(timedOut));
+        sweepSocketTimers(1);
+        console.log(JSON.stringify(timedOut.sort()));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(["[]", JSON.stringify(["after reload()", "before reload()"])]);
+    expect(exitCode).toBe(0);
+  });
+
   it("should allow large amounts of data to be sent and received", async () => {
     // Hashing and copying 1 GiB takes several seconds on debug and ASAN builds.
     const size = isDebug || isASAN ? 256 * 1024 * 1024 : 1024 * 1024 * 1024;
@@ -7488,6 +7529,36 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         stderr: "",
       });
       expect(exitCode).toBe(0);
+    },
+  );
+
+  // Windows takes a first send of any size whole, so nothing is queued there.
+  it.skipIf(isWindows)(
+    "end(data) on the raw half of an upgradeTLS() pair leaves the TLS half's tail alone",
+    async () => {
+      const size = 12 << 20;
+      let received = 0;
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: { data: (_socket, chunk) => void (received += chunk.length), close: () => closed.resolve() },
+      });
+      const plain = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+      const [raw] = plain.upgradeTLS({
+        tls: { ca: tls.cert },
+        socket: {
+          data() {},
+          handshake(socket) {
+            socket.end(Buffer.alloc(size));
+            // The kernel's buffer is full, so it takes none of this.
+            raw.end("zz");
+          },
+        },
+      });
+      await closed.promise;
+      expect(received).toBe(size);
     },
   );
 

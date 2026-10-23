@@ -186,8 +186,9 @@ describe.concurrent("process-stdio", () => {
   });
 });
 
-// A FileSink writes a string as UTF-8, so process.stdout/stderr decode every other encoding before the sink. Each row is
-// statements run with `w` as the stream, then what node v26.3.0 does with them: the bytes on the fd in hex, or the code thrown.
+// A FileSink writes a string as UTF-8, so process.stdout/stderr decode every other encoding before the sink. Each row
+// is statements run with `w` as the stream, then what node v26.3.0 does with them: the bytes on the fd in hex, or the
+// code thrown.
 describe.concurrent.each(["stdout", "stderr"] as const)("process.%s.write(chunk, encoding)", name => {
   const rows: [statements: string, expected: string][] = [
     [`w.write("0001ff", "hex")`, "0001ff"],

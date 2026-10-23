@@ -85,16 +85,13 @@ describe("FileSink", () => {
         it(`${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
           {
-            using _ = fileDescriptorLeakChecker();
+            await using _ = fileDescriptorLeakChecker();
 
             const sink = Bun.file(path).writer();
             for (let i = 0; i < input.length; i++) {
               sink.write(input[i]);
             }
             await sink.end();
-
-            // For the file descriptor leak checker.
-            await Bun.sleep(10);
           }
 
           if (!isPipe) {
@@ -114,16 +111,13 @@ describe("FileSink", () => {
           const path = getPathOrFd();
 
           {
-            using _ = fileDescriptorLeakChecker();
+            await using _ = fileDescriptorLeakChecker();
             const sink = Bun.file(path).writer();
             for (let i = 0; i < input.length; i++) {
               sink.write(input[i]);
               await sink.flush();
             }
             await sink.end();
-
-            // For the file descriptor leak checker.
-            await Bun.sleep(10);
           }
 
           if (!isPipe) {
@@ -141,14 +135,13 @@ describe("FileSink", () => {
         it(`highWaterMark -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
           {
-            using _ = fileDescriptorLeakChecker();
+            await using _ = fileDescriptorLeakChecker();
             const sink = Bun.file(path).writer({ highWaterMark: 1 });
             for (let i = 0; i < input.length; i++) {
               sink.write(input[i]);
               await sink.flush();
             }
             await sink.end();
-            await Bun.sleep(10); // For the file descriptor leak checker.
           }
 
           if (!isPipe) {
@@ -174,7 +167,7 @@ import type { Readable } from "node:stream";
 import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
-  using _ = fileDescriptorLeakChecker();
+  await using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
   const chunk = Buffer.from("1 Hello, world!");
@@ -187,17 +180,16 @@ it("end doesn't close when backed by a file descriptor", async () => {
 });
 
 it("end does close when not backed by a file descriptor", async () => {
-  using _ = fileDescriptorLeakChecker();
+  await using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const file = Bun.file(path.join(x, "test.txt"));
   const writer = file.writer();
   await writer.write(Buffer.from("1 Hello, world!"));
   await writer.end();
-  await Bun.sleep(10); // For the file descriptor leak checker.
 });
 
 it("write result is not cumulative", async () => {
-  using _ = fileDescriptorLeakChecker();
+  await using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
   const file = Bun.file(fd);

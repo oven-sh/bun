@@ -34,6 +34,8 @@ JSC::JSSourceCode* createSyntheticSourceCode(JSC::VM& vm, JSC::JSValue source, S
         provider->setModuleHasLiveExports();
 
     auto* sourceCode = JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)));
+    // `sourceCode` is the provider's only owner, so its destructor destroys this Weak before the cell's memory is reused.
+    // That wouldn't hold for createDeferred(): SyntheticModuleRecord keeps that provider.
     if (source.isCell())
         weak = JSC::Weak<JSC::JSCell>(source.asCell(), &owner.get(), sourceCode);
     return sourceCode;

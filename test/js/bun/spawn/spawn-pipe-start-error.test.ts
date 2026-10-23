@@ -104,12 +104,21 @@ try {
 //
 // FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
 // kernel answers for a child that runs as another user by now (sudo, su).
+//
+// WAIT_FOR_OUTPUT=n makes the nth EPOLL_CTL_ADD of a readable unix socket, which
+// is what a child's piped stdout and stderr are, wait until the child has
+// written to it: the read that follows the registration finds that output. How
+// many bytes of it are there by then is reported on stderr.
+//
+// In every mode, a kill() of a pid that wait4() already returned is reported on
+// stderr: that pid may be another process's by then.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -117,12 +126,32 @@ const SHIM_C = /* c */ `
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static long (*real_syscall)(long, ...);
 static int writer_mods;
 static int pidfd_adds;
+static int output_adds;
+static pid_t reaped[64];
+static int reaped_count;
+
+static void wait_for_output(long op, int fd, struct epoll_event *event) {
+  const char *nth = getenv("WAIT_FOR_OUTPUT");
+  if (!nth || op != EPOLL_CTL_ADD || !event || !(event->events & EPOLLIN)) return;
+  int domain;
+  socklen_t length = sizeof(domain);
+  if (getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &length) != 0 || domain != AF_UNIX) return;
+  if (++output_adds != atoi(nth)) return;
+  struct pollfd readable = { .fd = fd, .events = POLLIN };
+  while (poll(&readable, 1, -1) < 0 && errno == EINTR) {}
+  int pending = 0;
+  ioctl(fd, FIONREAD, &pending);
+  dprintf(2, "%d bytes of output before the first read\\n", pending);
+}
 
 static int is_pidfd(int fd) {
   char path[32], target[32];
@@ -161,6 +190,7 @@ long syscall(long number, ...) {
   long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
   long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
   va_end(ap);
+  if (number == SYS_epoll_ctl) wait_for_output(a2, (int)a3, (struct epoll_event *)a4);
   if (number == SYS_epoll_ctl && should_fail(a2, (int)a3, (struct epoll_event *)a4)) {
     errno = ENOSPC;
     return -1;
@@ -169,8 +199,23 @@ long syscall(long number, ...) {
   return real_syscall(number, a1, a2, a3, a4, a5, a6);
 }
 
+pid_t wait4(pid_t pid, int *status, int options, struct rusage *usage) {
+  static pid_t (*real_wait4)(pid_t, int *, int, struct rusage *);
+  if (!real_wait4) real_wait4 = (pid_t (*)(pid_t, int *, int, struct rusage *))dlsym(RTLD_NEXT, "wait4");
+  pid_t result = real_wait4(pid, status, options, usage);
+  // Not always the thread that calls kill(): without a pidfd, a thread of its own waits for the children.
+  if (result > 0) {
+    int slot = __sync_fetch_and_add(&reaped_count, 1);
+    if (slot < 64) reaped[slot] = result;
+  }
+  return result;
+}
+
 int kill(pid_t pid, int signal) {
   static int (*real_kill)(pid_t, int);
+  for (int i = 0; i < reaped_count && i < 64; i++) {
+    if (reaped[i] == pid) dprintf(2, "kill(pid, %d) after wait4() returned that pid\\n", signal);
+  }
   if (signal == SIGKILL && getenv("FAIL_SIGKILL")) {
     errno = EPERM;
     return -1;
@@ -191,6 +236,8 @@ const FIXTURE = /* js */ `
 import { readdirSync, readFileSync } from "node:fs";
 import { heapStats } from "bun:jsc";
 const kind = process.argv[2];
+// Loaded for the one kind that uses it, and before the baseline is taken.
+const { spawnSync } = kind === "sync-maxbuffer-node" ? await import("node:child_process") : {};
 const openFds = () => readdirSync("/proc/self/fd").length;
 // Running or zombie. The kernel lists them per spawning thread, which is this one, unless it was built without
 // CONFIG_PROC_CHILDREN. Then every process is asked for its parent, the field after its parenthesized name and state.
@@ -241,11 +288,17 @@ function writeToTerminal(writes) {
   return seen;
 }
 
+// Goes over maxBuffer with one write and then stays for a while: nothing but a signal ends it sooner. A builtin
+// writes it: a shell blocks signals while it starts a program, and a SIGKILL that follows then beats a blocked SIGHUP.
+const overMaxBuffer = fd => ["sh", "-c", "printf %01000d 0 >&" + fd + "; exec sleep 2"];
+const maxBuffer = { maxBuffer: 256, killSignal: "SIGHUP" };
+
 let error = null;
 let write;
 let sync;
 let onExit;
 let shell;
+let result;
 try {
   switch (kind) {
     case "stdin-pipe":
@@ -304,6 +357,29 @@ try {
     case "sync-unwatchable-timeout":
       Bun.spawnSync({ cmd: ["sleep", "1000"], stdin: "ignore", stdout: "ignore", stderr: "ignore", timeout: 1 });
       break;
+    // Under WAIT_FOR_OUTPUT, the child is over maxBuffer when the call first reads from it.
+    case "sync-maxbuffer-stdout":
+    case "sync-maxbuffer-stderr": {
+      const cmd = overMaxBuffer(kind.endsWith("stdout") ? 1 : 2);
+      const child = Bun.spawnSync({ cmd, stdin: "ignore", stdout: "pipe", stderr: "pipe", ...maxBuffer });
+      const { exitCode, signalCode, exitedDueToMaxBuffer } = child;
+      result = { exitCode, signalCode, exitedDueToMaxBuffer };
+      break;
+    }
+    case "sync-maxbuffer-node": {
+      const [file, ...args] = overMaxBuffer(1);
+      const child = spawnSync(file, args, { stdio: ["ignore", "pipe", "pipe"], ...maxBuffer });
+      result = { status: child.status, signal: child.signal, error: child.error?.code };
+      break;
+    }
+    // What the shim reports: it has to see both the wait and the kill.
+    case "sync-reaped-then-signalled": {
+      const { pid } = Bun.spawnSync(quiet);
+      try {
+        process.kill(pid, 0);
+      } catch {}
+      break;
+    }
     case "terminal":
       new Bun.Terminal({});
       break;
@@ -331,7 +407,7 @@ if (kind === "sync-stdin-buffer") {
   const deadline = performance.now() + 2000;
   while (children().length > 0 && performance.now() < deadline) await Bun.sleep(5);
   sync = { children: children().length, next: Bun.spawnSync(quiet).exitCode };
-} else if (kind.includes("unwatchable") || kind.endsWith("-running")) {
+} else if (kind.includes("unwatchable") || kind.includes("maxbuffer") || kind.endsWith("-running")) {
   // A call without pipes or a timeout waits for its child without registering it.
   sync = { children: children().length, next: Bun.spawnSync(quiet).exitCode };
 }
@@ -342,7 +418,7 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+console.log(JSON.stringify({ error, write, sync, onExit, shell, result, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
@@ -569,6 +645,38 @@ describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with th
   });
 });
 
+// Every `stderr: ""` above and below also says that no pid was signalled after it was reaped. That rests on this.
+test.concurrent.skipIf(!isLinux || !cc)("the shim reports a kill() of a pid that wait4() returned", async () => {
+  expect(await runFixture("sync-reaped-then-signalled")).toEqual({
+    report: { error: null, leakedFds: 0, leakedWrappers: 0 },
+    stderr: "kill(pid, 0) after wait4() returned that pid\n",
+    exitCode: 0,
+  });
+});
+
+// A worker of `bun test --parallel` is ended and reaped the same way, and its pid is free from then on. The error
+// path of the worker's start still asks for a kill: that one must not be sent.
+test.concurrent.skipIf(!isLinux || !cc)("a test worker that was ended and reaped is not signalled again", async () => {
+  using project = tempDir("unwatchable-worker", {
+    "a.test.js": `test("a", () => {});`,
+    "b.test.js": `test("b", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel"],
+    cwd: String(project),
+    env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({
+    unwatchable: stderr.includes("watchOrReap failed for test worker"),
+    killsOfReapedPids: stderr.split("\n").filter(line => line.startsWith("kill(")),
+    exitCode,
+  }).toEqual({ unwatchable: true, killsOfReapedPids: [], exitCode: 1 });
+});
+
 // Ending such a child takes a SIGKILL, and reaping it a wait for that to take effect. One that cannot be signalled
 // would be waited for until it exits by itself, with the thread blocked or no deadline to end the wait: it is left.
 describe.skipIf(!isLinux || !cc)("a child that has to be ended and cannot be signalled is not waited for", () => {
@@ -589,6 +697,57 @@ describe.skipIf(!isLinux || !cc)("a child that has to be ended and cannot be sig
     });
   });
 });
+
+// Bun.spawnSync reads its child's stdout and stderr once, and only then registers for the child's exit. Output that
+// was there for that read and went over maxBuffer asked for a kill that was never sent: the child got no signal, and
+// the call waited for it to end by itself.
+describe.skipIf(!isLinux || !cc)(
+  "a child that is over maxBuffer before spawnSync registers for its exit is sent its killSignal",
+  () => {
+    const killed = { exitCode: null, signalCode: "SIGHUP", exitedDueToMaxBuffer: true };
+    const killedNode = { status: null, signal: "SIGHUP", error: "ENOBUFS" };
+    // The other way a child is watched, for where pidfd_open() is not available: a thread waits for it.
+    const waiterThread = { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" };
+    // One at a time: run together with the rest of this file, a debug build takes them to their timeout.
+    test.each([
+      ["Bun.spawnSync, on stdout", "sync-maxbuffer-stdout", { WAIT_FOR_OUTPUT: "1" }, killed],
+      ["Bun.spawnSync, on stderr", "sync-maxbuffer-stderr", { WAIT_FOR_OUTPUT: "2" }, killed],
+      ["child_process.spawnSync", "sync-maxbuffer-node", { WAIT_FOR_OUTPUT: "1" }, killedNode],
+      [
+        "Bun.spawnSync, on stdout, without a pidfd",
+        "sync-maxbuffer-stdout",
+        { WAIT_FOR_OUTPUT: "1", ...waiterThread },
+        killed,
+      ],
+      [
+        "Bun.spawnSync, on stderr, without a pidfd",
+        "sync-maxbuffer-stderr",
+        { WAIT_FOR_OUTPUT: "2", ...waiterThread },
+        killed,
+      ],
+      [
+        "child_process.spawnSync, without a pidfd",
+        "sync-maxbuffer-node",
+        { WAIT_FOR_OUTPUT: "1", ...waiterThread },
+        killedNode,
+      ],
+      // The signal has ended the child by the time its exit cannot be registered for: that is reported, not the error.
+      [
+        "Bun.spawnSync whose pidfd then fails to register",
+        "sync-maxbuffer-stdout",
+        { WAIT_FOR_OUTPUT: "1", FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_SKIP: "1" },
+        killed,
+      ],
+    ])("%s", async (_, kind, env, result) => {
+      expect(await runFixture(kind, env)).toEqual({
+        report: { error: null, sync: { children: 0, next: 0 }, result, leakedFds: 0, leakedWrappers: 0 },
+        // All that the child writes, which is more than maxBuffer, was there for the first read.
+        stderr: "1000 bytes of output before the first read\n",
+        exitCode: 0,
+      });
+    });
+  },
+);
 
 // The POSIX reader reports a failed registration by calling on_reader_error
 // from inside start(), and start() still returns Ok. Terminal's reader

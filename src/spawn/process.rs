@@ -274,13 +274,16 @@ impl Process {
         posix: &PosixSpawnResult,
         event_loop: EventLoopHandle,
     ) -> *mut Process {
-        let status = 'brk: {
+        let (status, poller) = 'brk: {
             if posix.has_exited {
                 let mut rusage = rusage_zeroed();
                 let waitpid_result = posix_spawn::wait4(posix.pid, 0, Some(&mut rusage));
-                break 'brk Status::from(posix.pid, &waitpid_result).unwrap_or(Status::Running);
+                break 'brk (
+                    Status::from(posix.pid, &waitpid_result).unwrap_or(Status::Running),
+                    Poller::Detached,
+                );
             }
-            Status::Running
+            (Status::Running, Poller::Unwatched)
         };
         // bun.new → heap::alloc (pointer crosses FFI / intrusive refcount)
         bun_core::heap::into_raw(Box::new(Process {
@@ -290,7 +293,7 @@ impl Process {
             pidfd: posix.pidfd.unwrap_or(0),
             js_poster: event_loop.js_poster(),
             event_loop,
-            poller: Poller::Detached,
+            poller,
             status,
             exit_handler: ProcessExitHandler::default(),
         }))
@@ -448,7 +451,7 @@ impl Process {
                         self.on_exit(status, &rusage);
                         return Ok(true);
                     }
-                    // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
+                    // The pid may be another process's from here on, and `kill` leaves alone what is `Detached`.
                     self.close();
                 }
                 Err(err)
@@ -741,7 +744,7 @@ impl Process {
     }
 
     /// For a child whose exit nothing is going to report: left alone it would keep running, and never be reaped.
-    /// Watched or not, unlike [`Self::kill`]. A child that cannot be signalled (it runs as another user by now)
+    /// `Detached` or not, unlike [`Self::kill`]. A child that cannot be signalled (it runs as another user by now)
     /// is left alone after all, since the wait would last until it exits by itself.
     ///
     /// The status, with `rusage`, is that of a child which turns out to have ended by itself. It is for the caller
@@ -776,17 +779,13 @@ impl Process {
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
-            // Detached is a deliberate no-op: spawnSync's `read_all()` runs
-            // before `watch_or_reap()` installs the poller; the first
-            // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
-            // maxBuffer overflow fires from the event-loop poll
-            // tick *after* the Fd poller is armed. Do not widen this match to
-            // mask spawn-maxbuf.test.ts — the async-path hang there has a
-            // different root cause (poller is already Fd when `on_max_buffer`
-            // fires, so this arm is unreachable on that path).
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => return self.send_signal(signal),
-                _ => {}
+                Poller::Unwatched => {
+                    debug_assert!(!self.has_exited());
+                    return self.send_signal(signal);
+                }
+                Poller::Detached => {}
             }
         }
         #[cfg(windows)]
@@ -927,6 +926,9 @@ pub enum PollerPosix {
     Fd(core::ptr::NonNull<FilePoll>),
     /// Waited for off the loop: by the shared waiter thread (Linux without pidfd) or by a `reap_on_thread` thread (macOS).
     WaiterThread(KeepAlive),
+    /// Spawned and not reaped, with nothing waiting for its exit yet. The pid is still this child's, so `kill` signals it.
+    Unwatched,
+    /// Exited and reaped, or given up on (`close`). The pid may be another process's, so `kill` does nothing.
     Detached,
 }
 

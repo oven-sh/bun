@@ -462,7 +462,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let arguments = &mut all_arguments[..];
     let value = arguments[0];
 
-    if !arguments[1].is_array() {
+    if arguments[1].is_object() && !arguments[1].is_array() {
         arguments[2] = arguments[1];
         arguments[1] = JSValue::UNDEFINED;
     }

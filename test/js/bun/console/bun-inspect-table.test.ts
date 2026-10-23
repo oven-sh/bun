@@ -107,3 +107,29 @@ describe("inspect.table (with colors in 2nd position)", () => {
     });
   });
 });
+
+describe("inspect.table (options after a properties argument that is not an array)", () => {
+  // The declared types reject most of these calls.
+  const table = inspect.table as (...args: unknown[]) => string;
+  const rows = [{ a: { z: 1, y: { x: 1 } }, b: "s" }];
+
+  describe.each([{ colors: true }, { depth: 0 }, { sorted: true }, { compact: false }])("%j", options => {
+    test("changes the table", () => {
+      expect(table(rows, options)).not.toBe(table(rows));
+    });
+
+    test.each([undefined, null, "a", 0, true, Symbol("a"), 1n])("is read after %p", properties => {
+      expect(table(rows, properties, options)).toBe(table(rows, options));
+    });
+  });
+
+  test("a bad depth throws after undefined", () => {
+    expect(() => table(rows, undefined, { depth: -1 })).toThrow(
+      "expected depth to be greater than or equal to 0, got -1",
+    );
+  });
+
+  test("an options object in the second position is the options, and a third argument is ignored", () => {
+    expect(table(rows, { colors: true }, { sorted: true })).toBe(table(rows, { colors: true }));
+  });
+});

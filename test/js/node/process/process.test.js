@@ -376,11 +376,24 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", a
       fs.rmSync(path.join(base, "parent"), { recursive: true, force: true });
       // chdir("..") must not throw even though getcwd() now fails for the
       // unlinked directory: the chdir syscall itself still succeeds and Node
-      // returns normally here.
-      process.chdir("..");
+      // returns normally here. process.chdir() returns the cached cwd, which
+      // the fallback must have derived from the old cwd joined with "..".
+      const cached = process.chdir("..");
+      // process.cwd() is a real getcwd() call, so this proves the fallback
+      // ran because the OS really could not name the new cwd.
+      let cwdError;
+      try {
+        process.cwd();
+      } catch (e) {
+        cwdError = e.code;
+      }
       // Recovering to a live absolute directory still works.
       process.chdir(base);
-      console.log(process.cwd() === base ? "RECOVERED" : "WRONG:" + process.cwd());
+      console.log(JSON.stringify({
+        cachedIsParent: cached === path.join(base, "parent"),
+        cwdError,
+        recovered: process.cwd() === base,
+      }));
     `,
   });
 
@@ -394,14 +407,16 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", a
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("RECOVERED");
+  expect(JSON.parse(stdout)).toEqual({ cachedIsParent: true, cwdError: "ENOENT", recovered: true });
   expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/32409
 // Linux-only: the process cwd can grow past PATH_MAX via repeated relative
-// chdir, after which getcwd fails with ERANGE. The logical-path fallback must
-// not throw or crash the process.
+// chdir, after which getcwd fails with ERANGE and the logical path no longer
+// fits either. chdir must not throw, and once the cached cwd can no longer
+// follow the process it must stop being used as a base: a later relative
+// chdir must not derive a wrong but existing directory from it.
 it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH_MAX", async () => {
   using dir = tempDir("process-chdir-long", {
     "index.js": `
@@ -409,11 +424,24 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH
       const seg = Buffer.alloc(200, "d").toString();
       // 40 * ~201 bytes is well past PATH_MAX (4096): getcwd() starts failing
       // with ERANGE partway down, but each short relative chdir still succeeds.
+      // process.chdir() returns the cached cwd.
+      let cached;
       for (let i = 0; i < 40; i++) {
         fs.mkdirSync(seg);
-        process.chdir(seg);
+        cached = process.chdir(seg);
       }
-      console.log("OK");
+      // process.cwd() is a real getcwd() call: prove the cwd is past PATH_MAX.
+      let cwdError;
+      try {
+        process.cwd();
+      } catch (e) {
+        cwdError = e.code;
+      }
+      // The cache stopped following the process many levels ago. Joining ".."
+      // onto it would name an existing ancestor that is not where the process
+      // is, so the cache must stay frozen instead.
+      const afterUp = process.chdir("..");
+      console.log(JSON.stringify({ cwdError, cacheFrozen: afterUp === cached }));
     `,
   });
 
@@ -427,7 +455,7 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd grows past PATH
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("OK");
+  expect(JSON.parse(stdout)).toEqual({ cwdError: "ERANGE", cacheFrozen: true });
   expect(exitCode).toBe(0);
 });
 

@@ -424,6 +424,12 @@ pub struct VirtualMachine {
     /// made under an earlier count is the finished file's, and is dropped.
     pub test_isolation_generation: u32,
     pub test_isolation_state: TestIsolationState,
+    /// Set when a `chdir` moved the process somewhere the cached cwd could not
+    /// follow (`getcwd` failed and the logical path did not fit in PATH_MAX).
+    /// While set, the cache is known not to name the real cwd, so
+    /// [`Self::set_process_cwd`] must not derive a new cache entry from it.
+    /// Cleared by the next successful `getcwd`.
+    cwd_cache_stale: bool,
 }
 
 #[derive(Default)]
@@ -5946,6 +5952,7 @@ impl VirtualMachine {
     }
 
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
+        let cache_stale = self.cwd_cache_stale;
         let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -5959,6 +5966,12 @@ impl VirtualMachine {
             // logical path (old cwd joined with the target) instead of rolling
             // the chdir back and throwing.
             bun_sys::Result::Err(_) => {
+                // The logical path is only right when the cache names the
+                // real cwd the chdir started from. Once it does not, joining
+                // onto it would install a wrong but existing directory.
+                if cache_stale {
+                    return Ok(());
+                }
                 let prev = fs.top_level_dir();
                 let mut resolve_buf = bun_paths::path_buffer_pool::get();
                 match bun_paths::resolve_path::join_abs_string_buf_checked::<
@@ -5970,9 +5983,13 @@ impl VirtualMachine {
                         buf[..n].copy_from_slice(resolved);
                         n
                     }
-                    // The logical path does not fit in PATH_MAX either; keep
-                    // the previously cached cwd, which is already interned.
-                    None => return Ok(()),
+                    // The logical path does not fit in PATH_MAX either. Keep
+                    // the previously cached cwd (already interned) and stop
+                    // trusting it until getcwd succeeds again.
+                    None => {
+                        self.cwd_cache_stale = true;
+                        return Ok(());
+                    }
                 }
             }
         };
@@ -5981,6 +5998,7 @@ impl VirtualMachine {
             len += 1;
         }
         fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
+        self.cwd_cache_stale = false;
         Ok(())
     }
 

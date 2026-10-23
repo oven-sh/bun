@@ -18179,6 +18179,75 @@ new Chai.AssertionError().a; new Chai.AssertionError().b;
       }
     });
 
+    test("reports TS2744 for a later type parameter that's the check type of a conditional type", async () => {
+      using dir = project({
+        "a.ts": `type Box<A, B = unknown> = [A, B];
+export type T1<A = B, B = 1> = [A, B];
+export type T2<A = Box<B>, B = 1> = [A, B];
+export type T3<A = B extends undefined ? {} : B, B = 1> = [A, B];
+export type T4<A = Box<B extends undefined ? {} : B>, B = 1> = [A, B];
+export type T5<A = Box<1, B extends undefined ? {} : B>, B = 1> = [A, B];
+export type T6<A = { x: B }, B = 1> = [A, B];
+export type T7<A = () => B, B = 1> = [A, B];
+export type T8<A = B[], B = 1> = [A, B];
+export type T9<A = [B], B = 1> = [A, B];
+export type U1<A = keyof B, B = 1> = [A, B];
+export type U2<A = B["x"], B extends { x: 1 } = { x: 1 }> = [A, B];
+export type U3<A = { [K in keyof B]: 1 }, B = 1> = [A, B];
+export type U4<A = B | 1, B = 1> = [A, B];
+export type U5<A = 1 extends B ? 1 : 2, B = 1> = [A, B];
+export type U6<A = 1 extends 1 ? B : 2, B = 1> = [A, B];
+export type U7<A = 1 extends infer X ? [X, B] : 2, B = 1> = [A, B];
+export type U8<A = A, B = 1> = [A, B];
+export interface I { <A = B extends undefined ? {} : B, B = 1>(a: A, b: B): void; m<A = Box<B extends 1 ? B : 2>, B = 1>(): [A, B] }
+export declare function f<A = B extends undefined ? {} : B, B = 1>(a: A, b: B): void;
+export declare class C<A = Box<B extends undefined ? {} : B>, B = 1> { a: A; b: B }
+export type F = <A extends Box<1> = Box<1, B extends undefined ? {} : B>, B = 1>(a: A, b: B) => void;
+export type U9<A = \`\${B & string}\`, B = 1> = [A, B];
+export type V1<A = typeof import("./a") extends B ? 1 : 2, B = 1> = [A, B];
+export type V2<A = (b: B) => b is B, B = 1> = [A, B];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(3,24): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(4,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(4,47): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(5,24): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(5,51): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(6,27): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(6,54): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(7,25): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(8,26): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(9,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(10,21): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(11,26): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(12,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(13,34): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(14,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(15,30): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(16,34): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(17,44): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(18,20): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,27): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,54): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,93): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(19,107): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(20,31): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(20,58): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(21,32): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(21,59): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(22,44): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(22,71): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(23,23): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(24,49): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(25,24): error TS2744: Type parameter defaults can only reference previously declared type parameters.
+        a.ts(25,35): error TS2744: Type parameter defaults can only reference previously declared type parameters."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

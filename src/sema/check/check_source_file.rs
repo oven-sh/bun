@@ -442,6 +442,8 @@ impl<'s> Checker<'_, 's> {
                 TypeData::Substitution { base, .. } => base,
                 _ => t,
             };
+            // A distributed type parameter has the symbol of the type parameter.
+            let t = self.types().non_distributed(t);
             if (type_params.iter().skip(index)).any(|p| self.type_param(file, p) == t) {
                 self.error(file, node, 2744, &[]);
             }

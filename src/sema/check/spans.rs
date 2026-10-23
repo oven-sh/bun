@@ -945,7 +945,9 @@ impl<'a, 's> Spans<'a, 's> {
         let comments = &self.hir.jsdoc_comments;
         let started = comments.partition_point(|comment| comment.0 <= pos);
         let scanned = match started.checked_sub(1).and_then(|index| comments.get(index)) {
-            Some(&(_, end)) if pos < end => self.text.get(..end.saturating_sub(2) as usize),
+            Some(&(_, end)) if pos < end => {
+                self.text.get(..(end as usize).saturating_sub(b"*/".len()))
+            }
             _ => None,
         };
         let end = token_end(scanned.unwrap_or(self.text), pos as usize, self.is_jsx());

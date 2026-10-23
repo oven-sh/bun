@@ -78,7 +78,6 @@
 #include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
-#include "JSNextTickQueue.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "JavaScriptCore/BigIntConstructor.h"
 #include "JavaScriptCore/MathCommon.h"
@@ -7031,22 +7030,14 @@ bool Bun::takeTerminationOutsideScript(JSC::VM& vm, JSC::TopExceptionScope& scop
     auto* exception = scope.exception();
     if (!exception || !vm.isTerminationException(exception))
         return false;
-    // A termination that unwinds past the outermost script frame is the VM's stop, which closed the gate before firing the
-    // trap, or `bun test` interrupting a test, which doesn't close it (node:vm withdraws its own beneath script).
-    bool isStop = !WebCore::clientData(vm)->scriptAllowed();
+    // Every termination that unwinds past the outermost script frame is the VM's stop (node:vm withdraws its own
+    // beneath script), and the stop closed the gate before firing the trap.
+    ASSERT(!WebCore::clientData(vm)->scriptAllowed());
     scope.clearException();
     // Thrown by a trap check out here, no VM entry exit will reset this for JSC (VM::executeEntryScopeServicesOnExit).
     if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
         vm.clearHasTerminationRequest();
-    if (isStop) {
-        vm.setExecutionForbidden();
-        return true;
-    }
-    // A chain of promise jobs or ticks that the test left queued would block the event loop again, with no deadline armed.
-    vm.defaultMicrotaskQueue().clear();
-    auto* globalObject = defaultGlobalObject(vm);
-    if (auto* nextTickQueue = globalObject->m_nextTickQueue.get())
-        nextTickQueue->clear(vm, globalObject);
+    vm.setExecutionForbidden();
     return true;
 }
 

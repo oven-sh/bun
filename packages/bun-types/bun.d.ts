@@ -3604,8 +3604,28 @@ declare module "bun" {
      * A map of file paths to their contents for in-memory bundling.
      *
      * Use this to bundle virtual files that don't exist on disk, or override
-     * the contents of files that do exist on disk. The keys are file paths (which should
-     * match how they're imported) and the values are the file contents.
+     * the contents of files that do exist on disk. The values are the file
+     * contents. A key is one of:
+     *
+     * - An absolute path (`"/app/index.ts"`). Write it normalized, like the
+     *   result of `path.resolve()`. Bun does not resolve it against the
+     *   working directory.
+     * - A relative path (`"./src/config.ts"`, `"src/config.ts"`). It starts
+     *   with `./` or `../`, or it has a file extension and no scheme. Bun
+     *   resolves it against the working directory at the `Bun.build()` call.
+     *   An import with exactly the key as its specifier also gets the file.
+     * - A name (`"virtual:config.ts"`). It starts with a scheme, or it has no
+     *   file extension and does not start with `./` or `../`. Only an import
+     *   with exactly the key as its specifier gets the file. A name cannot
+     *   replace a module that the target provides, such as `node:fs`.
+     *
+     * To make any relative key a path, start it with `./`: `"./LICENSE"`.
+     * Bun picks the loader from the file extension of the key.
+     *
+     * A relative path for a file on disk replaces the contents of that file
+     * only. Bun still resolves the file on disk, so its `tsconfig.json` and
+     * `package.json` apply. The key must be the real path of the file: a path
+     * through a symlinked directory has no effect.
      *
      * File contents can be provided as:
      * - `string` - The source code as a string

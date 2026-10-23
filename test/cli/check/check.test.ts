@@ -24754,8 +24754,7 @@ describe.concurrent("--check", () => {
     expect(result).toEqual({ success: true, outputs: 2, logs: [] });
   });
 
-  // The bundler asserts that the path of an entry point is absolute.
-  test.skipIf(isDebug || isASAN)("a file that's only in `files` can have a relative name", async () => {
+  test("a file that's only in `files` can have a relative name", async () => {
     using dir = project({ "build.mjs": buildScript });
     const { result } = await build(dir, {
       entrypoints: ["./entry.ts"],

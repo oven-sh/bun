@@ -69,6 +69,7 @@ describe("console.Console", () => {
   // Node's `shouldColorize(stream)`: `FORCE_COLOR` decides if it is set, and the stream if it is not.
   describe.concurrent("without a colorMode", () => {
     // `process.stdout` and `process.stderr` listen for SIGWINCH if they are a terminal. The decision needs neither.
+    // Not on Windows: ConPTY adds its own sequences to what the terminal gets, so the output is not only the answer.
     test.skipIf(isWindows)("FORCE_COLOR=0 means no colors, also in a terminal", async () => {
       const program = `${head}
         const streams = () => process.listenerCount("SIGWINCH");

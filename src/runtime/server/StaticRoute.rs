@@ -43,7 +43,6 @@ pub(crate) struct InitFromBytesOptions<'a> {
     pub(crate) server: Option<AnyServer>,
     pub(crate) mime_type: Option<&'a MimeType>,
     pub(crate) status_code: u16,
-    pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
 impl<'a> Default for InitFromBytesOptions<'a> {
@@ -52,7 +51,6 @@ impl<'a> Default for InitFromBytesOptions<'a> {
             server: None,
             mime_type: None,
             status_code: 200,
-            headers: None,
         }
     }
 }
@@ -82,16 +80,11 @@ impl StaticRoute {
         blob: AnyBlob,
         options: InitFromBytesOptions<'_>,
     ) -> RefPtr<StaticRoute> {
-        let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-            options.headers,
-            any_blob_content_type(&blob),
-        );
-        if headers.get_content_type().is_none() {
-            if let Some(mime_type) = options.mime_type {
-                headers.append(b"Content-Type", &mime_type.value);
-            } else if blob.has_content_type_from_user() {
-                headers.append(b"Content-Type", blob.content_type());
-            }
+        let mut headers = Headers::default();
+        if let Some(content_type) = any_blob_content_type(&blob) {
+            headers.append(b"Content-Type", content_type);
+        } else if let Some(mime_type) = options.mime_type {
+            headers.append(b"Content-Type", &mime_type.value);
         }
 
         // Generate ETag if not already present
@@ -107,6 +100,32 @@ impl StaticRoute {
             options.server,
             options.status_code,
         ))
+    }
+
+    /// Ownership of `blob` is transferred to this function.
+    pub(crate) fn init_from_any_blob_with_headers(
+        global_this: &JSGlobalObject,
+        blob: AnyBlob,
+        fetch_headers: Option<&FetchHeaders>,
+        status_code: u16,
+    ) -> JsResult<RefPtr<StaticRoute>> {
+        let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+            global_this,
+            fetch_headers,
+            any_blob_content_type(&blob),
+        )?;
+
+        // Generate ETag if not already present
+        if headers.get(b"etag").is_none() {
+            if !blob.slice().is_empty() {
+                append_etag(blob.slice(), &mut headers);
+            }
+        }
+
+        let mut route = StaticRoute::new(blob, headers, None, status_code);
+        // Match the body `on_get` sends. `blob.size()` returns the unknown-size sentinel for an S3 store.
+        route.cached_blob_size = route.blob.slice().len() as u64;
+        Ok(RefPtr::new(route))
     }
 
     /// Create a static route to be used on a single response, freeing the bytes once sent.
@@ -223,24 +242,12 @@ impl StaticRoute {
                 )?;
             }
 
-            let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-                response.get_init_headers(),
-                any_blob_content_type(&blob),
-            );
-
-            // Generate ETag if not already present
-            if headers.get(b"etag").is_none() {
-                if !blob.slice().is_empty() {
-                    append_etag(blob.slice(), &mut headers);
-                }
-            }
-
-            return Ok(Some(RefPtr::new(StaticRoute::new(
+            return Ok(Some(Self::init_from_any_blob_with_headers(
+                global_this,
                 blob,
-                headers,
-                None,
+                response.get_init_headers(),
                 response.status_code(),
-            ))));
+            )?));
         }
 
         Ok(None)
@@ -263,7 +270,7 @@ impl StaticRoute {
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -318,7 +325,7 @@ impl StaticRoute {
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -356,7 +363,7 @@ impl StaticRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_static_request_complete();
         }
         let n = this.pending_responses.get() - 1;
@@ -549,7 +556,7 @@ impl StaticRoute {
     ) -> bool {
         req.set_yield(false);
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }

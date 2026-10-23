@@ -7,8 +7,8 @@ use bun_lint::utils::text;
 /// Disallow fallthrough of `case` statements.
 pub struct NoFallthrough {
     comment_pattern: CommentPattern,
-    /// `commentPattern` as oxlint reads it: in capitals or not.
-    pattern_of_oxlint: Option<Regex>,
+    /// `commentPattern` the way oxlint reads it, ignoring case.
+    oxlint_pattern: Option<Regex>,
     allow_empty_case: bool,
     report_unused_fallthrough_comment: bool,
 }
@@ -20,20 +20,20 @@ const UNUSED_FALLTHROUGH_COMMENT: Message = Message::new(
 const CASE: Message = Message::new("case", "Expected a 'break' statement before 'case'.");
 const DEFAULT: Message = Message::new("default", "Expected a 'break' statement before 'default'.");
 
-/// Without `commentPattern`, a comment has to be one of these for oxlint, in capitals or not.
-const COMMENTS_OF_OXLINT: [&[u8]; 4] = [b"falls through", b"fall through", b"fallsthrough", b"fallthrough"];
+/// Without `commentPattern`, oxlint requires a comment to be one of these, ignoring case.
+const OXLINT_COMMENTS: [&[u8]; 4] = [b"falls through", b"fall through", b"fallsthrough", b"fallthrough"];
 
 /// `commentPattern`
 enum CommentPattern {
     /// Not set, so it's ESLint's `/falls?\s?through/iu`.
-    OfEslint,
-    /// [`PATTERN_OF_BUN`]
-    OfBun,
+    EslintDefault,
+    /// [`BUN_PATTERN`]
+    BunDefault,
     Other(Regex),
 }
 
 /// `commentPattern` in `bun lint`'s default config. It's matched by hand, so a run with no config never compiles a regular expression.
-const PATTERN_OF_BUN: &str = r"(?i:falls?[\s-]?through|no\s?break)";
+const BUN_PATTERN: &str = r"(?i:falls?[\s-]?through|no\s?break)";
 
 /// Looks for `first`, then at most one whitespace character or one of `separators`, then `second`. Ignores case.
 fn has_words(value: &[u8], first: &[u8], separators: &[u8], second: &[u8]) -> bool {
@@ -64,14 +64,14 @@ impl CommentPattern {
             has_words(value, b"fall", separators, b"through") || has_words(value, b"falls", separators, b"through")
         };
         match self {
-            CommentPattern::OfEslint => falls_through(b""),
-            CommentPattern::OfBun => falls_through(b"-") || has_words(value, b"no", b"", b"break"),
+            CommentPattern::EslintDefault => falls_through(b""),
+            CommentPattern::BunDefault => falls_through(b"-") || has_words(value, b"no", b"", b"break"),
             CommentPattern::Other(pattern) => pattern.test(value),
         }
     }
 }
 
-/// `process.exit()`, `process.abort()`, or, in a file that has been type checked, any call that returns `never`.
+/// True for `process.exit()`, `process.abort()`, or, in a type-checked file, any call that returns `never`.
 fn never_returns(e: Expr) -> bool {
     let Some(call) = e.as_call() else {
         return false;
@@ -83,8 +83,8 @@ fn never_returns(e: Expr) -> bool {
     ends_the_process || e.file().types().is_some() && e.ty().has_flags(TypeFlags::NEVER)
 }
 
-/// Whether the code after `statement` can't run. ESLint's code paths only know `break`, `return`, `throw` and `continue`. This
-/// also knows [calls that never return](never_returns).
+/// True if the code after `statement` can't run. ESLint's code paths only know `break`, `return`, `throw` and
+/// `continue`. This also knows [calls that never return](never_returns).
 fn never_completes(statement: Stmt) -> bool {
     match statement.kind() {
         StmtKind::Break(..) | StmtKind::Return(..) | StmtKind::Throw(..) | StmtKind::Continue(..) => true,
@@ -96,17 +96,17 @@ fn never_completes(statement: Stmt) -> bool {
 }
 
 impl NoFallthrough {
-    /// The comment, if it is a fallthrough comment and not a directive of ESLint.
+    /// Returns the comment if it's a fallthrough comment and not an ESLint directive.
     fn fallthrough_comment<'a>(&self, comment: Option<Token<'a>>, is_oxlint: bool) -> Option<Token<'a>> {
         comment.filter(|comment| {
             let value = comment.comment_value();
             if is_oxlint {
                 let value = strings::trim_js_whitespace(value);
                 let is_directive = value.starts_with(b"oxlint-") || value.starts_with(b"eslint-");
-                return match (&self.pattern_of_oxlint, &self.comment_pattern) {
+                return match (&self.oxlint_pattern, &self.comment_pattern) {
                     (Some(pattern), _) => pattern.test(value) && !is_directive,
-                    (None, of_bun @ CommentPattern::OfBun) => of_bun.test(value) && !is_directive,
-                    (None, _) => COMMENTS_OF_OXLINT.iter().any(|it| value.eq_ignore_ascii_case(it)),
+                    (None, bun_default @ CommentPattern::BunDefault) => bun_default.test(value) && !is_directive,
+                    (None, _) => OXLINT_COMMENTS.iter().any(|it| value.eq_ignore_ascii_case(it)),
                 };
             }
             self.comment_pattern.test(value) && match_directives_pattern(strings::trim_js_whitespace(value)).is_none()
@@ -143,7 +143,7 @@ impl NoFallthrough {
             cx.line_of(skip_trivia(cx.text(), end)) > cx.line_of(end) + 1
         };
         let last = previous.body().last();
-        // What follows a `break`, a `return` or a `throw` cannot be reached.
+        // Code after a `break`, `return` or `throw` can't be reached.
         let ends_with_jump = matches!(
             last.map(Stmt::tag),
             Some(StmtTag::Break | StmtTag::Return | StmtTag::Throw | StmtTag::Continue)
@@ -153,8 +153,8 @@ impl NoFallthrough {
         if !may_fall_through && !self.report_unused_fallthrough_comment {
             return;
         }
-        // With an ESLint or oxlint config, only what they take for the end of a case counts.
-        let exits = || cx.language().stands_alone && previous.body().iter().any(never_completes);
+        // With an ESLint or oxlint config, only what those tools treat as the end of a case counts.
+        let exits = || cx.language().has_no_foreign_config && previous.body().iter().any(never_completes);
         let is_switch_exit_reachable = !ends_with_jump && previous.is_end_reachable() && !exits();
         let is_fallthrough = is_switch_exit_reachable && may_fall_through;
         if !is_fallthrough && (is_switch_exit_reachable || !self.report_unused_fallthrough_comment) {
@@ -168,20 +168,20 @@ impl NoFallthrough {
                 }
             }
             Some(comment) if !is_fallthrough => {
-                let place = match cx.language().is_oxlint {
-                    true => place_of_oxlint(previous, case, comment.span()),
+                let report_span = match cx.language().is_oxlint {
+                    true => oxlint_span(previous, case, comment.span()),
                     false => comment.span(),
                 };
-                cx.report(place, UNUSED_FALLTHROUGH_COMMENT);
+                cx.report(report_span, UNUSED_FALLTHROUGH_COMMENT);
             }
             _ => {}
         }
     }
 }
 
-/// oxlint points at all that is between the last statement of `previous` and `case`, or the `}` of the block that the
-/// comment is in.
-fn place_of_oxlint<'a>(previous: Case<'a>, case: Case<'a>, comment: Span) -> Span {
+/// oxlint reports everything between `previous`'s last statement and `case`, or the `}` of the block that contains the
+/// comment.
+fn oxlint_span<'a>(previous: Case<'a>, case: Case<'a>, comment: Span) -> Span {
     let (body, end_of_case) = (previous.body(), previous.span().end);
     let block = body.first().filter(|_| body.len() == 1).and_then(|it| Some((it.span(), it.as_block()?)));
     let start = match block {
@@ -203,13 +203,13 @@ impl Rule for NoFallthrough {
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         let source = object.str("commentPattern").filter(|pattern| !pattern.is_empty());
-        let compiled = source.filter(|pattern| *pattern != PATTERN_OF_BUN);
+        let compiled = source.filter(|pattern| *pattern != BUN_PATTERN);
         NoFallthrough {
-            pattern_of_oxlint: compiled.and_then(|pattern| Regex::new(pattern, "iu").ok()),
+            oxlint_pattern: compiled.and_then(|pattern| Regex::new(pattern, "iu").ok()),
             comment_pattern: match compiled.and_then(|pattern| Regex::new(pattern, "u").ok()) {
                 Some(pattern) => CommentPattern::Other(pattern),
-                None if source == Some(PATTERN_OF_BUN) => CommentPattern::OfBun,
-                None => CommentPattern::OfEslint,
+                None if source == Some(BUN_PATTERN) => CommentPattern::BunDefault,
+                None => CommentPattern::EslintDefault,
             },
             allow_empty_case: object.bool_or("allowEmptyCase", false),
             report_unused_fallthrough_comment: object

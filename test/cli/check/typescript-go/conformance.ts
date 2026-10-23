@@ -20,7 +20,8 @@ const only = process.env.ONLY;
 const sample = only ? 1 : isDebug || isASAN ? 40 : undefined;
 
 // The runner is compiled into debug and canary builds only.
-const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
+export const hasRunner =
+  isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
 /**
  * Declares the tests of one file of `../conformance`. CI limits the time a test file may take, so the files divide
@@ -32,36 +33,40 @@ export function conformance(shard: number, shards: number) {
   const dir = tempDir("typescript-go", {});
   afterAll(() => dir[Symbol.dispose]());
 
+  let written: Promise<string> | undefined;
+  const bundle = () =>
+    (written ??= (async () => {
+      const path = join(String(dir), "bundle.txt");
+      await Bun.write(path, Bun.zstdDecompressSync(await Bun.file(join(import.meta.dir, "bundle.zst")).bytes()));
+      return path;
+    })());
+  const runWith = async (...flags: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "check",
+        "--run-typescript-tests",
+        // The paths below are paths in it.
+        `--bundle=${await bundle()}`,
+        "--lib=/internal/bundled/libs",
+        "--testlib=/_submodules/TypeScript/tests/lib",
+        `--threads=${availableParallelism()}`,
+        `--every=${sample ?? shards}`,
+        `--first=${shard}`,
+        ...flags,
+        ...(only ? [`--only=${only}`] : []),
+        ...suites,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    return await proc.stdout.text();
+  };
+
   // One run compares all the kinds.
   let ran: Promise<string> | undefined;
-  const run = () =>
-    (ran ??= (async () => {
-      const bundle = join(String(dir), "bundle.txt");
-      await Bun.write(bundle, Bun.zstdDecompressSync(await Bun.file(join(import.meta.dir, "bundle.zst")).bytes()));
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "check",
-          "--run-typescript-tests",
-          // The paths below are paths in it.
-          `--bundle=${bundle}`,
-          "--lib=/internal/bundled/libs",
-          "--testlib=/_submodules/TypeScript/tests/lib",
-          `--threads=${availableParallelism()}`,
-          `--every=${sample ?? shards}`,
-          `--first=${shard}`,
-          "--types-and-symbols",
-          "--declarations",
-          "--traces",
-          ...(only ? [`--only=${only}`] : []),
-          ...suites,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      return await proc.stdout.text();
-    })());
+  const run = () => (ran ??= runWith("--types-and-symbols", "--declarations", "--traces"));
 
   // They wait for the same run.
   test.concurrent.skipIf(isSkipped).each([
@@ -77,6 +82,19 @@ export function conformance(shard: number, shards: number) {
       // The runner prints the first 50.
       expect(stdout.split("\n").filter(line => line.startsWith(`FAIL ${kind} `))).toEqual([]);
       expect(stdout).toMatch(new RegExp(`100\\.00%  of \\d+ ${kind}, byte for byte`));
+    },
+    10 * 60_000,
+  );
+
+  // A task can be discarded, by timing, and its file checked again. Whatever the first visit has shared by then stays.
+  test.concurrent.skipIf(isSkipped)(
+    "Errors: the same if every file's first visit is discarded and the file is checked again",
+    async () => {
+      // Each run uses every core, so they take turns.
+      await run();
+      const stdout = await runWith("--discard-first-visits");
+      expect(stdout.split("\n").filter(line => line.startsWith("FAIL Errors "))).toEqual([]);
+      expect(stdout).toMatch(/100\.00%  of \d+ Errors, byte for byte/);
     },
     10 * 60_000,
   );

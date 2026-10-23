@@ -568,7 +568,7 @@ new file mode 100644
     `${Buffer.alloc(kind.length - 1, " ")}at patches/is-even@1.0.0.patch:${line}:1`;
 
   describe.each(["hoisted", "isolated"])(
-    "what the install cannot apply is left out with a warning (%s linker)",
+    "a patch that the install can't apply is skipped with a warning (%s linker)",
     linker => {
       test.each([
         [
@@ -783,7 +783,7 @@ new file mode 100644
       await bunOk(dir, env, "patch", "--commit", folder);
       await expectPatchedDependencies(dir, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" });
 
-      // `bun patch` ran without `--linker`. It kept the layout, and left nothing for the root to resolve.
+      // `bun patch` ran without `--linker`. It kept the layout, and didn't leave anything for the root to resolve.
       expect((await readdir(join(dir, "node_modules"))).sort()).toEqual([".bun", "is-even"]);
       expect(await bunOk(dir, env, "install", "--linker", "isolated")).toContain("(no changes)");
       expect(await file(dir, folder, "index.js").text()).toContain('console.log("Transitive patch with isolated!");');
@@ -1141,7 +1141,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     patches: { "no-deps@1.0.0.patch": noDepsPatch },
   };
 
-  // Where each "patchedDependencies is ignored" warning points, relative to the workspace root.
+  // Returns where each "patchedDependencies is ignored" warning points, relative to the workspace root.
   const ignoredWarnings = (err: string) =>
     [
       ...err.matchAll(
@@ -1274,7 +1274,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       // Fresh install: the member is parsed when the workspace dependency resolves.
       expect(ignoredWarnings(await installUnpatched(packageDir, bunEnv, { allowWarnings: true }))).toEqual(warned);
 
-      // Nothing changed: the member is parsed again by the lockfile differ.
+      // Nothing changed, but the lockfile differ parses the workspace again.
       expect(
         ignoredWarnings(await installUnpatched(packageDir, bunEnv, { allowWarnings: true, savesLockfile: false })),
       ).toEqual(warned);

@@ -23,11 +23,11 @@ use bun_lint::utils::{estree_parent, estree_span};
 pub struct NoUnstableNestedComponents {
     allow_as_props: bool,
     prop_name_pattern: Box<[u8]>,
-    /// `propNamePattern` as upstream reads it.
+    /// `propNamePattern` as upstream matches it, with minimatch.
     minimatch: Minimatch,
 }
 
-/// upstream's `generateErrorMessageWithParentName`, and `COMPONENT_AS_PROPS_INFO` or nothing.
+/// Upstream's `generateErrorMessageWithParentName`. `info` is `COMPONENT_AS_PROPS_INFO` or empty.
 const DO_NOT_DEFINE_COMPONENTS_DURING_RENDER: Message = Message::new(
     "",
     "Do not define components during render. React will see a new component type on every render and destroy the entire subtree’s DOM nodes and state (https://reactjs.org/docs/reconciliation.html#elements-of-different-types). Instead, move this component definition out of the parent component{{parentName}}and pass data as props.{{info}}",
@@ -37,29 +37,29 @@ const NO_UNSTABLE_NESTED_COMPONENTS: Message = Message::new("", "Do not define c
 const COMPONENT_AS_PROPS_INFO: &str =
     " If you want to allow component creation in props, set allowAsProps option to true.";
 
-/// What makes upstream take for a component that which it is a property of.
+/// Properties that make upstream treat the object they belong to as a component.
 const RELATED: [&str; 3] = ["propTypes", "defaultProps", "getDefaultProps"];
 
-/// What tells oxlint a component.
+/// How oxlint detects components.
 struct Components<'a> {
     functions_with_jsx: FunctionsWithJsx<'a>,
     component_wrapper_functions: &'a [Json],
 }
 
-/// What tells upstream a component.
+/// How upstream detects components.
 struct Upstream<'a> {
     detected: Detected<'a>,
-    /// What it listens for, but for what cannot be reported.
+    /// The nodes upstream listens for, minus those that can't be reported.
     queue: Queue<'a>,
-    /// The file has one of [`RELATED`].
+    /// The file mentions one of [`RELATED`].
     has_related: bool,
-    /// The settings have `componentWrapperFunctions`.
+    /// The settings define `componentWrapperFunctions`.
     has_wrapper_functions: bool,
 }
 
 pub struct State<'a> {
     components: Option<Components<'a>>,
-    /// `None`: it is oxlint's flavour.
+    /// `None` when emulating oxlint.
     upstream: Option<Upstream<'a>>,
     in_jsx_attribute_expression: AncestorMemo<'a, bool>,
     inside_create_element_props_object: AncestorMemo<'a, bool>,
@@ -67,7 +67,7 @@ pub struct State<'a> {
     nearest_object: AncestorMemo<'a, Expr<'a>>,
     nearest_jsx_attribute_name: AncestorMemo<'a, Option<Name<'a>>>,
     nearest_call: AncestorMemo<'a, Expr<'a>>,
-    /// The name of the component that something is in. `Some(None)`: it has none.
+    /// Name of the enclosing component. `Some(None)` if it's unnamed.
     in_component: AncestorMemo<'a, Option<Name<'a>>>,
 }
 
@@ -79,7 +79,7 @@ impl Rule for NoUnstableNestedComponents {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let prop_name_pattern = options.str("propNamePattern");
-        // An empty pattern is none for upstream.
+        // Upstream treats an empty pattern as unset.
         let minimatch = prop_name_pattern.filter(|it| !it.is_empty()).unwrap_or("render*");
         NoUnstableNestedComponents {
             allow_as_props: options.bool_or("allowAsProps", false),
@@ -100,13 +100,13 @@ impl Rule for NoUnstableNestedComponents {
         if has_jsx || has_related {
             on = on.funcs();
         }
-        // For oxlint a wrapper makes a component of a function with JSX only.
+        // For oxlint, a wrapper only makes a component out of a function that contains JSX.
         if has_related
             || (has_jsx || !is_oxlint) && (has_wrapper_functions || file.mentions_any(&["memo", "forwardRef"]))
         {
             on = on.exprs(&[ExprTag::Call]);
         }
-        // What is a component depends for upstream on what comes before.
+        // For upstream, whether a node is a component depends on the code before it, so the checks run in `finish`.
         if is_oxlint { on } else { on.finish() }
     }
 
@@ -179,7 +179,7 @@ fn has_wrapper_functions(file: &File) -> bool {
 }
 
 impl<'a> Upstream<'a> {
-    /// Whether it listens for `node`, which then returns JSX or can be in the list of components. `false` is certain.
+    /// Returns false only if `node` can't be reported: it doesn't return JSX and can't be in the component list.
     fn can_report(&self, node: Node<'a>) -> bool {
         match node {
             Node::Func(func) => {
@@ -197,11 +197,10 @@ impl<'a> Upstream<'a> {
         }
     }
 
-    /// Whether `getRelatedComponent` can find `node`: a declaration, or the `init`, the `right` or the `value` of its
-    /// parent.
+    /// True if `getRelatedComponent` can find `node`: it's a declaration, or its parent's `init`, `right` or `value`.
     fn can_be_related(&self, node: Node<'a>) -> bool {
         self.has_related
-            && match node.as_written() {
+            && match node.owner_or_self() {
                 Node::Stmt(_) => true,
                 Node::Expr(e) => match e.parent() {
                     Node::VarDecl(_) | Node::Prop(_) => true,
@@ -214,7 +213,8 @@ impl<'a> Upstream<'a> {
     }
 }
 
-/// `node`: a `Func`, a `Class`, or the `Expr` of a call. `detected`: upstream's components when ESLint enters `node`.
+/// `node` is a `Func`, a `Class`, or a call `Expr`. `detected` has upstream's components at the point where ESLint
+/// enters `node`.
 fn check<'a>(
     rule: &NoUnstableNestedComponents,
     node: Node<'a>,
@@ -223,10 +223,10 @@ fn check<'a>(
 ) {
     let (file, state) = (cx.file(), &mut cx.state);
     let is_oxlint = detected.is_none();
-    // What takes no walk comes first. oxlint goes by the JSX in a function and by names.
+    // Checks that don't walk the tree come first. oxlint detects components by the JSX in a function and by name.
     let (is_component, is_returning_jsx) = match (detected.as_deref(), &state.components) {
         (Some(detected), _) => {
-            // The first is known of every function.
+            // `is_returning_jsx_or_null` is already known for every function, so it's tested first.
             let is_returning_jsx = detected.is_returning_jsx_or_null(node, Branches::Any)
                 && detected.is_returning_jsx(node, Branches::Any);
             (detected.get(node).is_some(), is_returning_jsx)
@@ -242,10 +242,10 @@ fn check<'a>(
     if !is_component && !is_returning_jsx {
         return;
     }
-    let (parent, outer) = (parent_node(node, is_oxlint), node.as_written());
+    let (parent, outer) = (parent_node(node, is_oxlint), node.owner_or_self());
     let property = parent.filter(|&it| is_property(it, outer, is_oxlint));
     let pragma = detected.as_deref().map(|it| it.pragmas().pragma);
-    // upstream's `isComponentInProp`
+    // Upstream's `isComponentInProp`
     let is_component_in_prop = if property.is_some()
         || (state.in_jsx_attribute_expression)
             .find(outer, |child, parent| is_in_jsx_attribute_expression(child, parent, is_oxlint))
@@ -273,7 +273,7 @@ fn check<'a>(
     {
         return;
     }
-    // `is_allowed_render_prop`. For upstream `children` is the name of an attribute only.
+    // `is_allowed_render_prop`. Upstream only allows `children` as an attribute name, not as a property key.
     let matches_pattern = |it: &[u8]| match is_oxlint {
         true => glob_match(&rule.prop_name_pattern, it),
         false => rule.minimatch.matches(it),
@@ -285,7 +285,7 @@ fn check<'a>(
     if key.is_some_and(|it| matches_pattern(it) || (is_oxlint && it == b"children")) {
         return;
     }
-    // upstream asks this of what is declared in props only.
+    // Upstream only checks this for components declared in props.
     if (is_oxlint || is_component_in_prop)
         && (is_direct_jsx_child_render_prop(node, is_oxlint)
             || (state.nearest_jsx_attribute_name)
@@ -300,7 +300,7 @@ fn check<'a>(
             if is_inside_render_method(node, detected) || is_stateless_component_returning_null(node, detected) {
                 return;
             }
-            // upstream knows a component by its range, which the `ChainExpression` around a call has too.
+            // Upstream identifies a component by its range, and the `ChainExpression` around a call has the same range.
             let is_in_chain_expression = matches!(node, Node::Expr(e) if e.is_chain_root());
             let parent_component = match estree_parent(node) {
                 _ if is_in_chain_expression => detected.get(node),
@@ -332,7 +332,7 @@ fn check<'a>(
     // Exclude lowercase parents, e.g. function createTestComponent()
     let is_lowercase = parent_name.is_some_and(|it| {
         let (first, size) = strings::wtf8_codepoint_at(it, 0);
-        // `parentName[0]` of a character outside the BMP has no case.
+        // For a character outside the BMP, `parentName[0]` is a lone surrogate, which has no case.
         first > 0xFFFF || it.get(..size).is_some_and(text::is_lower_case)
     });
     if !is_lowercase {
@@ -343,21 +343,21 @@ fn check<'a>(
     }
 }
 
-/// upstream's `isComponentInsideCreateElementsProp`, for a component. What is in no object, in a call without a second
-/// argument, is in the props too.
+/// Upstream's `isComponentInsideCreateElementsProp`, for a component. Also true if the call has no second argument and
+/// `node` isn't inside an object, because both lookups then come back empty.
 fn is_component_inside_create_elements_prop<'a>(node: Node<'a>, pragma: &[u8], state: &mut State<'a>) -> bool {
-    let of_kind = |node: Node<'a>, tag: ExprTag| node.as_expr().filter(|it| it.tag() == tag);
+    let expr_with_tag = |node: Node<'a>, tag: ExprTag| node.as_expr().filter(|it| it.tag() == tag);
     let create_element_parent = state.nearest_create_element_call.find(node, |_, ancestor| {
-        of_kind(ancestor, ExprTag::Call).filter(|it| is_create_element(*it, pragma))
+        expr_with_tag(ancestor, ExprTag::Call).filter(|it| is_create_element(*it, pragma))
     });
     create_element_parent.and_then(Expr::as_call).is_some_and(|call| {
         let is_object_expression = |it: &Expr| !it.is_assignment_target();
         call.args().get(1)
-            == state.nearest_object.find(node, |_, it| of_kind(it, ExprTag::Object).filter(is_object_expression))
+            == state.nearest_object.find(node, |_, it| expr_with_tag(it, ExprTag::Object).filter(is_object_expression))
     })
 }
 
-/// upstream's `isFunctionComponentInsideClassComponent`, for a `node` that returns JSX.
+/// Upstream's `isFunctionComponentInsideClassComponent`, for a `node` that returns JSX.
 fn is_function_component_inside_class_component<'a>(node: Node<'a>, detected: &mut Detected<'a>) -> bool {
     is_in_class_declaration(node, detected)
         && detected
@@ -371,7 +371,7 @@ fn is_in_class_declaration<'a>(node: Node<'a>, detected: &Detected<'a>) -> bool 
 }
 
 fn is_inside_render_method<'a>(node: Node<'a>, detected: &Detected<'a>) -> bool {
-    matches!(node.as_written(), Node::Member(method)
+    matches!(node.owner_or_self(), Node::Member(method)
         if method.key().and_then(name_of_key).is_some_and(|it| it == b"render"))
         && is_in_class_declaration(node, detected)
 }
@@ -399,7 +399,7 @@ fn is_called_as_a_hook(callee: Expr) -> bool {
     after_use.and_then(<[u8]>::first).is_some_and(|it| it.is_ascii_uppercase() || it.is_ascii_digit())
 }
 
-/// `parent`, in which `child` is, is a `Property`: for upstream also one of a pattern.
+/// True if `child`'s `parent` is a `Property`. Upstream also counts a property of an object pattern.
 fn is_property<'a>(parent: Node<'a>, child: Node<'a>, is_oxlint: bool) -> bool {
     match parent {
         Node::PatProp(property) => !is_oxlint && property.default().map(Node::Expr) != Some(child),
@@ -407,26 +407,26 @@ fn is_property<'a>(parent: Node<'a>, child: Node<'a>, is_oxlint: bool) -> bool {
     }
 }
 
-/// The parent of a function, a class or a call. `None`: it is the whole of an optional chain or, for oxlint, which has
-/// nodes for them, in parentheses.
+/// Parent of a function, class or call. `None` if the node is a whole optional chain or, for oxlint (which has nodes
+/// for parentheses), is parenthesized.
 fn parent_node(node: Node<'_>, is_oxlint: bool) -> Option<Node<'_>> {
-    match node.as_written() {
+    match node.owner_or_self() {
         Node::Expr(e) => (!(is_oxlint && e.is_parenthesized()) && !e.is_chain_root()).then(|| e.parent()),
-        // The function of a method is in the method.
+        // A method's function has the method as its parent.
         outer @ Node::Member(_) => Some(outer),
         outer => Some(outer.parent()),
     }
 }
 
-/// `argument` is the first argument of the call that it is in.
+/// Returns the enclosing call if `argument` is its first argument.
 fn as_first_argument(argument: Node<'_>) -> Option<Call<'_>> {
     let call = parent_node(argument, true)?.as_expr()?.as_call()?;
-    (call.args().first().map(Node::Expr) == Some(argument.as_written())).then_some(call)
+    (call.args().first().map(Node::Expr) == Some(argument.owner_or_self())).then_some(call)
 }
 
 impl<'a> Components<'a> {
-    /// The name of a function with JSX, of a class that is a component, or of a call that makes one.
-    /// `None`: `node` is none of these. `Some(None)`: it has no name.
+    /// Name of a function with JSX, a component class, or a call that creates a component.
+    /// `None` if `node` is none of these, `Some(None)` if it's unnamed.
     fn name_of_candidate(&self, node: Node<'a>) -> Option<Option<Name<'a>>> {
         let name = match node {
             Node::Func(func) if as_function(node).is_some() && self.functions_with_jsx.function_contains_jsx(func) => {
@@ -465,8 +465,8 @@ impl<'a> Components<'a> {
         as_first_argument(node).is_some_and(|call| self.is_hoc_component_call(call))
     }
 
-    /// What `find_parent_component_name` stops at.
-    /// `None`: `ancestor` is no component. `Some(None)`: one without a name.
+    /// oxlint's `find_parent_component_name` stops at the first ancestor for which this returns `Some`.
+    /// `None` if `ancestor` isn't a component, `Some(None)` if it's an unnamed one.
     fn component_name(&self, ancestor: Node<'a>) -> Option<Option<Name<'a>>> {
         let is_component_name = |name: &Name| is_react_component_name(name.bytes());
         match ancestor {
@@ -507,7 +507,7 @@ fn hoc_first_argument_name(mut call: Call<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// The name of the variable, of the property or of what is assigned to.
+/// Name of the variable, property or assignment target that `node` is assigned to.
 fn function_like_name(node: Node<'_>) -> Option<Name<'_>> {
     match parent_node(node, true)? {
         Node::VarDecl(declarator) => declarator.pat().as_ident(),
@@ -521,19 +521,19 @@ fn function_like_name(node: Node<'_>) -> Option<Name<'_>> {
 }
 
 fn is_anonymous_default_export(node: Node) -> bool {
-    match node.as_written() {
+    match node.owner_or_self() {
         Node::Stmt(statement) => statement.is_default_export(),
         _ => matches!(parent_node(node, true), Some(Node::Stmt(it)) if it.tag() == StmtTag::ExportDefault),
     }
 }
 
-/// `child` is the `e` of `{e}`.
+/// True if `child` is the `e` in `{e}`.
 fn is_in_jsx_expression_container(child: Node) -> bool {
     matches!(child, Node::Expr(e) if e.tag() != ExprTag::Spread && e.jsx_container_span().is_some())
 }
 
-/// One step of the way up: whether the braces that it is in, with no function and no class in between, are those of an
-/// attribute. For upstream: whether it is in the braces of an attribute at all.
+/// One step of the ancestor walk. For oxlint, true if the nearest enclosing `{}` belongs to an attribute, with no
+/// element, function or class in between. For upstream, true if any enclosing `{}` belongs to an attribute.
 fn is_in_jsx_attribute_expression<'a>(child: Node<'a>, parent: Node<'a>, is_oxlint: bool) -> Option<bool> {
     if is_in_jsx_expression_container(child) && (is_oxlint || matches!(parent, Node::Prop(_))) {
         return Some(matches!(parent, Node::Prop(_)));
@@ -547,14 +547,14 @@ fn is_in_jsx_attribute_expression<'a>(child: Node<'a>, parent: Node<'a>, is_oxli
     }
 }
 
-/// One step of the way up: whether the first object that is an argument of `createElement` is the second argument.
+/// One step of the ancestor walk. True if the first object that's a `createElement` argument is the second argument.
 fn is_inside_create_element_props_object<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
     let object = child.as_expr().filter(|it| it.tag() == ExprTag::Object && !it.is_parenthesized())?;
     let call = parent.as_expr()?.as_call().filter(|call| is_create_element_call(*call))?;
     Some(call.args().get(1) == Some(object))
 }
 
-/// One step of the way up: the name of the attribute whose braces it is in.
+/// One step of the ancestor walk. Returns the name of the attribute whose `{}` encloses the node.
 fn nearest_jsx_attribute_name<'a>(child: Node<'a>, parent: Node<'a>, is_oxlint: bool) -> Option<Option<Name<'a>>> {
     if is_in_jsx_expression_container(child) {
         let Node::Prop(attribute) = parent else {
@@ -562,19 +562,19 @@ fn nearest_jsx_attribute_name<'a>(child: Node<'a>, parent: Node<'a>, is_oxlint: 
         };
         return Some(attribute.key().and_then(Key::name).filter(|name| !strings::contains_char(name.bytes(), b':')));
     }
-    // oxlint does not look beyond an element.
+    // oxlint stops at the nearest element.
     (is_oxlint && matches!(parent, Node::Expr(e) if e.tag() == ExprTag::Jsx)).then_some(None)
 }
 
-/// `<a>{() => <b />}</a>`. For upstream whatever is in the braces.
+/// `<a>{() => <b />}</a>`. Upstream accepts anything in the braces, not only a function.
 fn is_direct_jsx_child_render_prop(node: Node, is_oxlint: bool) -> bool {
     (!is_oxlint || matches!(node, Node::Func(_)))
-        && is_in_jsx_expression_container(node.as_written())
+        && is_in_jsx_expression_container(node.owner_or_self())
         && matches!(parent_node(node, is_oxlint), Some(Node::Expr(e))
             if matches!(e.kind(), ExprKind::Jsx(jsx) if !jsx.is_fragment()))
 }
 
-/// `a.map(node)`. For upstream also `a.map(b, node)`, `new a.map(node)`, and a `node` that is `a.map()`.
+/// `a.map(node)`. Upstream also accepts `a.map(b, node)`, `new a.map(node)`, and a `node` that is itself `a.map()`.
 fn is_map_callback(node: Node, is_oxlint: bool) -> bool {
     if !is_oxlint {
         let is_map_call = |it: Node| it.as_expr().and_then(Expr::callee).is_some_and(|it| is_member_called(it, "map"));

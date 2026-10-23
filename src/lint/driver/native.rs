@@ -1,8 +1,8 @@
-//! Rule settings for projects with no ESLint or oxlint config ("native mode"). They come from `[lint]` in bunfig.toml and
-//! from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error. `react/*` is a
-//! wildcard that turns off every rule of a plugin: see [`expand_wildcards`].
+//! Rule settings for projects with no ESLint or oxlint config ("native mode"). They come from `[lint]` in bunfig.toml
+//! and from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error.
+//! `react/*` is a wildcard that turns off every rule of a plugin. See [`expand_wildcards`].
 
-use crate::bunfig::RuleOfBunfig;
+use crate::bunfig::BunfigRule;
 use crate::cli::{Options, Wildcard};
 use crate::configs::{CATEGORIES, is_category, plugin_longhand, severity_name};
 use crate::print_config::object;
@@ -65,8 +65,9 @@ impl Mistake {
     }
 }
 
-/// Error message for `id`, which is `name` with the prefix of `plugin`, which has no such rule. Goes after `error: `.
-fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
+/// Error message for `id`, which is `name` with `plugin`'s prefix, when the plugin has no such rule. It's printed after
+/// `error: `.
+fn unknown_plugin_rule(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
     let skipped = plugin.name.len() + 1;
     let closest = (plugin.rules.iter())
         .map(|it| {
@@ -95,22 +96,33 @@ fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
     message
 }
 
-/// Who names a rule that there isn't.
+/// Where an unknown rule name came from.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum NamedBy {
+pub(crate) enum NameSource {
     Bunfig,
     Flag,
     Explain,
 }
 
 /// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
-pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) -> Vec<u8> {
+pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], name_source: NameSource) -> Vec<u8> {
     let prefix = parse_rule_id(id).0;
+    // A rule for JSON or Markdown. `--rules` lists it, but only an ESLint config can assign its language to files.
+    if let Some(language) = registry.find(id).and_then(|it| it.meta.languages.first()) {
+        return [
+            b"\"",
+            id,
+            b"\" needs an ESLint config\n  Set language: \"",
+            language.as_bytes(),
+            b"\" for the files in an eslint.config.js",
+        ]
+        .concat();
+    }
     match registry.why_missing(id) {
         Missing::Formatting => {
             [b"\"", id, b"\" is a formatting rule\n  bun fmt does that"].concat()
         }
-        Missing::OfPluginWithoutRules(plugin) => [
+        Missing::PluginHasNoRules(plugin) => [
             b"\"",
             id,
             b"\" is not supported\n  bun lint has no ",
@@ -122,15 +134,15 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
         .concat(),
         Missing::Unknown(None) => {
             // `react` is also a name for the rules of react-hooks.
-            let is_its_own = |it: &Plugin| it.prefix().as_bytes() == prefix;
-            let built_in = (Plugin::spelled(prefix).find(is_its_own))
+            let has_exact_prefix = |it: &Plugin| it.prefix().as_bytes() == prefix;
+            let built_in = (Plugin::spelled(prefix).find(has_exact_prefix))
                 .or_else(|| Plugin::spelled(prefix).next());
-            let hint: Vec<u8> = match (built_in, named_by) {
+            let hint: Vec<u8> = match (built_in, name_source) {
                 _ if prefix.is_empty() => Vec::new(),
-                // No package has them.
+                // These rules don't come from a package.
                 (Some(Plugin::Eslint | Plugin::Oxc), _) => Vec::new(),
-                (Some(plugin), _) if plugin.is_always_there() => Vec::new(),
-                (Some(_), NamedBy::Explain) => Vec::new(),
+                (Some(plugin), _) if plugin.is_always_available() => Vec::new(),
+                (Some(_), NameSource::Explain) => Vec::new(),
                 (Some(plugin), _) => {
                     let package = plugin.prefix().as_bytes();
                     let package = plugin_longhand(package).unwrap_or_else(|| package.to_vec());
@@ -145,14 +157,14 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
                     ];
                     parts.concat()
                 }
-                (None, NamedBy::Bunfig) => {
+                (None, NameSource::Bunfig) => {
                     b"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]".to_vec()
                 }
-                (None, NamedBy::Flag) => {
+                (None, NameSource::Flag) => {
                     b"\n  To use a rule from an ESLint plugin, load the plugin with --plugin".to_vec()
                 }
-                // Whether the plugin is loaded or not, its rules are explained where it is.
-                (None, NamedBy::Explain) => {
+                // Loaded or not, a plugin's rules are documented by the plugin itself.
+                (None, NameSource::Explain) => {
                     b"\n  --explain has the built-in rules. For a rule from a plugin, see the plugin's docs".to_vec()
                 }
             };
@@ -169,44 +181,44 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
     }
 }
 
-/// Error message for `written`, which isn't a valid severity. `rule` is the rule or category it was set for.
-pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
+/// Error message for `invalid_value`, which isn't a valid severity. `rule` is the rule or category it was set for.
+pub(crate) fn invalid_severity(rule: &[u8], invalid_value: &Json) -> Vec<u8> {
     let mut message = Vec::new();
-    write_json(&mut message, written);
+    write_json(&mut message, invalid_value);
     message.extend_from_slice(b" is not a valid severity for ");
     message.extend_from_slice(rule);
     message.extend_from_slice(b"\n  Expected \"off\", \"warn\", or \"error\"");
     message
 }
 
-/// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an unknown
-/// rule, an invalid severity, or options the rule doesn't take. Turning off a rule that Bun left out on purpose is fine.
-/// `plugins`: the JavaScript plugins that are loaded.
-/// `only_of_plugins`: there is a configuration file, whose tool has its own words about the other rules. `Some(true)`: it is
-/// ESLint, which does not look at a rule that is off.
+/// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an
+/// unknown rule, an invalid severity, or options the rule doesn't accept. Turning off a rule that Bun left out on
+/// purpose is fine. `plugins` holds the loaded JavaScript plugins. `only_plugin_rules` is set if there's a config file,
+/// whose tool has its own messages for the other rules. `Some(true)` means the tool is ESLint, which doesn't validate a
+/// rule that's off.
 pub(crate) fn check_rules(
     linter: &Linter,
     options: &Options,
     plugins: &[NamedPlugin],
-    only_of_plugins: Option<bool>,
+    only_plugin_rules: Option<bool>,
 ) -> Result<(), Mistake> {
-    let check = |rules: &[(Vec<u8>, Json)], places: &[RuleOfBunfig]| {
-        check(linter, plugins, rules, places, only_of_plugins)
+    let check = |rules: &[(Vec<u8>, Json)], rule_locations: &[BunfigRule]| {
+        check(linter, plugins, rules, rule_locations, only_plugin_rules)
     };
     let filters = options.filters.iter().filter(|it| !is_category(&it.1));
     let filters: Vec<(Vec<u8>, Json)> = filters
         .map(|(severity, rule)| (rule.clone(), severity_name(*severity)))
         .collect();
     check(&filters, &[])?;
-    check(&options.rule, &options.rules_of_bunfig)?;
+    check(&options.rule, &options.bunfig_rules)?;
     for it in &options.overrides {
-        check(&it.rules, &it.places)?;
+        check(&it.rules, &it.rule_locations)?;
     }
-    if only_of_plugins.is_some() {
+    if only_plugin_rules.is_some() {
         return Ok(());
     }
-    let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
-    let mut wildcards = options.wildcards.iter().chain(of_overrides);
+    let override_wildcards = options.overrides.iter().flat_map(|it| &it.wildcards);
+    let mut wildcards = options.wildcards.iter().chain(override_wildcards);
     wildcards.try_for_each(|it| check_wildcard(linter.registry(), plugins, it))
 }
 
@@ -218,8 +230,8 @@ fn check_wildcard(
     wildcard: &Wildcard,
 ) -> Result<(), Mistake> {
     let (id, plugin) = (&wildcard.id[..], wildcard.plugin());
-    let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));
-    if is_left_out || !rules_of_plugin(registry, js_plugins, plugin).is_empty() {
+    let is_intentionally_missing = !matches!(registry.why_missing(id), Missing::Unknown(_));
+    if is_intentionally_missing || !rules_of_plugin(registry, js_plugins, plugin).is_empty() {
         return Ok(());
     }
     let message = match similar_plugin(registry, js_plugins, plugin) {
@@ -228,47 +240,51 @@ fn check_wildcard(
             [b"Unknown plugin \"", plugin, b"\"\n  ", &hint].concat()
         }
         None => {
-            let named_by = wildcard.key_at.map_or(NamedBy::Flag, |_| NamedBy::Bunfig);
-            unknown_rule(registry, id, named_by)
+            let name_source = wildcard
+                .key_at
+                .map_or(NameSource::Flag, |_| NameSource::Bunfig);
+            unknown_rule(registry, id, name_source)
         }
     };
     Err(Mistake::new(message, wildcard.key_at))
 }
 
-/// `places` has the bunfig.toml locations of the first `places.len()` rules. The rest came from `--rule`.
+/// `rule_locations` has the bunfig.toml locations of the first `rule_locations.len()` rules. The rest came from
+/// `--rule`.
 fn check(
     linter: &Linter,
     plugins: &[NamedPlugin],
     rules: &[(Vec<u8>, Json)],
-    places: &[RuleOfBunfig],
-    only_of_plugins: Option<bool>,
+    rule_locations: &[BunfigRule],
+    only_plugin_rules: Option<bool>,
 ) -> Result<(), Mistake> {
     let registry = linter.registry();
     for (at, (id, setting)) in rules.iter().enumerate() {
         // `--rule` may have replaced this entry, so its bunfig.toml location no longer applies.
-        let written = places.get(at);
-        let written = written.filter(|it| it.setting == *setting);
+        let rule_location = rule_locations.get(at);
+        let rule_location = rule_location.filter(|it| it.setting.as_ref() == Some(setting));
         let parts: &[Json] = match setting {
             Json::Array(items) => items,
             setting => std::slice::from_ref(setting),
         };
         let severity = parts.first().and_then(severity_of);
         let invalid_severity = || {
-            let place = written.map(|it| it.place.items.first().unwrap_or(&it.place));
+            let severity_location =
+                rule_location.map(|it| it.offsets.items.first().unwrap_or(&it.offsets));
             Mistake {
                 message: invalid_severity(id, parts.first().unwrap_or(&Json::Null)),
-                at: place.map(|it| it.at),
+                at: severity_location.map(|it| it.at),
             }
         };
         let (prefix, name) = parse_rule_id(id);
         if let Some((plugin, _)) = plugins.iter().find(|it| *it.0.name == *prefix) {
             let Some(rule) = plugin.rule(name) else {
-                if only_of_plugins == Some(true) && severity == Some(Severity::Off) {
+                if only_plugin_rules == Some(true) && severity == Some(Severity::Off) {
                     continue;
                 }
                 return Err(Mistake {
-                    message: unknown_rule_of(plugin, id, name),
-                    at: written.map(|it| it.key_at),
+                    message: unknown_plugin_rule(plugin, id, name),
+                    at: rule_location.map(|it| it.key_at),
                 });
             };
             let given = parts.get(1..).unwrap_or_default();
@@ -291,28 +307,28 @@ fn check(
                             .collect();
                         return Err(Mistake {
                             message: [b"Invalid options for ", &id[..], b"\n", &lines].concat(),
-                            at: written.map(|it| it.place.find(&[Step::Index(1)], false)),
+                            at: rule_location.map(|it| it.offsets.find(&[Step::Index(1)], false)),
                         });
                     }
                 },
             }
         }
-        if only_of_plugins.is_some() {
+        if only_plugin_rules.is_some() {
             continue;
         }
         let found = registry.find_by_any_name(id);
         if found.or_else(|| registry.base_of(id)).is_none() {
-            let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));
-            if is_left_out && severity == Some(Severity::Off) {
+            let is_intentionally_missing = !matches!(registry.why_missing(id), Missing::Unknown(_));
+            if is_intentionally_missing && severity == Some(Severity::Off) {
                 continue;
             }
             return Err(Mistake {
                 message: unknown_rule(
                     registry,
                     id,
-                    written.map_or(NamedBy::Flag, |_| NamedBy::Bunfig),
+                    rule_location.map_or(NameSource::Flag, |_| NameSource::Bunfig),
                 ),
-                at: written.map(|it| it.key_at),
+                at: rule_location.map(|it| it.key_at),
             });
         }
         let Some(severity) = severity else {
@@ -338,31 +354,31 @@ fn check(
             let path: Vec<Step> = after_severity.collect();
             return Err(Mistake {
                 message: mistake.message,
-                at: written.map(|it| it.place.find(&path, mistake.is_about_key)),
+                at: rule_location.map(|it| it.offsets.find(&path, mistake.is_about_key)),
             });
         }
         // Some errors get past the schema, like an invalid selector or regular expression.
         if let Some(Err(thrown)) = entry.map(|it| linter.validate(it, given)) {
             return Err(Mistake {
                 message: [b"Invalid options for ", &id[..], b"\n  ", &thrown].concat(),
-                at: written.map(|it| it.place.find(&[Step::Index(1)], false)),
+                at: rule_location.map(|it| it.offsets.find(&[Step::Index(1)], false)),
             });
         }
     }
     Ok(())
 }
 
-/// Severity that `[lint.categories]` sets for rules in oxlint's `category`.
+/// Returns the severity that `[lint.categories]` sets for rules in oxlint's `category`.
 fn severity_in(options: &Options, category: &[u8]) -> Option<Severity> {
     let is_about =
         |name: &[u8]| name == category || name == b"all" && CATEGORIES.contains(&category);
-    let mut said = options.filters.iter().rev();
-    said.find(|it| is_about(&it.1)).map(|it| it.0)
+    let mut latest_first = options.filters.iter().rev();
+    latest_first.find(|it| is_about(&it.1)).map(|it| it.0)
 }
 
 const TYPESCRIPT: &[u8] = b"**/*.{ts,mts,cts,tsx}";
 
-/// Whether TypeScript files get type information in this run.
+/// Controls whether TypeScript files get type information in this run.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Types {
     /// `--type-aware`, `typeAware = true` or `--type-check`.
@@ -416,13 +432,18 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
                 continue;
             };
             let is_extension = found.is_some_and(|it| it.meta.plugin == Plugin::TypeScript);
-            let said = match is_extension {
+            let pair_settings = match is_extension {
                 true => [None, Some(setting)],
                 false => [Some(setting), None],
             };
             match pairs.iter_mut().find(|it| it.0[0].name == base.meta.name) {
-                Some(pair) => pair.1 = [said[0].or(pair.1[0]), said[1].or(pair.1[1])],
-                None => pairs.push(([base.meta, extension.meta], said)),
+                Some(pair) => {
+                    pair.1 = [
+                        pair_settings[0].or(pair.1[0]),
+                        pair_settings[1].or(pair.1[1]),
+                    ]
+                }
+                None => pairs.push(([base.meta, extension.meta], pair_settings)),
             }
         }
         if pairs.is_empty() {
@@ -430,23 +451,26 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
             continue;
         }
         let mut in_typescript = Vec::new();
-        for ([base, extension], [of_base, of_extension]) in pairs {
-            let (Some(for_javascript), Some(for_typescript)) =
-                (of_base.or(of_extension), of_extension.or(of_base))
-            else {
+        for ([base, extension], [base_setting, extension_setting]) in pairs {
+            let (Some(for_javascript), Some(for_typescript)) = (
+                base_setting.or(extension_setting),
+                extension_setting.or(base_setting),
+            ) else {
                 continue;
             };
             everywhere.push((id(base), for_javascript.clone()));
             everywhere.push((id(extension), off()));
             let given = for_typescript.as_array().and_then(|it| it.get(1..));
-            let takes = |it| mistake_in_options(it, b"", given.unwrap_or_default()).is_none();
+            let accepts_options =
+                |it| mistake_in_options(it, b"", given.unwrap_or_default()).is_none();
             let can_run = has_types || !extension.requires_types;
-            let (runs, rests) = match can_run && (takes(extension) || !takes(base)) {
-                true => (extension, base),
-                false => (base, extension),
-            };
+            let (runs, rests) =
+                match can_run && (accepts_options(extension) || !accepts_options(base)) {
+                    true => (extension, base),
+                    false => (base, extension),
+                };
             // Leave a typed rule on if the user asked for it by name. It can't run, but the "Skipped" warning counts it.
-            let is_skipped = !can_run && of_extension.is_some();
+            let is_skipped = !can_run && extension_setting.is_some();
             in_typescript.push((
                 id(rests),
                 if is_skipped {
@@ -484,7 +508,7 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
     split
 }
 
-/// Every built-in rule available in native mode, with the ID it's reported under.
+/// Returns every built-in rule available in native mode, with the ID it's reported under.
 fn native_rules(registry: &Registry) -> impl Iterator<Item = (&'static Meta, Vec<u8>)> {
     let all = registry.all().iter().map(|it| it.meta);
     let with_id = all.map(|meta| (meta, RuleId::Known(meta).to_vec()));
@@ -531,13 +555,14 @@ pub(crate) fn categories(registry: &Registry, options: &Options) -> Vec<Json> {
     objects
 }
 
-/// IDs of all rules in the plugin named `prefix`: a loaded JavaScript plugin, or a built-in one under any of its spellings.
-/// Empty if there's no such plugin.
+/// Returns the IDs of all rules in the plugin named `prefix`: a loaded JavaScript plugin, or a built-in one under any
+/// of its spellings. Empty if there's no such plugin.
 fn rules_of_plugin(registry: &Registry, js_plugins: &[NamedPlugin], prefix: &[u8]) -> Vec<Vec<u8>> {
     if let Some((plugin, _)) = js_plugins.iter().find(|it| *it.0.name == *prefix) {
         return plugin.rules.iter().map(|it| it.id.to_vec()).collect();
     }
-    // `react/rules-of-hooks` is accepted as a name for the react-hooks rule, but `react/*` is eslint-plugin-react alone.
+    // `react/rules-of-hooks` is accepted as a name for the react-hooks rule, but `react/*` covers only
+    // eslint-plugin-react.
     let own = Plugin::spelled(prefix).find(|it| it.prefix().as_bytes() == prefix);
     let is_in_plugin = |meta: &Meta| match own {
         Some(own) => meta.plugin == own,
@@ -551,7 +576,7 @@ fn rules_of_plugin(registry: &Registry, js_plugins: &[NamedPlugin], prefix: &[u8
         .collect()
 }
 
-/// The plugin name closest to `prefix`, for a "Did you mean" hint. `None` if nothing is close.
+/// Returns the plugin name closest to `prefix`, for a "Did you mean" hint. `None` if nothing is close.
 fn similar_plugin<'a>(
     registry: &Registry,
     js_plugins: &'a [NamedPlugin],
@@ -566,10 +591,10 @@ fn similar_plugin<'a>(
     (closest.filter(|it| it.0 <= prefix.len().max(3) / 3)).map(|it| it.1)
 }
 
-/// The first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A`.
+/// Returns the first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A`.
 pub(crate) fn first_wildcard(options: &Options) -> Option<&Wildcard> {
-    let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
-    options.wildcards.iter().chain(of_overrides).next()
+    let override_wildcards = options.overrides.iter().flat_map(|it| &it.wildcards);
+    options.wildcards.iter().chain(override_wildcards).next()
 }
 
 /// Config object key for the IDs of its [`Wildcard`]s. [`expand_wildcards`] replaces it.
@@ -578,8 +603,8 @@ pub(crate) const WILDCARDS: &[u8] = b"$wildcards";
 /// Moves the [`WILDCARDS`] of each config object into a new object that turns off every rule of those plugins. The new
 /// object matches the same files and goes first, so the single rules of the original object override it.
 ///
-/// Call after [`split_pairs`]. A wildcard is about one plugin, so `"@typescript-eslint/*"` must not turn `no-unused-vars` off
-/// in JavaScript files, which naming `@typescript-eslint/no-unused-vars` does.
+/// Call after [`split_pairs`]. A wildcard covers one plugin, so `"@typescript-eslint/*"` must not turn `no-unused-vars`
+/// off in JavaScript files, which naming `@typescript-eslint/no-unused-vars` does.
 pub(crate) fn expand_wildcards(
     registry: &Registry,
     js_plugins: &[NamedPlugin],

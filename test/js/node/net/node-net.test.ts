@@ -29,6 +29,8 @@ import {
   isIPv4,
   isIPv6,
   Server,
+  setDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamilyAttemptTimeout,
   Socket,
   SocketAddress,
   // @ts-expect-error legacy alias
@@ -3583,3 +3585,22 @@ it.skipIf(isWindows || isMusl).each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
 });
+
+it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyAttemptTimeout }))(
+  "net.%s() without an argument throws what it throws for undefined",
+  (_, set) => {
+    const thrownBy = (call: () => void) => {
+      try {
+        call();
+      } catch (error: any) {
+        return { name: error.name, code: error.code, message: error.message };
+      }
+    };
+    // @ts-expect-error
+    const thrown = thrownBy(() => set());
+    expect(thrown).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    expect(thrown!.message).toMatch(/^The "value" argument must be of type (boolean|number)\. Received undefined$/);
+    // @ts-expect-error
+    expect(thrown).toEqual(thrownBy(() => set(undefined)));
+  },
+);

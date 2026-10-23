@@ -69,7 +69,8 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
 
     let requested_as = |dependency_id: DependencyID| -> &[u8] {
         let version = &dependencies_buffer[dependency_id as usize].version;
-        // Only the package.json parser gives the root's edge to a workspace a literal: its path.
+        // Only the package.json parser gives the root's dependency on a workspace a literal, which
+        // is the workspace's path.
         if version.literal.is_empty() && version.tag == dependency::Tag::Workspace {
             return version.workspace().slice(string_buf);
         }

@@ -15,8 +15,8 @@ fn var_kind_text(kind: VarKind) -> &'static str {
     }
 }
 
-/// `for (;;) var a = 1, b = 2;`: oxfmt does not give each variable a line of its own.
-fn body_of_for_loop_is_written_like_its_head(f: &Formatter<'_>) -> bool {
+/// `for (;;) var a = 1, b = 2;`: oxfmt doesn't put each variable on its own line.
+fn for_loop_body_is_printed_like_its_head(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -27,11 +27,11 @@ pub(crate) fn write_variable_declaration<'a>(
     declarations: List<'a, VarDecl<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    // The keyword is a property of what is declared.
+    // The keyword is stored on each declarator.
     let Some(kind) = declarations.first().map(VarDecl::var_kind) else {
         return write!(f, FormatSuppressedNode(statement.span()));
     };
-    // Whether it ends with a `;`, which it does not in the head of a loop, and whether it is in a loop.
+    // `semicolon` is false in the head of a loop.
     let (semicolon, is_in_for_loop) = match statement.parent() {
         Node::File(_) if f.options().in_html.root == HtmlRoot::SvelteStatement => (false, false),
         _ if !statement.modifiers().is_empty() && statement.is_exported() => {
@@ -45,7 +45,7 @@ pub(crate) fn write_variable_declaration<'a>(
         _ => (true, false),
     };
     let is_parent_for_loop =
-        is_in_for_loop && (!semicolon || body_of_for_loop_is_written_like_its_head(f));
+        is_in_for_loop && (!semicolon || for_loop_body_is_printed_like_its_head(f));
 
     if statement
         .modifiers()
@@ -63,8 +63,8 @@ pub(crate) fn write_variable_declaration<'a>(
         },
         semicolon.then_some(OptionalSemicolon)
     );
-    // All that can break in `const a = b;` is in the group of the declarator, which fits if and only
-    // if a group around this fits.
+    // Everything that can break in `const a = b;` is in the declarator's group, which fits if and only if a group
+    // around this fits.
     match f.is_quiet()
         && declarations.len() == 1
         && declarations.first().is_some_and(|it| it.init().is_some())
@@ -100,7 +100,7 @@ impl<'a> Format<'a> for FormatVariableDeclarators<'a> {
             return;
         };
 
-        // Only oxfmt has dangling comments here: the ones that stay behind the `=`. They do not count.
+        // Only oxfmt has dangling comments here: the ones that stay after the `=`. They don't count.
         let has_comments = |declarator: VarDecl<'a>| {
             let comments = (f.comments()).of_node(AstNodes::VariableDeclarator(declarator));
             !comments.leading.is_empty() || !comments.trailing.is_empty()

@@ -12,7 +12,7 @@ pub struct NoInvalidVoidType {
 enum Generics {
     Allowed,
     Forbidden,
-    /// The names of the types that may have `void` as an argument, without spaces.
+    /// The names of the types that accept `void` as an argument, without spaces.
     Only(Vec<Box<[u8]>>),
 }
 
@@ -51,7 +51,8 @@ fn without_spaces(text: &[u8]) -> impl Iterator<Item = u8> + '_ {
     text.iter().copied().filter(|byte| *byte != b' ')
 }
 
-/// `void`, `never`, or any `T<.., void, ..>`, which is checked where the `void` in it is. For oxlint not in parentheses.
+/// `void`, `never`, or any `T<.., void, ..>`, which is checked when its `void` is visited. For oxlint, only if
+/// unparenthesized.
 fn is_valid_union_member(member: TypeNode) -> bool {
     let is_oxlint = member.file().language().is_oxlint;
     let is_bare = |ty: TypeNode| !(is_oxlint && ty.is_parenthesized());
@@ -63,12 +64,11 @@ fn is_valid_union_member(member: TypeNode) -> bool {
         }
 }
 
-/// typescript-eslint's `getParentFunctionDeclarationNode`: the innermost function declaration or
-/// method of a class around `node` that has a body. For oxlint the innermost function with a body that is no arrow
-/// function.
+/// typescript-eslint's `getParentFunctionDeclarationNode`: the innermost function declaration or class method around
+/// `node` that has a body. For oxlint, the innermost non-arrow function with a body.
 fn parent_function_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, Node<'a>>) -> Option<Node<'a>> {
     let is_oxlint = node.file().language().is_oxlint;
-    let is_one = |ancestor: Node<'a>| match ancestor {
+    let is_function_declaration = |ancestor: Node<'a>| match ancestor {
         Node::Func(func) if is_oxlint => {
             func.has_body() && !matches!(func.kind(), FnKind::Arrow | FnKind::StaticBlock)
         }
@@ -80,11 +80,11 @@ fn parent_function_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, 
         }
         _ => false,
     };
-    known.find(node, |_, ancestor| is_one(ancestor).then_some(ancestor))
+    known.find(node, |_, ancestor| is_function_declaration(ancestor).then_some(ancestor))
 }
 
-/// oxlint's `has_function_overload_signatures`: a declaration without a body, of the same name and exported in the same
-/// way, among the statements that `func` is one of, or among those around them.
+/// oxlint's `has_function_overload_signatures`: looks for a declaration without a body, with the same name and the same
+/// kind of export, among `func`'s sibling statements or in the enclosing statement lists.
 fn oxlint_function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
     const EXPORT_DEFAULT: Flags = Flags::EXPORT.union(Flags::DEFAULT);
     let export = match func.owner() {
@@ -106,7 +106,7 @@ fn oxlint_function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
     Node::Func(func).ancestors().any(|ancestor| {
         let statements = match ancestor {
             Node::File(file) => Some(file.body()),
-            Node::Func(around) if around.kind() != FnKind::StaticBlock => around.body_statements(),
+            Node::Func(outer_function) if outer_function.kind() != FnKind::StaticBlock => outer_function.body_statements(),
             Node::Stmt(statement) => match statement.kind() {
                 StmtKind::Block(statements) => Some(statements),
                 StmtKind::Module(module) => Some(module.innermost().body()),
@@ -118,7 +118,8 @@ fn oxlint_function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
     })
 }
 
-/// oxlint's `has_method_overload_signatures`: another method without a body whose key is written in the same way.
+/// oxlint's `has_method_overload_signatures`: looks for another method without a body whose key is written the same
+/// way.
 fn oxlint_method_has_overload_signatures<'a>(member: Member<'a>) -> bool {
     let Node::Class(class) = member.parent() else {
         return false;
@@ -151,22 +152,22 @@ impl NoInvalidVoidType {
                 let Some(name) = name else {
                     return;
                 };
-                let written = cx.slice(name);
-                if !allowed.iter().any(|it| without_spaces(written).eq(it.iter().copied())) {
+                let name_text = cx.slice(name);
+                if !allowed.iter().any(|it| without_spaces(name_text).eq(it.iter().copied())) {
                     cx.report(ty, INVALID_VOID_FOR_GENERIC)
-                        .data("generic", without_spaces(written).collect::<Vec<u8>>());
+                        .data("generic", without_spaces(name_text).collect::<Vec<u8>>());
                 }
             }
         }
     }
 
-    /// Whether `void` is valid as the type annotation or as a type argument of `parent`.
+    /// True if `void` is valid as `parent`'s type annotation or type argument.
     fn is_valid_in(&self, parent: Node) -> bool {
         let as_type_argument = matches!(self.generics, Generics::Allowed);
         match parent {
             // A return type.
             Node::Func(_) => true,
-            // The annotation of an identifier is invalid, that of any other pattern is not.
+            // It's invalid as an identifier's annotation, but valid on any other pattern.
             Node::Param(param) => param.is_rest() || param.pat().tag() != PatTag::Ident,
             Node::VarDecl(declaration) => declaration.pat().tag() != PatTag::Ident,
             Node::Member(_) => matches!(
@@ -204,7 +205,8 @@ impl NoInvalidVoidType {
         });
     }
 
-    /// oxlint's rule, which knows the places where `void` is valid: all others are not, and none is in parentheses.
+    /// oxlint's rule. It lists the positions where `void` is valid. Everything else is invalid, including anything in
+    /// parentheses.
     fn check_as_oxlint<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let parent = ty.parent();
         match parent {
@@ -227,7 +229,7 @@ impl NoInvalidVoidType {
             }
             Node::Type(union) => {
                 if let TypeKind::Union(members) = union.kind() {
-                    // The overloads count for the return type only.
+                    // Overloads only matter for the return type.
                     let is_valid = members.iter().all(is_valid_union_member)
                         || matches!(parent_function_declaration(parent, &mut cx.state), Some(Node::Func(func))
                             if func.return_type().is_some_and(|it| it.outer_span().contains(union.span()))

@@ -8,7 +8,7 @@ pub struct SortTypeConstituents {
     is_case_sensitive: bool,
     checks_intersections: bool,
     checks_unions: bool,
-    /// For each [`Group`], where it is in `groupOrder`. `u32::MAX` if it is not.
+    /// Each [`Group`]'s index in `groupOrder`, or `u32::MAX` if it isn't listed.
     positions: [u32; Group::COUNT],
 }
 
@@ -122,7 +122,7 @@ impl SortTypeConstituents {
             TypeKind::Intersection(types) => (types, true),
             _ => return,
         };
-        // A stable sort changes nothing if no constituent is greater than the next.
+        // A stable sort is a no-op if no constituent is greater than the next.
         if types.iter().zip(types.iter().skip(1)).all(|(a, b)| self.compare(a, b) != Ordering::Greater) {
             return;
         }
@@ -182,7 +182,7 @@ impl Rule for SortTypeConstituents {
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         let mut positions = [u32::MAX; Group::COUNT];
-        let mut place = |group: Group, at: usize| {
+        let mut record_position = |group: Group, at: usize| {
             let position = &mut positions[group as usize];
             *position = (*position).min(at as u32);
         };
@@ -190,13 +190,13 @@ impl Rule for SortTypeConstituents {
             Some(names) => {
                 for (at, name) in names.iter().enumerate() {
                     if let Some(group) = name.as_str().and_then(Group::named) {
-                        place(group, at);
+                        record_position(group, at);
                     }
                 }
             }
             None => {
                 for (at, group) in Group::DEFAULT_ORDER.into_iter().enumerate() {
-                    place(group, at);
+                    record_position(group, at);
                 }
             }
         }

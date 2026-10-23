@@ -1,737 +1,433 @@
-//! oxfmt's `sortPackageJson`: the fields of a `package.json` in the conventional order.
+//! Sorts the keys of a `package.json`.
 //!
-//! oxfmt does it with the crate [`sort-package-json`](https://crates.io/crates/sort-package-json)
-//! (MIT license, VoidZero Inc. and contributors), which this is a port of, before it formats the
-//! result. The crate reads the text with `serde_json` and writes it with `serde_json`, so this also
-//! does what that round trip does to the spelling of strings and numbers.
+//! There are two orders. Each is a table of the known keys and how to handle each key's value:
+//! - `oxfmt.rs`: oxfmt's `sortPackageJson`.
+//! - `npm.rs`: `prettier-plugin-packagejson`.
+//!
+//! Both tools parse the text into values, sort those, and write them back. That rewrites numbers and strings
+//! (`12345678901234567890` becomes `12345678901234567000`) and drops all but one of the members that have the same key.
+//!
+//! Sorting here only moves members. It reorders the nodes of the formatter's tree, and the writer still prints every name and
+//! every value from its source text, as it does without sorting:
+//! - Numbers and strings stay as written. A key is decoded only to compare it.
+//! - Members with the same key all stay, in source order.
+//! - A key like `"10"` sorts like any other key. In the plugin's JavaScript objects such keys always come first.
+//! - The text doesn't have to be strict JSON. Whatever the `json-stringify` parser accepts is sorted.
+//!
+//! One thing is removed, as in both tools: a duplicate string in a list like `keywords`.
 
-use crate::text::BOM;
-use bun_core::fmt::parse_hex4;
-use bun_core::printer::json_stringify;
+mod npm;
+mod oxfmt;
+
+use super::parser::{Kind, Node, Tree};
+use super::writer::cooked;
+use bun_core::strings;
 use bun_lint::utils::text::number_to_string;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::sync::Arc;
 
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SortPackageJson {
-    /// `scripts`, `betterScripts` and `wireit` are sorted by name too.
+    /// oxfmt's `sortScripts`: also sort `scripts`, `betterScripts` and `wireit` by name.
     pub sort_scripts: bool,
+    /// Sort like `prettier-plugin-packagejson` instead of oxfmt.
+    pub plugin: Option<Arc<Plugin>>,
 }
 
-type Object<'a> = Vec<(Cow<'a, [u8]>, Value<'a>)>;
-
-enum Value<'a> {
-    /// `null`, `true`, `false`
-    Literal(&'a [u8]),
-    /// As it is written.
-    Number(Vec<u8>),
-    /// Its value.
-    String(Cow<'a, [u8]>),
-    Array(Vec<Value<'a>>),
-    Object(Object<'a>),
+/// The settings of `prettier-plugin-packagejson`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Plugin {
+    /// `packageSortOrder`: these keys come before all others.
+    pub first: Vec<Vec<u8>>,
+    /// The working directory has `yarn.lock`, `.yarn/`, `.yarnrc.yml`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`.
+    pub has_yarn_or_pnpm_files: bool,
 }
 
-impl Value<'_> {
-    fn as_string(&self) -> Option<&[u8]> {
-        match self {
-            Value::String(value) => Some(value),
-            _ => None,
-        }
-    }
-}
-
-/// Appends `text` with its fields sorted to `out`, on one line. Returns `false`, and appends nothing,
-/// if `text` is not JSON in the strict sense: it is formatted as it is then.
-pub fn sort_package_json(text: &[u8], options: SortPackageJson, out: &mut Vec<u8>) -> bool {
-    let body = text.strip_prefix(BOM).unwrap_or(text);
-    let mut reader = Reader { text: body, at: 0 };
-    let Some(value) = reader.value(0) else {
-        return false;
-    };
-    reader.skip_whitespace();
-    if reader.at != body.len() {
-        return false;
-    }
-    let value = match value {
-        Value::Object(object) => Value::Object(sort_fields(object, options)),
-        other => other,
-    };
-    out.reserve(text.len());
-    out.extend_from_slice(&text[..text.len() - body.len()]);
-    write_value(&value, out);
-    true
-}
-
-// ───────────────────────────── reading, as serde_json does ─────────────────────────────
-
-struct Reader<'a> {
-    text: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn peek(&self) -> Option<u8> {
-        self.text.get(self.at).copied()
-    }
-
-    fn skip_whitespace(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-            self.at += 1;
-        }
-    }
-
-    fn eat(&mut self, byte: u8) -> Option<()> {
-        (self.peek() == Some(byte)).then(|| self.at += 1)
-    }
-
-    /// `depth`: the number of containers around. `serde_json` gives up at 128.
-    fn value(&mut self, depth: u32) -> Option<Value<'a>> {
-        self.skip_whitespace();
-        match self.peek()? {
-            b'{' if depth < 127 => {
-                self.at += 1;
-                let mut object = Vec::new();
-                self.skip_whitespace();
-                if self.eat(b'}').is_some() {
-                    return Some(Value::Object(object));
-                }
-                loop {
-                    self.skip_whitespace();
-                    let key = self.string()?;
-                    self.skip_whitespace();
-                    self.eat(b':')?;
-                    object.push((key, self.value(depth + 1)?));
-                    self.skip_whitespace();
-                    if self.eat(b',').is_none() {
-                        self.eat(b'}')?;
-                        return Some(Value::Object(object));
-                    }
-                }
-            }
-            b'[' if depth < 127 => {
-                self.at += 1;
-                let mut array = Vec::new();
-                self.skip_whitespace();
-                if self.eat(b']').is_some() {
-                    return Some(Value::Array(array));
-                }
-                loop {
-                    array.push(self.value(depth + 1)?);
-                    self.skip_whitespace();
-                    if self.eat(b',').is_none() {
-                        self.eat(b']')?;
-                        return Some(Value::Array(array));
-                    }
-                }
-            }
-            b'"' => self.string().map(Value::String),
-            b'-' | b'0'..=b'9' => self.number().map(Value::Number),
-            _ => {
-                let rest = self.text.get(self.at..)?;
-                let literal = [&b"null"[..], b"true", b"false"]
-                    .into_iter()
-                    .find(|it| rest.starts_with(it))?;
-                self.at += literal.len();
-                rest.get(..literal.len()).map(Value::Literal)
-            }
-        }
-    }
-
-    fn hex4(&mut self) -> Option<u32> {
-        let value = parse_hex4(self.text.get(self.at..)?)?;
-        self.at += 4;
-        Some(u32::from(value))
-    }
-
-    /// The value of the string at the cursor.
-    fn string(&mut self) -> Option<Cow<'a, [u8]>> {
-        self.eat(b'"')?;
-        let start = self.at;
-        let mut owned: Option<Vec<u8>> = None;
-        loop {
-            match self.peek()? {
-                b'"' => {
-                    let end = self.at;
-                    self.at += 1;
-                    return Some(match owned {
-                        Some(owned) => Cow::Owned(owned),
-                        None => Cow::Borrowed(self.text.get(start..end)?),
-                    });
-                }
-                b'\\' => {
-                    let value = owned.get_or_insert_with(|| self.text[start..self.at].to_vec());
-                    let escaped = *self.text.get(self.at + 1)?;
-                    self.at += 2;
-                    match escaped {
-                        b'"' | b'\\' | b'/' => value.push(escaped),
-                        b'b' => value.push(0x08),
-                        b'f' => value.push(0x0C),
-                        b'n' => value.push(b'\n'),
-                        b'r' => value.push(b'\r'),
-                        b't' => value.push(b'\t'),
-                        b'u' => {
-                            let mut value = std::mem::take(value);
-                            let c = match self.hex4()? {
-                                0xDC00..=0xDFFF => return None,
-                                high @ 0xD800..=0xDBFF => {
-                                    self.eat(b'\\')?;
-                                    self.eat(b'u')?;
-                                    match self.hex4()? {
-                                        low @ 0xDC00..=0xDFFF => {
-                                            0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)
-                                        }
-                                        _ => return None,
-                                    }
-                                }
-                                c => c,
-                            };
-                            bun_core::strings::push_codepoint_wtf8(&mut value, c);
-                            owned = Some(value);
-                        }
-                        _ => return None,
-                    }
-                }
-                0..0x20 => return None,
-                byte => {
-                    if let Some(value) = &mut owned {
-                        value.push(byte);
-                    }
-                    self.at += 1;
-                }
-            }
-        }
-    }
-
-    fn digit(&self) -> Option<u64> {
-        self.peek()
-            .filter(u8::is_ascii_digit)
-            .map(|digit| u64::from(digit - b'0'))
-    }
-
-    /// The number at the cursor, as `serde_json` writes it: an integer that fits in 64 bits as it
-    /// is, anything else as a `f64`. Without its feature `float_roundtrip`, that is the digits that
-    /// fit in a `u64`, multiplied or divided by a power of ten, which is not always the nearest.
-    fn number(&mut self) -> Option<Vec<u8>> {
-        let is_positive = self.eat(b'-').is_none();
-        let push_digit =
-            |significand: u64, digit: u64| significand.checked_mul(10)?.checked_add(digit);
-        let mut significand = self.digit()?;
-        self.at += 1;
-        let mut exponent = 0i32;
-        let mut is_float = false;
-        if significand == 0 {
-            // Only one leading zero.
-            if self.digit().is_some() {
-                return None;
-            }
-        } else {
-            while let Some(digit) = self.digit() {
-                self.at += 1;
-                match push_digit(significand, digit).filter(|_| !is_float) {
-                    Some(next) => significand = next,
-                    // The digits that do not fit only count.
-                    None => {
-                        is_float = true;
-                        exponent = exponent.saturating_add(1);
-                    }
-                }
-            }
-        }
-        if self.eat(b'.').is_some() {
-            is_float = true;
-            self.digit()?;
-            let mut is_full = false;
-            while let Some(digit) = self.digit() {
-                self.at += 1;
-                match push_digit(significand, digit).filter(|_| !is_full) {
-                    Some(next) => {
-                        significand = next;
-                        exponent -= 1;
-                    }
-                    None => is_full = true,
-                }
-            }
-        }
-        if matches!(self.peek(), Some(b'e' | b'E')) {
-            is_float = true;
-            self.at += 1;
-            let is_positive_exponent = match self.peek() {
-                Some(b'-') => {
-                    self.at += 1;
-                    false
-                }
-                Some(b'+') => {
-                    self.at += 1;
-                    true
-                }
-                _ => true,
-            };
-            self.digit()?;
-            let mut written: Option<i32> = Some(0);
-            while let Some(digit) = self.digit() {
-                self.at += 1;
-                written = written.and_then(|it| it.checked_mul(10)?.checked_add(digit as i32));
-            }
-            match written {
-                Some(written) if is_positive_exponent => {
-                    exponent = exponent.saturating_add(written)
-                }
-                Some(written) => exponent = exponent.saturating_sub(written),
-                None if significand != 0 && is_positive_exponent => return None,
-                None => {
-                    return Some(if is_positive {
-                        b"0.0".to_vec()
-                    } else {
-                        b"-0.0".to_vec()
-                    });
-                }
-            }
-        }
-
-        if !is_float {
-            if is_positive {
-                return Some(significand.to_string().into_bytes());
-            }
-            if significand != 0 && significand <= 1 << 63 {
-                return Some(format!("-{significand}").into_bytes());
-            }
-            return Some(write_f64(-(significand as f64)));
-        }
-        let mut value = significand as f64;
-        loop {
-            if exponent.unsigned_abs() <= 308 {
-                // The nearest `f64`, which multiplying tens does not give.
-                let power = format!("1e{}", exponent.unsigned_abs())
-                    .parse::<f64>()
-                    .unwrap_or(f64::INFINITY);
-                if exponent >= 0 {
-                    value *= power;
-                    if value.is_infinite() {
-                        return None;
-                    }
-                } else {
-                    value /= power;
-                }
-                break;
-            }
-            if value == 0.0 {
-                break;
-            }
-            if exponent >= 0 {
-                return None;
-            }
-            value /= 1e308;
-            exponent += 308;
-        }
-        Some(write_f64(if is_positive { value } else { -value }))
-    }
-}
-
-// ───────────────────────────── writing, as serde_json does ─────────────────────────────
-
-/// The shortest digits that give `value` back, with an exponent from `1e16` on and below `1e-5`.
-fn write_f64(value: f64) -> Vec<u8> {
-    if value == 0.0 {
-        return if value.is_sign_negative() {
-            b"-0.0".to_vec()
-        } else {
-            b"0.0".to_vec()
-        };
-    }
-    // The digits of JavaScript. Where two numbers of the same length are as close, `serde_json` takes
-    // the even one, as JavaScript does. `{:e}` takes the greater one.
-    let text = number_to_string(value.abs());
-    let (mantissa, exponent) =
-        bun_core::strings::split_once_char(&text, b'e').unwrap_or((&text, b"0"));
-    let (integer, fraction) =
-        bun_core::strings::split_once_char(mantissa, b'.').unwrap_or((mantissa, b""));
-    let exponent = std::str::from_utf8(exponent)
-        .ok()
-        .and_then(|it| it.parse::<i32>().ok())
-        .unwrap_or(0);
-    let all = [integer, fraction].concat();
-    let leading_zeros = all.iter().take_while(|digit| **digit == b'0').count();
-    let digits = &all[leading_zeros..];
-    let digits = &digits[..digits.len()
-        - digits
-            .iter()
-            .rev()
-            .take_while(|digit| **digit == b'0')
-            .count()];
-    // Where the decimal point is, counted from the first digit.
-    let point = integer.len() as i32 + exponent - leading_zeros as i32;
-    let len = digits.len() as i32;
-    let mut out = Vec::with_capacity(24);
-    if value < 0.0 {
-        out.push(b'-');
-    }
-    if len <= point && point <= 16 {
-        out.extend_from_slice(digits);
-        out.extend(std::iter::repeat_n(b'0', (point - len) as usize));
-        out.extend_from_slice(b".0");
-    } else if 0 < point && point <= 16 {
-        out.extend_from_slice(&digits[..point as usize]);
-        out.push(b'.');
-        out.extend_from_slice(&digits[point as usize..]);
-    } else if -5 < point && point <= 0 {
-        out.extend_from_slice(b"0.");
-        out.extend(std::iter::repeat_n(b'0', (-point) as usize));
-        out.extend_from_slice(digits);
-    } else if let Some((first, rest)) = digits.split_first() {
-        out.push(*first);
-        if !rest.is_empty() {
-            out.push(b'.');
-            out.extend_from_slice(rest);
-        }
-        out.push(b'e');
-        if point > 0 {
-            out.push(b'+');
-        }
-        out.extend_from_slice((point - 1).to_string().as_bytes());
-    }
-    out
-}
-
-/// The nesting is limited by [`Reader::value`].
-fn write_value(value: &Value<'_>, out: &mut Vec<u8>) {
-    match value {
-        Value::Literal(text) => out.extend_from_slice(text),
-        Value::Number(text) => out.extend_from_slice(text),
-        Value::String(value) => json_stringify(value, out),
-        Value::Array(values) => {
-            out.push(b'[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    out.push(b',');
-                }
-                write_value(value, out);
-            }
-            out.push(b']');
-        }
-        Value::Object(entries) => {
-            out.push(b'{');
-            for (index, (key, value)) in entries.iter().enumerate() {
-                if index > 0 {
-                    out.push(b',');
-                }
-                json_stringify(key, out);
-                out.push(b':');
-                write_value(value, out);
-            }
-            out.push(b'}');
-        }
-    }
-}
-
-// ───────────────────────────── sorting ─────────────────────────────
-
-/// What is done to the value of a field.
+/// How to handle a key's value.
 #[derive(Copy, Clone)]
-enum Transform {
-    None,
-    /// The names of the object are sorted.
-    Alphabetically,
-    /// And those of the objects in it.
-    Recursively,
-    /// These names first, in this order. The others follow, sorted.
-    KeyOrder(&'static [&'static str]),
-    /// Of an array, the strings are kept, sorted, each once.
-    SortedUnique,
-    /// Of an array, the strings are kept, each once, in their order.
+enum Over {
+    Nothing,
+    /// In an array of strings, drop duplicates.
     Unique,
-    /// Like the document.
+    /// The same, and sort them.
+    UniqueSorted,
+    /// These keys first, then the others by name. Then apply the properties.
+    Keys(&'static [&'static str], Properties),
+    /// Leave the keys where they are and apply the properties.
+    In(Properties),
+    /// [`Over::Keys`], for nested objects too.
+    Deep(&'static [&'static str]),
+    /// Apply this to every element of an array.
+    Each(&'static Over),
+    /// The same, or apply it to the value itself if that's an object.
+    EachOrSelf(&'static Over),
+    /// Sort the keys by name and apply this to every value.
+    Values(&'static Over),
+    /// Sort like the top level.
     Fields,
-    /// [`Transform::Alphabetically`], if that is asked for.
+    /// Sort by name, with oxfmt's `sortScripts`.
+    OxfmtScripts,
+    // The rest is in `npm.rs`.
+    Dependencies,
+    DependenciesMeta,
     Scripts,
-    DevEngines,
+    Exports,
+    EslintConfig,
+    EslintRules,
+    PrettierConfig,
+    PnpmConfig,
+    PnpmOverrides,
 }
 
-use Transform::{Alphabetically, Recursively, SortedUnique};
+/// How to handle the values of some of an object's keys.
+type Properties = &'static [(&'static str, Over)];
 
-const TYPE_URL: Transform = Transform::KeyOrder(&["type", "url"]);
-const DEV_ENGINE: Transform = Transform::KeyOrder(&["name", "version", "onFail"]);
+const AS_IS: Over = Over::Nothing;
+const SORTED: Over = Over::Keys(&[], &[]);
 
-/// The known fields, in their order.
-const FIELDS: &[(&str, Transform)] = &[
-    // Core package metadata
-    ("$schema", Transform::None),
-    ("name", Transform::None),
-    ("displayName", Transform::None),
-    ("version", Transform::None),
-    ("stableVersion", Transform::None),
-    ("gitHead", Transform::None),
-    ("private", Transform::None),
-    ("description", Transform::None),
-    ("categories", SortedUnique),
-    ("keywords", SortedUnique),
-    ("homepage", Transform::None),
-    ("bugs", Transform::KeyOrder(&["url", "email"])),
-    // License and people
-    ("license", Transform::None),
-    ("author", Transform::KeyOrder(&["name", "email", "url"])),
-    ("maintainers", Transform::None),
-    ("contributors", Transform::None),
-    // Repository and funding
-    ("repository", TYPE_URL),
-    ("funding", TYPE_URL),
-    ("donate", TYPE_URL),
-    ("sponsor", TYPE_URL),
-    ("qna", Transform::None),
-    ("publisher", Transform::None),
-    // Package content and distribution
-    ("man", Transform::None),
-    ("style", Transform::None),
-    ("example", Transform::None),
-    ("examplestyle", Transform::None),
-    ("assets", Transform::None),
-    ("bin", Alphabetically),
-    ("source", Transform::None),
-    (
-        "directories",
-        Transform::KeyOrder(&["lib", "bin", "man", "doc", "example", "test"]),
-    ),
-    ("workspaces", Transform::None),
-    (
-        "binary",
-        Transform::KeyOrder(&[
-            "module_name",
-            "module_path",
-            "remote_path",
-            "package_name",
-            "host",
-        ]),
-    ),
-    ("files", Transform::Unique),
-    ("os", Transform::None),
-    ("cpu", Transform::None),
-    ("libc", SortedUnique),
-    // Package entry points
-    ("type", Transform::None),
-    ("sideEffects", Transform::None),
-    ("main", Transform::None),
-    ("module", Transform::None),
-    ("browser", Transform::None),
-    ("types", Transform::None),
-    ("typings", Transform::None),
-    ("typesVersions", Transform::None),
-    ("typeScriptVersion", Transform::None),
-    ("typesPublisherContentHash", Transform::None),
-    ("react-native", Transform::None),
-    ("svelte", Transform::None),
-    ("unpkg", Transform::None),
-    ("jsdelivr", Transform::None),
-    ("jsnext:main", Transform::None),
-    ("umd", Transform::None),
-    ("umd:main", Transform::None),
-    ("es5", Transform::None),
-    ("esm5", Transform::None),
-    ("fesm5", Transform::None),
-    ("es2015", Transform::None),
-    ("esm2015", Transform::None),
-    ("fesm2015", Transform::None),
-    ("es2020", Transform::None),
-    ("esm2020", Transform::None),
-    ("fesm2020", Transform::None),
-    ("esnext", Transform::None),
-    ("imports", Transform::None),
-    ("exports", Transform::None),
-    ("publishConfig", Transform::Fields),
-    // Scripts
-    ("scripts", Transform::Scripts),
-    ("betterScripts", Transform::Scripts),
-    ("wireit", Transform::Scripts),
-    // Dependencies
-    ("dependencies", Alphabetically),
-    ("devDependencies", Alphabetically),
-    ("dependenciesMeta", Transform::None),
-    ("peerDependencies", Alphabetically),
-    ("peerDependenciesMeta", Transform::None),
-    ("optionalDependencies", Alphabetically),
-    ("bundledDependencies", SortedUnique),
-    ("bundleDependencies", SortedUnique),
-    ("resolutions", Alphabetically),
-    ("overrides", Alphabetically),
-    // Git hooks and commit tools
-    ("husky", Recursively),
-    ("simple-git-hooks", Transform::None),
-    ("vite-staged", Transform::None),
-    ("lint-staged", Transform::None),
-    ("nano-staged", Transform::None),
-    ("pre-commit", Transform::None),
-    ("commitlint", Recursively),
-    // Extensions of VS Code
-    ("l10n", Transform::None),
-    ("contributes", Transform::None),
-    ("activationEvents", SortedUnique),
-    ("extensionPack", SortedUnique),
-    ("extensionDependencies", SortedUnique),
-    ("extensionKind", SortedUnique),
-    ("icon", Transform::None),
-    ("badges", Transform::None),
-    ("galleryBanner", Transform::None),
-    ("preview", Transform::None),
-    ("markdown", Transform::None),
-    // Configuration of build tools. Where the order of what is nested means something, only the top
-    // level is sorted.
-    ("napi", Alphabetically),
-    ("flat", Transform::None),
-    ("config", Alphabetically),
-    ("nodemonConfig", Recursively),
-    ("browserify", Recursively),
-    ("babel", Recursively),
-    ("browserslist", Transform::None),
-    ("xo", Recursively),
-    ("prettier", Recursively),
-    ("eslintConfig", Recursively),
-    ("eslintIgnore", Transform::None),
-    ("standard", Recursively),
-    ("npmpkgjsonlint", Transform::None),
-    ("npmPackageJsonLintConfig", Transform::None),
-    ("npmpackagejsonlint", Transform::None),
-    ("release", Transform::None),
-    ("auto-changelog", Alphabetically),
-    ("remarkConfig", Alphabetically),
-    ("stylelint", Recursively),
-    ("typescript", Recursively),
-    ("typedoc", Recursively),
-    ("tshy", Alphabetically),
-    ("tsdown", Recursively),
-    ("size-limit", Transform::None),
-    // Testing
-    ("ava", Recursively),
-    ("jest", Alphabetically),
-    ("jest-junit", Transform::None),
-    ("jest-stare", Transform::None),
-    ("mocha", Recursively),
-    ("nyc", Recursively),
-    ("c8", Recursively),
-    ("tap", Transform::None),
-    ("tsd", Recursively),
-    ("typeCoverage", Recursively),
-    ("oclif", Recursively),
-    // Runtime and package manager
-    ("languageName", Transform::None),
-    ("preferGlobal", Transform::None),
-    ("devEngines", Transform::DevEngines),
-    ("engines", Alphabetically),
-    ("engineStrict", Transform::None),
-    ("volta", Recursively),
-    ("packageManager", Transform::None),
-    ("pnpm", Transform::None),
-];
-
-fn sort_by_key(object: &mut Object<'_>) {
-    crate::sort::sort_by(&mut object[..], |(a, _), (b, _)| a.cmp(b));
+/// A member of an object.
+struct Member<'a> {
+    /// Decoded.
+    key: Cow<'a, [u8]>,
+    /// The index of its name in the tree. Its value is the next node.
+    name: u32,
 }
 
-fn sort_recursively(object: &mut Object<'_>) {
-    for (_, value) in object.iter_mut() {
-        if let Value::Object(nested) = value {
-            sort_recursively(nested);
-        }
+/// The tree, before anything moves.
+#[derive(Copy, Clone)]
+struct Document<'a> {
+    text: &'a [u8],
+    nodes: &'a [Node],
+}
+
+impl<'a> Document<'a> {
+    fn kind(self, index: u32) -> Option<Kind> {
+        Some(self.nodes.get(index as usize)?.kind)
     }
-    sort_by_key(object);
-}
 
-fn sort_by_key_order<'a>(object: Object<'a>, order: &[&str]) -> Object<'a> {
-    let mut known: Vec<Option<(Cow<'a, [u8]>, Value<'a>)>> = order.iter().map(|_| None).collect();
-    let mut others = Vec::new();
-    for (key, value) in object {
-        match known
-            .iter_mut()
-            .zip(order)
-            .find(|(_, name)| name.as_bytes() == &*key)
-        {
-            Some((slot, _)) => *slot = Some((key, value)),
-            None => others.push((key, value)),
-        }
+    fn source(self, index: u32) -> &'a [u8] {
+        let span = self.nodes.get(index as usize);
+        span.and_then(|it| self.text.get(it.start as usize..it.end as usize))
+            .unwrap_or_default()
     }
-    sort_by_key(&mut others);
-    known.into_iter().flatten().chain(others).collect()
-}
 
-fn transform<'a>(value: Value<'a>, kind: Transform, options: SortPackageJson) -> Value<'a> {
-    match (kind, value) {
-        (Transform::Scripts, Value::Object(mut object)) => {
-            if options.sort_scripts {
-                sort_by_key(&mut object);
+    /// The nodes directly in the container at `index`. In an object, names and values alternate.
+    fn children(self, index: u32) -> impl Iterator<Item = u32> + use<'a> {
+        let end = self.nodes.get(index as usize).map_or(0, |it| it.next);
+        let mut at = index + 1;
+        std::iter::from_fn(move || {
+            let child = at;
+            at = self.nodes.get(at as usize).filter(|_| at < end)?.next;
+            Some(child)
+        })
+    }
+
+    /// The elements of the array at `index`, or the values of the object.
+    fn values(self, index: u32) -> impl Iterator<Item = u32> + use<'a> {
+        let names = usize::from(self.kind(index) == Some(Kind::Object));
+        self.children(index).skip(names).step_by(1 + names)
+    }
+
+    fn members(self, object: u32) -> Vec<Member<'a>> {
+        let names = self.children(object).step_by(2);
+        let member = |name| Member {
+            key: self.key(name),
+            name,
+        };
+        names.map(member).collect()
+    }
+
+    /// The decoded text between the quotes of the string or template at `index`.
+    fn string(self, index: u32) -> Option<Cow<'a, [u8]>> {
+        if !matches!(self.kind(index)?, Kind::String | Kind::Template) {
+            return None;
+        }
+        let source = self.source(index);
+        let raw = source.get(1..source.len().saturating_sub(1))?;
+        Some(match strings::contains_char(raw, b'\\') {
+            true => Cow::Owned(cooked(raw)),
+            false => Cow::Borrowed(raw),
+        })
+    }
+
+    /// The name at `index` as a JavaScript property key.
+    fn key(self, index: u32) -> Cow<'a, [u8]> {
+        let source = self.source(index);
+        match self.kind(index) {
+            Some(Kind::Number) => {
+                Cow::Owned(number_to_string(bun_core::fmt::js_string_to_number(source)))
             }
-            Value::Object(object)
+            _ => self.string(index).unwrap_or(Cow::Borrowed(source)),
         }
-        (Alphabetically, Value::Object(mut object)) => {
-            sort_by_key(&mut object);
-            Value::Object(object)
+    }
+
+    /// The value of `key` in the object at `index`: the last one, as for `JSON.parse`. `None` if it isn't an object.
+    fn get(self, index: u32, key: &[u8]) -> Option<u32> {
+        if self.kind(index)? != Kind::Object {
+            return None;
         }
-        (Recursively, Value::Object(mut object)) => {
-            sort_recursively(&mut object);
-            Value::Object(object)
+        let names = self.children(index).step_by(2);
+        names
+            .filter(|&it| *self.key(it) == *key)
+            .last()
+            .map(|it| it + 1)
+    }
+
+    /// `Boolean(value)`
+    fn is_truthy(self, index: u32) -> bool {
+        let source = self.source(index);
+        match self.kind(index) {
+            Some(Kind::Object | Kind::Array) => true,
+            Some(Kind::String | Kind::Template) => source.len() > 2,
+            Some(Kind::Number) => bun_core::fmt::js_string_to_number(source) != 0.0,
+            Some(Kind::Unary) => self.is_truthy(index + 1),
+            Some(Kind::Identifier) => matches!(source, b"true" | b"Infinity"),
+            Some(Kind::Hole) | None => false,
         }
-        (Transform::KeyOrder(order), Value::Object(object)) => {
-            Value::Object(sort_by_key_order(object, order))
+    }
+}
+
+/// The state a step needs besides the value it sorts.
+struct Context<'a> {
+    document: Document<'a>,
+    /// The known keys of the top level, in order.
+    fields: Properties,
+    /// The keys that come before those.
+    first: &'a [Vec<u8>],
+    /// The order "by name".
+    by_name: fn(&[u8], &[u8]) -> Ordering,
+    sorts_scripts: bool,
+    /// See `npm.rs`.
+    sorts_dependencies_like_npm: bool,
+    has_sequential_script: bool,
+}
+
+fn sort_by(members: &mut [Member<'_>], mut compare: impl FnMut(&[u8], &[u8]) -> Ordering) {
+    crate::sort::sort_by(members, |a, b| compare(&a.key, &b.key));
+}
+
+/// The keys in `first` come first, in that order. Then the others, by name.
+fn sort_keys(members: &mut [Member<'_>], first: &[&str], context: &Context<'_>) {
+    let rank = |key: &[u8]| first.iter().position(|it| it.as_bytes() == key);
+    let rank = |key: &[u8]| rank(key).unwrap_or(first.len());
+    sort_by(members, |a, b| {
+        (rank(a).cmp(&rank(b))).then_with(|| (context.by_name)(a, b))
+    });
+}
+
+/// `context.first`, then the known keys, then the others by name, with those that start with `_` last.
+fn sort_fields(members: &mut [Member<'_>], context: &Context<'_>) {
+    let mut ranks: FxHashMap<&[u8], usize> = FxHashMap::default();
+    let first = context.first.iter().map(|it| &it[..]);
+    let known = context.fields.iter().map(|it| it.0.as_bytes());
+    for (rank, name) in first.chain(known).enumerate() {
+        ranks.entry(name).or_insert(rank);
+    }
+    let rank = |key: &[u8]| {
+        let known = ranks.get(key).copied().unwrap_or(usize::MAX);
+        (known, key.starts_with(b"_"))
+    };
+    sort_by(members, |a, b| {
+        (rank(a).cmp(&rank(b))).then_with(|| (context.by_name)(a, b))
+    });
+}
+
+/// The new order of some containers' children.
+#[derive(Default)]
+struct Plan {
+    /// Keyed by a container's index: its elements, or its members' names, in their new order.
+    orders: FxHashMap<u32, Vec<u32>>,
+    /// The dropped elements.
+    removed: Vec<u32>,
+}
+
+impl Plan {
+    /// Applies `over` to the value at `index`. Nested values wait in a list, so deep nesting costs heap and not stack.
+    fn make(index: u32, over: Over, context: &Context<'_>) -> Plan {
+        let mut plan = Plan::default();
+        let mut pending = vec![(index, over)];
+        while let Some((index, over)) = pending.pop() {
+            match context.document.kind(index) {
+                Some(Kind::Array) => plan.sort_array(index, over, context, &mut pending),
+                Some(Kind::Object) => plan.sort_object(index, over, context, &mut pending),
+                _ => {}
+            }
         }
-        (Transform::Fields, Value::Object(object)) => Value::Object(sort_fields(object, options)),
-        (Transform::DevEngines, Value::Object(object)) => {
-            let mut object: Object<'a> = object
-                .into_iter()
-                .map(|(key, value)| match value {
-                    Value::Array(engines) => {
-                        let engines = engines
-                            .into_iter()
-                            .map(|engine| transform(engine, DEV_ENGINE, options));
-                        (key, Value::Array(engines.collect()))
+        plan
+    }
+
+    fn sort_array(
+        &mut self,
+        index: u32,
+        over: Over,
+        context: &Context<'_>,
+        pending: &mut Vec<(u32, Over)>,
+    ) {
+        let elements = context.document.children(index);
+        match over {
+            Over::Each(over) | Over::EachOrSelf(over) => {
+                pending.extend(elements.map(|it| (it, *over)));
+            }
+            Over::Unique | Over::UniqueSorted => {
+                let strings = elements.map(|it| Some((context.document.string(it)?, it)));
+                // An array with anything else in it is left alone.
+                let Some(mut strings) = strings.collect::<Option<Vec<_>>>() else {
+                    return;
+                };
+                let count = strings.len();
+                let mut seen = FxHashSet::default();
+                strings.retain(|(string, element)| {
+                    let is_first = seen.insert(string.clone());
+                    if !is_first {
+                        self.removed.push(*element);
                     }
-                    engine => (key, transform(engine, DEV_ENGINE, options)),
-                })
-                .collect();
-            sort_by_key(&mut object);
-            Value::Object(object)
-        }
-        (SortedUnique, Value::Array(mut array)) => {
-            array.retain(|it| it.as_string().is_some());
-            crate::sort::sort_by(&mut array[..], |a, b| a.as_string().cmp(&b.as_string()));
-            array.dedup_by(|a, b| a.as_string() == b.as_string());
-            Value::Array(array)
-        }
-        (Transform::Unique, Value::Array(array)) => {
-            let mut unique: Vec<Value<'a>> = Vec::with_capacity(array.len());
-            for value in array {
-                if value
-                    .as_string()
-                    .is_some_and(|it| !unique.iter().any(|seen| seen.as_string() == Some(it)))
-                {
-                    unique.push(value);
+                    is_first
+                });
+                if matches!(over, Over::UniqueSorted) {
+                    crate::sort::sort_by(&mut strings, |a, b| (context.by_name)(&a.0, &b.0));
+                }
+                if strings.len() < count || !strings.is_sorted_by_key(|it| it.1) {
+                    let order = strings.iter().map(|it| it.1).collect();
+                    self.orders.insert(index, order);
                 }
             }
-            Value::Array(unique)
+            _ => {}
         }
-        (_, value) => value,
+    }
+
+    fn sort_object(
+        &mut self,
+        index: u32,
+        over: Over,
+        context: &Context<'_>,
+        pending: &mut Vec<(u32, Over)>,
+    ) {
+        let over = match over {
+            Over::EachOrSelf(over) => *over,
+            over => over,
+        };
+        let mut members = context.document.members(index);
+        let members = &mut members[..];
+        let mut properties: Properties = &[];
+        // Applied to the values of the keys that aren't in `properties`.
+        let mut inner = Over::Nothing;
+        match over {
+            // For arrays.
+            Over::Nothing
+            | Over::Unique
+            | Over::UniqueSorted
+            | Over::Each(_)
+            | Over::EachOrSelf(_) => {}
+            Over::In(all) => properties = all,
+            Over::Keys(first, all) => {
+                sort_keys(members, first, context);
+                properties = all;
+            }
+            Over::Deep(first) => {
+                sort_keys(members, first, context);
+                inner = over;
+            }
+            Over::Values(over) => {
+                sort_keys(members, &[], context);
+                inner = *over;
+            }
+            Over::Fields => {
+                sort_fields(members, context);
+                properties = context.fields;
+            }
+            Over::OxfmtScripts if context.sorts_scripts => sort_keys(members, &[], context),
+            Over::OxfmtScripts => {}
+            Over::Dependencies => npm::sort_dependencies(members, context),
+            Over::DependenciesMeta => {
+                npm::sort_by_package_name(members);
+                inner = over;
+            }
+            Over::Scripts => npm::sort_scripts(members, context.has_sequential_script),
+            Over::Exports => {
+                npm::sort_exports(members);
+                inner = over;
+            }
+            Over::EslintConfig => {
+                sort_keys(members, npm::ESLINT_KEYS, context);
+                properties = npm::ESLINT_PROPERTIES;
+            }
+            Over::EslintRules => npm::sort_eslint_rules(members),
+            Over::PrettierConfig => {
+                npm::sort_prettier_config(members);
+                properties = npm::PRETTIER_OVERRIDES;
+            }
+            Over::PnpmConfig => {
+                sort_keys(members, npm::PNPM_KEYS, context);
+                properties = &[("overrides", Over::PnpmOverrides)];
+                inner = Over::Deep(npm::PNPM_KEYS);
+            }
+            Over::PnpmOverrides => {
+                sort_keys(members, npm::PNPM_KEYS, context);
+                npm::sort_by_version(members);
+                inner = Over::Deep(npm::PNPM_KEYS);
+            }
+        }
+        for member in members.iter() {
+            let matching_property = properties.iter().find(|it| it.0.as_bytes() == &*member.key);
+            match matching_property.map_or(inner, |it| it.1) {
+                Over::Nothing => {}
+                over => pending.push((member.name + 1, over)),
+            }
+        }
+        if !members.is_sorted_by_key(|it| it.name) {
+            let order = members.iter().map(|it| it.name).collect();
+            self.orders.insert(index, order);
+        }
+    }
+
+    /// The nodes of `old` in their new order. A container is still followed by its contents.
+    fn apply(mut self, old: &[Node]) -> Vec<Node> {
+        crate::sort::sort(&mut self.removed);
+        let removed_before = |index: u32| self.removed.partition_point(|it| *it < index) as u32;
+        let mut nodes: Vec<Node> = Vec::with_capacity(old.len());
+        // Ranges of `old` that have yet to be copied. The last one comes next.
+        let mut ranges = vec![(0, old.len() as u32)];
+        while let Some((mut at, end)) = ranges.pop() {
+            while let Some(&(mut node)) = old.get(at as usize).filter(|_| at < end) {
+                let (container, after) = (at, node.next);
+                let len = after - at - (removed_before(after) - removed_before(at));
+                node.next = nodes.len() as u32 + len;
+                at += 1;
+                let Some(order) = self.orders.get(&container) else {
+                    nodes.push(node);
+                    continue;
+                };
+                node.count = order.len() as u32;
+                nodes.push(node);
+                ranges.push((after, end));
+                // A member ends where its value does.
+                let last = u32::from(node.kind == Kind::Object);
+                let range = |&child: &u32| {
+                    let end = old.get((child + last) as usize).map_or(child, |it| it.next);
+                    (child, end)
+                };
+                ranges.extend(order.iter().rev().map(range));
+                break;
+            }
+        }
+        nodes
     }
 }
 
-/// The known fields in their order, then the others by name, those that start with `_` last.
-fn sort_fields<'a>(object: Object<'a>, options: SortPackageJson) -> Object<'a> {
-    let mut known: Vec<(usize, Cow<'a, [u8]>, Value<'a>)> = Vec::new();
-    let mut unknown: Object<'a> = Vec::new();
-    for (key, value) in object {
-        match FIELDS
-            .iter()
-            .enumerate()
-            .find(|(_, (name, _))| name.as_bytes() == &*key)
-        {
-            Some((index, (_, field))) => {
-                known.push((index, key, transform(value, *field, options)))
-            }
-            None => unknown.push((key, value)),
-        }
+/// Sorts `tree`, which the `json-stringify` parser built from `text`.
+pub(super) fn sort(text: &[u8], tree: &mut Tree, how: &SortPackageJson) {
+    let document = Document {
+        text,
+        nodes: &tree.nodes,
+    };
+    let context = match &how.plugin {
+        Some(plugin) => npm::context(document, plugin),
+        None => oxfmt::context(document, how.sort_scripts),
+    };
+    let plan = Plan::make(0, Over::Fields, &context);
+    if !plan.orders.is_empty() {
+        tree.nodes = plan.apply(&tree.nodes);
     }
-    crate::sort::sort_by_key(&mut known[..], |(index, ..)| *index);
-    crate::sort::sort_by(&mut unknown[..], |(a, _), (b, _)| {
-        a.starts_with(b"_")
-            .cmp(&b.starts_with(b"_"))
-            .then_with(|| a.cmp(b))
-    });
-    known
-        .into_iter()
-        .map(|(_, key, value)| (key, value))
-        .chain(unknown)
-        .collect()
 }

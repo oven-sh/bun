@@ -46,6 +46,7 @@ import {
   reconfigureCodegen,
   type ConfigureInput,
 } from "./build/configure.ts";
+import { edgeEnvironment, restrictEnvironment } from "./build/env.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
@@ -81,6 +82,10 @@ async function main(): Promise<void> {
     process.exit(result.status ?? 1);
   }
 
+  // The build sees the variables env.ts lists. The rest reach only the binary the caller asked to run afterwards.
+  const callerEnvironment = { ...process.env };
+  restrictEnvironment(process.env);
+
   // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
   // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
   if (args.ninjaTool !== undefined) {
@@ -115,23 +120,6 @@ async function main(): Promise<void> {
     : { profile: args.profile, overrides: args.overrides };
 
   const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
-  // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
-  // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
-  // --target. A build environment may set them for the *host* gcc toolchain
-  // (a machine set up for a gcc toolchain does), which hijacks <vector> & co. away from the MSVC
-  // STL when cross-compiling for Windows ("'bits/c++config.h' file not
-  // found"). Scrub them for Windows cross builds — they are host-targeted by
-  // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
-  // every other target keep the environment as provisioned.
-  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
-    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
-    if (cfg.windows && cfg.host.os !== "windows") {
-      for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
-        delete merged[name];
-      }
-    }
-    return merged;
-  };
 
   if (args.configFile !== undefined) {
     // ninja's generator rule replaying a previous configure (`regen`, configure.ts): just rewrite build.ninja.
@@ -152,7 +140,10 @@ async function main(): Promise<void> {
       process.stderr.write(`codegen only → ${result.cfg.codegenDir} (configured in ${result.elapsed}ms)\n`);
     }
     if (args.configureOnly) return;
-    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), { stdio: "inherit" });
+    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), {
+      stdio: "inherit",
+      env: edgeEnvironment(process.env, result.env),
+    });
     if (ninja.error) throw new BuildError("Failed to run ninja", { cause: ninja.error });
     process.exit(ninja.status ?? 1);
   }
@@ -174,7 +165,7 @@ async function main(): Promise<void> {
     const runNinja = (targets: string[] = args.ninjaTargets) =>
       spawnWithAnnotations(ninja, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
         label: "ninja",
-        env: ninjaEnv(result.cfg, result.env),
+        env: edgeEnvironment(process.env, result.env),
       });
 
     const inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
@@ -260,7 +251,7 @@ async function main(): Promise<void> {
     }
     const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), {
       stdio,
-      env: ninjaEnv(result.cfg, result.env),
+      env: edgeEnvironment(process.env, result.env),
       // Captured output (quiet mode) can be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
       maxBuffer: 1024 * 1024 * 1024,
     });
@@ -296,7 +287,7 @@ async function main(): Promise<void> {
     // binary — bun-debug for debug, bun-profile for release. That's the one
     // you want for dev iteration (has symbols + assertions in debug).
     const exe = result.output.exe;
-    const child = spawnSync(exe, args.execArgs, { stdio: "inherit" });
+    const child = spawnSync(exe, args.execArgs, { stdio: "inherit", env: callerEnvironment });
     if (child.error) {
       throw new BuildError(`Failed to exec ${exe}`, { cause: child.error });
     }

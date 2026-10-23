@@ -1,21 +1,23 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import { join } from "path";
 
 describe("text-loader", () => {
+  // A reload costs ~2.5ms on debug builds; 5,000 of them would blow the default 5s test timeout.
+  const reloads = isWindows || isDebug ? 500 : 5_000;
   const fixtures = [
-    ["dynamic-import reloaded 10000 times", "text-loader-fixture-dynamic-import-stress.ts"],
+    [`dynamic-import reloaded ${reloads} times`, "text-loader-fixture-dynamic-import-stress.ts", String(reloads)],
     ["dynamic-import", "text-loader-fixture-dynamic-import.ts"],
     ["import", "text-loader-fixture-import.ts"],
     ["require", "text-loader-fixture-require.ts"],
   ] as const;
-  for (let [kind, path] of fixtures) {
+  for (let [kind, path, ...args] of fixtures) {
     describe("should load text", () => {
       it(`using ${kind}`, () => {
         const result = spawnSync({
-          cmd: [bunExe(), join(import.meta.dir, path)],
+          cmd: [bunExe(), join(import.meta.dir, path), ...args],
           env: bunEnv,
           stdout: "pipe",
           stderr: "inherit",

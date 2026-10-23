@@ -1193,6 +1193,45 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, same as the Bun.mmap block above. typescript@latest (7.x) reports
+  // only the error of the last overload, so the order of the overloads of Database.run decides
+  // how a wrong binding reads.
+  describe("bun:sqlite Database.run", () => {
+    test("a wrong value in the array of bindings is one error, at that value", async () => {
+      const checkDir = join(TEMP_DIR, "sqlite-run-diagnostic-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["sqlite-run.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      // The runtime throws for a Date.
+      const call = `new Database().run("INSERT INTO users VALUES (?, ?, ?)", [user.id, user.name, user.born]);`;
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "sqlite-run.ts": [
+          `import { Database } from "bun:sqlite";`,
+          `declare const user: { id: number; name: string; born: Date };`,
+          call,
+        ].join("\n"),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.match(/^\S+\(\d+,\d+\): error TS\d+/gm)).toEqual([
+        `sqlite-run.ts(3,${call.indexOf("user.born") + 1}): error TS2769`,
+      ]);
+      expect(exitCode).not.toBe(0);
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

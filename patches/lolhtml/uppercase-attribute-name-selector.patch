@@ -1,0 +1,122 @@
+Match attribute selector names ASCII case-insensitively.
+
+`[HREF]` was accepted but silently matched nothing (ast.rs stored the
+selector's original-case name while the matcher compares against
+lowercased element attribute names), and `[HREF="x"]` threw a bogus
+NamespacedSelector error (the `selectors` crate emits AttributeOther
+for non-lowercase names even without a namespace; parser.rs rejected
+all AttributeOther unconditionally).
+
+Upstream: https://github.com/cloudflare/lol-html/issues/328
+
+--- a/src/selectors_vm/parser.rs
++++ b/src/selectors_vm/parser.rs
+@@ -146,6 +146,11 @@
+             | Component::AttributeInNoNamespaceExists { .. }
+             | Component::AttributeInNoNamespace { .. } => Ok(()),
+ 
++            // NOTE: the `selectors` crate emits AttributeOther not only for namespaced
++            // selectors, but also for `[Foo=bar]` where the attribute name contains
++            // ASCII uppercase. Only reject when a namespace is actually present.
++            Component::AttributeOther(attr) if attr.namespace.is_none() => Ok(()),
++
+             Component::Nth(data) => Self::validate_nth(data),
+ 
+             Component::Negation(selectors) => selectors
+--- a/src/selectors_vm/ast.rs
++++ b/src/selectors_vm/ast.rs
+@@ -1,6 +1,6 @@
+ use super::parser::{Selector, SelectorImplDescriptor};
+ use hashbrown::{DefaultHashBuilder, HashSet};
+-use selectors::attr::{AttrSelectorOperator, ParsedCaseSensitivity};
++use selectors::attr::{AttrSelectorOperator, ParsedAttrSelectorOperation, ParsedCaseSensitivity};
+ use selectors::parser::{Combinator, Component, NthType};
+ use std::fmt::{self, Debug, Formatter};
+ use std::hash::Hash;
+@@ -124,9 +124,15 @@
+             Component::ExplicitNoNamespace => Self::OnTagName(OnTagNameExpr::Unmatchable),
+             Component::ID(id) => Self::OnAttributes(OnAttributesExpr::Id(id.to_boxed_slice())),
+             Component::Class(c) => Self::OnAttributes(OnAttributesExpr::Class(c.to_boxed_slice())),
+-            Component::AttributeInNoNamespaceExists { local_name, .. } => Self::OnAttributes(
+-                OnAttributesExpr::AttributeExists(local_name.to_boxed_slice()),
+-            ),
++            // NOTE: the attribute matcher lowercases the element's attribute names
++            // before comparing, so the selector side must be lowercase too. Use
++            // `local_name_lower`; `local_name` preserves the selector's original case
++            // and would make `[HREF]` never match.
++            Component::AttributeInNoNamespaceExists {
++                local_name_lower, ..
++            } => Self::OnAttributes(OnAttributesExpr::AttributeExists(
++                local_name_lower.to_boxed_slice(),
++            )),
+             &Component::AttributeInNoNamespace {
+                 ref local_name,
+                 ref value,
+@@ -140,6 +146,30 @@
+                     operator,
+                 ),
+             )),
++            // NOTE: the `selectors` crate emits AttributeOther for `[Foo=bar]` (an
++            // attribute name containing ASCII uppercase) even when no namespace is
++            // present, so handle the no-namespace case here instead of treating it
++            // as unsupported.
++            Component::AttributeOther(attr) if attr.namespace.is_none() => {
++                let name = attr.local_name_lower.to_boxed_slice();
++                match attr.operation {
++                    ParsedAttrSelectorOperation::Exists => {
++                        Self::OnAttributes(OnAttributesExpr::AttributeExists(name))
++                    }
++                    ParsedAttrSelectorOperation::WithValue {
++                        operator,
++                        case_sensitivity,
++                        ref value,
++                    } => Self::OnAttributes(OnAttributesExpr::AttributeComparisonExpr(
++                        AttributeComparisonExpr::new(
++                            name,
++                            value.to_boxed_slice(),
++                            case_sensitivity,
++                            operator,
++                        ),
++                    )),
++                }
++            }
+             Component::Nth(data) if data.ty == NthType::Child => Self::OnTagName(
+                 OnTagNameExpr::NthChild(NthChild::new(data.an_plus_b.0, data.an_plus_b.1)),
+             ),
+@@ -412,6 +442,27 @@
+                 },
+             ),
+             (
++                "[Data-Foo]",
++                Expr {
++                    simple_expr: OnAttributesExpr::AttributeExists("data-foo".into()),
++                    negation: false,
++                },
++            ),
++            (
++                r#"[Data-Foo="bar"]"#,
++                Expr {
++                    simple_expr: OnAttributesExpr::AttributeComparisonExpr(
++                        AttributeComparisonExpr {
++                            name: "data-foo".into(),
++                            value: "bar".into(),
++                            case_sensitivity: ParsedCaseSensitivity::CaseSensitive,
++                            operator: AttrSelectorOperator::Equal,
++                        },
++                    ),
++                    negation: false,
++                },
++            ),
++            (
+                 r#"[foo="bar"]"#,
+                 Expr {
+                     simple_expr: OnAttributesExpr::AttributeComparisonExpr(
+@@ -826,6 +877,8 @@
+             SelectorError::UnexpectedTokenInAttribute,
+         );
+         assert_err("svg|img", SelectorError::NamespacedSelector);
++        assert_err("[*|foo]", SelectorError::NamespacedSelector);
++        assert_err(r#"[*|Foo="bar"]"#, SelectorError::NamespacedSelector);
+         assert_err(".foo()", SelectorError::InvalidClassName);
+         assert_err(":not()", SelectorError::EmptySelector);
+         assert_err("div + span", SelectorError::UnsupportedCombinator('+'));

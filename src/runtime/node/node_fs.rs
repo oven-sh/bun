@@ -7448,14 +7448,17 @@ impl NodeFS {
         pathbuf: &mut PathBuffer,
         args: &args::WriteFile,
     ) -> Maybe<ret::WriteFile> {
+        let mut dest_is_dup = false;
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
+                dest_is_dup = sys::path_opens_as_dup(path.as_bytes());
                 // O_TRUNC is dropped on purpose: keeping the existing blocks
                 // allocated makes rewriting a large file cheaper, and the resize
                 // below sets the final size. O_APPEND writes at EOF, so it keeps it.
+                // A dup name keeps it too: a dup ignores it, and a file that the name opens on its own is emptied here.
                 let mut flags = args.flag.as_int();
-                if (flags & sys::O::APPEND) == 0 {
+                if (flags & sys::O::APPEND) == 0 && !dest_is_dup {
                     flags &= !sys::O::TRUNC;
                 }
                 match sys::openat(args.dirfd, path, flags, args.mode) {
@@ -7548,6 +7551,7 @@ impl NodeFS {
         // descriptor it was handed.
         if (args.flag.as_int() & sys::O::TRUNC) != 0
             && matches!(args.file, PathOrFileDescriptor::Path(_))
+            && !dest_is_dup
         {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).

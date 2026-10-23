@@ -136,6 +136,16 @@ function listenException(err, address: string | null, port?: number) {
   return errno === undefined ? err : new UVExceptionWithHostPort(errno, "listen", address, port);
 }
 
+// The error dgram.Socket reports for what Bun.udpSocket() threw. `address` is undefined for a descriptor, which Node opens.
+function bindException(err, address?: string, port?: number) {
+  const syscall = address === undefined ? "open" : "bind";
+  const errno = err?.syscall === syscall ? process.binding("uv")[`UV_${err.code}`] : undefined;
+  if (errno === undefined) return err;
+  return address === undefined
+    ? new ErrnoException(errno, syscall)
+    : new ExceptionWithHostPort(errno, syscall, address, port);
+}
+
 class NodeAggregateError extends AggregateError {
   constructor(errors, message?) {
     super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
@@ -479,6 +489,7 @@ export default {
   warnNotImplementedOnce,
   ExceptionWithHostPort,
   listenException,
+  bindException,
   NodeAggregateError,
   ConnResetException,
   ErrnoException,

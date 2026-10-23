@@ -139,11 +139,17 @@ for (const list of [undefined, AES256, AES128, "TLS_AES_128_GCM_SHA256"]) {
 }
 // The list is the thread's, as in Node.js.
 results.worker = await outcome(1, () => new Worker(`new WebSocket(${JSON.stringify(wss)})`, { eval: true }));
-// fetch.preconnect() dials with the list too, so the fetch() after it takes that connection.
-tls.DEFAULT_CIPHERS = AES256;
-connections = 0;
-results["fetch.preconnect()"] = await outcome(1, () => fetch.preconnect(url));
-await fetch(url);
-results["connections of fetch.preconnect() and fetch()"] = String(connections);
+// fetch.preconnect() dials with the list too, so the fetch() after it takes that connection. It does nothing on Windows.
+if (process.platform !== "win32") {
+  tls.DEFAULT_CIPHERS = AES256;
+  connections = 0;
+  results["fetch.preconnect()"] = await outcome(1, () => fetch.preconnect(url));
+  // In TLS 1.2 the server is done first. By the end of a whole request to another origin, the HTTP thread has read the
+  // server's Finished and pooled the socket.
+  using other = Bun.serve({ port: 0, fetch: () => new Response() });
+  await fetch(other.url);
+  await fetch(url);
+  results["connections of fetch.preconnect() and fetch()"] = String(connections);
+}
 console.log(JSON.stringify(results));
 process.exit(0);

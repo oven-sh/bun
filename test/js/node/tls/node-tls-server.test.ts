@@ -1540,6 +1540,77 @@ describe.each(["a socket", "a stream"])("bytes after the ClientHello while an SN
   });
 });
 
+// The callbacks run inside the handshake, and what they catch is theirs alone.
+describe.each(["a socket", "a stream"])(
+  "an error that a TLS callback caught stays out of its handshake, over %s",
+  via => {
+    const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+    const agent = (n: number) => ({ key: fixture(`agent${n}-key.pem`), cert: fixture(`agent${n}-cert.pem`) });
+    const failures = {
+      "a context that can't be built": () => {
+        expect(() => tls.createSecureContext({ key: "not a key", cert: "not a cert" })).toThrow();
+      },
+      "a key that can't be imported": () => {
+        const algorithm = { name: "RSA-PSS", hash: "SHA-256" };
+        globalThis.crypto.subtle.importKey("pkcs8", new Uint8Array(16), algorithm, false, ["sign"]).catch(() => {});
+      },
+    };
+    const answerLater: NonNullable<tls.TlsOptions["SNICallback"]> = (_name, cb) => {
+      setImmediate(() => cb(null, tls.createSecureContext(agent(3))));
+    };
+
+    it.each(
+      (Object.keys(failures) as (keyof typeof failures)[]).flatMap(failure => [
+        ["SNICallback", failure] as const,
+        ["ALPNCallback", failure] as const,
+      ]),
+    )("%s: %s", async (callback, failure) => {
+      const inALPNCallback = callback === "ALPNCallback";
+      const callbacks: tls.TlsOptions = {
+        SNICallback: (name, cb) => {
+          if (!inALPNCallback) failures[failure]();
+          answerLater(name, cb);
+        },
+        ALPNCallback: inALPNCallback ? () => (failures[failure](), "h2") : undefined,
+      };
+      const alpnProtocol = inALPNCallback && "h2";
+      const clientErrors: string[] = [];
+      const server: Server = createServer({ ...agent(1), ...callbacks }, socket => socket.on("error", () => {}).end());
+      server.on("tlsClientError", err => clientErrors.push((err as NodeJS.ErrnoException).code ?? err.message));
+      let target: tls.ConnectionOptions;
+      if (via === "a socket") {
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        target = { host: "127.0.0.1", port: (server.address() as AddressInfo).port };
+      } else {
+        const [near, far] = duplexPair();
+        server.emit("connection", far);
+        target = { socket: near };
+      }
+      const secured = Promise.withResolvers<object>();
+      const options = { ca: fixture("ca2-cert.pem"), servername: "agent3", ALPNProtocols: ["h2"] };
+      const client = connect({ ...target, ...options, checkServerIdentity: () => undefined }, () => {
+        secured.resolve({
+          authorized: client.authorized,
+          served: (client.getPeerCertificate() as PeerCertificate).subject.CN,
+          alpnProtocol: client.alpnProtocol,
+        });
+      });
+      client.on("error", secured.reject);
+      try {
+        expect({ ...(await secured.promise), clientErrors }).toEqual({
+          authorized: true,
+          served: "agent3",
+          alpnProtocol,
+          clientErrors: [],
+        });
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  },
+);
+
 it("SNICallback accepts a raw native context (Node's context.context || context)", async () => {
   // cb(null, secureContext.context) - passing the unwrapped native context -
   // must select it, same as passing the wrapper.
@@ -4706,8 +4777,10 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
     "S3Client, stream()": row,
     "S3Client, list()": row,
     worker: AES128,
-    "fetch.preconnect()": AES256,
-    "connections of fetch.preconnect() and fetch()": "1",
+    ...(!isWindows && {
+      "fetch.preconnect()": AES256,
+      "connections of fetch.preconnect() and fetch()": "1",
+    }),
   });
   expect(exitCode).toBe(0);
 });

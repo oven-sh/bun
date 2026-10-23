@@ -1,6 +1,6 @@
 // fetch and WebSocket are built natively, so tls.setDefaultCACertificates() has to reach them as it does node:tls.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as serverCert, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tls as serverCert, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -153,7 +153,8 @@ test.concurrent.each([
   },
 );
 
-test.concurrent.each(["http", "https"])(
+// fetch.preconnect() does nothing on Windows.
+test.skipIf(isWindows).concurrent.each(["http", "https"])(
   "fetch.preconnect() opens the %s connection that fetch() then takes",
   async scheme => {
     const result = await run(`

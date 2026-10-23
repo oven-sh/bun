@@ -44,7 +44,7 @@ const { kStateSymbol, guessHandleType } = require("internal/dgram");
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { throwNotImplemented, ErrnoException, ExceptionWithHostPort } = require("internal/shared");
+const { throwNotImplemented, ErrnoException, ExceptionWithHostPort, bindException } = require("internal/shared");
 const {
   validateString,
   validateNumber,
@@ -797,10 +797,11 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
       err => {
         state.bindState = BIND_STATE_UNBOUND;
         if (sharedHandle) releaseSharedHandle(state, sharedHandle);
-        self.emit("error", err);
+        self.emit("error", bindException(err, createOptions.hostname, createOptions.port));
       },
     );
-  } catch (err) {
+  } catch (nativeError) {
+    const err = bindException(nativeError, createOptions.hostname, createOptions.port);
     state.bindState = BIND_STATE_UNBOUND;
     if (sharedHandle) releaseSharedHandle(state, sharedHandle);
     // bind({ fd }) is the caller, and node throws what handle.open(fd) returns.

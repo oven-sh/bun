@@ -117,12 +117,14 @@ pub(crate) fn create_bun_socket_error_to_js(
     global: &JSGlobalObject,
 ) -> JSValue {
     use bun_uws::create_bun_socket_error_t as E;
+    let queued = bun_boringssl_sys::ERR_get_error();
+    bun_boringssl_sys::ERR_clear_error();
     match err {
         // `us_ssl_ctx_from_options` only sets *err for the CA/cipher cases;
         // bad cert/key/DH return NULL with `.none` and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `getOrCreateOpts(...) orelse return err.toJS()` site correct.
-        E::none => boringssl_err_to_js(global, bun_boringssl_sys::ERR_get_error()),
+        E::none => boringssl_err_to_js(global, queued),
         E::load_ca_file => global
             .err(ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
             .to_js(),

@@ -552,6 +552,8 @@ void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
 }
 
 void us_internal_ssl_loop_state_restore(void **saved) {
+  /* SSL_get_error reads the thread's queue first, and whatever the JS queued isn't about the SSL_* call it ran inside. */
+  ERR_clear_error();
   struct loop_ssl_data *d = (struct loop_ssl_data *)saved[0];
   if (!d) return;
   d->ssl_socket = (struct us_socket_t *)saved[1];

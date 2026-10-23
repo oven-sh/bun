@@ -601,6 +601,7 @@ pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
     /// An explicit length.
+    #[css(non_negative)]
     LengthPercentage(LengthPercentage),
 }
 

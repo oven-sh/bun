@@ -1,7 +1,7 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Maybe, PrintErr, Printer, Token};
 use crate::values::calc::Calc;
-use crate::values::number::{CSSNumber, CSSNumberFns};
+use crate::values::number::{CSSNumber, CSSNumberFns, ClampNegative};
 
 /// A CSS [`<time>`](https://www.w3.org/TR/css-values-4/#time) value, in either
 /// seconds or milliseconds.
@@ -23,6 +23,15 @@ pub enum Time {
     Seconds(CSSNumber) = 1,
     /// A time in milliseconds.
     Milliseconds(CSSNumber) = 2,
+}
+
+impl ClampNegative for Time {
+    fn clamp_negative(self) -> Self {
+        match self {
+            Time::Seconds(v) => Time::Seconds(v.clamp_negative()),
+            Time::Milliseconds(v) => Time::Milliseconds(v.clamp_negative()),
+        }
+    }
 }
 
 impl Time {

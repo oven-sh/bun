@@ -6724,6 +6724,56 @@ maybe(() => { return f; });
       expect(reports).toEqual(expected);
     });
 
+    // From ESLint 8.57.1 and 9.39.5.
+    test.each([
+      [
+        "8.57.1",
+        [
+          "a.js 3:10 no-inner-declarations, 5:8 no-constant-condition, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion",
+          "b.js 3:10 no-inner-declarations, 5:8 no-constant-condition, 6:25 no-implicit-coercion, 8:12 no-unused-vars",
+          "c.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 3:10 no-inner-declarations, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion, 7:22 no-unused-vars",
+        ],
+      ],
+      [
+        "9.39.5",
+        [
+          "a.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 6:12 no-implicit-coercion, 6:18 no-implicit-coercion, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion, 7:22 no-unused-vars",
+          "b.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 6:12 no-implicit-coercion, 6:18 no-implicit-coercion, 6:25 no-implicit-coercion, 7:22 no-unused-vars, 8:12 no-unused-vars",
+          "c.js 1:21 no-unused-vars, 2:11 no-useless-computed-key, 6:12 no-implicit-coercion, 6:18 no-implicit-coercion, 6:25 no-implicit-coercion, 6:29 no-implicit-coercion, 7:22 no-unused-vars",
+        ],
+      ],
+    ])("the default options with an eslint.config.mjs and eslint %s", async (version, expected) => {
+      const source = `try { f(); } catch (e) {}
+class A { ["x"]() {} }
+if (a) { function g() {} g(); }
+function f(globalThis) { return [globalThis, A]; }
+while (true) { f(); }
+const n = [- -a, a - 0, +a, !!a];
+try { f(n); } catch (unused) {}
+function h(x, y) { return y; }
+h();
+`;
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `export default [
+  { languageOptions: { globals: { a: "readonly" } }, rules: { "no-unused-vars": "error", "no-useless-computed-key": "error", "no-inner-declarations": "error", "no-shadow-restricted-names": "error", "no-constant-condition": "error", "no-implicit-coercion": "error" } },
+  { files: ["b.js"], rules: { "no-unused-vars": ["error", { args: "all" }], "no-implicit-coercion": ["error", { boolean: false }], "no-inner-declarations": ["error", "both"] } },
+  { files: ["c.js"], rules: { "no-unused-vars": ["error", { caughtErrors: "all" }], "no-useless-computed-key": ["error", { enforceForClassMembers: true }], "no-constant-condition": ["error", { checkLoops: false }] } },
+];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.js": source,
+          "b.js": source,
+          "c.js": source,
+        },
+        ["-f", "json", "a.js", "b.js", "c.js"],
+      );
+      const found = (JSON.parse(raw) as any[]).map(
+        it =>
+          `${basename(it.filePath)} ${it.messages.map((it: any) => `${it.line}:${it.column} ${it.ruleId}`).join(", ")}`,
+      );
+      expect(found).toEqual(expected);
+    });
+
     // From ESLint 8.57.1 too. In version 9 the location changed with 9.38.
     test.each([
       ["8.57.1", ["1:1-3:2 4", "5:9-5:37 2", "6:3-6:43 3", "7:11-7:23 2", "9:11-9:68 2", "10:14-10:45 3"]],

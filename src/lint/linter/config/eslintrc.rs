@@ -26,7 +26,7 @@ use crate::linter::{schema, write_json};
 use crate::options::Json;
 use crate::paths::{self, Style};
 use bun_core::strings;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A config file, or something treated as one: `.eslintignore`, the command line.
 pub struct LegacyFile {
@@ -260,6 +260,14 @@ fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
             (default, option) => option.or_else(|| default.cloned()),
         })
         .collect()
+}
+
+/// [`migrate_options`] for an `eslint.config.js` that ESLint 8 reads. `None` if the rule's defaults haven't changed.
+pub(super) fn options_for_eslint_8(id: &[u8], options: &[Json]) -> Option<Vec<Json>> {
+    static DEFAULTS: OnceLock<Json> = OnceLock::new();
+    let defaults = DEFAULTS.get_or_init(eslint_8_defaults);
+    defaults.get(id)?;
+    Some(migrate_options(defaults, id, options))
 }
 
 /// An environment's `parserOptions.ecmaVersion`.

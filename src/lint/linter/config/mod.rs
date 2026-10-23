@@ -1663,6 +1663,13 @@ impl Config {
             .map(Arc::new);
         }
         for mut setting in rules {
+            // An `.eslintrc` has them already.
+            if self.eslint_major == 8
+                && !self.is_legacy
+                && let Some(options) = eslintrc::options_for_eslint_8(&setting.id, &setting.options)
+            {
+                setting.options = options;
+            }
             // ESLint's `throwRuleNotFoundError`, where it's certain that ESLint has no such rule.
             if setting.severity != Severity::Off
                 && !self.accepts_all_plugins

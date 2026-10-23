@@ -315,6 +315,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "BunObject.bind.ts":
     "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape; table: typeof Bun.inspect.table }",
   "BunObjectInternals.bind.ts": null,
+  "BunTest.bind.ts": null,
   "ByteStream.bind.ts": null,
   "BytecodeOrderRecorder.bind.ts": null,
   "Counters.bind.ts": null,
@@ -370,7 +371,6 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "YAMLObject.bind.ts": "typeof Bun.YAML",
   "bindgen_test.bind.ts": null,
   "bun_string_jsc.bind.ts": null,
-  "bun_test.bind.ts": null,
   "cares_jsc.bind.ts": null,
   "client.bind.ts": null,
   "color_js.bind.ts": "typeof Bun",

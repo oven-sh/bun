@@ -19,12 +19,12 @@ pub(crate) fn proxy_for<'a>(
     url: &[u8],
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSString>>> {
     let mut env = bun_dotenv::Loader::init();
-    let mut entries = entries.iter();
+    let mut entries = entries.into_iter();
     while let Some(name) = entries.next() {
         let Some(value) = entries.next() else {
             return Err(heap.invalid_arguments(format_args!("a name without a value")));
         };
-        bun_core::handle_oom(env.map.put(name, value));
+        bun_core::handle_oom(env.map.put(&name, &value));
     }
     env.get_http_proxy_for(&URL::parse(url))
         .map(|proxy| heap.create_utf8_string(proxy.href))

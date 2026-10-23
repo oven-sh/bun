@@ -5,6 +5,22 @@ import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
+// Prints whether the code around it runs in strict mode. A plain function call
+// sees `this === undefined` only in strict mode, and assigning to an undeclared
+// name throws only in strict mode.
+const strictModeProbe = `
+var thisIsUndefined = (function () { return this === undefined; })();
+var undeclaredThrows = false;
+try {
+  someUndeclaredNameForTheStrictModeProbe = 1;
+} catch (e) {
+  undeclaredThrows = e instanceof ReferenceError;
+}
+console.log(JSON.stringify({ thisIsUndefined, undeclaredThrows }));
+`;
+const strictResult = JSON.stringify({ thisIsUndefined: true, undeclaredThrows: true }) + "\n";
+const sloppyResult = JSON.stringify({ thisIsUndefined: false, undeclaredThrows: false }) + "\n";
+
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {
     test("it works", async () => {
@@ -247,6 +263,11 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
       expect(stdout.toString("utf8")).toEqual(code + "\n");
     }
   });
+
+  test('a leading "use strict" makes the script strict', async () => {
+    const { stdout } = run(`"use strict";` + strictModeProbe);
+    expect(stdout.toString("utf8")).toEqual(strictResult);
+  });
 }
 
 describe("bun run - < file-path.js", () => {
@@ -347,4 +368,104 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stderr).toContain("stdin-cjs-uncaught");
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
+});
+
+// The eval entry point (-e, -p, stdin) is transpiled as CommonJS without the
+// module wrapper and then evaluated as a classic script. The transpiler consumes
+// a module-level "use strict" while parsing, so it has to emit the directive
+// again, or the script runs in sloppy mode. Node honors the directive.
+describe.concurrent('"use strict" in the eval entry point', () => {
+  async function runBun(args: string[], cwd?: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("bun -e honors a leading directive", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-e", `"use strict";` + strictModeProbe]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(strictResult);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -e stays sloppy without the directive", async () => {
+    // `module.exports` forces CommonJS. Without it the eval source is an ES
+    // module, which is always strict.
+    const { stdout, stderr, exitCode } = await runBun(["-e", `module.exports;` + strictModeProbe]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(sloppyResult);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -e is strict when the directive follows a comment", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-e", `// leading comment\n'use strict';` + strictModeProbe]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(strictResult);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -e is strict when another directive comes first", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-e", `"use client"; "use strict";` + strictModeProbe]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(strictResult);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -e as an ES module is strict", async () => {
+    // An import statement makes the eval source an ES module, which is strict
+    // with or without the directive.
+    const code = `"use strict"; import { ok } from "node:assert"; ok(true);` + strictModeProbe;
+    const { stdout, stderr, exitCode } = await runBun(["-e", code]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(strictResult);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -p honors a leading directive", async () => {
+    const { stdout, stderr, exitCode } = await runBun([
+      "-p",
+      `"use strict"; (function () { return this === undefined; })()`,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -p is strict when another directive comes first", async () => {
+    // -p keeps the other directive as a statement (it disables dead code
+    // elimination), so "use strict" has to be emitted in front of it.
+    const { stdout, stderr, exitCode } = await runBun([
+      "-p",
+      `"use client"; "use strict"; (function () { return this === undefined; })()`,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -p prints a lone directive like node does", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-p", `"use strict"`]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("use strict\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a required CommonJS file is strict when another directive comes first", async () => {
+    // Same directive handling, but through the CommonJS module wrapper. The
+    // -p entry point disables dead code elimination for every module in the
+    // process, so "use client" survives as the first statement of the file.
+    using dir = tempDir("eval-use-strict", {
+      "strict-after-directive.cjs": `"use client";\n"use strict";\nmodule.exports = (function () { return this === undefined; })();\n`,
+    });
+    const { stdout, stderr, exitCode } = await runBun(["-p", `require("./strict-after-directive.cjs")`], String(dir));
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
 });

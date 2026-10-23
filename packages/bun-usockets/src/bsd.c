@@ -725,6 +725,18 @@ static _Atomic(uint64_t) *bsd_owned_word(unsigned int key) {
     return &page[key % BSD_OWNED_PAGE_BITS / 64];
 }
 
+#ifdef _WIN32
+/* Only a socket this process made: another process may hold one that came from elsewhere, and a shutdown() reaches every holder. */
+static void bsd_own_new_socket(SOCKET fd) {
+    uintptr_t key = BSD_OWNED_KEY(fd);
+    if (key < BSD_OWNED_KEYS) {
+        atomic_fetch_or(bsd_owned_word((unsigned int) key), 1ull << (key % 64));
+    }
+}
+#else
+#define bsd_own_new_socket(fd) bsd_adopt_socket(fd, 0)
+#endif
+
 int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type) {
     if (type) {
         int actual = 0;
@@ -740,13 +752,7 @@ int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type) {
             return -1;
         }
     }
-#ifdef _WIN32
-    /* Only bsd_shutdown_owned_sockets() reads the bits here. */
-    uintptr_t key = BSD_OWNED_KEY(fd);
-    if (key < BSD_OWNED_KEYS) {
-        atomic_fetch_or(bsd_owned_word((unsigned int) key), 1ull << (key % 64));
-    }
-#else
+#ifndef _WIN32
     if (fd < 0) {
         errno = EBADF;
         return -1;
@@ -810,7 +816,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    bsd_adopt_socket(created_fd, 0);
+    bsd_own_new_socket(created_fd);
     return apple_no_sigpipe(created_fd);
 #elif defined(_WIN32)
     /* Plain socket() returns an inheritable handle, so any child spawned with
@@ -826,7 +832,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    bsd_adopt_socket(created_fd, 0);
+    bsd_own_new_socket(created_fd);
     return bsd_set_nonblocking(created_fd);
 #else
     do {
@@ -840,7 +846,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    bsd_adopt_socket(created_fd, 0);
+    bsd_own_new_socket(created_fd);
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
 #endif
 }
@@ -1065,7 +1071,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 #endif
 
     internal_finalize_bsd_addr(addr);
-    bsd_adopt_socket(accepted_fd, 0);
+    bsd_own_new_socket(accepted_fd);
 
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
 // skip the extra fcntl calls.
@@ -1431,6 +1437,8 @@ int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void 
     if (WSADuplicateSocketW(fd, (DWORD) target_pid, (WSAPROTOCOL_INFOW *) info_out) != 0) {
         return WSAGetLastError();
     }
+    /* The other process holds it too from here on, so the exit of this one leaves it alone. */
+    bsd_disown_socket(fd);
     return 0;
 #else
     (void) fd; (void) target_pid; (void) info_out;

@@ -198,7 +198,7 @@ int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type);
 /* Gives up ownership without closing. */
 void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 #ifdef _WIN32
-/* Ends the sending side of every owned socket, on any thread's loop. For the exit of the process, where Winsock resets what is still open. */
+/* Ends the sending side of every socket this process made and shared with no other, on any thread's loop. For the exit of the process, where Winsock resets what is still open. */
 void bsd_shutdown_owned_sockets(void);
 #endif
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);

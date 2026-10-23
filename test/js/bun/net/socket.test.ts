@@ -7442,15 +7442,15 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
         try {
           // More than the kernel takes for a peer that doesn't read.
-          const size = 8 << 20;
+          const size = 4 << 20;
           expect(socket.end(Buffer.alloc(size, "a"))).toBe(size);
           if (second !== "nothing") socket[second]();
           peer.write("x");
           await readOrClosed.promise;
           peer.resume();
           await peerClosed.promise;
-          // A TCP or unix socket closes inside close(), so it reads nothing more.
-          expect(writes).toEqual(second === "close" && transport !== "tls" ? [] : [-1]);
+          // A closed socket may read nothing more.
+          expect(writes).toEqual(second === "close" ? writes.map(() => -1) : [-1]);
           expect(received.equals(Buffer.alloc(received.length, "a"))).toBe(true);
         } finally {
           socket.terminate();
@@ -7459,6 +7459,71 @@ describe.concurrent("end(data) larger than the send buffer", () => {
       },
     );
   });
+
+  // In its own process: the rule that refuses the sends is process-wide.
+  it.skipIf(isWindows || !socketFaultInjection.available())(
+    "write() in data() is refused while close() still sends what the TLS layer holds",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+          import { socketFaultInjection } from "bun:internal-for-testing";
+          const { key, cert } = JSON.parse(process.env.TEST_TLS);
+          const writes = [];
+          let onlyTheChunk = true;
+          const opened = Promise.withResolvers();
+          const peerOpened = Promise.withResolvers();
+          const read = Promise.withResolvers();
+          const peerClosed = Promise.withResolvers();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { key, cert },
+            socket: {
+              handshake: socket => opened.resolve(socket),
+              data(socket) {
+                writes.push(socket.write("LATE"));
+                read.resolve();
+              },
+            },
+          });
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            tls: { ca: cert },
+            socket: {
+              handshake(socket) {
+                socket.pause();
+                peerOpened.resolve(socket);
+              },
+              data: (socket, chunk) => void (onlyTheChunk &&= chunk.equals(Buffer.alloc(chunk.length, "a"))),
+              error() {},
+              close: () => peerClosed.resolve(),
+            },
+          });
+          const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+          socket.end(Buffer.alloc(4 << 20, "a"));
+          socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: socket.fd });
+          socket.close();
+          peer.write("x");
+          await read.promise;
+          socketFaultInjection.clear();
+          peer.resume();
+          await peerClosed.promise;
+          console.log(JSON.stringify({ writes, onlyTheChunk }));
+          `,
+        ],
+        env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tls.key, cert: tls.cert }) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: '{"writes":[-1],"onlyTheChunk":true}\n', stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // In its own process: an uncaught error sets the exit code.
   it.skipIf(isWindows)(

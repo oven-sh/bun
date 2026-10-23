@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import YamlPlugin from ".";
 
 test("yaml loader - no plugin", async () => {
-  expect(async () => {
+  await expect(async () => {
     await import("./data.yml");
   }).toThrow();
 });

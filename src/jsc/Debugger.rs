@@ -161,6 +161,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
+    safe fn BunDebugger__handleMessagesWhileWaitingForConnection(ctx_id: u32);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
@@ -590,9 +591,8 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     }
 
     // Install Bun's controller before any yield can let a client
-    // connectFrontend() to JSC's default one; the waiting path's later call
-    // from wait_for_debugger_if_necessary is then a bunControllerInstalled
-    // no-op that only handles the block.
+    // connectFrontend() to JSC's default one; the later call from
+    // wait_for_node_inspector_connection finds it installed.
     let ctx_id = match this.debugger.as_deref() {
         Some(d) => d.script_execution_context_id,
         None => return false,
@@ -602,15 +602,18 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     true
 }
 
-/// `inspector.open(port, host, true)` / `inspector.waitForDebugger()` — block,
-/// ticking the event loop, until a frontend connects to the inspector.
+/// `inspector.open(port, host, true)` / `inspector.waitForDebugger()` — block the thread until a
+/// frontend connects to the inspector.
+///
+/// Script is on the stack, so the event loop does not run. The inspector server has its own thread;
+/// this one sleeps and only handles what a frontend sends, as it does while paused at a breakpoint.
 // HOST_EXPORT(Debugger__waitForNodeInspectorConnection, c)
 pub fn wait_for_node_inspector_connection() {
     // Node blocks on every waitForDebugger() call for a fresh
     // Runtime.runIfWaitingForDebugger, even if a frontend already resolved a
     // previous wait — see test-inspector-wait-for-connection.js.
     let this = VirtualMachine::get();
-    {
+    let ctx_id = {
         let Some(dbg) = this.debugger_mut() else {
             return;
         };
@@ -619,9 +622,22 @@ pub fn wait_for_node_inspector_connection() {
             dbg.wait_for_connection = Wait::Forever;
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         }
-        dbg.must_block_until_connected = true;
-    }
-    Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
+        // This is the wait that `create()` asked for.
+        dbg.must_block_until_connected = false;
+        dbg.script_execution_context_id
+    };
+    bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
+    Bun__ensureDebugger(ctx_id, true);
+    BunDebugger__handleMessagesWhileWaitingForConnection(ctx_id);
+}
+
+/// Whether a wait for a frontend is under way: `did_connect` and `abandon_node_inspector_wait` end it.
+// HOST_EXPORT(Debugger__isWaitingForConnection, c)
+pub fn is_waiting_for_connection() -> bool {
+    VirtualMachine::get()
+        .debugger
+        .as_deref()
+        .is_some_and(|dbg| dbg.wait_for_connection != Wait::Off)
 }
 
 /// The debugger thread reported that `Bun.serve` failed (e.g. EADDRINUSE) —

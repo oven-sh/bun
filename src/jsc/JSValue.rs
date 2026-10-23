@@ -998,6 +998,11 @@ impl JSValue {
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
         Bun__attachAsyncStackFromPromise(global, self, promise)
     }
+    /// Gives this error the stack `source` (another error) captured, when its own has no
+    /// JavaScript frame — see `AsyncStackTrace.cpp:Bun__takeStackIfNativeOnly`.
+    pub fn take_stack_if_native_only(self, global: &JSGlobalObject, source: JSValue) {
+        Bun__takeStackIfNativeOnly(global, self, source)
+    }
     pub fn get_unix_timestamp(self) -> f64 {
         JSC__JSValue__getUnixTimestamp(self)
     }
@@ -2092,6 +2097,7 @@ unsafe extern "C" {
         err: JSValue,
         promise: &JSPromise,
     );
+    safe fn Bun__takeStackIfNativeOnly(global: &JSGlobalObject, err: JSValue, source: JSValue);
     safe fn JSC__JSValue__isAnyError(this: JSValue) -> bool;
     // safe: `JSValue` is a by-value scalar; `&mut *const u8` / `&mut usize` are
     // ABI-identical to non-null `*mut` out-params the C++ side fills on success.

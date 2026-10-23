@@ -158,7 +158,7 @@ describe("expect()", () => {
 
     const { promise, resolve } = Promise.withResolvers.call(Lazy);
     setTimeout(resolve, 0);
-    expect(() => promise).not.toThrow();
+    await expect(() => promise).not.toThrow();
     expect(promise.thenCalls).toBe(1);
   });
 
@@ -1005,7 +1005,7 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
-  test("toThrow", () => {
+  test("toThrow", async () => {
     expect(() => {
       throw new Error("hello");
     }).toThrow("hello");
@@ -1023,7 +1023,7 @@ describe("expect()", () => {
       throw new Error("foo");
     }).toThrow(/oo/);
 
-    expect(() =>
+    await expect(() =>
       expect(() => {
         throw new Error("bar");
       }).toThrow(/baz/),
@@ -4868,12 +4868,12 @@ describe("expect()", () => {
         // a non-promise value should not match
         await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
 
-        // Different task
-        await expect(
-          new Promise((_, reject) => {
-            setTimeout(() => reject("a"), 0);
-          }),
-        ).toEqual(expect.rejectsTo.stringContaining("a"));
+        // a promise that settles in a different task has to be awaited first
+        const later = new Promise((_, reject) => {
+          setTimeout(() => reject("a"), 0);
+        });
+        await later.catch(() => {});
+        expect(later).toEqual(expect.rejectsTo.stringContaining("a"));
       });
 
       test("expect.resolvesTo", async () => {
@@ -4893,12 +4893,12 @@ describe("expect()", () => {
         // a non-promise value should not match
         await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
 
-        // Different task
-        await expect(
-          new Promise(resolve => {
-            setTimeout(() => resolve("a"), 0);
-          }),
-        ).toEqual(expect.resolvesTo.stringContaining("a"));
+        // a promise that settles in a different task has to be awaited first
+        const later = new Promise(resolve => {
+          setTimeout(() => resolve("a"), 0);
+        });
+        await later;
+        expect(later).toEqual(expect.resolvesTo.stringContaining("a"));
       });
 
       test("expect.resolvesTo.any and expect.rejectsTo.any match primitives by constructor type", async () => {
@@ -5044,11 +5044,15 @@ describe("expect()", () => {
   test("pass to return undefined", () => {
     expect(expect().pass()).toBeUndefined();
   });
-  test("rejects to return undefined", () => {
-    expect(expect(Promise.reject("error")).rejects.toBe("error")).toBeUndefined();
+  test("rejects to return a promise of undefined", async () => {
+    const result = expect(Promise.reject("error")).rejects.toBe("error");
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBeUndefined();
   });
-  test("resolves to return undefined", () => {
-    expect(expect(Promise.resolve(1)).resolves.toBe(1)).toBeUndefined();
+  test("resolves to return a promise of undefined", async () => {
+    const result = expect(Promise.resolve(1)).resolves.toBe(1);
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBeUndefined();
   });
   test("toBe to return undefined", () => {
     expect(expect(true).toBe(true)).toBeUndefined();
@@ -5269,6 +5273,162 @@ describe("expect()", () => {
       expect(e.message).toContain("Received message: ");
       expect(e.message).toContain('"ball"');
     }
+  });
+});
+
+// A matcher that needs a promise to settle returns a promise. It never runs the event loop itself.
+describe("matchers that wait for a promise", () => {
+  /** Calls `matcher` with a promise that a timer settles, and reports whether the timer fired inside the call. */
+  async function firedInsideTheCall(/** @type {(settled: Promise<void>) => unknown} */ matcher) {
+    let fired = false;
+    const settled = new Promise(resolve =>
+      setTimeout(() => {
+        fired = true;
+        resolve(undefined);
+      }, 1),
+    );
+    const result = matcher(settled);
+    const firedInside = fired;
+    expect(result).toBeInstanceOf(Promise);
+    await result;
+    expect(fired).toBe(true);
+    return firedInside;
+  }
+
+  test(".resolves", async () => {
+    expect(await firedInsideTheCall(settled => expect(settled).resolves.toBeUndefined())).toBe(false);
+  });
+
+  test(".rejects", async () => {
+    expect(
+      await firedInsideTheCall(settled =>
+        expect(settled.then(() => Promise.reject(new Error("no")))).rejects.toThrow("no"),
+      ),
+    ).toBe(false);
+  });
+
+  test_skipIf(!isBun)("toThrow() of a function that returns a promise", async () => {
+    expect(
+      await firedInsideTheCall(settled =>
+        expect(() => settled.then(() => Promise.reject(new Error("no")))).toThrow("no"),
+      ),
+    ).toBe(false);
+    expect(await firedInsideTheCall(settled => expect(() => settled).not.toThrow())).toBe(false);
+  });
+
+  test("a matcher of expect.extend() that returns a promise", async () => {
+    expect.extend({
+      _toSettle: async (/** @type {Promise<void>} */ received) => (await received, { pass: true, message: () => "" }),
+    });
+    expect(await firedInsideTheCall(settled => ANY(expect(settled))._toSettle())).toBe(false);
+  });
+
+  test("a promise that settles after the matcher call", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const result = expect(promise).resolves.toBe(25);
+    resolve(25);
+    await result;
+  });
+
+  test("a failure rejects the returned promise", async () => {
+    const failures = [
+      expect(Promise.resolve(1)).resolves.toBe(2),
+      expect(Promise.resolve(1)).resolves.not.toBe(1),
+      expect(Promise.reject(1)).rejects.toBe(2),
+      expect(Promise.resolve(1)).rejects.toBe(1),
+      expect(Promise.reject(1)).resolves.toBe(1),
+    ];
+    for (const result of await Promise.allSettled(failures)) {
+      expect(result.status).toBe("rejected");
+      expect(ANY(result).reason).toBeInstanceOf(Error);
+    }
+  });
+
+  test("a value that is not a promise throws from the call", () => {
+    expect(() => expect(1).resolves.toBe(1)).toThrow();
+    expect(() => expect(1).rejects.toBe(1)).toThrow();
+  });
+
+  test("each call keeps the flags it was made with", async () => {
+    const chain = expect(Promise.resolve(1)).resolves;
+    const first = chain.toBe(1);
+    const second = chain.not.toBe(2);
+    await Promise.all([first, second]);
+  });
+
+  test_skipIf(!isBun)("a failure of toThrow() rejects the returned promise", async () => {
+    const failures = [
+      expect(async () => {}).toThrow(),
+      expect(async () => {
+        throw new Error("a");
+      }).toThrow("b"),
+      expect(async () => {
+        throw new Error("a");
+      }).not.toThrow(),
+    ];
+    for (const result of await Promise.allSettled(failures)) {
+      expect(result.status).toBe("rejected");
+    }
+  });
+
+  test_skipIf(!isBun)("the function under toThrow() is called once", async () => {
+    let calls = 0;
+    await expect(async () => {
+      calls++;
+      await 1;
+      throw new Error("a");
+    }).toThrow("a");
+    expect(calls).toBe(1);
+  });
+
+  test_skipIf(!isBun)(".resolves.toThrow() of a function that returns a promise", async () => {
+    await expect(Promise.resolve(async () => Promise.reject(new Error("a")))).resolves.toThrow("a");
+  });
+
+  test("counts once towards expect.assertions()", async () => {
+    expect.assertions(isBun ? 3 : 2);
+    await expect(Promise.resolve(1)).resolves.toBe(1);
+    await expect(Promise.reject(1)).rejects.toBe(1);
+    if (isBun) await expect(async () => Promise.reject(new Error("a"))).toThrow("a");
+  });
+
+  test_skipIf(!isBun)("toSatisfy() and toIncludeRepeated() get the settled value", async () => {
+    await expect(Promise.resolve(2)).resolves.toSatisfy(value => value === 2);
+    await expect(Promise.resolve("aa")).resolves.toIncludeRepeated("a", 2);
+  });
+
+  test("toMatchInlineSnapshot()", async () => {
+    await expect(Promise.resolve({ a: 1 })).resolves.toMatchInlineSnapshot(`
+      {
+        "a": 1,
+      }
+    `);
+    await expect(Promise.reject(new Error("no"))).rejects.toThrowErrorMatchingInlineSnapshot(`"no"`);
+  });
+
+  test_skipIf(!isBun)("an asymmetric matcher reads a settled promise and refuses a pending one", async () => {
+    expect({ a: Promise.resolve("b") }).toEqual({ a: expect.resolvesTo.stringContaining("b") });
+    expect({ a: Promise.reject("b") }).toEqual({ a: expect.rejectsTo.stringContaining("b") });
+    const pending = new Promise(() => {});
+    expect(() => expect(pending).toEqual(expect.resolvesTo.anything())).toThrow(
+      "expect.resolvesTo cannot wait for a pending promise",
+    );
+    expect(() => expect(pending).toEqual(expect.rejectsTo.anything())).toThrow(
+      "expect.rejectsTo cannot wait for a pending promise",
+    );
+    // `.not` does not turn the error into a match, after which the comparison would go on.
+    let comparedTheNextProperty = false;
+    const received = {
+      a: pending,
+      get b() {
+        comparedTheNextProperty = true;
+        return 1;
+      },
+    };
+    expect(() => expect(received).toEqual({ a: expect.not.resolvesTo.stringContaining("x"), b: 1 })).toThrow(
+      "expect.resolvesTo cannot wait for a pending promise",
+    );
+    expect(comparedTheNextProperty).toBe(false);
   });
 });
 

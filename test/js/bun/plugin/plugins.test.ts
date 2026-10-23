@@ -525,7 +525,7 @@ describe("errors", () => {
   });
 
   it("async transpiler errors work", async () => {
-    expect(async () => {
+    await expect(async () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");
       throw -1;
@@ -533,11 +533,11 @@ describe("errors", () => {
   });
 
   it("onLoad returns the rejected promise", async () => {
-    expect(async () => {
+    await expect(async () => {
       await import("rejected-promise:hi");
       throw -1;
     }).toThrow("Rejected Promise");
-    expect(async () => {
+    await expect(async () => {
       await import("rejected-promise2:hi");
       throw -1;
     }).toThrow("Rejected Promise");

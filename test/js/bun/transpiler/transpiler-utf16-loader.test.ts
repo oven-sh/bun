@@ -21,9 +21,9 @@ describe("Bun.Transpiler with a UTF-16 loader string", () => {
     expect(() => t.transformSync("", utf16 as any)).toThrow(TypeError);
   });
 
-  test("transform", () => {
+  test("transform", async () => {
     const t = new Bun.Transpiler();
-    expect(() => t.transform("", utf16 as any)).toThrow(TypeError);
+    await expect(() => t.transform("", utf16 as any)).toThrow(TypeError);
   });
 
   test("constructor", () => {

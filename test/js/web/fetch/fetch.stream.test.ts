@@ -107,7 +107,7 @@ describe.concurrent("fetch() with streaming", () => {
     const server_url = `http://${server.hostname}:${server.port}`;
     const res = await fetch(server_url, {});
     const promise = res.text();
-    expect(async () => res.body?.getReader()).toThrow("ReadableStream is locked");
+    await expect(async () => res.body?.getReader()).toThrow("ReadableStream is locked");
     await promise;
   });
 

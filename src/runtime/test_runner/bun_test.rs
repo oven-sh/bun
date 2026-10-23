@@ -1521,6 +1521,33 @@ impl RefData {
     pub(crate) fn bun_test(&self) -> Option<BunTestPtr> {
         self.buntest_weak.upgrade()
     }
+
+    /// A matcher that was called in this entry returned a promise. See
+    /// [`ExecutionSequence::pending_matchers`](Execution::ExecutionSequence::pending_matchers).
+    pub(crate) fn matcher_started(&self) {
+        let Some(buntest) = self.bun_test() else { return };
+        let Some((mut sequence, _)) = buntest.get().execution.get_current_and_valid_execution_sequence(&self.phase) else {
+            return;
+        };
+        // SAFETY: points into `execution.sequences`; no other borrow of the sequence is live.
+        unsafe { sequence.as_mut() }.pending_matchers += 1;
+    }
+
+    /// That promise has settled.
+    pub(crate) fn matcher_settled(&self, global_this: &JSGlobalObject) {
+        let Some(buntest) = self.bun_test() else { return };
+        let Some((mut sequence, _)) = buntest.get().execution.get_current_and_valid_execution_sequence(&self.phase) else {
+            return;
+        };
+        // SAFETY: points into `execution.sequences`; no other borrow of the sequence is live.
+        let sequence = unsafe { sequence.as_mut() };
+        sequence.pending_matchers = sequence.pending_matchers.saturating_sub(1);
+        if sequence.pending_matchers == 0 && sequence.waiting_for_matchers {
+            sequence.waiting_for_matchers = false;
+            buntest.get().add_result(self.phase);
+            BunTest::run_next_tick(&self.buntest_weak, global_this, self.phase);
+        }
+    }
 }
 
 pub(crate) struct RunTestsTask {

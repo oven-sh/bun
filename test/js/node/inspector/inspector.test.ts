@@ -389,15 +389,19 @@ test("inspector.open() with wait=true does not hang the process after a bind fai
 
 // waitForDebugger() must block until a client sends Runtime.runIfWaitingForDebugger,
 // even when open() was called without `wait`. The client marks a global before
-// resuming, so the fixture can tell whether it actually waited.
+// resuming, so the fixture can tell whether it actually waited. It blocks the
+// thread, as in Node: the program's event loop does not run inside the call.
 const waitForDebuggerFixture = `
 import inspector from "node:inspector";
 
 inspector.open(0, "127.0.0.1", false);
+const ranInsideTheCall = [];
+setTimeout(() => ranInsideTheCall.push("timer"), 0);
+setImmediate(() => ranInsideTheCall.push("immediate"));
 process.stderr.write("WAITING_FOR_DEBUGGER\\n");
 inspector.waitForDebugger();
 const resumedByClient = globalThis.__resumed_by_client === true;
-console.log(JSON.stringify({ resumedByClient }));
+console.log(JSON.stringify({ resumedByClient, ranInsideTheCall }));
 inspector.close();
 process.exit(resumedByClient ? 0 : 7);
 `;
@@ -457,7 +461,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
   await drained;
   ws.close();
 
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true, ranInsideTheCall: [] });
   expect(exitCode).toBe(0);
 });
 
@@ -882,7 +886,7 @@ export { after };
 // a module containing `debugger;`, and the client resumes the pause.
 test("breakpoints pause and resume over the inspector.open() DevTools server", async () => {
   using dir = tempDir("inspector-breakpoints", {
-    // wait=true blocks the inspected thread in waitForDebugger()'s tick loop
+    // wait=true blocks the inspected thread in waitForDebugger()
     // until Runtime.runIfWaitingForDebugger, so Debugger.enable is guaranteed
     // to have armed setPauseOnDebuggerStatements before mod.mjs evaluates.
     "entry.mjs": `

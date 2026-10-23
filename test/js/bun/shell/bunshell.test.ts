@@ -130,15 +130,15 @@ describe("bunshell", () => {
       for (let i = 0; i < 100; i++) nested = [nested];
       const { stdout } = await $`echo ${nested}`;
       expect(stdout.toString()).toEqual("x\n");
-      expect(() => $`echo ${[nested]}`).toThrow(
+      await expect(() => $`echo ${[nested]}`).toThrow(
         "Shell script template arrays cannot be nested more than 100 levels deep",
       );
     });
 
-    test("rejects template arrays nested past the depth limit", () => {
+    test("rejects template arrays nested past the depth limit", async () => {
       let nested: any = "x";
       for (let i = 0; i < 101; i++) nested = [nested];
-      expect(() => $`echo ${nested}`).toThrow(
+      await expect(() => $`echo ${nested}`).toThrow(
         "Shell script template arrays cannot be nested more than 100 levels deep",
       );
     });
@@ -544,7 +544,7 @@ describe("bunshell", () => {
           controller.close();
         },
       });
-      expect(async () => await $`${{ raw: cmd }} < ${stream}`.env(bunEnv).quiet()).toThrow(
+      await expect(async () => await $`${{ raw: cmd }} < ${stream}`.env(bunEnv).quiet()).toThrow(
         "ReadableStream is not supported as a shell redirect yet",
       );
     }
@@ -3695,15 +3695,15 @@ test.each([
   ["ASCII", "a\0b"],
   ["Latin-1", "caf\xe9\0b"],
   ["UTF-16", "\u4e2d\0b"],
-])(".cwd() and .env() reject a %s string with a NUL byte", (_, value) => {
+])(".cwd() and .env() reject a %s string with a NUL byte", async (_, value) => {
   const error = (name: string) => ({
     code: "ERR_INVALID_ARG_VALUE",
     message: `The shell ${name} must be a string without null bytes. Received ${JSON.stringify(value)}`,
   });
-  expect(() => $`true`.cwd(value)).toThrow(error("cwd"));
-  expect(() => $`true`.env({ [value]: "1" })).toThrow(error("env key"));
-  expect(() => $`true`.env({ X: value })).toThrow(error("env value"));
-  expect(() => new $.Shell().cwd(value)`true`).toThrow(error("cwd"));
+  await expect(() => $`true`.cwd(value)).toThrow(error("cwd"));
+  await expect(() => $`true`.env({ [value]: "1" })).toThrow(error("env key"));
+  await expect(() => $`true`.env({ X: value })).toThrow(error("env value"));
+  await expect(() => new $.Shell().cwd(value)`true`).toThrow(error("cwd"));
 });
 
 test(".env() rejects a NUL byte at any offset in an ASCII string and copies clean strings unchanged", async () => {
@@ -3714,8 +3714,8 @@ test(".env() rejects a NUL byte at any offset in an ASCII string and copies clea
     env["V" + length] = clean;
     for (const at of length > 33 ? [0, 64, length - 9, length - 1] : Array(length).keys()) {
       const value = clean.slice(0, at) + "\0" + clean.slice(at + 1);
-      expect(() => $`true`.env({ X: value })).toThrow(error);
-      expect(() => $`true`.env({ [value]: "1" })).toThrow(error);
+      await expect(() => $`true`.env({ X: value })).toThrow(error);
+      await expect(() => $`true`.env({ [value]: "1" })).toThrow(error);
     }
   }
   const raw = `echo "[$${Object.keys(env).join("][$")}]"`;

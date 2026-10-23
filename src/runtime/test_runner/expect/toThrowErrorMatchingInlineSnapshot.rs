@@ -63,7 +63,11 @@ impl Expect {
             "toThrowErrorMatchingInlineSnapshot",
             "<green>properties<r><d>, <r>hint",
         )?;
-        let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
+        let thrown = match this.fn_to_err_string_or_undefined(global, received, true)? {
+            Ok(thrown) => thrown,
+            Err(promise) => return Ok(promise),
+        };
+        let Some(value) = thrown else {
             let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
             return throw!(
                 this,

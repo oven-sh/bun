@@ -15,7 +15,7 @@ test("should import and execute ES module from string (base64)", async () => {
 });
 
 test("should throw when importing malformed string (base64)", async () => {
-  expect(() => import("data:text/javascript;base64,asdasdasd")).toThrowError("Base64DecodeError");
+  await expect(() => import("data:text/javascript;base64,asdasdasd")).toThrowError("Base64DecodeError");
 });
 
 // data: URLs carry the module source inline and never touch the filesystem,

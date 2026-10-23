@@ -449,6 +449,27 @@ declare module "bun:test" {
      * Accepts `[1, 2, 3] | ["a", "b", "c"]` and returns `[1 | "a", 2 | "b", 3 | "c"]`
      */
     type Flatten<T, Copy extends T = T> = { [Key in keyof T]: Copy[Key] };
+
+    /**
+     * `Async` when `T` is a function that returns a promise, otherwise `Sync`.
+     * Both when it returns a union with a promise in it. `any` and `never`
+     * say nothing about a promise, so they are `Sync`.
+     */
+    type IfReturnsPromise<T, Async, Sync> = 0 extends 1 & T
+      ? Sync
+      : T extends (...args: any[]) => infer Result
+        ? 0 extends 1 & Result
+          ? Sync
+          : [Result] extends [never]
+            ? Sync
+            : Result extends PromiseLike<unknown>
+              ? Async
+              : Sync
+        : Sync;
+
+    /** The matchers that call the value passed to `expect()`. */
+    type CallingMatchers =
+      "toThrow" | "toThrowError" | "toThrowErrorMatchingSnapshot" | "toThrowErrorMatchingInlineSnapshot";
   }
 
   /**
@@ -668,6 +689,9 @@ declare module "bun:test" {
     /**
      * Create an asymmetric matcher for a promise resolved value.
      *
+     * Asymmetric matchers run synchronously, so the promise must already be
+     * settled. A promise that is still pending throws.
+     *
      * @example
      * expect(Promise.resolve("value")).toEqual(expect.resolvesTo.stringContaining("value")); // will pass
      * expect(Promise.reject("value")).toEqual(expect.resolvesTo.stringContaining("value")); // will fail
@@ -677,6 +701,9 @@ declare module "bun:test" {
 
     /**
      * Create an asymmetric matcher for a promise rejected value.
+     *
+     * Asymmetric matchers run synchronously, so the promise must already be
+     * settled. A promise that is still pending throws.
      *
      * @example
      * expect(Promise.reject("error")).toEqual(expect.rejectsTo.stringContaining("error")); // will pass
@@ -772,6 +799,19 @@ declare module "bun:test" {
    * }
    */
   export interface Matchers<T = unknown> extends MatchersBuiltin<T> {}
+
+  /**
+   * The matchers after `.resolves` or `.rejects`. Each one returns a promise
+   * that settles once the assertion has run, so it must be awaited or returned
+   * from the test.
+   *
+   * Matchers added to {@link Matchers} through declaration merging are included.
+   */
+  export type PromiseMatchers<T = unknown> = MatchersBuiltin<T, Promise<void>> & {
+    [K in Exclude<keyof Matchers<T>, keyof MatchersBuiltin<T>>]: Matchers<T>[K] extends (...args: infer Args) => unknown
+      ? (...args: Args) => Promise<void>
+      : Matchers<T>[K];
+  };
 
   /**
    * Extend this interface with declaration merging to add type support for custom asymmetric matchers.
@@ -928,7 +968,11 @@ declare module "bun:test" {
     closeTo(num: number, numDigits?: number): AsymmetricMatcher;
   }
 
-  export interface MatchersBuiltin<T = unknown> {
+  /**
+   * @template T the type of the value passed to `expect()`
+   * @template R what a matcher returns: `void`, or `Promise<void>` after `.resolves` or `.rejects`
+   */
+  export interface MatchersBuiltin<T = unknown, R = void> {
     /**
      * Negates the result of a subsequent assertion.
      *
@@ -940,23 +984,29 @@ declare module "bun:test" {
      * expect(42).toEqual(42); // will pass
      * expect(42).not.toEqual(42); // will fail
      */
-    not: Matchers<unknown>;
+    not: [R] extends [void]
+      ? Omit<Matchers<unknown>, __internal.CallingMatchers> & Pick<Matchers<T>, __internal.CallingMatchers>
+      : PromiseMatchers<unknown>;
 
     /**
      * Expects the value to be a promise that resolves.
      *
+     * The matcher returns a promise. Await it, or return it from the test.
+     *
      * @example
-     * expect(Promise.resolve(1)).resolves.toBe(1);
+     * await expect(Promise.resolve(1)).resolves.toBe(1);
      */
-    resolves: Matchers<Awaited<T>>;
+    resolves: PromiseMatchers<Awaited<T>>;
 
     /**
      * Expects the value to be a promise that rejects.
      *
+     * The matcher returns a promise. Await it, or return it from the test.
+     *
      * @example
-     * expect(Promise.reject("error")).rejects.toBe("error");
+     * await expect(Promise.reject("error")).rejects.toBe("error");
      */
-    rejects: Matchers<unknown>;
+    rejects: PromiseMatchers<unknown>;
 
     /**
      * Assertion which passes.
@@ -970,7 +1020,7 @@ declare module "bun:test" {
      *
      * @param message the message to display if the test fails (optional)
      */
-    pass: (message?: string) => void;
+    pass: (message?: string) => R;
 
     /**
      * Assertion which fails.
@@ -982,7 +1032,7 @@ declare module "bun:test" {
      * expect().not.fail();
      * expect().not.fail("hi");
      */
-    fail: (message?: string) => void;
+    fail: (message?: string) => R;
 
     /**
      * Asserts that a value equals what is expected.
@@ -1003,8 +1053,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBe(expected: T): void;
-    toBe<X = T>(expected: NoInfer<X>): void;
+    toBe(expected: T): R;
+    toBe<X = T>(expected: NoInfer<X>): R;
 
     /**
      * Asserts that a number is odd.
@@ -1014,7 +1064,7 @@ declare module "bun:test" {
      * expect(1).toBeOdd();
      * expect(2).not.toBeOdd();
      */
-    toBeOdd(): void;
+    toBeOdd(): R;
 
     /**
      * Asserts that a number is even.
@@ -1024,7 +1074,7 @@ declare module "bun:test" {
      * expect(2).toBeEven();
      * expect(1).not.toBeEven();
      */
-    toBeEven(): void;
+    toBeEven(): R;
 
     /**
      * Asserts that a value is close to the expected value, within floating point precision.
@@ -1043,7 +1093,7 @@ declare module "bun:test" {
      * @param expected the expected value
      * @param numDigits the number of digits to check after the decimal point. Default is `2`
      */
-    toBeCloseTo(expected: number, numDigits?: number): void;
+    toBeCloseTo(expected: number, numDigits?: number): R;
 
     /**
      * Asserts that a value is deeply equal to what is expected.
@@ -1056,8 +1106,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toEqual(expected: T): void;
-    toEqual<X = T>(expected: NoInfer<X>): void;
+    toEqual(expected: T): R;
+    toEqual<X = T>(expected: NoInfer<X>): R;
 
     /**
      * Asserts that a value is deeply and strictly equal to
@@ -1082,8 +1132,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toStrictEqual(expected: T): void;
-    toStrictEqual<X = T>(expected: NoInfer<X>): void;
+    toStrictEqual(expected: T): R;
+    toStrictEqual<X = T>(expected: NoInfer<X>): R;
 
     /**
      * Asserts that the value is deeply equal to an element in the expected array.
@@ -1097,8 +1147,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Iterable<T>): void;
-    toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): void;
+    toBeOneOf(expected: Iterable<T>): R;
+    toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): R;
 
     /**
      * Asserts that a value contains what is expected.
@@ -1113,8 +1163,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContain(expected: T extends Iterable<infer U> ? U : T): void;
-    toContain<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
+    toContain(expected: T extends Iterable<infer U> ? U : T): R;
+    toContain<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R;
 
     /**
      * Asserts that an `object` contains a key.
@@ -1129,8 +1179,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKey(expected: __internal.IfNeverThenElse<keyof T, PropertyKey>): void;
-    toContainKey<X = T>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): void;
+    toContainKey(expected: __internal.IfNeverThenElse<keyof T, PropertyKey>): R;
+    toContainKey<X = T>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): R;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1146,8 +1196,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAllKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
-    toContainAllKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
+    toContainAllKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): R;
+    toContainAllKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R;
 
     /**
      * Asserts that an `object` contains at least one of the provided keys.
@@ -1162,8 +1212,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAnyKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
-    toContainAnyKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
+    toContainAnyKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): R;
+    toContainAnyKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R;
 
     /**
      * Asserts that an `object` contains the provided value.
@@ -1197,7 +1247,7 @@ declare module "bun:test" {
      */
     // Contributor note: In theory we could type this better but it would be a
     // slow union to compute...
-    toContainValue(expected: unknown): void;
+    toContainValue(expected: unknown): R;
 
     /**
      * Asserts that an `object` contains the provided values.
@@ -1214,7 +1264,7 @@ declare module "bun:test" {
      * expect(o).not.toContainValues(['qux', 'foo']);
      * @param expected the expected value
      */
-    toContainValues(expected: Array<unknown>): void;
+    toContainValues(expected: Array<unknown>): R;
 
     /**
      * Asserts that an `object` contains all the provided values.
@@ -1228,7 +1278,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAllValues(['bar', 'foo']);
      * @param expected the expected value
      */
-    toContainAllValues(expected: Array<unknown>): void;
+    toContainAllValues(expected: Array<unknown>): R;
 
     /**
      * Asserts that an `object` contains any of the provided values.
@@ -1243,7 +1293,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAnyValues(['qux']);
      * @param expected the expected value
      */
-    toContainAnyValues(expected: Array<unknown>): void;
+    toContainAnyValues(expected: Array<unknown>): R;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1255,8 +1305,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
-    toContainKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
+    toContainKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): R;
+    toContainKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R;
 
     /**
      * Asserts that a value contains and equals what is expected.
@@ -1270,8 +1320,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainEqual(expected: T extends Iterable<infer U> ? U : T): void;
-    toContainEqual<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
+    toContainEqual(expected: T extends Iterable<infer U> ? U : T): R;
+    toContainEqual<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R;
 
     /**
      * Asserts that a value has a `.length` property
@@ -1283,7 +1333,7 @@ declare module "bun:test" {
      *
      * @param length the expected length
      */
-    toHaveLength(length: number): void;
+    toHaveLength(length: number): R;
 
     /**
      * Asserts that a value has a property with the
@@ -1298,7 +1348,7 @@ declare module "bun:test" {
      * @param keyPath the expected property name or path, or an index
      * @param value the expected property value, if provided
      */
-    toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): void;
+    toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): R;
 
     /**
      * Asserts that a value is "truthy".
@@ -1311,7 +1361,7 @@ declare module "bun:test" {
      * expect(1).toBeTruthy();
      * expect({}).toBeTruthy();
      */
-    toBeTruthy(): void;
+    toBeTruthy(): R;
 
     /**
      * Asserts that a value is "falsy".
@@ -1324,7 +1374,7 @@ declare module "bun:test" {
      * expect(0).toBeFalsy();
      * expect("").toBeFalsy();
      */
-    toBeFalsy(): void;
+    toBeFalsy(): R;
 
     /**
      * Asserts that a value is defined (that is, not `undefined`).
@@ -1333,7 +1383,7 @@ declare module "bun:test" {
      * expect(true).toBeDefined();
      * expect(undefined).toBeDefined(); // fail
      */
-    toBeDefined(): void;
+    toBeDefined(): R;
 
     /**
      * Asserts that a value is an instance of the given class or constructor.
@@ -1342,7 +1392,7 @@ declare module "bun:test" {
      * expect([]).toBeInstanceOf(Array);
      * expect(null).toBeInstanceOf(Array); // fail
      */
-    toBeInstanceOf(value: unknown): void;
+    toBeInstanceOf(value: unknown): R;
 
     /**
      * Asserts that a value is `undefined`.
@@ -1351,7 +1401,7 @@ declare module "bun:test" {
      * expect(undefined).toBeUndefined();
      * expect(null).toBeUndefined(); // fail
      */
-    toBeUndefined(): void;
+    toBeUndefined(): R;
 
     /**
      * Asserts that a value is `null`.
@@ -1360,7 +1410,7 @@ declare module "bun:test" {
      * expect(null).toBeNull();
      * expect(undefined).toBeNull(); // fail
      */
-    toBeNull(): void;
+    toBeNull(): R;
 
     /**
      * Asserts that a value is `NaN`.
@@ -1372,7 +1422,7 @@ declare module "bun:test" {
      * expect(Infinity).toBeNaN(); // fail
      * expect("notanumber").toBeNaN(); // fail
      */
-    toBeNaN(): void;
+    toBeNaN(): R;
 
     /**
      * Asserts that a value is a `number` and is greater than the expected value.
@@ -1384,7 +1434,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeGreaterThan(expected: number | bigint): void;
+    toBeGreaterThan(expected: number | bigint): R;
 
     /**
      * Asserts that a value is a `number` and is greater than or equal to the expected value.
@@ -1396,7 +1446,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeGreaterThanOrEqual(expected: number | bigint): void;
+    toBeGreaterThanOrEqual(expected: number | bigint): R;
 
     /**
      * Asserts that a value is a `number` and is less than the expected value.
@@ -1408,7 +1458,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeLessThan(expected: number | bigint): void;
+    toBeLessThan(expected: number | bigint): R;
 
     /**
      * Asserts that a value is a `number` and is less than or equal to the expected value.
@@ -1420,7 +1470,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeLessThanOrEqual(expected: number | bigint): void;
+    toBeLessThanOrEqual(expected: number | bigint): R;
 
     /**
      * Asserts that a function throws an error.
@@ -1439,9 +1489,17 @@ declare module "bun:test" {
      * expect(fail).toThrow(Error);
      * expect(fail).toThrow();
      *
+     * If the function returns a promise, a rejection counts as a throw and the
+     * matcher returns a promise. Await it, or return it from the test.
+     *
+     * @example
+     * await expect(async () => {
+     *   throw new Error("Oops!");
+     * }).toThrow("Oops!");
+     *
      * @param expected the expected error, error message, or error pattern
      */
-    toThrow(expected?: unknown): void;
+    toThrow(expected?: unknown): __internal.IfReturnsPromise<T, Promise<void>, R>;
 
     /**
      * Asserts that a function throws an error.
@@ -1463,7 +1521,7 @@ declare module "bun:test" {
      * @param expected the expected error, error message, or error pattern
      * @alias toThrow
      */
-    toThrowError(expected?: unknown): void;
+    toThrowError(expected?: unknown): __internal.IfReturnsPromise<T, Promise<void>, R>;
 
     /**
      * Asserts that a value matches a regular expression or includes a substring.
@@ -1474,7 +1532,7 @@ declare module "bun:test" {
      *
      * @param expected the expected substring or pattern.
      */
-    toMatch(expected: string | RegExp): void;
+    toMatch(expected: string | RegExp): R;
 
     /**
      * Asserts that a value matches the most recent snapshot.
@@ -1483,7 +1541,7 @@ declare module "bun:test" {
      * expect([1, 2, 3]).toMatchSnapshot('hint message');
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
-    toMatchSnapshot(hint?: string): void;
+    toMatchSnapshot(hint?: string): R;
 
     /**
      * Asserts that a value matches the most recent snapshot.
@@ -1496,7 +1554,7 @@ declare module "bun:test" {
      * @param propertyMatchers Object containing properties to match against the value.
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
-    toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
+    toMatchSnapshot(propertyMatchers?: object, hint?: string): R;
 
     /**
      * Asserts that a value matches the most recent inline snapshot.
@@ -1507,7 +1565,7 @@ declare module "bun:test" {
      *
      * @param value The latest automatically-updated snapshot value.
      */
-    toMatchInlineSnapshot(value?: string): void;
+    toMatchInlineSnapshot(value?: string): R;
 
     /**
      * Asserts that a value matches the most recent inline snapshot.
@@ -1523,7 +1581,7 @@ declare module "bun:test" {
      * @param propertyMatchers Object containing properties to match against the value.
      * @param value The latest automatically-updated snapshot value.
      */
-    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): R;
 
     /**
      * Asserts that a function throws an error matching the most recent snapshot.
@@ -1537,7 +1595,7 @@ declare module "bun:test" {
      *
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
-    toThrowErrorMatchingSnapshot(hint?: string): void;
+    toThrowErrorMatchingSnapshot(hint?: string): __internal.IfReturnsPromise<T, Promise<void>, R>;
 
     /**
      * Asserts that a function throws an error matching the most recent snapshot.
@@ -1551,7 +1609,7 @@ declare module "bun:test" {
      *
      * @param value The latest automatically-updated snapshot value.
      */
-    toThrowErrorMatchingInlineSnapshot(value?: string): void;
+    toThrowErrorMatchingInlineSnapshot(value?: string): __internal.IfReturnsPromise<T, Promise<void>, R>;
 
     /**
      * Asserts that an object matches a subset of properties.
@@ -1562,7 +1620,7 @@ declare module "bun:test" {
      *
      * @param subset Subset of properties to match with.
      */
-    toMatchObject(subset: object): void;
+    toMatchObject(subset: object): R;
 
     /**
      * Asserts that a value is empty.
@@ -1573,7 +1631,7 @@ declare module "bun:test" {
      * expect({}).toBeEmpty();
      * expect(new Set()).toBeEmpty();
      */
-    toBeEmpty(): void;
+    toBeEmpty(): R;
 
     /**
      * Asserts that a value is an empty `object`.
@@ -1582,7 +1640,7 @@ declare module "bun:test" {
      * expect({}).toBeEmptyObject();
      * expect({ a: 'hello' }).not.toBeEmptyObject();
      */
-    toBeEmptyObject(): void;
+    toBeEmptyObject(): R;
 
     /**
      * Asserts that a value is `null` or `undefined`.
@@ -1591,7 +1649,7 @@ declare module "bun:test" {
      * expect(null).toBeNil();
      * expect(undefined).toBeNil();
      */
-    toBeNil(): void;
+    toBeNil(): R;
 
     /**
      * Asserts that a value is an `array`.
@@ -1602,7 +1660,7 @@ declare module "bun:test" {
      * expect(new Array(1)).toBeArray();
      * expect({}).not.toBeArray();
      */
-    toBeArray(): void;
+    toBeArray(): R;
 
     /**
      * Asserts that a value is an `array` of a certain length.
@@ -1614,7 +1672,7 @@ declare module "bun:test" {
      * expect(new Array(1)).toBeArrayOfSize(1);
      * expect({}).not.toBeArrayOfSize(0);
      */
-    toBeArrayOfSize(size: number): void;
+    toBeArrayOfSize(size: number): R;
 
     /**
      * Asserts that a value is a `boolean`.
@@ -1625,7 +1683,7 @@ declare module "bun:test" {
      * expect(null).not.toBeBoolean();
      * expect(0).not.toBeBoolean();
      */
-    toBeBoolean(): void;
+    toBeBoolean(): R;
 
     /**
      * Asserts that a value is `true`.
@@ -1635,7 +1693,7 @@ declare module "bun:test" {
      * expect(false).not.toBeTrue();
      * expect(1).not.toBeTrue();
      */
-    toBeTrue(): void;
+    toBeTrue(): R;
 
     /**
      * Asserts that a value matches a specific type.
@@ -1646,7 +1704,7 @@ declare module "bun:test" {
      * expect("hello").toBeTypeOf("string");
      * expect([]).not.toBeTypeOf("boolean");
      */
-    toBeTypeOf(type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined"): void;
+    toBeTypeOf(type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined"): R;
 
     /**
      * Asserts that a value is `false`.
@@ -1656,7 +1714,7 @@ declare module "bun:test" {
      * expect(true).not.toBeFalse();
      * expect(0).not.toBeFalse();
      */
-    toBeFalse(): void;
+    toBeFalse(): R;
 
     /**
      * Asserts that a value is a `number`.
@@ -1667,7 +1725,7 @@ declare module "bun:test" {
      * expect(NaN).toBeNumber();
      * expect(BigInt(1)).not.toBeNumber();
      */
-    toBeNumber(): void;
+    toBeNumber(): R;
 
     /**
      * Asserts that a value is a `number`, and is an integer.
@@ -1677,7 +1735,7 @@ declare module "bun:test" {
      * expect(3.14).not.toBeInteger();
      * expect(NaN).not.toBeInteger();
      */
-    toBeInteger(): void;
+    toBeInteger(): R;
 
     /**
      * Asserts that a value is an `object`.
@@ -1687,7 +1745,7 @@ declare module "bun:test" {
      * expect("notAnObject").not.toBeObject();
      * expect(NaN).not.toBeObject();
      */
-    toBeObject(): void;
+    toBeObject(): R;
 
     /**
      * Asserts that a value is a `number`, and is not `NaN` or `Infinity`.
@@ -1698,7 +1756,7 @@ declare module "bun:test" {
      * expect(NaN).not.toBeFinite();
      * expect(Infinity).not.toBeFinite();
      */
-    toBeFinite(): void;
+    toBeFinite(): R;
 
     /**
      * Asserts that a value is a positive `number`.
@@ -1708,7 +1766,7 @@ declare module "bun:test" {
      * expect(-3.14).not.toBePositive();
      * expect(NaN).not.toBePositive();
      */
-    toBePositive(): void;
+    toBePositive(): R;
 
     /**
      * Asserts that a value is a negative `number`.
@@ -1718,7 +1776,7 @@ declare module "bun:test" {
      * expect(1).not.toBeNegative();
      * expect(NaN).not.toBeNegative();
      */
-    toBeNegative(): void;
+    toBeNegative(): R;
 
     /**
      * Asserts that a value is a number between a start and end value.
@@ -1726,7 +1784,7 @@ declare module "bun:test" {
      * @param start the start number (inclusive)
      * @param end the end number (exclusive)
      */
-    toBeWithin(start: number, end: number): void;
+    toBeWithin(start: number, end: number): R;
 
     /**
      * Asserts that a value is equal to the expected string, ignoring any whitespace.
@@ -1737,7 +1795,7 @@ declare module "bun:test" {
      *
      * @param expected the expected string
      */
-    toEqualIgnoringWhitespace(expected: string): void;
+    toEqualIgnoringWhitespace(expected: string): R;
 
     /**
      * Asserts that a value is a `symbol`.
@@ -1746,7 +1804,7 @@ declare module "bun:test" {
      * expect(Symbol("foo")).toBeSymbol();
      * expect("foo").not.toBeSymbol();
      */
-    toBeSymbol(): void;
+    toBeSymbol(): R;
 
     /**
      * Asserts that a value is a `function`.
@@ -1754,7 +1812,7 @@ declare module "bun:test" {
      * @example
      * expect(() => {}).toBeFunction();
      */
-    toBeFunction(): void;
+    toBeFunction(): R;
 
     /**
      * Asserts that a value is a `Date` object.
@@ -1766,7 +1824,7 @@ declare module "bun:test" {
      * expect(new Date(null)).toBeDate();
      * expect("2020-03-01").not.toBeDate();
      */
-    toBeDate(): void;
+    toBeDate(): R;
 
     /**
      * Asserts that a value is a valid `Date` object.
@@ -1776,7 +1834,7 @@ declare module "bun:test" {
      * expect(new Date(null)).not.toBeValidDate();
      * expect("2020-03-01").not.toBeValidDate();
      */
-    toBeValidDate(): void;
+    toBeValidDate(): R;
 
     /**
      * Asserts that a value is a `string`.
@@ -1786,7 +1844,7 @@ declare module "bun:test" {
      * expect(new String("bar")).toBeString();
      * expect(123).not.toBeString();
      */
-    toBeString(): void;
+    toBeString(): R;
 
     /**
      * Asserts that a value includes a `string`.
@@ -1795,14 +1853,14 @@ declare module "bun:test" {
      *
      * @param expected the expected substring
      */
-    toInclude(expected: string): void;
+    toInclude(expected: string): R;
 
     /**
      * Asserts that a value includes a `string` the given number of times.
      * @param expected the expected substring
      * @param times the number of times the substring should occur
      */
-    toIncludeRepeated(expected: string, times: number): void;
+    toIncludeRepeated(expected: string, times: number): R;
 
     /**
      * Asserts that a value satisfies a custom condition.
@@ -1814,47 +1872,47 @@ declare module "bun:test" {
      * @link https://vitest.dev/api/expect.html#tosatisfy
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/toSatisfy
      */
-    toSatisfy(predicate: (value: T) => boolean): void;
+    toSatisfy(predicate: (value: T) => boolean): R;
 
     /**
      * Asserts that a value starts with a `string`.
      *
      * @param expected the string to start with
      */
-    toStartWith(expected: string): void;
+    toStartWith(expected: string): R;
 
     /**
      * Asserts that a value ends with a `string`.
      *
      * @param expected the string to end with
      */
-    toEndWith(expected: string): void;
+    toEndWith(expected: string): R;
 
     /**
      * Ensures that a mock function has returned successfully at least once.
      *
      * An unfulfilled promise counts as a failure, as does a thrown error.
      */
-    toHaveReturned(): void;
+    toHaveReturned(): R;
 
     /**
      * Ensures that a mock function has returned successfully `times` times.
      *
      * An unfulfilled promise counts as a failure, as does a thrown error.
      */
-    toHaveReturnedTimes(times: number): void;
+    toHaveReturnedTimes(times: number): R;
 
     /**
      * Ensures that a mock function has returned a specific value.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      */
-    toHaveReturnedWith(expected: unknown): void;
+    toHaveReturnedWith(expected: unknown): R;
 
     /**
      * Ensures that a mock function has returned a specific value on its last invocation.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      */
-    toHaveLastReturnedWith(expected: unknown): void;
+    toHaveLastReturnedWith(expected: unknown): R;
 
     /**
      * Ensures that a mock function has returned a specific value on the nth invocation.
@@ -1862,67 +1920,67 @@ declare module "bun:test" {
      * @param n The 1-based index of the function call
      * @param expected The expected return value
      */
-    toHaveNthReturnedWith(n: number, expected: unknown): void;
+    toHaveNthReturnedWith(n: number, expected: unknown): R;
 
     /**
      * Ensures that a mock function is called.
      */
-    toHaveBeenCalled(): void;
+    toHaveBeenCalled(): R;
 
     /**
      * Ensures that a mock function is called.
      * @alias toHaveBeenCalled
      */
-    toBeCalled(): void;
+    toBeCalled(): R;
 
     /**
      * Ensures that a mock function is called exactly once.
      */
-    toHaveBeenCalledOnce(): void;
+    toHaveBeenCalledOnce(): R;
 
     /**
      * Ensures that a mock function is called an exact number of times.
      */
-    toHaveBeenCalledTimes(expected: number): void;
+    toHaveBeenCalledTimes(expected: number): R;
 
     /**
      * Ensures that a mock function is called an exact number of times.
      * @alias toHaveBeenCalledTimes
      */
-    toBeCalledTimes(expected: number): void;
+    toBeCalledTimes(expected: number): R;
 
     /**
      * Ensure that a mock function is called with specific arguments.
      */
-    toHaveBeenCalledWith(...expected: unknown[]): void;
+    toHaveBeenCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments.
      * @alias toHaveBeenCalledWith
      */
-    toBeCalledWith(...expected: unknown[]): void;
+    toBeCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the last call.
      */
-    toHaveBeenLastCalledWith(...expected: unknown[]): void;
+    toHaveBeenLastCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the last call.
      * @alias toHaveBeenLastCalledWith
      */
-    lastCalledWith(...expected: unknown[]): void;
+    lastCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
      */
-    toHaveBeenNthCalledWith(n: number, ...expected: unknown[]): void;
+    toHaveBeenNthCalledWith(n: number, ...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
      * @alias toHaveBeenNthCalledWith
      */
-    nthCalledWith(n: number, ...expected: unknown[]): void;
+    nthCalledWith(n: number, ...expected: unknown[]): R;
   }
 
   /**

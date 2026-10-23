@@ -38,7 +38,7 @@ test("fs.mkdir recursive should not error on existing", async () => {
   expect(() => {
     mkdirSync(file, { recursive: true });
   }).toThrow("EEXIST: file already exists");
-  expect(async () => {
+  await expect(async () => {
     await mkdir(file, { recursive: true });
   }).toThrow("EEXIST: file already exists");
 });

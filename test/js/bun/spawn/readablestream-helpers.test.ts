@@ -105,7 +105,7 @@ describe("ReadableStream conversion methods", () => {
     const result = process.stdout.json();
     expect(result).toBeInstanceOf(Promise);
 
-    expect(async () => await result).toThrowErrorMatchingInlineSnapshot(`"JSON Parse error: Expected '}'"`);
+    await expect(async () => await result).toThrowErrorMatchingInlineSnapshot(`"JSON Parse error: Expected '}'"`);
     await process.exited;
 
     expect(process.exitCode).toBe(0);
@@ -126,7 +126,7 @@ describe("ReadableStream conversion methods", () => {
     // Check it doesn't throw synchronously.
     expect(result).toBeInstanceOf(Promise);
 
-    expect(async () => await result).toThrowErrorMatchingInlineSnapshot(`"JSON Parse error: Expected '}'"`);
+    await expect(async () => await result).toThrowErrorMatchingInlineSnapshot(`"JSON Parse error: Expected '}'"`);
 
     expect(process.exitCode).toBe(0);
   });

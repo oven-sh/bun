@@ -1246,17 +1246,6 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    /// # Safety
-    /// `done` must point to a live `bool`; C++ writes `true` through it from a
-    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
-    pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
-        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
-        while !unsafe { done.read_volatile() } {
-            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
-            unsafe { (*self.native_loop()).tick() };
-        }
-    }
-
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
@@ -1379,13 +1368,39 @@ impl EventLoop {
     }
 }
 
+/// Testing API: runs the event loop, with the caller's script on the stack, until a promise settles.
+///
+/// No JavaScript API does this. A macro that returns a promise still does, and an addon can, so what
+/// the runtime does to survive it needs a way to be tested.
+#[bun_jsc::host_fn]
+pub fn run_nested_until_settled(
+    global_object: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let [value] = frame.arguments_as_array::<1>();
+    let Some(promise) = value.as_any_promise() else {
+        return Err(global_object.throw(format_args!("Expected a promise")));
+    };
+    global_object
+        .bun_vm()
+        .as_mut()
+        .wait_for_promise(promise)
+        .map_err(|stopped| stopped.throw(global_object))?;
+    Ok(JSValue::UNDEFINED)
+}
+
 /// Testing API to expose event loop state
 #[bun_jsc::host_fn]
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 9);
+    let result = JSValue::create_empty_object(global_object, 10);
+    result.put(
+        global_object,
+        b"enteredCount",
+        JSValue::js_number(event_loop.entered_event_loop_count as f64),
+    );
     result.put(
         global_object,
         b"activeTasks",

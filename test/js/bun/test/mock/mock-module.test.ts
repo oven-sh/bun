@@ -191,7 +191,7 @@ test("a factory export getter that throws fails the import", async () => {
 
 test("a factory export getter that throws while patching an already-imported module throws from mock.module and leaves the namespace untouched", async () => {
   const before = { fn, variable };
-  expect(() =>
+  await expect(() =>
     mock.module("./mock-module-fixture", () => ({
       fn: () => "patched",
       get variable() {
@@ -204,7 +204,7 @@ test("a factory export getter that throws while patching an already-imported mod
   expect(variable).toBe(before.variable);
 });
 
-test("onResolve plugin errors surface from mock.module; an unresolvable specifier is still mockable", () => {
+test("onResolve plugin errors surface from mock.module; an unresolvable specifier is still mockable", async () => {
   Bun.plugin({
     name: "mock-module-onresolve-errors",
     setup(build) {
@@ -215,8 +215,8 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
     },
   });
   try {
-    expect(() => mock.module("./thing.mock-onresolve-throws", () => ({ default: 1 }))).toThrow("onResolve threw");
-    expect(() => mock.module("./thing.mock-onresolve-invalid", () => ({ default: 1 }))).toThrow(
+    await expect(() => mock.module("./thing.mock-onresolve-throws", () => ({ default: 1 }))).toThrow("onResolve threw");
+    await expect(() => mock.module("./thing.mock-onresolve-invalid", () => ({ default: 1 }))).toThrow(
       'Expected "path" to be a string in onResolve plugin',
     );
     mock.module("./does-not-exist-mock-probe", () => ({ default: 7 }));
@@ -306,7 +306,7 @@ test("a pending factory promise that rejects rejects the promise mock.module ret
   expect((await import(path)).a()).toBe("real-a");
 
   // Already rejected when the factory returns: thrown, and not also reported as an unhandled rejection.
-  expect(() =>
+  await expect(() =>
     mock.module(path, async () => {
       throw error;
     }),
@@ -343,9 +343,9 @@ test("a factory promise that resolves to a non-object is rejected like the synch
   const ns = await import(path);
   const message = "mock(module, fn) requires a function that returns an object";
 
-  expect(() => mock.module(path, () => 42)).toThrow(message);
+  await expect(() => mock.module(path, () => 42)).toThrow(message);
   // Already fulfilled when the factory returns.
-  expect(() => mock.module(path, async () => 42)).toThrow(message);
+  await expect(() => mock.module(path, async () => 42)).toThrow(message);
   // Still pending when the factory returns.
   const patched = mock.module(path, async () => {
     await Promise.resolve();

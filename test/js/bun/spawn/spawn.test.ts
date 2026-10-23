@@ -1,5 +1,6 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
+import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
@@ -2466,7 +2467,9 @@ it("doesn't crash when a subprocess pipe is canceled and the event loop runs ins
   }
   expect(stderr).toStartWith("ready\n");
 
-  // An expect().resolves that isn't awaited runs the event loop synchronously.
-  expect(Bun.sleep(1)).resolves.toBeUndefined();
-  expect(fetch(server.url).then(r => r.text())).resolves.toBe("ok");
+  // Both waits run the event loop synchronously.
+  runNestedEventLoopUntilSettled(Bun.sleep(1));
+  const response = fetch(server.url).then(r => r.text());
+  runNestedEventLoopUntilSettled(response);
+  expect(await response).toBe("ok");
 });

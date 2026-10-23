@@ -784,20 +784,20 @@ test.concurrent.each([
 });
 
 describe("getHeapSnapshot", () => {
-  test("throws if the wrong options are passed", () => {
+  test("throws if the wrong options are passed", async () => {
     const worker = new Worker("", { eval: true });
     // @ts-expect-error
-    expect(() => worker.getHeapSnapshot(0)).toThrow({
+    await expect(() => worker.getHeapSnapshot(0)).toThrow({
       name: "TypeError",
       message: 'The "options" argument must be of type object. Received type number (0)',
     });
     // @ts-expect-error
-    expect(() => worker.getHeapSnapshot({ exposeInternals: 0 })).toThrow({
+    await expect(() => worker.getHeapSnapshot({ exposeInternals: 0 })).toThrow({
       name: "TypeError",
       message: 'The "options.exposeInternals" property must be of type boolean. Received type number (0)',
     });
     // @ts-expect-error
-    expect(() => worker.getHeapSnapshot({ exposeNumericValues: 0 })).toThrow({
+    await expect(() => worker.getHeapSnapshot({ exposeNumericValues: 0 })).toThrow({
       name: "TypeError",
       message: 'The "options.exposeNumericValues" property must be of type boolean. Received type number (0)',
     });

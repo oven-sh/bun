@@ -70,8 +70,8 @@ pub use bun_spawn_sys::{
 ///
 /// `EPOLLONESHOT` is actively harmful here: the kernel disarms the fd the
 /// instant `epoll_wait` returns it — before user-space has dispatched it.
-/// If a poll callback then re-enters `us_loop_run_bun_tick` (e.g.
-/// `expect(p).resolves` → `waitForPromise` → `autoTick`, or any other
+/// If a poll callback then re-enters `us_loop_run_bun_tick` (e.g. a macro
+/// that returns a promise → `waitForPromise` → `autoTick`, or any other
 /// `waitForPromise` path), the inner tick overwrites the shared
 /// `loop->ready_polls`/`num_ready_polls`/`current_ready_poll` and the outer
 /// dispatch silently skips its remaining events. A dropped one-shot pidfd

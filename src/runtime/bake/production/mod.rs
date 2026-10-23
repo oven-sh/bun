@@ -409,6 +409,20 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
     };
 
+    // No script is on the stack here, so this is the event loop's top level.
+    while let Some(setup) = options.bundler_options.pending_plugin_setup.take() {
+        let promise = setup.get().as_any_promise().expect("a setup() promise");
+        vm.wait_for_promise(promise)
+            .map_err(|stopped| js_err(stopped.throw(global)))?;
+        if let Unwrapped::Rejected(err) = promise.unwrap(global.vm(), UnwrapMode::MarkHandled) {
+            return Err(js_err(global.throw_value(err)));
+        }
+        options
+            .bundler_options
+            .run_plugin_setups(global)
+            .map_err(js_err)?;
+    }
+
     let framework = &mut options.framework;
 
     let separate_ssr_graph = framework

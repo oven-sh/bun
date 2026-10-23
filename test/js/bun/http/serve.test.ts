@@ -193,7 +193,7 @@ it("should call cancel() on ReadableStream when the Request is aborted", async (
       const request = fetch(server.url, { signal });
       await onIncomingRequest.promise;
       controller.abort();
-      expect(async () => await request).toThrow();
+      await expect(async () => await request).toThrow();
       // Delay for one run of the event loop.
       await Bun.sleep(1);
 
@@ -566,7 +566,7 @@ it("request.signal works in trivial case", async () => {
       },
     },
     async server => {
-      expect(async () => {
+      await expect(async () => {
         const response = await fetch(server.url.origin, {
           signal: aborty.signal,
         });
@@ -2908,7 +2908,7 @@ it("#5859 json", async () => {
 it("#5859 arrayBuffer", async () => {
   const tmp = join(tmpdirSync(), "bad");
   await Bun.write(tmp, new Uint8Array([0xfd]));
-  expect(async () => await Bun.file(tmp).json()).toThrow();
+  await expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
 describe("server.requestIP", () => {

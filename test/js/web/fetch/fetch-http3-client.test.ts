@@ -474,8 +474,8 @@ describe("fetch protocol: http3", () => {
     await expect(fetch(`https://127.0.0.1:${port}/`, { ...h3, signal: AbortSignal.timeout(2000) })).rejects.toThrow();
   });
 
-  test("invalid protocol value throws", () => {
-    expect(() => fetch(`${base}/hello`, { protocol: "spdy" } as any)).toThrow(/protocol/);
+  test("invalid protocol value throws", async () => {
+    await expect(() => fetch(`${base}/hello`, { protocol: "spdy" } as any)).toThrow(/protocol/);
   });
 
   test("1MB request → 1MB response round-trip", async () => {

@@ -622,10 +622,10 @@ it("writing after end() fails during flush does not crash", async () => {
   expect(endErr).toBeDefined();
   // Previously this would attempt to write to an invalid fd and crash with a
   // debug assertion; now it should behave as if the sink is closed.
-  expect(() => writer.write("y")).not.toThrow();
+  await expect(() => writer.write("y")).not.toThrow();
   expect(() => writer.start({})).not.toThrow();
-  expect(() => writer.write("z")).not.toThrow();
-  expect(() => writer.flush()).not.toThrow();
+  await expect(() => writer.write("z")).not.toThrow();
+  await expect(() => writer.flush()).not.toThrow();
   await Promise.resolve(writer.end()).catch(() => {});
   await 1;
 });

@@ -249,9 +249,9 @@ describe("dns", () => {
     { socketType: false },
     { protocol: {} },
     { backend: 0 },
-  ])("lookup with %p throws ERR_INVALID_ARG_TYPE", options => {
+  ])("lookup with %p throws ERR_INVALID_ARG_TYPE", async options => {
     // @ts-expect-error
-    expect(() => dns.lookup("localhost", options)).toThrow(
+    await expect(() => dns.lookup("localhost", options)).toThrow(
       expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
     );
   });

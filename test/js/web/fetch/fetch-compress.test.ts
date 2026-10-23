@@ -247,8 +247,8 @@ describe("fetch compress option", () => {
     expect(json.decoded).toBe(payload);
   });
 
-  test("invalid encoding string throws", () => {
-    expect(() =>
+  test("invalid encoding string throws", async () => {
+    await expect(() =>
       fetch("http://127.0.0.1:1/", {
         method: "POST",
         body: "x",
@@ -258,8 +258,8 @@ describe("fetch compress option", () => {
     ).toThrow(/'compress' must be/);
   });
 
-  test.each([99, -1, 5.5, Infinity, "6"])("invalid level %p throws", level => {
-    expect(() =>
+  test.each([99, -1, 5.5, Infinity, "6"])("invalid level %p throws", async level => {
+    await expect(() =>
       fetch("http://127.0.0.1:1/", {
         method: "POST",
         body: "x",

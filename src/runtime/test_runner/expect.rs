@@ -38,12 +38,29 @@ use bun_jsc::js_error_to_write_error;
 // To support async tests, we need to track the test ID
 // Every JS-exposed method takes `&self`; the only
 // field mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
-// chaining getters) is `Cell`-wrapped. `parent` and `custom_label` are
-// read-only after `call()` constructs the wrapper.
+// chaining getters) is `Cell`-wrapped. The other fields are read-only after
+// the wrapper is constructed.
 pub(crate) struct Expect {
     pub(crate) flags: Cell<Flags>,
     pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
     pub(crate) custom_label: bun_core::String,
+    pub(crate) resumed: Resumed,
+    /// Where the matcher was called from, for a resumed inline snapshot matcher: by then the
+    /// caller's frame is gone.
+    pub(crate) call_site: Option<bun_jsc::call_frame::CallerSrcLoc>,
+}
+
+/// A matcher never waits for a promise. It returns its own promise, and once the one it needs has
+/// settled it runs again on a copy of its `Expect` whose captured value is that settled promise.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Resumed {
+    /// The `Expect` that `expect()` returned.
+    #[default]
+    No,
+    /// A copy that holds the settled subject of `.resolves` / `.rejects`.
+    Subject,
+    /// A copy that holds the settled promise which the function under `toThrow()` returned.
+    FunctionResult,
 }
 
 
@@ -188,6 +205,8 @@ impl Expect {
     }
 
     pub(crate) fn increment_expect_call_counter(&self) {
+        // The run that called the function counted this matcher.
+        if self.resumed == Resumed::FunctionResult { return; }
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
         let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
@@ -421,6 +440,10 @@ impl Expect {
         };
         value.ensure_still_alive();
 
+        if self.resumed == Resumed::FunctionResult {
+            return Ok(value);
+        }
+
         #[allow(clippy::disallowed_methods)] // template is a runtime parameter
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
@@ -483,9 +506,12 @@ impl Expect {
         Ok(())
     }
 
-    /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
+    /// Processes the async flags (resolves/rejects).
     /// If no flags, returns the original value
-    /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
+    /// If either flag is set, returns what the promise settled with, or an error if the expectation failed (in which case if silent is false, also throws a js exception)
+    ///
+    /// Never waits. A matcher gets here with a settled promise (see [`Resumed`]). An asymmetric
+    /// matcher runs inside a synchronous comparison, so a pending promise throws there.
     pub(crate) fn process_promise(
         custom_label: &bun_core::String,
         flags: Flags,
@@ -500,15 +526,6 @@ impl Expect {
                 if let Some(promise) = value.as_any_promise() {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
-
-                    Self::call_then_if_pending(global_this, value, promise)?;
-
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -544,7 +561,16 @@ impl Expect {
                             }
                             Promise::None => unreachable!(),
                         },
-                        js_promise::Status::Pending => unreachable!(),
+                        js_promise::Status::Pending => {
+                            debug_assert!(silent, "a matcher ran before its promise settled");
+                            return Err(global_this.throw(format_args!(
+                                "expect.{} cannot wait for a pending promise, because asymmetric matchers are synchronous. Await the promise before comparing it.",
+                                match resolution {
+                                    Promise::Rejects => "rejectsTo",
+                                    _ => "resolvesTo",
+                                },
+                            )));
+                        }
                     }
 
                     new_value.ensure_still_alive();
@@ -564,6 +590,147 @@ impl Expect {
             }
             _ => Ok(value),
         }
+    }
+
+    /// The `before` of every matcher in expect.bind.ts.
+    pub(crate) fn resume_when_received_settles(&self, cx: &mut JsScope<'_>) -> Option<JsResult<JSValue>> {
+        self.resume_when_subject_settles(cx.global(), false).transpose()
+    }
+
+    /// The `before` of the inline snapshot matchers.
+    pub(crate) fn resume_at_call_site_when_received_settles(&self, cx: &mut JsScope<'_>) -> Option<JsResult<JSValue>> {
+        self.resume_when_subject_settles(cx.global(), true).transpose()
+    }
+
+    /// After `.resolves` / `.rejects`, the promise the matcher call returns. `None` when the matcher
+    /// is to run now: no such flag, a subject that has settled, or one that is not a promise (which
+    /// the matcher reports).
+    fn resume_when_subject_settles(
+        &self,
+        global_this: &JSGlobalObject,
+        keep_call_site: bool,
+    ) -> JsResult<Option<JSValue>> {
+        if self.flags.get().promise() == Promise::None || self.resumed != Resumed::No {
+            return Ok(None);
+        }
+        let this_value = global_this.host_call_frame().this();
+        let Some(subject) = super::expect::js::captured_value_get_cached(this_value) else {
+            return Ok(None);
+        };
+        if subject.as_any_promise().is_none() {
+            return Ok(None);
+        }
+        self.resume_when_settled(global_this, subject, Resumed::Subject, keep_call_site)
+            .map(Some)
+    }
+
+    /// Returns a promise for the outcome of calling the matcher that is running again, with the
+    /// same arguments, once `awaited` has settled.
+    pub(crate) fn resume_when_settled(
+        &self,
+        global_this: &JSGlobalObject,
+        awaited: JSValue,
+        resumed: Resumed,
+        keep_call_site: bool,
+    ) -> JsResult<JSValue> {
+        let promise = awaited.as_any_promise().expect("awaited is a promise");
+        promise.set_handled(global_this.vm());
+        Self::call_then_if_pending(global_this, awaited, promise)?;
+
+        // The getters of a chain change the flags of the `Expect` they are read from, so the
+        // resumed call gets its own.
+        let copy = Expect {
+            flags: Cell::new(self.flags.get()),
+            parent: self.parent.clone(),
+            custom_label: self.custom_label.clone(),
+            resumed,
+            call_site: self
+                .call_site
+                .clone()
+                .or_else(|| keep_call_site.then(|| global_this.get_caller_src_loc())),
+        }
+        .to_js(global_this);
+        super::expect::js::captured_value_set_cached(copy, global_this, awaited);
+
+        let outcome = bun_jsc::JSPromise::create(global_this).to_js();
+        let call_frame = global_this.host_call_frame();
+        let arguments = call_frame.arguments();
+        let context = JSValue::create_empty_array(global_this, ResumeContext::ARGUMENTS as usize + arguments.len())?;
+        context.put_index(global_this, ResumeContext::OUTCOME, outcome)?;
+        context.put_index(global_this, ResumeContext::CALL_STACK, Self::capture_call_stack(global_this))?;
+        context.put_index(global_this, ResumeContext::MATCHER, call_frame.callee())?;
+        context.put_index(global_this, ResumeContext::EXPECT, copy)?;
+        for (i, argument) in arguments.iter().enumerate() {
+            context.put_index(global_this, ResumeContext::ARGUMENTS + i as u32, *argument)?;
+        }
+        awaited.then_with_value(global_this, context, Bun__Expect__onSettled, Bun__Expect__onSettled);
+        if let Some(parent) = &self.parent {
+            parent.matcher_started();
+        }
+        Ok(outcome)
+    }
+
+    /// An error that is only kept for its stack: a failure reported from a promise reaction has no
+    /// caller, so it takes the stack of the matcher call.
+    fn capture_call_stack(global_this: &JSGlobalObject) -> JSValue {
+        global_this.create_error_instance(format_args!(""))
+    }
+
+    /// Settles the promise a matcher call returned.
+    fn settle_outcome(
+        global_this: &JSGlobalObject,
+        context: JSValue,
+        result: JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
+        // First, so that nothing below runs with an exception pending.
+        let result = match result {
+            Err(JsError::Thrown) => {
+                let exception = global_this.take_exception(JsError::Thrown);
+                if exception.is_termination_exception() {
+                    return Err(bun_jsc::top_exception_scope::thrown(global_this));
+                }
+                Err(Ok(exception.to_error().unwrap_or(exception)))
+            }
+            Err(err) => Err(Err(err)),
+            Ok(value) => Ok(value),
+        };
+        let outcome = context.get_index(global_this, ResumeContext::OUTCOME)?;
+        let outcome = outcome.as_promise().expect("the context holds the promise");
+        // `opaque_mut`: the context array keeps this JSC heap cell alive.
+        let outcome = bun_jsc::JSPromise::opaque_mut(outcome);
+        match result {
+            // A promise: the resumed matcher has to wait again.
+            Ok(value) if value.as_any_promise().is_some() => outcome.resolve(global_this, value)?,
+            Ok(_) => outcome.resolve(global_this, JSValue::UNDEFINED)?,
+            Err(error) => {
+                if let Ok(error) = error {
+                    error.take_stack_if_native_only(
+                        global_this,
+                        context.get_index(global_this, ResumeContext::CALL_STACK)?,
+                    );
+                }
+                outcome.reject(global_this, error)?;
+            }
+        }
+        let expect = context.get_index(global_this, ResumeContext::EXPECT)?;
+        if let Some(parent) = expect.as_class_ref::<Expect>().and_then(|expect| expect.parent.as_ref()) {
+            parent.matcher_settled(global_this);
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    fn on_settled(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let [_, context] = call_frame.arguments_as_array::<2>();
+        let matcher = context.get_index(global_this, ResumeContext::MATCHER)?;
+        let expect = context.get_index(global_this, ResumeContext::EXPECT)?;
+        let length = context.get_length(global_this)? as u32;
+        // `context` keeps the arguments alive.
+        let mut arguments: Vec<JSValue> = Vec::with_capacity((length - ResumeContext::ARGUMENTS) as usize);
+        for i in ResumeContext::ARGUMENTS..length {
+            arguments.push(context.get_index(global_this, i)?);
+        }
+        let result = matcher.call(global_this, expect, &arguments);
+        Self::settle_outcome(global_this, context, result)
     }
 
     pub(crate) fn is_asymmetric_matcher(value: JSValue) -> bool {
@@ -713,6 +880,8 @@ impl Expect {
             flags: Cell::new(Flags::default()),
             custom_label,
             parent: active_execution_entry_ref,
+            resumed: Resumed::No,
+            call_site: None,
         };
         let expect_js_value = expect.to_js(global_this);
         super::expect::js::captured_value_set_cached(expect_js_value, global_this, value);
@@ -793,6 +962,54 @@ impl Expect {
     }
 }
 
+/// Indices into the array a promise reaction of a matcher gets as its context. The array is the
+/// only holder of what it lists, so a promise that is collected unsettled takes all of it along.
+///
+/// [`Expect::settle_outcome`] reads the first three of either layout.
+struct ResumeContext;
+impl ResumeContext {
+    const OUTCOME: u32 = 0;
+    const CALL_STACK: u32 = 1;
+    /// The `this` to call the matcher function with.
+    const EXPECT: u32 = 2;
+    const MATCHER: u32 = 3;
+    const ARGUMENTS: u32 = 4;
+}
+
+/// The layout for the promise that the function of a custom matcher returned.
+struct CustomMatcherContext;
+impl CustomMatcherContext {
+    const OUTCOME: u32 = ResumeContext::OUTCOME;
+    const CALL_STACK: u32 = ResumeContext::CALL_STACK;
+    /// The `Expect` the matcher was called on.
+    const EXPECT: u32 = ResumeContext::EXPECT;
+    /// The user's function.
+    const MATCHER_FN: u32 = 3;
+    /// [`Flags::encode`]
+    const FLAGS: u32 = 4;
+    const LEN: usize = 5;
+}
+
+bun_jsc::jsc_promise_handler!(
+    pub fn Bun__Expect__onSettled => Expect::on_settled
+);
+bun_jsc::jsc_promise_handler!(
+    pub fn Bun__Expect__onCustomMatcherResolve => Expect::on_custom_matcher_resolve
+);
+bun_jsc::jsc_promise_handler!(
+    pub fn Bun__Expect__onCustomMatcherReject => Expect::on_custom_matcher_reject
+);
+
+/// What calling the value under `toThrow()` and its relatives led to.
+pub(crate) enum CallOutcome {
+    Done {
+        thrown: Option<JSValue>,
+        returned: JSValue,
+    },
+    /// It returned a promise. The matcher returns this one, which settles after it has run again.
+    Pending(JSValue),
+}
+
 pub(crate) struct TrimResult<'a> {
     pub(crate) trimmed: &'a [u8],
     pub(crate) start_indent: Option<&'a [u8]>,
@@ -804,15 +1021,27 @@ impl Expect {
         &self,
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<(Option<JSValue>, JSValue)> {
+        keep_call_site: bool,
+    ) -> JsResult<CallOutcome> {
         // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
         let vm = global_this.bun_vm().as_mut();
 
-        let mut return_value_from_function: JSValue = JSValue::ZERO;
+        if self.resumed == Resumed::FunctionResult {
+            let promise = value.as_any_promise().expect("resumed with the promise the function returned");
+            return Ok(CallOutcome::Done {
+                thrown: match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
+                    js_promise::Unwrapped::Fulfilled(_) => None,
+                    // since we know for sure it rejected, we should always return the error
+                    js_promise::Unwrapped::Rejected(rejected) => Some(rejected.to_error().unwrap_or(rejected)),
+                    js_promise::Unwrapped::Pending => unreachable!("resumed before the promise settled"),
+                },
+                returned: value,
+            });
+        }
 
         if !value.js_type().is_function() {
             if self.flags.get().promise() != Promise::None {
-                return Ok((Some(value), return_value_from_function));
+                return Ok(CallOutcome::Done { thrown: Some(value), returned: JSValue::ZERO });
             }
             return Err(global_this.throw(format_args!("Expected value must be a function")));
         }
@@ -826,36 +1055,23 @@ impl Expect {
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-        return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
+        let return_value_from_function: JSValue = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),
         };
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
         let _ = vm.global().handle_rejected_promises();
+        scope.apply(vm);
 
         if return_value.is_empty() {
             return_value = return_value_from_function;
         }
 
-        if let Some(promise) = return_value.as_any_promise() {
-            if let Err(err) = Self::call_then_if_pending(global_this, return_value, promise) {
-                scope.apply(vm);
-                return Err(err);
-            }
-            let waited = vm.wait_for_promise(promise);
-            scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
-            match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
-                js_promise::Unwrapped::Fulfilled(_) => {
-                    return Ok((None, return_value_from_function));
-                }
-                js_promise::Unwrapped::Rejected(rejected) => {
-                    // since we know for sure it rejected, we should always return the error
-                    return Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function));
-                }
-                js_promise::Unwrapped::Pending => unreachable!(),
-            }
+        if return_value.as_any_promise().is_some() {
+            return self
+                .resume_when_settled(global_this, return_value, Resumed::FunctionResult, keep_call_site)
+                .map(CallOutcome::Pending);
         }
 
         if return_value != return_value_from_function {
@@ -864,22 +1080,25 @@ impl Expect {
             }
         }
 
-        scope.apply(vm);
-
-        Ok((
-            return_value.to_error().or_else(|| return_value_from_function.to_error()),
-            return_value_from_function,
-        ))
+        Ok(CallOutcome::Done {
+            thrown: return_value.to_error().or_else(|| return_value_from_function.to_error()),
+            returned: return_value_from_function,
+        })
     }
 
+    /// `Err` holds the promise for the matcher to return: see [`CallOutcome::Pending`].
     pub(crate) fn fn_to_err_string_or_undefined(
         &self,
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let (err_value, _) = self.get_value_as_to_throw(global_this, value)?;
+        keep_call_site: bool,
+    ) -> JsResult<Result<Option<JSValue>, JSValue>> {
+        let err_value = match self.get_value_as_to_throw(global_this, value, keep_call_site)? {
+            CallOutcome::Done { thrown, .. } => thrown,
+            CallOutcome::Pending(promise) => return Ok(Err(promise)),
+        };
 
-        let Some(mut err_value_res) = err_value else { return Ok(None) };
+        let Some(mut err_value_res) = err_value else { return Ok(Ok(None)) };
         if err_value_res.is_any_error() {
             let message: JSValue = err_value_res
                 .get_truthy(global_this, "message")?
@@ -888,7 +1107,7 @@ impl Expect {
         } else {
             err_value_res = JSValue::UNDEFINED;
         }
-        Ok(Some(err_value_res))
+        Ok(Ok(Some(err_value_res)))
     }
 
     pub(crate) fn trim_leading_whitespace_for_inline_snapshot<'a>(
@@ -1060,7 +1279,14 @@ impl Expect {
             let buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
-            let srcloc = global_this.get_caller_src_loc();
+            let caller;
+            let srcloc = match &this.call_site {
+                Some(call_site) => call_site,
+                None => {
+                    caller = global_this.get_caller_src_loc();
+                    &caller
+                }
+            };
             let file_id = buntest.file_id;
             // MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.
@@ -1370,14 +1596,20 @@ impl Expect {
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
+    ///
+    /// `Err` holds the promise for the matcher call to return: the user's function returned a promise,
+    /// and that one settles once its result has been checked. Never with silent=true: an asymmetric
+    /// matcher runs inside a synchronous comparison, so there a pending promise throws.
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
         args: &[JSValue],
         flags: Flags,
-        silent: bool,
-    ) -> JsResult<bool> {
+        // The `Expect` it was called on. `None` is an asymmetric matcher: silent=true.
+        expect_value: Option<JSValue>,
+    ) -> JsResult<Result<bool, JSValue>> {
+        let silent = expect_value.is_none();
         // prepare the this object
         let matcher_context_jsvalue = ExpectMatcherContext { flags }.to_js(global_this);
         matcher_context_jsvalue.ensure_still_alive();
@@ -1389,31 +1621,89 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+            if let Some(expect_value) = expect_value {
+                let outcome = bun_jsc::JSPromise::create(global_this).to_js();
+                let context = JSValue::create_empty_array(global_this, CustomMatcherContext::LEN)?;
+                context.put_index(global_this, CustomMatcherContext::OUTCOME, outcome)?;
+                context.put_index(global_this, CustomMatcherContext::CALL_STACK, Self::capture_call_stack(global_this))?;
+                context.put_index(global_this, CustomMatcherContext::EXPECT, expect_value)?;
+                context.put_index(global_this, CustomMatcherContext::MATCHER_FN, matcher_fn)?;
+                context.put_index(global_this, CustomMatcherContext::FLAGS, JSValue::js_number_from_int32(i32::from(flags.encode())))?;
+                result.then_with_value(
+                    global_this,
+                    context,
+                    Bun__Expect__onCustomMatcherResolve,
+                    Bun__Expect__onCustomMatcherReject,
+                );
+                if let Some(parent) = expect_value.as_class_ref::<Expect>().and_then(|expect| expect.parent.as_ref()) {
+                    parent.matcher_started();
+                }
+                return Ok(Err(outcome));
+            }
 
-            result = promise.result(vm);
-            result.ensure_still_alive();
-            debug_assert!(!result.is_empty());
             match promise.status() {
-                js_promise::Status::Pending => unreachable!(),
-                js_promise::Status::Fulfilled => {}
-                js_promise::Status::Rejected => {
-                    // TODO: rewrite this code to use .then() instead of blocking the event loop
-                    // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
-                    bun_test::print_error(VirtualMachine::get().as_mut(), global_this, result, None);
+                js_promise::Status::Pending => {
                     return Err(global_this.throw(format_args!(
-                        "Matcher `{}` returned a promise that rejected",
-                        matcher_name,
+                        "expect.{matcher_name}() cannot wait for a pending promise, because asymmetric matchers are synchronous. Call it as expect(value).{matcher_name}() and await the result.",
                     )));
                 }
+                js_promise::Status::Fulfilled => {}
+                js_promise::Status::Rejected => {
+                    return Err(Self::throw_custom_matcher_rejection(global_this, matcher_name, promise.result(vm)));
+                }
             }
+            result = promise.result(vm);
+            result.ensure_still_alive();
         }
 
+        Self::check_custom_matcher_result(global_this, matcher_name, matcher_fn, result, flags, silent).map(Ok)
+    }
+
+    fn throw_custom_matcher_rejection(
+        global_this: &JSGlobalObject,
+        matcher_name: &bun_core::String,
+        rejection: JSValue,
+    ) -> JsError {
+        // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
+        bun_test::print_error(VirtualMachine::get().as_mut(), global_this, rejection, None);
+        global_this.throw(format_args!(
+            "Matcher `{}` returned a promise that rejected",
+            matcher_name,
+        ))
+    }
+
+    fn on_custom_matcher_resolve(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let [result, context] = call_frame.arguments_as_array::<2>();
+        let checked = Self::custom_matcher_of(global_this, context).and_then(|(matcher_name, matcher_fn, flags)| {
+            Self::check_custom_matcher_result(global_this, &matcher_name, matcher_fn, result, flags, false)
+        });
+        Self::settle_outcome(global_this, context, checked.map(|_| JSValue::UNDEFINED))
+    }
+
+    fn on_custom_matcher_reject(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let [rejection, context] = call_frame.arguments_as_array::<2>();
+        let thrown = match Self::custom_matcher_of(global_this, context) {
+            Ok((matcher_name, ..)) => Self::throw_custom_matcher_rejection(global_this, &matcher_name, rejection),
+            Err(err) => err,
+        };
+        Self::settle_outcome(global_this, context, Err(thrown))
+    }
+
+    fn custom_matcher_of(global_this: &JSGlobalObject, context: JSValue) -> JsResult<(bun_core::String, JSValue, Flags)> {
+        let matcher_fn = context.get_index(global_this, CustomMatcherContext::MATCHER_FN)?;
+        let flags = context.get_index(global_this, CustomMatcherContext::FLAGS)?;
+        Ok((matcher_fn.get_name(global_this)?, matcher_fn, Flags(flags.as_int32() as u8)))
+    }
+
+    /// Whether `result`, which the user's function returned or its promise fulfilled with, is a pass.
+    fn check_custom_matcher_result(
+        global_this: &JSGlobalObject,
+        matcher_name: &bun_core::String,
+        matcher_fn: JSValue,
+        result: JSValue,
+        flags: Flags,
+        silent: bool,
+    ) -> JsResult<bool> {
         let mut pass: bool = false;
         let mut message: JSValue = JSValue::UNDEFINED;
 
@@ -1496,6 +1786,10 @@ impl Expect {
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
 
+        if let Some(promise) = expect.resume_when_subject_settles(global_this, false)? {
+            return Ok(promise);
+        }
+
         // retrieve the matcher name
         let matcher_name = matcher_fn.get_name(global_this)?;
 
@@ -1533,9 +1827,10 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
-
-        Ok(this_value)
+        match Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), Some(this_value))? {
+            Ok(_) => Ok(this_value),
+            Err(promise) => Ok(promise),
+        }
     }
 
     pub(crate) fn add_snapshot_serializer<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, ()> {
@@ -2286,7 +2581,8 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, self.flags, true)
+        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, self.flags, None)
+            .map(|matched| matched.expect("silent"))
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue

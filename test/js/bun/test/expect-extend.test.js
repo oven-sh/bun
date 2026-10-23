@@ -306,9 +306,11 @@ describe("async support", () => {
     await expect(1)._toCustomA(); // symmetric use
     await expect(1)._toCustomB(); // symmetric use
     if (isBun) {
-      // jest somehow can't handle this
-      await expect(1).toEqual(expect._toCustomA()); // asymmetric use
-      await expect(1).toEqual(expect._toCustomB()); // asymmetric use
+      // An asymmetric matcher is synchronous: it reads a promise that has settled, and refuses to wait for one.
+      expect(1).toEqual(expect._toCustomA());
+      expect(() => expect(1).toEqual(expect._toCustomB())).toThrow(
+        "expect._toCustomB() cannot wait for a pending promise",
+      );
     }
   });
 
@@ -327,7 +329,7 @@ describe("async support", () => {
     }
   });
 
-  it("throws the matcher's rejection error when printing the rejected value throws", () => {
+  it("throws the matcher's rejection error when printing the rejected value throws", async () => {
     const rejection = new String("rejection");
     rejection.toString = () => {
       throw new TypeError("toString throws");
@@ -337,8 +339,8 @@ describe("async support", () => {
     });
 
     if (isBun) {
-      // the matcher call throws its own error, not the TypeError from toString()
-      expect(() => expect(1)._toCustomA()).toThrow("Matcher `_toCustomA` returned a promise that rejected");
+      // the matcher call fails with its own error, not the TypeError from toString()
+      await expect(() => expect(1)._toCustomA()).toThrow("Matcher `_toCustomA` returned a promise that rejected");
     }
   });
 });

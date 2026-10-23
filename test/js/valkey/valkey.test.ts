@@ -875,35 +875,35 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid object argument in SCAN", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.scan({} as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'scan'."`);
       });
 
       test("should reject invalid array argument in SCAN", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.scan([] as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'scan'."`);
       });
 
       test("should reject invalid null argument in SCAN", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.scan(null as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'scan'."`);
       });
 
       test("should reject invalid source key in COPY", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.copy({} as any, "dest");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'copy'."`);
       });
 
       test("should reject invalid destination key in COPY", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.copy("source", [] as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'copy'."`);
       });
@@ -911,126 +911,126 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should reject invalid option in COPY", async () => {
         const redis = ctx.redis;
         await redis.set("copy-invalid-opt-source", "value");
-        expect(async () => {
+        await expect(async () => {
           await redis.copy("copy-invalid-opt-source", "copy-invalid-opt-dest", "NOTVALID" as any);
         }).toThrowErrorMatchingInlineSnapshot(`"ERR syntax error"`);
       });
 
       test("should reject invalid old key in RENAME", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.rename({} as any, "newkey");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'rename'."`);
       });
 
       test("should reject invalid new key in RENAME", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.rename("oldkey", null as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected newkey to be a string or buffer for 'rename'."`);
       });
 
       test("should reject invalid key in GETRANGE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.getrange({} as any, 0, 5);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'getrange'."`);
       });
 
       test("should reject invalid key in SETRANGE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.setrange(undefined as any, 0, "value");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'setrange'."`);
       });
 
       test("should reject invalid key in INCRBY", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.incrby([] as any, 10);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'incrby'."`);
       });
 
       test("should reject invalid value in MSET", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.mset("key", {} as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'mset'."`);
       });
 
       test("should reject invalid value in MSETNX", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.msetnx("key1", "value1", "key2", [] as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'msetnx'."`);
       });
 
       test("should reject invalid key in SETBIT", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.setbit({} as any, 0, 1);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'setbit'."`);
       });
 
       test("should reject invalid key in SETEX", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.setex(null as any, 10, "value");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'setex'."`);
       });
 
       test("should reject invalid key in PSETEX", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.psetex([] as any, 1000, "value");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'psetex'."`);
       });
 
       test("should reject invalid key in UNLINK", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.unlink({} as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'unlink'."`);
       });
 
       test("should reject invalid additional key in UNLINK", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.unlink("valid-key", [] as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'unlink'."`);
       });
 
       test("should reject invalid key in TOUCH", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.touch(null as any);
         }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
       });
 
       test("should reject invalid additional key in TOUCH", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.touch("valid-key", {} as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'touch'."`);
       });
 
       test("should reject invalid key in EXPIREAT", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.expireat({} as any, 1234567890);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'expireat'."`);
       });
 
       test("should reject invalid key in PEXPIRE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.pexpire([] as any, 5000);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'pexpire'."`);
       });
 
       test("should reject invalid key in PEXPIREAT", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.pexpireat(null as any, 1234567890000);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'pexpireat'."`);
       });
@@ -1413,16 +1413,16 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.lpush("lset-error-test", "value");
 
-        expect(async () => {
+        await expect(async () => {
           await redis.lset("lset-error-test", 10, "newvalue");
         }).toThrow(/index out of range/i);
 
-        expect(async () => {
+        await expect(async () => {
           await redis.lset("nonexistent-list", 0, "value");
         }).toThrow(/no such key/i);
 
         await redis.set("string-key", "value");
-        expect(async () => {
+        await expect(async () => {
           await redis.lset("string-key", 0, "value");
         }).toThrow(/wrong.*type|WRONGTYPE/i);
       });
@@ -2530,7 +2530,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should throw error when SINTER receives no keys", async () => {
         const redis = ctx.redis;
 
-        expect(async () => {
+        await expect(async () => {
           // @ts-expect-error
           await redis.sinter();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sinter' command"`);
@@ -2539,7 +2539,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should throw error when SINTERSTORE receives no keys", async () => {
         const redis = ctx.redis;
 
-        expect(async () => {
+        await expect(async () => {
           // @ts-expect-error
           await redis.sinterstore();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sinterstore' command"`);
@@ -2548,7 +2548,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should throw error when SINTERCARD receives no keys", async () => {
         const redis = ctx.redis;
 
-        expect(async () => {
+        await expect(async () => {
           // @ts-expect-error
           await redis.sintercard();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sintercard' command"`);
@@ -2587,7 +2587,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should throw error with SDIFFSTORE on invalid arguments", async () => {
         const redis = ctx.redis;
 
-        expect(async () => {
+        await expect(async () => {
           await (redis as any).sdiffstore();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sdiffstore' command"`);
       });
@@ -2613,7 +2613,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should throw error with SMISMEMBER on invalid arguments", async () => {
         const redis = ctx.redis;
 
-        expect(async () => {
+        await expect(async () => {
           await (redis as any).smismember();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'smismember' command"`);
       });
@@ -2680,7 +2680,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should throw error with SSCAN on invalid arguments", async () => {
         const redis = ctx.redis;
 
-        expect(async () => {
+        await expect(async () => {
           await (redis as any).sscan();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sscan' command"`);
       });
@@ -3237,14 +3237,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid arguments in ZDIFF", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zdiff({} as any, "key1");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zdiff'."`);
       });
 
       test("should reject invalid arguments in ZDIFFSTORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zdiffstore("dest", {} as any, "key1");
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zdiffstore'."`,
@@ -3253,7 +3253,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid arguments in ZINTERCARD", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zintercard({} as any, "key1");
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zintercard'."`,
@@ -3313,42 +3313,42 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid key in ZINCRBY", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zincrby({} as any, 1, "member");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zincrby'."`);
       });
 
       test("should reject invalid key in ZCOUNT", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zcount([] as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zcount'."`);
       });
 
       test("should reject invalid key in ZLEXCOUNT", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zlexcount(null as any, "[a", "[z");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zlexcount'."`);
       });
 
       test("should reject invalid key in ZREMRANGEBYRANK", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zremrangebyrank({} as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zremrangebyrank'."`);
       });
 
       test("should reject invalid key in ZREMRANGEBYSCORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zremrangebyscore([] as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zremrangebyscore'."`);
       });
 
       test("should reject invalid key in ZREMRANGEBYLEX", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zremrangebylex(null as any, "[a", "[z");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zremrangebylex'."`);
       });
@@ -3393,14 +3393,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid key in ZREM", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrem({} as any, "member");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zrem'."`);
       });
 
       test("should reject invalid key in ZMSCORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zmscore([] as any, "member");
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zmscore'."`,
@@ -3608,14 +3608,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid key in ZADD", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zadd({} as any, "1", "member");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zadd'."`);
       });
 
       test("should reject invalid key in ZSCAN", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zscan([] as any, 0);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zscan'."`);
       });
@@ -3750,14 +3750,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid key in ZRANGE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrange({} as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zrange'."`);
       });
 
       test("should reject invalid key in ZREVRANGE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrevrange([] as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zrevrange'."`,
@@ -4259,7 +4259,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       });
       test("should reject invalid key in ZRANGEBYSCORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrangebyscore({} as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zrangebyscore'."`,
@@ -4268,7 +4268,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid key in ZREVRANGEBYSCORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrevrangebyscore([] as any, 10, 0);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zrevrangebyscore'."`,
@@ -4277,7 +4277,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid key in ZRANGEBYLEX", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrangebylex(null as any, "-", "+");
         }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
       });
@@ -4379,7 +4379,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid key in ZREVRANGEBYLEX", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrevrangebylex({} as any, "+", "-");
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zrevrangebylex'."`,
@@ -4388,7 +4388,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid destination in ZRANGESTORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrangestore([] as any, "source", 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zrangestore'."`,
@@ -4397,7 +4397,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid source in ZRANGESTORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zrangestore("dest", null as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zrangestore'."`,
@@ -4768,21 +4768,21 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid numkeys in ZUNION", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zunion(-1, "key1");
         }).toThrowErrorMatchingInlineSnapshot(`"ERR at least 1 input key is needed for 'zunion' command"`);
       });
 
       test("should reject invalid key in ZUNION", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zunion(1, {} as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zunion'."`);
       });
 
       test("should reject invalid destination in ZUNIONSTORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zunionstore([] as any, 2, "key1", "key2");
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zunionstore'."`,
@@ -4791,7 +4791,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid source key in ZUNIONSTORE", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zunionstore("dest", 2, "key1", null as any);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zunionstore'."`,
@@ -4906,14 +4906,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid arguments in ZMPOP", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.zmpop({} as any, "key1", "MIN");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zmpop'."`);
       });
 
       test("should reject invalid arguments in BZMPOP", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.bzmpop(1, {} as any, "key1", "MIN");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'bzmpop'."`);
       });
@@ -5050,7 +5050,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid arguments in BZPOPMIN", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.bzpopmin({} as any, 1);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'bzpopmin'."`,
@@ -5059,7 +5059,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
       test("should reject invalid arguments in BZPOPMAX", async () => {
         const redis = ctx.redis;
-        expect(async () => {
+        await expect(async () => {
           await redis.bzpopmax([] as any, 1);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'bzpopmax'."`,
@@ -5374,7 +5374,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "hash-error-test";
 
-        expect(async () => {
+        await expect(async () => {
           await redis.hset(key, "field1", "value1", "field2");
         }).toThrow("HSET requires field-value pairs (even number of arguments after key)");
       });
@@ -5383,7 +5383,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "hash-empty-test";
 
-        expect(async () => {
+        await expect(async () => {
           await redis.hset(key, {});
         }).toThrow("HSET requires at least one field-value pair");
       });
@@ -5392,7 +5392,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "hmset-error-test";
 
-        expect(async () => {
+        await expect(async () => {
           await redis.hmset(key, ["field1", "value1", "field2"]);
         }).toThrow("Array must have an even number of elements (field-value pairs)");
       });
@@ -6391,12 +6391,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const id = (await redis.xadd(stream, "*", "f", "v"))!;
 
         // An interior undefined must not shift the later arguments into its place.
-        expect(() => redis.mset(other, undefined as any, "b")).toThrow("string or buffer");
-        expect(() => redis.copy(src, undefined as any, dst as any)).toThrow("string or buffer");
+        await expect(() => redis.mset(other, undefined as any, "b")).toThrow("string or buffer");
+        await expect(() => redis.copy(src, undefined as any, dst as any)).toThrow("string or buffer");
         // The new commands follow the same rule, optional argument or not.
-        expect(() => redis.flushdb(undefined as any)).toThrow("string or buffer");
-        expect(() => redis.bitop("AND", dst, undefined as any, src)).toThrow("string or buffer");
-        expect(() => redis.xdel(stream, undefined as any, id)).toThrow("string or buffer");
+        await expect(() => redis.flushdb(undefined as any)).toThrow("string or buffer");
+        await expect(() => redis.bitop("AND", dst, undefined as any, src)).toThrow("string or buffer");
+        await expect(() => redis.xdel(stream, undefined as any, id)).toThrow("string or buffer");
 
         expect(await redis.mget(other, dst)).toEqual([null, null]);
         expect(await redis.get(src)).toBe("x");
@@ -6608,7 +6608,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           tls: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tls : false,
         });
 
-        expect(async () => {
+        await expect(async () => {
           await customRedis.get("test");
         }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
       });
@@ -6675,7 +6675,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await subscriber.subscribe(testChannel(), () => {});
 
-        expect(() => subscriber.set(testKey(), testValue())).toThrow(
+        await expect(() => subscriber.set(testKey(), testValue())).toThrow(
           "RedisClient.prototype.set cannot be called while in subscriber mode",
         );
 
@@ -6687,7 +6687,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         await subscriber.subscribe(channel, () => {});
         await subscriber.unsubscribe(channel);
-        expect(ctx.redis.set(testKey(), testValue())).resolves.toEqual("OK");
+        await expect(ctx.redis.set(testKey(), testValue())).resolves.toEqual("OK");
       });
 
       test("subscribing to a channel receives messages", async () => {
@@ -6872,7 +6872,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await subscriber.subscribe(channel, () => {});
         expect(await ctx.redis.publish(channel, testMessage())).toBe(1);
 
-        expect(() => subscriber.unsubscribe(undefined as any)).toThrow("string or array");
+        await expect(() => subscriber.unsubscribe(undefined as any)).toThrow("string or array");
         expect(await ctx.redis.publish(channel, testMessage())).toBe(1);
 
         await subscriber.unsubscribe();
@@ -7039,7 +7039,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         await subscriber.subscribe(channel, () => {});
 
-        expect(async () => subscriber.publish(channel, "self-published")).toThrow(
+        await expect(async () => subscriber.publish(channel, "self-published")).toThrow(
           "RedisClient.prototype.publish cannot be called while in subscriber mode.",
         );
       });
@@ -7051,7 +7051,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         await subscriber.subscribe(channel, () => {});
 
-        expect(() => subscriber.set(testKey, testValue())).toThrow(
+        await expect(() => subscriber.set(testKey, testValue())).toThrow(
           "RedisClient.prototype.set cannot be called while in subscriber mode.",
         );
 
@@ -7073,7 +7073,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("unsubscribing from non-subscribed channels", async () => {
         const channel = "never-subscribed-channel";
 
-        expect(() => ctx.redis.unsubscribe(channel)).toThrow(
+        await expect(() => ctx.redis.unsubscribe(channel)).toThrow(
           "RedisClient.prototype.unsubscribe can only be called while in subscriber mode.",
         );
       });
@@ -7335,7 +7335,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const duplicate = await subscriber.duplicate();
 
-        expect(() => duplicate.set("test-key", "test-value")).not.toThrow();
+        await expect(() => duplicate.set("test-key", "test-value")).not.toThrow();
 
         await subscriber.unsubscribe(testChannel);
       });

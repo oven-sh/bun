@@ -318,10 +318,10 @@ it("chrome: cdp() guards — before navigate and params validation", async () =>
   // Chrome before first navigate → no sessionId → INVALID_STATE.
   const crView = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   try {
-    expect(() => crView.cdp("Page.enable")).toThrow(/session.*navigate/i);
+    await expect(() => crView.cdp("Page.enable")).toThrow(/session.*navigate/i);
     // params validation: non-object rejected before any I/O.
     await crView.navigate(html("<body></body>"));
-    expect(() => crView.cdp("Page.enable", 42 as any)).toThrow(/object/);
+    await expect(() => crView.cdp("Page.enable", 42 as any)).toThrow(/object/);
   } finally {
     crView.close();
   }

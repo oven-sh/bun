@@ -871,7 +871,22 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
+  /**
+   * How many `EventLoop::tick()` calls and callback scopes are on the native stack. The same kind of
+   * callback always sees the same number, unless the event loop runs inside itself.
+   */
+  enteredCount: number;
 } = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+
+/**
+ * Runs the event loop inside this call until `promise` settles. No public API does that, but a macro
+ * that returns a promise and a native addon still can, so tests of how the runtime survives it use this.
+ */
+export const runNestedEventLoopUntilSettled: (promise: Promise<unknown>) => void = $newRustFunction(
+  "event_loop.rs",
+  "runNestedUntilSettled",
+  1,
+);
 
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),

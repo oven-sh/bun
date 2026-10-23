@@ -108,7 +108,7 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn reload(&mut self) {
-        VirtualMachine::reload(self, None);
+        VirtualMachine::reload_from_task(self);
     }
 
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool {

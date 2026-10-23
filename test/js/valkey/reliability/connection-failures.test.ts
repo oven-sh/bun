@@ -92,7 +92,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         connectionTimeout: 2, // 2ms second timeout
         autoReconnect: false,
       });
-      expect(async () => {
+      await expect(async () => {
         await client.get("any-key");
       }).toThrowErrorMatchingInlineSnapshot(`"Connection timeout reached after 2ms"`);
     });
@@ -262,7 +262,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
 
       // Try to send a command
       expect(client.connected).toBe(false);
-      expect(async () => {
+      await expect(async () => {
         await client.get("__test_key");
       }).toThrowErrorMatchingInlineSnapshot(`"Connection has failed"`);
       // Wait some time to see if auto-reconnect happens
@@ -283,7 +283,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       await client.close();
 
       expect(client.connected).toBe(false);
-      expect(async () => {
+      await expect(async () => {
         await client.get("any-key");
       }).toThrowErrorMatchingInlineSnapshot(`"Connection closed"`);
       // Multiple disconnects should not cause issues
@@ -1883,7 +1883,7 @@ describe("Valkey: Recovering After fail()", () => {
         message: "Connection has failed",
       });
       // The rejected subscribe left the client out of subscriber mode.
-      expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
+      await expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
 
       // A subscribe on the next connection is the only registration: the
       // message arrives once, not once per attempt.
@@ -1926,7 +1926,7 @@ describe("Valkey: Recovering After fail()", () => {
         code: "ERR_REDIS_CONNECTION_CLOSED",
         message: "Connection is closed and offline queue is disabled",
       });
-      expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
+      await expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
 
       // That dial completes on its own.
       await connected.promise;
@@ -1952,7 +1952,7 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`redis://127.0.0.1:${port}`);
     const probe = new RedisClient(`redis://127.0.0.1:${port}`);
     try {
-      expect(() => client.subscribe(123 as never, () => {})).toThrow(
+      await expect(() => client.subscribe(123 as never, () => {})).toThrow(
         "Expected channel to be a string or array for 'subscribe'.",
       );
       // A dial made by the call above is ahead of the probe's in the stub's

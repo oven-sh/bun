@@ -358,15 +358,15 @@ describe("yield", async () => {
         expect(alive()).toBe(false);
       });
 
-      // `expect().resolves` turns the event loop, so the killed member exits while the catch block runs.
+      // The killed member exits while the catch block runs.
       test.concurrent("a catch block that turns the event loop", async () => {
         await using proc = Bun.spawn({
           cmd: child(`
-            import { expect } from "bun:test";
+            import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
             try {
               await $\`\${bun} --version; ${sleeper} | echo hi > \${new Blob(["x"])}\`.quiet();
             } catch (error) {
-              await expect(Bun.sleep(50).then(() => "turned")).resolves.toBe("turned");
+              runNestedEventLoopUntilSettled(Bun.sleep(50));
               console.log("rejected " + error.constructor.name + ": " + error.message);
             }
           `),

@@ -176,3 +176,33 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
 
     instance->setStackFrames(vm, WTF::move(frames));
 }
+
+extern "C" void Bun__takeStackIfNativeOnly(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::EncodedJSValue sourceValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
+    auto* source = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(sourceValue));
+    if (!instance || !source || instance == source)
+        return;
+
+    // setStackFrames after materialization would desync m_stackTrace from the cached property.
+    if (instance->hasMaterializedErrorInfo() || source->hasMaterializedErrorInfo())
+        return;
+    if (auto* existing = instance->stackTrace()) {
+        for (auto& frame : *existing) {
+            if (frame.hasLineAndColumnInfo())
+                return;
+        }
+    }
+    auto* frames = source->stackTrace();
+    if (!frames || frames->isEmpty())
+        return;
+
+    instance->setStackFrames(vm, WTF::Vector<JSC::StackFrame>(*frames));
+    vm.writeBarrier(instance);
+}
+
+extern "C" JSC::CallFrame* JSC__JSGlobalObject__topCallFrame(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).topCallFrame;
+}

@@ -7,6 +7,7 @@ use bun_jsc::JsClass;
 use bun_core::strings;
 use crate::generated_bindgen::expect::js_ExpectAny;
 
+use super::CallOutcome;
 use super::Expect;
 use super::ExpectAny;
 use super::get_signature;
@@ -59,10 +60,14 @@ impl Expect {
 
         let not = this.flags.get().not();
 
-        let (result_, return_value_from_function) = this.get_value_as_to_throw(
+        let (result_, return_value_from_function) = match this.get_value_as_to_throw(
             global,
             this.get_value(global, this_value, "toThrow", "<green>expected<r>")?,
-        )?;
+            false,
+        )? {
+            CallOutcome::Done { thrown, returned } => (thrown, returned),
+            CallOutcome::Pending(promise) => return Ok(promise),
+        };
 
         let did_throw = result_.is_some();
 

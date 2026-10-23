@@ -470,6 +470,18 @@ impl TestCounter {
         self.count.get().wrapping_add(other.count.get())
     }
 
+    pub(crate) fn refuse_at_100(&self) -> Option<i32> {
+        (self.count.get() >= 100).then_some(-1)
+    }
+
+    pub(crate) fn throw_at_100<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+    ) -> Option<bindgen::Result<'a, i32>> {
+        (self.count.get() >= 100)
+            .then(|| Err(cx.heap.range_error(format_args!("the count is at 100"))))
+    }
+
     pub(crate) fn starting<'a>(heap: &JsHeap<'a>, at: i32) -> JsWrapper<'a, Self> {
         Self::new(at).into_js(heap)
     }

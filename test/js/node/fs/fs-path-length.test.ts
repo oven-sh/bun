@@ -30,11 +30,11 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
   });
 
   it("rejects overly long multi-byte paths in async readFile", async () => {
-    expect(async () => await fs.promises.readFile(cjkPath)).toThrow("ENAMETOOLONG");
+    await expect(async () => await fs.promises.readFile(cjkPath)).toThrow("ENAMETOOLONG");
   });
 
   it("rejects overly long multi-byte paths in async stat", async () => {
-    expect(async () => await fs.promises.stat(cjkPath)).toThrow("ENAMETOOLONG");
+    await expect(async () => await fs.promises.stat(cjkPath)).toThrow("ENAMETOOLONG");
   });
 
   // 2-byte UTF-8 characters (U+0080 to U+07FF range)
@@ -192,7 +192,7 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   });
 
   it("rejects over-long paths in async fs.promises.mkdir", async () => {
-    expect(async () => await fs.promises.mkdir(kernel32Long, { recursive: true })).toThrow("ENAMETOOLONG");
+    await expect(async () => await fs.promises.mkdir(kernel32Long, { recursive: true })).toThrow("ENAMETOOLONG");
   });
 
   it("rejects over-long Buffer paths", () => {

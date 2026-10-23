@@ -94,11 +94,11 @@ describe("fetch data urls", () => {
     var blob = await res.blob();
     expect(blob.size).toBe(13);
     expect(blob.type).toBe("text/plain;charset=utf-8");
-    expect(blob.text()).resolves.toBe("Hello, World!");
+    await expect(blob.text()).resolves.toBe("Hello, World!");
   });
   it("percent encoded (invalid)", async () => {
     var url = "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ%3D%3";
-    expect(async () => {
+    await expect(async () => {
       await fetch(url);
     }).toThrow("failed to fetch the data URL");
   });
@@ -112,7 +112,7 @@ describe("fetch data urls", () => {
     var blob = await res.blob();
     expect(blob.size).toBe(13);
     expect(blob.type).toBe("text/plain;charset=utf-8");
-    expect(blob.text()).resolves.toBe("Hello, World!");
+    await expect(blob.text()).resolves.toBe("Hello, World!");
 
     url = "data:,helloworld!";
     res = await fetch(url);
@@ -123,7 +123,7 @@ describe("fetch data urls", () => {
     blob = await res.blob();
     expect(blob.size).toBe(11);
     expect(blob.type).toBe("text/plain;charset=utf-8");
-    expect(blob.text()).resolves.toBe("helloworld!");
+    await expect(blob.text()).resolves.toBe("helloworld!");
   });
   it("unstrict parsing of invalid URL characters", async () => {
     var url = "data:application/json,{%7B%7D}";
@@ -135,7 +135,7 @@ describe("fetch data urls", () => {
     var blob = await res.blob();
     expect(blob.size).toBe(4);
     expect(blob.type).toBe("application/json;charset=utf-8");
-    expect(blob.text()).resolves.toBe("{{}}");
+    await expect(blob.text()).resolves.toBe("{{}}");
   });
   it("unstrict parsing of double percent characters", async () => {
     var url = "data:application/json,{%%7B%7D%%}%%";
@@ -147,11 +147,11 @@ describe("fetch data urls", () => {
     var blob = await res.blob();
     expect(blob.size).toBe(9);
     expect(blob.type).toBe("application/json;charset=utf-8");
-    expect(blob.text()).resolves.toBe("{%{}%%}%%");
+    await expect(blob.text()).resolves.toBe("{%{}%%}%%");
   });
   it("data url (invalid)", async () => {
     var url = "data:Hello%2C%20World!";
-    expect(async () => {
+    await expect(async () => {
       await fetch(url);
     }).toThrow("failed to fetch the data URL");
   });
@@ -166,7 +166,7 @@ describe("fetch data urls", () => {
     var blob = await res.blob();
     expect(blob.size).toBe(4);
     expect(blob.type).toBe("text/plain;charset=utf-8");
-    expect(blob.text()).resolves.toBe("😀");
+    await expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request", async () => {
     var req = new Request("data:,Hello%2C%20World!");
@@ -178,7 +178,7 @@ describe("fetch data urls", () => {
     var blob = await res.blob();
     expect(blob.size).toBe(13);
     expect(blob.type).toBe("text/plain;charset=utf-8");
-    expect(blob.text()).resolves.toBe("Hello, World!");
+    await expect(blob.text()).resolves.toBe("Hello, World!");
 
     req = new Request("data:,😀");
     res = await fetch(req);
@@ -189,15 +189,15 @@ describe("fetch data urls", () => {
     blob = await res.blob();
     expect(blob.size).toBe(4);
     expect(blob.type).toBe("text/plain;charset=utf-8");
-    expect(blob.text()).resolves.toBe("😀");
+    await expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request (invalid)", async () => {
     var req = new Request("data:Hello%2C%20World!");
-    expect(async () => {
+    await expect(async () => {
       await fetch(req);
     }).toThrow("failed to fetch the data URL");
     req = new Request("data:Hello%345632");
-    expect(async () => {
+    await expect(async () => {
       await fetch(req);
     }).toThrow("failed to fetch the data URL");
   });
@@ -244,7 +244,7 @@ describe("AbortSignal", () => {
     const controller = new AbortController();
     const signal = controller.signal;
 
-    expect(async () => {
+    await expect(async () => {
       async function manualAbort() {
         await sleep(1);
         controller.abort();
@@ -267,7 +267,7 @@ describe("AbortSignal", () => {
     const controller = new AbortController();
     const signal = controller.signal;
 
-    expect(async () => {
+    await expect(async () => {
       async function manualAbort() {
         await sleep(10);
         controller.abort(new Error("My Reason"));
@@ -798,7 +798,7 @@ describe("fetch", () => {
   ["GET", "HEAD", "TRACE"].forEach(method =>
     it.concurrent(`fail on ${method} with body`, async () => {
       // The request is rejected before any network I/O, so the URL is irrelevant.
-      expect(async () => {
+      await expect(async () => {
         await fetch("http://example.invalid/", { method, body: "buntastic" });
       }).toThrow("fetch() request with GET/HEAD method cannot have body.");
     }),
@@ -1123,9 +1123,9 @@ describe.concurrent("Bun.file", () => {
       chmodSync(path, 0x000);
     });
 
-    forEachMethod(m => () => {
+    forEachMethod(m => async () => {
       const file = Bun.file(path);
-      expect(async () => await file[m]()).toThrow("permission denied");
+      await expect(async () => await file[m]()).toThrow("permission denied");
     });
 
     afterAll(() => {
@@ -1138,7 +1138,7 @@ describe.concurrent("Bun.file", () => {
 
     forEachMethod(m => async () => {
       const file = Bun.file(path);
-      expect(async () => await file[m]()).toThrow("no such file or directory");
+      await expect(async () => await file[m]()).toThrow("no such file or directory");
     });
   });
 });
@@ -1433,19 +1433,19 @@ describe("Response", () => {
       expect(response.bodyUsed).toBe(true);
       expect(await promise).toBe("<div>hello</div>");
       expect(response.bodyUsed).toBe(true);
-      expect(async () => {
+      await expect(async () => {
         await response.text();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.json();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.formData();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.blob();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.arrayBuffer();
       }).toThrow("Body already used");
     });
@@ -1456,19 +1456,19 @@ describe("Response", () => {
       expect(response.bodyUsed).toBe(true);
       expect(await promise).toEqual({ "hello": "world" });
       expect(response.bodyUsed).toBe(true);
-      expect(async () => {
+      await expect(async () => {
         await response.json();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.text();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.formData();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.blob();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.arrayBuffer();
       }).toThrow("Body already used");
     });
@@ -1483,19 +1483,19 @@ describe("Response", () => {
       expect(response.bodyUsed).toBe(true);
       expect(await promise).toBeInstanceOf(FormData);
       expect(response.bodyUsed).toBe(true);
-      expect(async () => {
+      await expect(async () => {
         await response.formData();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.text();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.json();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.blob();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.arrayBuffer();
       }).toThrow("Body already used");
     });
@@ -1506,22 +1506,22 @@ describe("Response", () => {
       expect(response.bodyUsed).toBe(true);
       expect(await promise).toBeInstanceOf(Blob);
       expect(response.bodyUsed).toBe(true);
-      expect(async () => {
+      await expect(async () => {
         await response.blob();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.bytes();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.text();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.json();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.formData();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.arrayBuffer();
       }).toThrow("Body already used");
     });
@@ -1532,19 +1532,19 @@ describe("Response", () => {
       expect(response.bodyUsed).toBe(true);
       expect(await promise).toBeInstanceOf(ArrayBuffer);
       expect(response.bodyUsed).toBe(true);
-      expect(async () => {
+      await expect(async () => {
         await response.arrayBuffer();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.text();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.json();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.formData();
       }).toThrow("Body already used");
-      expect(async () => {
+      await expect(async () => {
         await response.blob();
       }).toThrow("Body already used");
     });
@@ -1559,7 +1559,7 @@ describe("Response", () => {
       startServer({
         async fetch(request: Request) {
           var text = await request.text();
-          expect(async () => {
+          await expect(async () => {
             await request.arrayBuffer();
           }).toThrow();
           return (response = new Response((await new Response(text).blob()).stream()));
@@ -1731,9 +1731,9 @@ it("Request({toString() { throw 'wat'; } }) throws", async () => {
   ).toThrow("wat");
 });
 
-it("should not be able to parse json from empty body", () => {
-  expect(async () => await new Response().json()).toThrow(SyntaxError);
-  expect(async () => await new Request("http://example.com/").json()).toThrow(SyntaxError);
+it("should not be able to parse json from empty body", async () => {
+  await expect(async () => await new Response().json()).toThrow(SyntaxError);
+  await expect(async () => await new Request("http://example.com/").json()).toThrow(SyntaxError);
 });
 
 it("#874", () => {
@@ -1747,12 +1747,12 @@ it("#2794", () => {
   expect(typeof Bun.fetch.bind).toBe("function");
 });
 
-it("#3545", () => {
-  expect(() => fetch("http://example.com?a=b")).not.toThrow();
+it("#3545", async () => {
+  await expect(() => fetch("http://example.com?a=b")).not.toThrow();
 });
 
-it("invalid header doesnt crash", () => {
-  expect(() =>
+it("invalid header doesnt crash", async () => {
+  await expect(() =>
     fetch("http://example.com", {
       headers: {
         ["lol!!!!!" + "emoji" + "😀"]: "hello",
@@ -2277,7 +2277,7 @@ describe("maxRedirects", () => {
   });
 
   it("rejects once the chain exceeds maxRedirects", async () => {
-    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
+    await expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
   });
 
   it("follows the chain when maxRedirects is large enough", async () => {
@@ -2288,9 +2288,9 @@ describe("maxRedirects", () => {
   });
 
   it("rejects invalid values", async () => {
-    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: -1 })).toThrow();
-    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: 1.5 })).toThrow();
-    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: NaN })).toThrow();
+    await expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: -1 })).toThrow();
+    await expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: 1.5 })).toThrow();
+    await expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: NaN })).toThrow();
   });
 });
 
@@ -2465,13 +2465,13 @@ describe("http/1.1 response body length", () => {
     it("should read text until socket closed", async () => {
       const response = await fetch(`http://${getHost()}/text`);
       expect(response.status).toBe(200);
-      expect(response.text()).resolves.toBe("Hello, World!");
+      await expect(response.text()).resolves.toBe("Hello, World!");
     });
 
     it("should read json until socket closed", async () => {
       const response = await fetch(`http://${getHost()}/json`);
       expect(response.status).toBe(200);
-      expect(response.json()).resolves.toEqual({ "hello": "World" });
+      await expect(response.json()).resolves.toEqual({ "hello": "World" });
     });
 
     it("should disable keep-alive", async () => {
@@ -2481,38 +2481,38 @@ describe("http/1.1 response body length", () => {
       // the 1st http response body + the full 2nd http response as text
       const response = await fetch(`http://${getHost()}/keepalive/bad`);
       expect(response.status).toBe(200);
-      expect(response.text()).resolves.toHaveLength(95);
+      await expect(response.text()).resolves.toHaveLength(95);
     });
   });
 
   it("should support keep-alive", async () => {
     const response = await fetch(`http://${getHost()}/keepalive`);
     expect(response.status).toBe(200);
-    expect(response.text()).resolves.toBe("Hello, World!");
+    await expect(response.text()).resolves.toBe("Hello, World!");
   });
 
   it("should support transfer-encoding: chunked", async () => {
     const response = await fetch(`http://${getHost()}/chunked`);
     expect(response.status).toBe(200);
-    expect(response.text()).resolves.toBe("Hello, World!");
+    await expect(response.text()).resolves.toBe("Hello, World!");
   });
 
   it("should support non-zero content-length", async () => {
     const response = await fetch(`http://${getHost()}/non-empty`);
     expect(response.status).toBe(200);
-    expect(response.text()).resolves.toBe("Hello, World!");
+    await expect(response.text()).resolves.toBe("Hello, World!");
   });
 
   it("should support content-length: 0", async () => {
     const response = await fetch(`http://${getHost()}/empty`);
     expect(response.status).toBe(200);
-    expect(response.arrayBuffer()).resolves.toHaveLength(0);
+    await expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 
   it.todoIf(isBroken)("should ignore body on HEAD", async () => {
     const response = await fetch(`http://${getHost()}/text`, { method: "HEAD" });
     expect(response.status).toBe(200);
-    expect(response.arrayBuffer()).resolves.toHaveLength(0);
+    await expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 });
 describe("fetch Response life cycle", () => {
@@ -2772,7 +2772,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";
@@ -2801,7 +2801,7 @@ describe("fetch should allow duplex", () => {
       },
     });
 
-    expect(async () => {
+    await expect(async () => {
       const response = await fetch(server.url, {
         body: async function* iter() {
           yield "Hello";

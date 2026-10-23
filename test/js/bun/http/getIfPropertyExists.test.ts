@@ -4,7 +4,7 @@ import * as ServerOptions from "./bun-serve-exports-fixture.js";
 
 describe("getIfPropertyExists", () => {
   test("Bun.serve()", async () => {
-    expect(() => Bun.serve(ServerOptions).stop(true)).not.toThrow();
+    await expect(() => Bun.serve(ServerOptions).stop(true)).not.toThrow();
   });
 
   test("new Request()", async () => {

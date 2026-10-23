@@ -11,6 +11,11 @@
 // ErrorInstance with no stack of its own; no-op otherwise. Never throws.
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject*, JSC::EncodedJSValue errorValue, JSC::JSPromise*);
 
+// Gives `errorValue` the stack that `sourceValue` (another ErrorInstance) captured, when its own has no
+// JavaScript frame: an error that native code throws from a promise reaction, on behalf of an earlier
+// call. No-op otherwise. Never throws.
+extern "C" void Bun__takeStackIfNativeOnly(JSC::JSGlobalObject*, JSC::EncodedJSValue errorValue, JSC::EncodedJSValue sourceValue);
+
 namespace Bun {
 
 // C++ convenience wrapper over Bun__attachAsyncStackFromPromise.

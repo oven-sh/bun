@@ -537,6 +537,27 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 | ✅     | `.resolves()` |
 | ✅     | `.rejects()`  |
 
+A matcher after `.resolves` or `.rejects` returns a promise. `await` it, or return it from the test. Otherwise the code after it runs before the assertion does. A test finishes only after the promises of the matchers it called have settled, so an assertion that is not awaited still fails its own test. One that never settles makes the test time out.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("promises", async () => {
+  await expect(Promise.resolve(1)).resolves.toBe(1);
+  await expect(Promise.reject(new Error("no"))).rejects.toThrow("no");
+});
+```
+
+The same goes for `.toThrow()` when the function returns a promise, and for a custom matcher from `expect.extend()` that returns one.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("async function", async () => {
+  await expect(async () => {
+    throw new Error("no");
+  }).toThrow("no");
+});
+```
+
+An asymmetric matcher runs inside a synchronous comparison such as `.toEqual()`, so it cannot wait. `expect.resolvesTo`, `expect.rejectsTo`, and a custom matcher used as `expect.myMatcher()` read a promise that has already settled. A promise that is still pending throws.
+
 ### Mock Function Matchers
 
 | Status | Matcher                       |

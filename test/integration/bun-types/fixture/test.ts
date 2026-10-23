@@ -47,6 +47,42 @@ describe("bun:test", () => {
       expect(fail).toThrow(/bad/i);
       expect(fail).toThrow(Error);
       expect(fail).toThrow(new Error("Bad"));
+      expectType(expect(fail).toThrow()).is<void>();
+      expectType(expect(fail).not.toThrow()).is<void>();
+      expectType(
+        expect(() => {
+          throw new Error("Bad");
+        }).toThrow(),
+      ).is<void>();
+      expectType(expect(() => JSON.parse("{")).toThrow()).is<void>();
+      expectType(expect(() => JSON.parse("{")).not.toThrow()).is<void>();
+      expectType(expect(fail as any).toThrow()).is<void>();
+      expectType(expect(1).toThrow()).is<void>();
+    });
+    test("toThrow() with a function that returns a promise", async () => {
+      async function fail() {
+        throw new Error("Bad");
+      }
+      expectType(expect(fail).toThrow()).is<Promise<void>>();
+      expectType(expect(fail).toThrowError("Bad")).is<Promise<void>>();
+      expectType(expect(fail).toThrowErrorMatchingSnapshot()).is<Promise<void>>();
+      expectType(expect(fail).toThrowErrorMatchingInlineSnapshot()).is<Promise<void>>();
+      expectType(expect(fail).not.toThrow()).is<Promise<void>>();
+      expectType(expect(() => Promise.resolve(1)).toThrow()).is<Promise<void>>();
+      expectType(expect((): void | Promise<void> => {}).toThrow()).is<void | Promise<void>>();
+      expectType(expect(fail).not.toBe(1)).is<void>();
+    });
+    test(".resolves and .rejects return a promise", async () => {
+      expectType(expect(Promise.resolve(1)).resolves.toBe(1)).is<Promise<void>>();
+      expectType(expect(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
+      expectType(expect(Promise.resolve(1)).not.resolves.toBe(2)).is<Promise<void>>();
+      expectType(expect(Promise.reject(1)).rejects.toBe(1)).is<Promise<void>>();
+      expectType(expect(Promise.reject(1)).rejects.toThrow()).is<Promise<void>>();
+      expectType(expect(Promise.resolve("a")).resolves.toMatchInlineSnapshot()).is<Promise<void>>();
+      expectType(expect(Promise.resolve(1)).resolves.pass()).is<Promise<void>>();
+      // @ts-expect-error
+      void expect(Promise.resolve(1)).resolves.toBe("1");
+      void expect(Promise.resolve(1)).resolves.toBe<string>("1");
     });
   });
   test("expect()", () => {

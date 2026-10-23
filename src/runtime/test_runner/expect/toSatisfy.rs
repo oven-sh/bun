@@ -13,7 +13,7 @@ impl Expect {
         predicate: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // Not `matcher_prelude`: toSatisfy bypasses `get_value` (no .resolves/.rejects handling).
+        // Not `matcher_prelude`: the argument is checked before the value is read.
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
@@ -26,12 +26,7 @@ impl Expect {
             return Err(global.throw(format_args!("toSatisfy() argument must be a function")));
         }
 
-        let Some(value) = super::js::captured_value_get_cached(this_value) else {
-            return Err(global.throw(format_args!(
-                "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
-            )));
-        };
-        value.ensure_still_alive();
+        let value = this.get_value(global, this_value, "toSatisfy", "<green>expected<r>")?;
 
         let result = predicate.call(global, JSValue::UNDEFINED, &[value])?;
 

@@ -589,6 +589,10 @@ pub(crate) struct DevServer {
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
+    /// What the reactions of a `setup()` promise of `bundler_options` get: a one-element array with
+    /// the address of this `DevServer`, which `Drop` replaces with undefined. A reaction cannot be
+    /// removed. `plugin_state` is `Pending` while this is set.
+    pub(crate) plugin_setup_context: jsc::StrongOptional,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,

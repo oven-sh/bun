@@ -817,7 +817,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         const dir = `${tmpbase}/fs.test.js/${performance.now()}-1/bun-write/ENOENT`;
         const file = join(dir, "file");
         try {
-          expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
+          await expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
             "no such file or directory",
           );
           expect(fs.existsSync(file)).toBe(false);
@@ -828,7 +828,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
       it("throws when given a file descriptor", async () => {
         const file = Bun.file(123);
-        expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
+        await expect(async () => await Bun.write(file, "contents", { createPath: true })).toThrow(
           "Cannot create a directory for a file descriptor",
         );
       });

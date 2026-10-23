@@ -99,6 +99,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(source_maps, SourceMapStore::empty());
         w!(plugin_state, PluginState::Unknown);
+        w!(plugin_setup_context, jsc::StrongOptional::default());
         w!(bundling_failures, Default::default());
         w!(
             assume_perfect_incremental_bundling,
@@ -529,6 +530,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // after that line.
     dev.scan_initial_routes()?;
 
+    dev.wait_for_plugin_setup(global)?;
+
     debug_assert!(dev.magic == Magic::Valid);
 
     Ok(dev)
@@ -585,6 +588,7 @@ impl Drop for DevServer {
                 ssr_transpiler: _,
                 log: _,
                 plugin_state: _,
+                plugin_setup_context: _,
                 current_bundle: _,
                 next_bundle: _,
                 deferred_request_pool: _,
@@ -596,6 +600,8 @@ impl Drop for DevServer {
                 broadcast_console_log_from_browser_to_server: _,
             } = &*self;
         }
+
+        self.forget_plugin_setup();
 
         // WebSockets should be deinitialized before other parts.
         // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,

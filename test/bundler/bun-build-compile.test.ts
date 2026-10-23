@@ -1272,7 +1272,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         ]);
         expect(stderr).toContain("--bytecode-order requires --compile --bytecode");
         expect(exitCode).not.toBe(0);
-        expect(() =>
+        await expect(() =>
           Bun.build({
             entrypoints: [join(cwd(), "app.js")],
             compile: { outfile: join(cwd(), exe("rejected")), bytecodeOrder: "plain.order" },
@@ -1280,7 +1280,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         ).toThrow("compile.bytecodeOrder requires bytecode: true");
         // An empty path names no file: the API says so, the command line's list just has nothing between two commas.
         for (const bytecodeOrder of ["", ["plain.order", ""]]) {
-          expect(() =>
+          await expect(() =>
             Bun.build({
               entrypoints: [join(cwd(), "app.js")],
               bytecode: true,
@@ -1289,7 +1289,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           ).toThrow("compile.bytecodeOrder must not contain an empty path");
         }
         // The error is about the entry that is not a path, not about the array it is in.
-        expect(() =>
+        await expect(() =>
           Bun.build({
             entrypoints: [join(cwd(), "app.js")],
             bytecode: true,
@@ -1298,7 +1298,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         ).toThrow('The "compile.bytecodeOrder" property must be of type string or array of strings. Received number');
         // `false`, `null` and `[]` are no order file (`haveProfile && path`): the options after it are looked at.
         for (const bytecodeOrder of [false, null, [] as string[]] as const) {
-          expect(() =>
+          await expect(() =>
             Bun.build({
               entrypoints: [join(cwd(), "app.js")],
               bytecode: true,
@@ -2039,7 +2039,7 @@ export function inOther() {
       "index.js": `console.log("test");`,
     });
 
-    expect(() =>
+    await expect(() =>
       Bun.build({
         entrypoints: [join(dir, "index.js")],
         compile: {
@@ -2929,14 +2929,14 @@ describe("Bun.build compile optimize", () => {
     await runExe(outfile);
   });
 
-  test("compile.jitPolicy must be a finite number >= 1", () => {
+  test("compile.jitPolicy must be a finite number >= 1", async () => {
     using dir = tempDir("build-compile-jit-policy", files);
     for (const jitPolicy of [0, 0.5, NaN, Infinity]) {
-      expect(() => Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy } })).toThrow(
+      await expect(() => Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy } })).toThrow(
         RangeError,
       );
     }
-    expect(() =>
+    await expect(() =>
       Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy: "8" as unknown as number } }),
     ).toThrow(TypeError);
   });

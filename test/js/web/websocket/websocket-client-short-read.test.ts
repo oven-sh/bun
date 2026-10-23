@@ -1,4 +1,5 @@
 import { TCPSocketListener } from "bun";
+import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
@@ -455,11 +456,10 @@ describe("aborting while CONNECTING", () => {
 });
 
 describe("data received while a handshake listener spins the event loop", () => {
-  // Call from a listener. Sends `bytes` from the peer, then blocks until `until` settles.
-  // `expect().resolves` is deliberately not awaited. It ticks the event loop until the promise settles.
+  // Call from a listener. Sends `bytes` from the peer, then ticks the event loop until `until` settles.
   function sendAndWaitSynchronously(peer: RawSocket, bytes: string, until: Promise<void>) {
     write(peer, bytes);
-    expect(until).resolves.toBeUndefined();
+    runNestedEventLoopUntilSettled(until);
   }
 
   test("a frame received during a 101's handshake listener is delivered after 'open'", async () => {

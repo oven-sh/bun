@@ -187,7 +187,7 @@ describe("Bun.build", () => {
       "index.ts": nestedSource,
     });
     for (const bytecodeDepth of [-1, 1.5, "abc", Infinity, NaN]) {
-      expect(() =>
+      await expect(() =>
         Bun.build({
           entrypoints: [join(dir, "index.ts")],
           outdir: join(dir, "out"),
@@ -551,25 +551,25 @@ describe("Bun.build", () => {
   });
 
   test("invalid options throws", async () => {
-    expect(() => Bun.build({} as any)).toThrow();
-    expect(() =>
+    await expect(() => Bun.build({} as any)).toThrow();
+    await expect(() =>
       Bun.build({
         entrypoints: [],
       } as any),
     ).toThrow();
-    expect(() =>
+    await expect(() =>
       Bun.build({
         entrypoints: ["hello"],
         format: "invalid",
       } as any),
     ).toThrow();
-    expect(() =>
+    await expect(() =>
       Bun.build({
         entrypoints: ["hello"],
         target: "invalid",
       } as any),
     ).toThrow();
-    expect(() =>
+    await expect(() =>
       Bun.build({
         entrypoints: ["hello"],
         sourcemap: "invalid",
@@ -1246,7 +1246,7 @@ describe("Bun.build", () => {
   });
 
   test.concurrent("module() throws error", async () => {
-    expect(() =>
+    await expect(() =>
       Bun.build({
         entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
         plugins: [

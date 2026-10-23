@@ -91,4 +91,4 @@ async function resolve(value: string | Promise<string>, other: unknown) {
 }
 ```
 
-`await expect(promise).resolves.toBe(1)` and `await expect(promise).rejects.toThrow()` from `bun:test` aren't reported either, even though their declared return type is `void`.
+`await expect(promise).resolves.toBe(1)` and `await expect(promise).rejects.toThrow()` from `bun:test` aren't reported either. They return a promise, and older versions of `bun-types` declare their return type as `void`.

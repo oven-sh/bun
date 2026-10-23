@@ -256,7 +256,7 @@ for (const { body, fn } of bodyTypes) {
         for (const { label, stream, content, skip } of streams) {
           const it = skip ? test.skip : test;
           it(label, async () => {
-            expect(async () => fn(await stream())).not.toThrow();
+            await expect(async () => fn(await stream())).not.toThrow();
             const text = await fn(await stream()).text();
             if (typeof content === "string") {
               expect(text).toBe(content);
@@ -930,7 +930,7 @@ for (const { body, fn } of bodyTypes) {
       ];
       for (const actual of invalidTests) {
         test(actual || "<empty>", async () => {
-          expect(async () => await fn(actual).json()).toThrow(SyntaxError);
+          await expect(async () => await fn(actual).json()).toThrow(SyntaxError);
           // An empty body is rejected before the parser runs, with its own message.
           if (actual !== "") {
             const error: any = await fn(actual)
@@ -942,11 +942,11 @@ for (const { body, fn } of bodyTypes) {
       }
     });
     describe("formData()", () => {
-      test("undefined", () => {
-        expect(async () => await fn().formData()).toThrow(TypeError);
+      test("undefined", async () => {
+        await expect(async () => await fn().formData()).toThrow(TypeError);
       });
-      test("null", () => {
-        expect(async () => await fn(null).formData()).toThrow(TypeError);
+      test("null", async () => {
+        await expect(async () => await fn(null).formData()).toThrow(TypeError);
       });
       const validTests = [
         {
@@ -1095,8 +1095,8 @@ for (const { body, fn } of bodyTypes) {
         },
       ];
       for (const { label, body, headers } of invalidTests) {
-        test(label, () => {
-          expect(async () => await fn(body.join("\r\n"), headers).formData()).toThrow(TypeError);
+        test(label, async () => {
+          await expect(async () => await fn(body.join("\r\n"), headers).formData()).toThrow(TypeError);
         });
       }
     });
@@ -1229,10 +1229,10 @@ for (const { body, fn } of bodyTypes) {
       for (const [property, entries] of Object.entries(tests)) {
         describe(`${property}()`, () => {
           for (const { label, body, bodyUsed } of entries) {
-            test(label || `${body}`, () => {
+            test(label || `${body}`, async () => {
               const result = fn(body);
               expect(result).toHaveProperty("bodyUsed", false);
-              expect(() => result[property]()).not.toThrow();
+              await expect(() => result[property]()).not.toThrow();
               expect(result).toHaveProperty("bodyUsed", bodyUsed);
             });
           }

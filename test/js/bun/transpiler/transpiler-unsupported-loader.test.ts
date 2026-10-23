@@ -12,8 +12,8 @@ describe("Bun.Transpiler rejects non-transpilable loaders", () => {
       expect(() => t.transformSync("let x = 1", loader as any)).toThrow(TypeError);
     });
 
-    test("transform", () => {
-      expect(() => t.transform("let x = 1", loader as any)).toThrow(TypeError);
+    test("transform", async () => {
+      await expect(() => t.transform("let x = 1", loader as any)).toThrow(TypeError);
     });
 
     test("scan", () => {

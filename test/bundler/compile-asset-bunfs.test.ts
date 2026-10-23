@@ -377,7 +377,6 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(await run(String(dir))).toEqual({ stdout: "a\n", stderr: "", code: 0 });
 
       // Both names are stored as U+FFFD.
-      // expect().rejects would wait in a nested event loop tick, which can drop the concurrent tests' pipe events.
       const error = await compile(String(dir), ["--asset", "./b"]).catch(error => error);
       expect(error?.message).toContain("collides");
     },

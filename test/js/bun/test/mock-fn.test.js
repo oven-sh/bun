@@ -742,9 +742,9 @@ describe("mock()", () => {
       expect(fn()).toBeUndefined();
     });
   }
-  test("withImplementation (callback throws)", () => {
+  test("withImplementation (callback throws)", async () => {
     const fn = jest.fn(() => "1");
-    expect(() =>
+    await expect(() =>
       fn.withImplementation(
         () => "2",
         () => {

@@ -25,7 +25,7 @@ it("node.js util.promisify(setTimeout) works", async () => {
   const setTimeout = promisify(globalThis.setTimeout);
   await setTimeout(1);
 
-  expect(async () => {
+  await expect(async () => {
     await setTimeout(1).then(a => {
       throw new Error("TestPassed");
     });
@@ -106,7 +106,7 @@ it("node.js util.promisify(setImmediate) works", async () => {
   const setImmediate = promisify(globalThis.setImmediate);
   await setImmediate();
 
-  expect(async () => {
+  await expect(async () => {
     await setImmediate().then(a => {
       throw new Error("TestPassed");
     });

@@ -302,7 +302,7 @@ it.skipIf(isWindows)("stop(true) between ticks closes every socket when a close 
       bunExe(),
       "-e",
       `
-        import { expect } from "bun:test";
+        import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
         const events = [];
         const { promise: bothOpen, resolve: onBothOpen } = Promise.withResolvers();
         let opened = 0;
@@ -324,7 +324,7 @@ it.skipIf(isWindows)("stop(true) between ticks closes every socket when a close 
                     resolve();
                   }),
                 );
-                expect(timer).resolves.toBeUndefined();
+                runNestedEventLoopUntilSettled(timer);
                 events.push("ticked");
               }
             },

@@ -141,9 +141,9 @@ describe("null byte injection protection", () => {
   });
 
   describe("Shell ($)", () => {
-    test("throws error when interpolated string contains null byte", () => {
+    test("throws error when interpolated string contains null byte", async () => {
       const name = "x.html\0.txt";
-      expect(() => $`echo ${name}`).toThrow(/must be a string without null bytes/);
+      await expect(() => $`echo ${name}`).toThrow(/must be a string without null bytes/);
     });
 
     test("throws error with ERR_INVALID_ARG_VALUE code for shell args with null byte", () => {
@@ -157,14 +157,14 @@ describe("null byte injection protection", () => {
       }
     });
 
-    test("throws error when array element contains null byte", () => {
+    test("throws error when array element contains null byte", async () => {
       const args = ["valid", "x\0y", "also valid"];
-      expect(() => $`echo ${args}`).toThrow(/must be a string without null bytes/);
+      await expect(() => $`echo ${args}`).toThrow(/must be a string without null bytes/);
     });
 
-    test("throws error when object with raw property contains null byte", () => {
+    test("throws error when object with raw property contains null byte", async () => {
       const raw = { raw: "test\0value" };
-      expect(() => $`echo ${raw}`).toThrow(/must be a string without null bytes/);
+      await expect(() => $`echo ${raw}`).toThrow(/must be a string without null bytes/);
     });
 
     test("works normally with valid arguments", async () => {

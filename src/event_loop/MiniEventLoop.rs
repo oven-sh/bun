@@ -64,6 +64,9 @@ type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTask
 
 pub struct MiniEventLoop {
     pub(crate) tasks: Queue,
+    /// Tasks for the next iteration, after the loop has polled: `tick_once` does not poll while
+    /// `tasks` has something to run, so a task that re-posts itself there starves I/O.
+    pub(crate) yield_tasks: Vec<*mut AnyTaskWithExtraContext>,
     pub(crate) concurrent_tasks: ConcurrentTaskQueue,
     // Raw pointer because the loop is C-owned
     // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
@@ -251,6 +254,7 @@ impl MiniEventLoop {
     pub(crate) fn init() -> MiniEventLoop {
         MiniEventLoop {
             tasks: Queue::init(),
+            yield_tasks: Vec::new(),
             concurrent_tasks: ConcurrentTaskQueue::default(),
             loop_: UwsLoop::get(),
             file_polls: None,
@@ -304,7 +308,13 @@ impl MiniEventLoop {
 
     #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
-        if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
+        if !self.yield_tasks.is_empty() {
+            // SAFETY: see `loop_ptr()` invariant.
+            unsafe { (*self.loop_ptr()).tick_without_idle() };
+            self.on_after_event_loop();
+            self.promote_yield_tasks();
+            let _ = self.tick_concurrent_with_count();
+        } else if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
             // SAFETY: see `loop_ptr()` invariant.
             unsafe {
                 (*self.loop_ptr()).inc();
@@ -321,6 +331,7 @@ impl MiniEventLoop {
     }
 
     pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
+        self.promote_yield_tasks();
         loop {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {
@@ -347,6 +358,18 @@ impl MiniEventLoop {
         while !is_done(context) {
             self.tick_once(context);
         }
+    }
+
+    fn promote_yield_tasks(&mut self) {
+        for task in self.yield_tasks.drain(..) {
+            bun_core::handle_oom(self.tasks.write_item(task));
+        }
+    }
+
+    /// See [`MiniEventLoop::yield_tasks`]. `task` as for
+    /// [`enqueue_task_concurrent`](Self::enqueue_task_concurrent). Loop thread only.
+    pub fn enqueue_task_after_yield(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
+        self.yield_tasks.push(task.as_ptr());
     }
 
     /// `task` must outlive the queued work item; ownership of the intrusive

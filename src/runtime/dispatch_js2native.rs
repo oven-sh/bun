@@ -35,6 +35,7 @@ pub(crate) use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testin
 pub(crate) use bun_jsc::bytecode_order_recorder::names_for_testing as jsc_bytecode_order_recorder_names_for_testing;
 pub(crate) use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub(crate) use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
+pub(crate) use bun_jsc::event_loop::run_nested_until_settled as jsc_event_loop_run_nested_until_settled;
 pub(crate) use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
 
 pub(crate) use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;

@@ -1928,6 +1928,8 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   privateSymbol?: string;
   /** The Rust function. Defaults to the property's name in snake_case. */
   rustName?: string;
+  /** A member that is called first, with the receiver and the capability. If it returns `Some`, that is the result and the function is not called. */
+  before?: string;
   /** Overrides the function's `name`. Only for an `@@` key, where it defaults to `[Symbol.x]`. */
   name?: string;
 }
@@ -1965,7 +1967,7 @@ export interface BuiltinField {
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
 export type Field = FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField;
 export type StaticField =
-  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
+  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "before" | "name">
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
@@ -2035,6 +2037,7 @@ export class Method extends Signature {
   readonly hasDefaultRustName: boolean;
   readonly receiver: Receiver;
   readonly passThis: boolean;
+  readonly before: string | undefined;
   readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
@@ -2046,6 +2049,8 @@ export class Method extends Signature {
     refuseReentrancy(name, isStatic, sharedThis, this.capability);
     this.receiver = memberReceiver(isStatic, sharedThis, !!options.mutates);
     this.passThis = !isStatic && !!options.passThis;
+    this.before = options.before === undefined ? undefined : memberRustName(options.before);
+    assert(!(this.before && isStatic), `${name}: a static function has no before`);
     this.invalidThis = options.invalidThis ?? "throw";
     this.privateSymbol = options.privateSymbol;
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);

@@ -1,5 +1,7 @@
 use crate::mal_prelude::*;
 
+use std::borrow::Cow;
+
 use bstr::BStr;
 
 use bun_ast::Log;
@@ -9,7 +11,7 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, UrlAction, url_suffix};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -89,16 +91,13 @@ struct HTMLLoader<'a> {
     added_body_script: bool,
 }
 
-/// `Element::set_attribute` takes `&str`, so non-UTF-8 `name`/`value` bytes
-/// fail the same way an invalid attribute name does.
-fn set_attribute(element: &mut Element<'_, '_>, name: &[u8], value: &[u8]) {
-    let ok = match (core::str::from_utf8(name), core::str::from_utf8(value)) {
-        (Ok(name), Ok(value)) => element.set_attribute(name, value).is_ok(),
-        _ => false,
-    };
-    if !ok {
-        panic!("unexpected error from Element.setAttribute");
-    }
+/// `new_url` with the `?query#fragment` of the URL it replaces; borrowed when there is none.
+fn replace<'a>(new_url: &'a [u8], suffix: &[u8]) -> UrlAction<'a> {
+    UrlAction::Replace(if suffix.is_empty() {
+        Cow::Borrowed(new_url)
+    } else {
+        Cow::Owned([new_url, suffix].concat())
+    })
 }
 
 impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
@@ -113,13 +112,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         ));
     }
 
-    fn on_tag(
-        &mut self,
-        element: &mut Element<'_, '_>,
-        _path: &[u8],
-        url_attribute: &[u8],
-        _kind: ImportKind,
-    ) {
+    fn on_url(&mut self, url: &[u8], _kind: ImportKind) -> UrlAction<'_> {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
                 "Assertion failure in HTMLLoader.onTag: current_import_record_index ({}) >= import_records.len ({})",
@@ -145,6 +138,21 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         } else {
             Loader::File
         };
+        // The resolver found `./sprite.svg` for `./sprite.svg#icon`, so `#icon` goes back on the new URL. In `./C#/logo.png` it is part of the path.
+        let resolved_path = if import_record.source_index.is_valid() {
+            parse_graph.input_files.items_source()[import_record.source_index.get() as usize]
+                .path
+                .text
+        } else {
+            import_record.path.text
+        };
+        let suffix = url_suffix(url);
+        let suffix_is_path = resolved_path.len() >= suffix.len()
+            && resolved_path[resolved_path.len() - suffix.len()..]
+                .iter()
+                .zip(suffix)
+                .all(|(&a, &b)| a == b || (b == b'/' && a == b'\\'));
+        let suffix = if suffix_is_path { b"" } else { suffix };
 
         if import_record
             .flags
@@ -154,21 +162,20 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving external import: {}",
                 BStr::new(import_record.path.text)
             );
-            return;
+            return UrlAction::Keep;
         }
 
         if self.linker.dev_server.is_some() {
-            if !unique_key_for_additional_files.is_empty() {
-                set_attribute(element, url_attribute, unique_key_for_additional_files);
+            return if !unique_key_for_additional_files.is_empty() {
+                replace(unique_key_for_additional_files, suffix)
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()
             {
-                element.remove();
+                UrlAction::RemoveElement
             } else {
-                set_attribute(element, url_attribute, import_record.path.pretty);
-            }
-            return;
+                replace(import_record.path.pretty, suffix)
+            };
         }
 
         if import_record.source_index.is_invalid() {
@@ -176,30 +183,32 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving import with invalid source index: {}",
                 BStr::new(import_record.path.text)
             );
-            return;
+            return UrlAction::Keep;
         }
 
         if loader.is_javascript_like() || loader.is_css() {
             // Remove the original non-external tags
-            element.remove();
-            return;
+            return UrlAction::RemoveElement;
         }
 
-        if self.compile_to_standalone_html && import_record.source_index.is_valid() {
+        if self.compile_to_standalone_html {
             // In standalone HTML mode, inline assets as data: URIs
             let url_for_css =
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
-                set_attribute(element, url_attribute, url_for_css);
-                return;
+                // A `?query` would land inside the base64 body; keep only the fragment.
+                let fragment =
+                    strings::index_of_char_usize(suffix, b'#').map_or(&b""[..], |i| &suffix[i..]);
+                return replace(url_for_css, fragment);
             }
         }
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            set_attribute(element, url_attribute, unique_key_for_additional_files);
-            return;
+            return replace(unique_key_for_additional_files, suffix);
         }
+
+        UrlAction::Keep
     }
 
     fn on_head_tag(&mut self, element: &mut Element<'_, '_>) -> bool {

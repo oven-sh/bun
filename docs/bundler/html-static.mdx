@@ -456,9 +456,11 @@ Bun automatically handles all common web assets:
 
 - **Scripts** (`<script src>`) are run through Bun's JavaScript/TypeScript/JSX bundler
 - **Stylesheets** (`<link rel="stylesheet">`) are run through Bun's CSS parser & bundler
-- **Images** (`<img>`, `<picture>`) are copied and hashed
+- **Images** (`<img>`, `<picture>`) are copied and hashed. Each candidate in a `srcset` is rewritten on its own and keeps its descriptor.
 - **Media** (`<video>`, `<audio>`, `<source>`) are copied and hashed
 - Any `<link>` tag with an `href` attribute pointing to a local file is rewritten to the new path, and hashed
+
+A `?query` or `#fragment` on the URL is kept on the rewritten path, so `<img src="./icons.svg#menu">` becomes `<img src="./icons-a1b2c3.svg#menu">`. URLs with a scheme (`https://...`, `data:...`), protocol-relative URLs (`//cdn.example.com/...`) and same-document references (`#id`) are left as-is.
 
 Bun resolves all paths relative to your HTML file, so you can organize your project however you want.
 

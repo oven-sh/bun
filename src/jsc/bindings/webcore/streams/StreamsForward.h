@@ -106,6 +106,15 @@ enum class WritableStreamState : uint8_t {
 // Algorithm kind tags. SourceKind::Direct deliberately DOES NOT EXIST: a Bun `type:"direct"`
 // stream is a JSDirectStreamController (ControllerKind::Direct), never a spec controller.
 
+// Who consumes the chunks a default reader delivers. Every acquireReadableStreamDefaultReader
+// caller names one. Native: a Bun consumer that never hands a chunk object to script (a Body
+// drain, a tee or text-decode source read, a native sink pump), so a body-clone tee branch
+// delivers its shared chunk as is. Script: the chunk reaches user code, so that branch copies.
+enum class ReaderOwner : uint8_t {
+    Script,
+    Native,
+};
+
 // Which arm runs a readable controller's pull/cancel/start algorithms. No closures are stored.
 enum class SourceKind : uint8_t {
     JavaScript, // new ReadableStream({...}) — user underlyingSource (underlyingObject + methods)

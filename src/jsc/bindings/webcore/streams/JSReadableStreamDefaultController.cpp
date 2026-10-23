@@ -306,10 +306,21 @@ JSValue JSReadableStreamDefaultController::dequeueChunkForRead(JSGlobalObject* g
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     ASSERT(!m_queue.isEmpty());
+    // Read before the close step below clears the algorithm slots.
+    auto* isolatingTee = teeBranchIsolatingChunks(this);
     JSValue chunk;
     {
         WTF::Locker locker { cellLock() };
         chunk = m_queue.dequeueValue(locker);
+    }
+    if (isolatingTee) [[unlikely]] {
+        chunk = isolateTeeBranchChunk(globalObject, isolatingTee, chunk);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!chunk)
+            return {};
+        // The copy runs user code (userJS: yes) that can close or cancel this branch.
+        if (m_stream->m_state != ReadableStreamState::Readable)
+            return chunk;
     }
     if (m_closeRequested && m_queue.isEmpty()) {
         readableStreamDefaultControllerClearAlgorithms(this);
@@ -331,6 +342,13 @@ void JSReadableStreamDefaultController::pullSteps(JSGlobalObject* globalObject, 
     if (!m_queue.isEmpty()) {
         JSValue chunk = dequeueChunkForRead(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
+        if (!chunk) {
+            if (stream->m_state == ReadableStreamState::Closed)
+                RELEASE_AND_RETURN(scope, readRequest->closeSteps(globalObject));
+            ASSERT(stream->m_state == ReadableStreamState::Errored);
+            JSValue storedError = stream->m_storedError.get();
+            RELEASE_AND_RETURN(scope, readRequest->errorSteps(globalObject, storedError ? storedError : jsUndefined()));
+        }
         RELEASE_AND_RETURN(scope, readRequest->chunkSteps(globalObject, chunk));
     }
     readableStreamAddReadRequest(globalObject, stream, readRequest);

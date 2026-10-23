@@ -80,6 +80,10 @@ public:
     // `canceled1` / `canceled2`
     bool m_canceled1 : 1 { false };
     bool m_canceled2 : 1 { false };
+    // Bun's form of the spec's `cloneForBranch2` (body clone passes true, the public tee()
+    // false). Both branch queues hold the one shared chunk; a branch hands a copy to a script
+    // consumer when it dequeues (isolateTeeBranchChunk). Default tee only.
+    bool m_isolateScriptDeliveries : 1 { false };
 
 private:
     JSStreamTeeState(JSC::VM&, JSC::Structure*);

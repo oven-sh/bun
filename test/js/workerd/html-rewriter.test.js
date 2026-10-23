@@ -1,3 +1,4 @@
+import { createSocketPair } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -7,6 +8,7 @@ import {
   gcTick,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -3537,6 +3539,406 @@ describe("GC pressure mid-rewrite", () => {
       stdout: JSON.stringify({ seen: 20, ended: true }),
       stderr: "",
       exitCode: 0,
+    });
+  });
+});
+
+// A document that arrives on a pipe is fed to the rewriter by the pipe reader's event-loop
+// callback, not by script: the content handlers run there, and the end of the pipe finishes
+// the rewrite and settles the body there. That callback owes a microtask checkpoint for the
+// JS it entered. It ran none, so with nothing else alive the process exited with the jobs
+// still queued: `.text()` was fulfilled and its `.then()` never ran.
+//
+// No fixture has a timer or a top-level await: either keeps the loop turning and hides a
+// missing checkpoint. A 'beforeExit' listener hides it too, by running the jobs late, so the
+// fixtures that have one assert that the jobs ran before it.
+describe("a document that arrives on a pipe, with nothing else alive", () => {
+  const text = Buffer.alloc(64, "a").toString();
+  const html = `<b>${text}</b>`;
+  const rewritten = `<b seen="1">${text}</b>`;
+
+  // `seen` reports each <b> on stderr: that is how the test knows a chunk was delivered.
+  const prelude = `
+    const print = value => console.log(JSON.stringify(value));
+    const seen = { element(el) { console.error("chunk"); el.setAttribute("seen", "1"); } };
+    const rewriter = () => new HTMLRewriter().on("b", seen);
+  `;
+
+  // How the end of the document reaches the rewriter. A plain `write(); end()` gives either,
+  // by timing, so each is forced:
+  // - "alone": the pipe is closed only after the fixture reported the last chunk, so the
+  //   end arrives in a callback of its own.
+  // - "with the last chunk": the input is a slice of exactly the document's length, so the
+  //   reader reports the end together with the chunk that completes it.
+  const inputs = {
+    "alone": `new Response(Bun.stdin)`,
+    "with the last chunk": `new Response(Bun.stdin.slice(0, ${html.length}))`,
+  };
+
+  // Reads the fixture's stderr as it comes. `printed(line)` is true once the fixture has
+  // printed `line`, false if its stderr closed first; with no line it reads to the end.
+  function watch(stderr) {
+    const decoder = new TextDecoder();
+    const reader = stderr.getReader();
+    const watched = { text: "", printed };
+    async function printed(line) {
+      while (line === undefined || !watched.text.includes(line + "\n")) {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        watched.text += decoder.decode(value, { stream: true });
+      }
+      return true;
+    }
+    return watched;
+  }
+
+  const parseLines = stdout =>
+    stdout
+      .split("\n")
+      .filter(Boolean)
+      .map(line => JSON.parse(line));
+
+  // Runs `script` with the document on its stdin. The fixture wires its rewriter to
+  // `input()` and prints "wired"; only then is the document written, so it always arrives
+  // from the event loop, after the script has returned to it. Each of `writes` is a chunk
+  // and the line the fixture prints once a handler has seen it: the next chunk (or the end)
+  // is sent only then, so each arrives in a callback of its own.
+  //
+  // `Bun.spawn({ stdin: "pipe" })` hands the child a socket pair. With `kernelPipe`, `cat`
+  // sits in between and the fixture reads a pipe that hangs up with bytes still in it.
+  async function run(script, { input = inputs.alone, writes = [[html, "chunk"]], kernelPipe = false } = {}) {
+    const fixture = `${prelude} const input = () => ${input}; ${script}; console.error("wired");`;
+    await using proc = Bun.spawn({
+      cmd: kernelPipe ? ["sh", "-c", 'cat | "$BUN" -e "$FIXTURE"'] : [bunExe(), "-e", fixture],
+      env: kernelPipe ? { ...bunEnv, BUN: bunExe(), FIXTURE: fixture } : bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = watch(proc.stderr);
+    await stderr.printed("wired");
+    for (const [chunk, seen] of writes) {
+      // A fixture that is gone has closed its end of the pipe. What it printed is compared below.
+      try {
+        proc.stdin.write(chunk);
+        await proc.stdin.flush();
+      } catch {
+        break;
+      }
+      if (seen && !(await stderr.printed(seen))) break;
+    }
+    await proc.stdin.end();
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), stderr.printed(), proc.exited]);
+    return { stdout: parseLines(stdout), stderr: stderr.text, exitCode };
+  }
+
+  const ran = (...stdout) => ({ stdout, stderr: "wired\nchunk\n", exitCode: 0 });
+
+  describe.each(Object.entries(inputs))("the end arrives %s", (_, input) => {
+    it.concurrent("text() runs its reaction", async () => {
+      const script = `rewriter().transform(input()).text().then(text => print({ text }))`;
+      expect(await run(script, { input })).toEqual(ran({ text: rewritten }));
+    });
+
+    it.concurrent("'beforeExit' is emitted once, after the reaction", async () => {
+      const script = `
+        process.on("beforeExit", () => print("beforeExit"));
+        rewriter().transform(input()).text().then(text => print({ text }));
+      `;
+      expect(await run(script, { input })).toEqual(ran({ text: rewritten }, "beforeExit"));
+    });
+
+    // The jobs of the last chunk's handlers run before the end handlers, however the end arrives.
+    it.concurrent("the order is element, its microtask, end", async () => {
+      const script = `
+        const order = [];
+        new HTMLRewriter()
+          .on("b", { element() { console.error("chunk"); order.push("element"); queueMicrotask(() => order.push("element microtask")); } })
+          .onDocument({ end() { order.push("end"); queueMicrotask(() => print(order)); } })
+          .transform(input());
+      `;
+      expect(await run(script, { input })).toEqual(ran(["element", "element microtask", "end"]));
+    });
+  });
+
+  // Everything else that can wait for the output. The end of the pipe settles each.
+  it.concurrent.each([
+    [
+      "bytes()",
+      `rewriter().transform(input()).bytes().then(bytes => print({ text: new TextDecoder().decode(bytes) }))`,
+      { text: rewritten },
+    ],
+    [
+      "arrayBuffer()",
+      `rewriter().transform(input()).arrayBuffer().then(buffer => print({ text: new TextDecoder().decode(buffer) }))`,
+      { text: rewritten },
+    ],
+    [
+      "blob()",
+      `rewriter().transform(input()).blob().then(blob => print({ size: blob.size }))`,
+      { size: rewritten.length },
+    ],
+    ["body.text()", `rewriter().transform(input()).body.text().then(text => print({ text }))`, { text: rewritten }],
+    [
+      "Bun.readableStreamToText(body)",
+      `Bun.readableStreamToText(rewriter().transform(input()).body).then(text => print({ text }))`,
+      { text: rewritten },
+    ],
+    [
+      "new Response(body).text()",
+      `new Response(rewriter().transform(input()).body).text().then(text => print({ text }))`,
+      { text: rewritten },
+    ],
+    [
+      "a second rewriter",
+      `new HTMLRewriter().on("b", { element(el) { el.setAttribute("again", "1"); } })
+         .transform(rewriter().transform(input())).text().then(text => print({ text }))`,
+      { text: rewritten.replace(">", ' again="1">') },
+    ],
+    [
+      "a handler that throws",
+      `new HTMLRewriter().on("b", { element() { console.error("chunk"); throw new Error("boom"); } })
+         .transform(input()).text().then(text => print({ text }), error => print({ rejected: error.message }))`,
+      { rejected: "boom" },
+    ],
+    [
+      "a nextTick queued by a document end handler",
+      `rewriter().onDocument({ end() { process.nextTick(() => print("nextTick")); } }).transform(input())`,
+      "nextTick",
+    ],
+  ])("%s", async (_, script, expected) => {
+    expect(await run(script)).toEqual(ran(expected));
+  });
+
+  // The shape that was reported: the pipe is a child's stdout, and the child is unref'd.
+  // The child copies the fixture's own stdin, so the test still decides when the document arrives.
+  it.concurrent("the pipe is the stdout of an unref'd child", async () => {
+    const script = `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const stdout = child.stdout;
+      child.unref();
+      rewriter().transform(new Response(stdout)).text().then(text => print({ text }));
+    `;
+    expect(await run(script)).toEqual(ran({ text: rewritten }));
+  });
+
+  // A Worker has a run loop of its own, and it ended the same way.
+  it.concurrent("in a Worker, the reaction runs before the Worker closes", async () => {
+    const script = `
+      const source = ${JSON.stringify(prelude)} + ${JSON.stringify(
+        `rewriter().transform(new Response(Bun.stdin)).text().then(text => postMessage({ text })); console.error("wired");`,
+      )};
+      const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "application/javascript" })));
+      worker.onmessage = event => print(event.data);
+      worker.addEventListener("close", () => print("closed"));
+    `;
+    expect(await run(script)).toEqual({
+      stdout: [{ text: rewritten }, "closed"],
+      stderr: expect.stringContaining("chunk\n"),
+      exitCode: 0,
+    });
+  });
+
+  // A chunk that the rewriter answers with backpressure pauses the reader, and a paused
+  // reader does not keep the process alive: the jobs its handlers queued never ran. The
+  // output is locked by a reader that reads nothing, so the second chunk puts it more than
+  // a high-water mark (16 KiB) ahead.
+  it.concurrent("jobs queued by the handlers of a backpressured chunk run", async () => {
+    const script = `
+      let chunks = 0;
+      const ran = [];
+      const job = name => () => { ran.push(name); if (ran.length === 2) print(ran.sort()); };
+      process.on("beforeExit", () => print("beforeExit"));
+      const out = new HTMLRewriter()
+        .on("b", {
+          element() {
+            console.error("chunk " + ++chunks);
+            if (chunks < 2) return;
+            queueMicrotask(job("microtask"));
+            process.nextTick(job("nextTick"));
+          },
+        })
+        .transform(input());
+      globalThis.reader = out.body.getReader();
+    `;
+    const big = "<p>" + Buffer.alloc(32 * 1024, "a").toString() + "</p><b>2</b>";
+    const writes = [
+      ["<b>1</b>", "chunk 1"],
+      [big, "chunk 2"],
+    ];
+    expect(await run(script, { writes })).toEqual({
+      stdout: [["microtask", "nextTick"], "beforeExit"],
+      stderr: "wired\nchunk 1\nchunk 2\n",
+      exitCode: 0,
+    });
+  });
+
+  // The handler waits for the reader of the output to see what was emitted before its
+  // element, so its chunk is answered with backpressure and the reader is paused. What
+  // resumes the rewrite is the reaction of the handler's promise: a job of that callback.
+  const waitsForTheReader = `
+    const decoder = new TextDecoder();
+    let release = null, started = 0;
+    process.on("beforeExit", () => print("beforeExit"));
+    const out = new HTMLRewriter()
+      .on("b", {
+        async element(el) {
+          console.error("handler " + ++started);
+          await new Promise(resolve => (release = resolve));
+          el.setAttribute("seen", "1");
+        },
+      })
+      .transform(input());
+    (async () => {
+      let document = "";
+      for await (const chunk of out.body) {
+        document += decoder.decode(chunk, { stream: true });
+        if (release) { const resolve = release; release = null; resolve(); }
+      }
+      print({ length: document.length, head: document.slice(0, 29), tail: document.slice(-11) });
+    })();
+  `;
+
+  it.concurrent("a handler that waits for the reader of the output", async () => {
+    const chunks = ["<p>intro</p><b>one</b>", "<p>mid</p><b>two</b>", "<p>tail</p>"];
+    const writes = [[chunks[0], "handler 1"], [chunks[1], "handler 2"], [chunks[2]]];
+    expect(await run(waitsForTheReader, { writes })).toEqual({
+      stdout: [
+        { length: chunks.join("").length + 18, head: '<p>intro</p><b seen="1">one</', tail: "<p>tail</p>" },
+        "beforeExit",
+      ],
+      stderr: "wired\nhandler 1\nhandler 2\n",
+      exitCode: 0,
+    });
+  });
+
+  // The same through a kernel pipe that holds more than one read: the writer is gone and
+  // the pipe has hung up by the time a job resumes the reader from inside its own callback.
+  it.skipIf(isWindows).concurrent("a document larger than the pipe, from a writer that has exited", async () => {
+    const paragraph = "<p>" + Buffer.alloc(1000, "a").toString() + "</p>";
+    const elements = 99;
+    const document = Array.from({ length: elements }, (_, i) => `${paragraph}<b>${i}</b>\n`).join("") + "<i>tail</i>";
+    const { stdout, stderr, exitCode } = await run(waitsForTheReader, { writes: [[document]], kernelPipe: true });
+    expect({
+      stdout,
+      handlers: stderr.split("\n").filter(line => line.startsWith("handler ")).length,
+      exitCode,
+    }).toEqual({
+      stdout: [
+        { length: document.length + elements * 9, head: document.slice(0, 29), tail: "<i>tail</i>" },
+        "beforeExit",
+      ],
+      handlers: elements,
+      exitCode: 0,
+    });
+  });
+
+  // A job of the last chunk may cancel the output and drop the rewriter. The end that the
+  // reader owes the sink then has no sink to go to.
+  it.concurrent("a job of the last chunk cancels the output and collects the rewriter", async () => {
+    const script = `
+      let out = new HTMLRewriter()
+        .on("b", {
+          element() {
+            console.error("chunk");
+            queueMicrotask(() => {
+              reader.cancel();
+              reader = out = undefined;
+              Bun.gc(true);
+              print("cancelled");
+            });
+          },
+        })
+        .transform(input());
+      let reader = out.body.getReader();
+    `;
+    expect(await run(script, { input: inputs["with the last chunk"] })).toEqual(ran("cancelled"));
+  });
+
+  // A failed read of the pipe ends the rewrite too. The fixture's stdin is one end of a
+  // socket pair, and it leaves one byte unread at the test's end: closing that end then
+  // fails the fixture's next read with ECONNRESET. Only Linux resets a Unix socket for that.
+  it.skipIf(!isLinux)("a read error rejects the body, and the reaction runs before 'beforeExit'", async () => {
+    const [childEnd, testEnd] = createSocketPair();
+    let testEndOpen = true;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${prelude}
+           require("node:fs").writeSync(0, "x");
+           process.on("beforeExit", () => print("beforeExit"));
+           rewriter().transform(new Response(Bun.stdin)).text()
+             .then(text => print({ text }), error => print({ rejected: error.code }));
+           console.error("wired");`,
+        ],
+        env: bunEnv,
+        stdin: childEnd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      fs.closeSync(childEnd);
+      const stderr = watch(proc.stderr);
+      await stderr.printed("wired");
+      fs.writeSync(testEnd, html);
+      await stderr.printed("chunk");
+      fs.closeSync(testEnd);
+      testEndOpen = false;
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), stderr.printed(), proc.exited]);
+      expect({ stdout: parseLines(stdout), stderr: stderr.text, exitCode }).toEqual(
+        ran({ rejected: "ECONNRESET" }, "beforeExit"),
+      );
+    } finally {
+      if (testEndOpen) fs.closeSync(testEnd);
+    }
+  });
+
+  // The checkpoint belongs to a delivery that the event loop dispatched. A read that the
+  // rewriter's own drain drives delivers on its caller's stack, and a checkpoint there would
+  // run jobs in the middle of the caller's statement. An 'exit' listener is such a caller,
+  // and nothing above it holds the event loop entered.
+  describe("a read driven by script runs no job before it returns", () => {
+    it.concurrent.each([
+      // On Windows the event loop reads a file, and an 'exit' listener does not run the loop.
+      ...(isWindows ? [] : [["a file", `rewriter()`, `Bun.file(process.argv[1])`, "chunk\n"]]),
+      // An empty slice ends without a read, on the caller's stack, on every platform.
+      [
+        "an empty slice of a file",
+        `new HTMLRewriter().onDocument({ end() { console.error("end"); } })`,
+        `Bun.file(process.argv[1]).slice(0, 0)`,
+        "end\n",
+      ],
+    ])("%s", async (_, rewriter, input, delivered) => {
+      using dir = tempDir("html-rewriter-sync-read", { "page.html": html });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${prelude}
+           process.on("exit", () => {
+             let ranInside = false;
+             queueMicrotask(() => { ranInside = true; });
+             ${rewriter}.transform(new Response(${input}));
+             print({ ranInside });
+           });`,
+          join(String(dir), "page.html"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: parseLines(stdout), stderr, exitCode }).toEqual({
+        stdout: [{ ranInside: false }],
+        stderr: delivered,
+        exitCode: 0,
+      });
     });
   });
 });

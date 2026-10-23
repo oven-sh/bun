@@ -1307,8 +1307,65 @@ pub(crate) fn download_stream(
     task_ptr
 }
 
+pub struct S3DownloadStreamWrapper {
+    /// The last callback of the download frees this wrapper, so `feed.task` never dangles.
+    feed: S3DownloadFeed,
+    pub path: Box<[u8]>,
+    pub global: GlobalRef, // JSC_BORROW
+}
+
+impl S3DownloadStreamWrapper {
+    fn new(init: Self) -> *mut Self {
+        bun_core::heap::into_raw(Box::new(init))
+    }
+
+    /// `this` is the heap pointer from `new` (write and dealloc provenance): the terminal
+    /// callback frees the wrapper through it, so no reference derived from it may outlive
+    /// this call.
+    fn callback(
+        chunk: &MutableString,
+        has_more: bool,
+        request_err: Option<Error::S3Error>,
+        this: *mut Self,
+    ) {
+        let _guard = scopeguard::guard(this, move |s| {
+            if !has_more {
+                // SAFETY: `s` is the live allocation from `new`; the HTTP thread does not call
+                // back after the terminal chunk, so this is the only owner left.
+                drop(unsafe { bun_core::heap::take(s) });
+            }
+        });
+        // SAFETY: live until the guard runs, which is after the last use of this borrow.
+        let self_ = unsafe { &*this };
+
+        if let Some(err) = request_err {
+            let Some(bytes) = self_.feed.stream.take() else {
+                return;
+            };
+            bytes.on_data(crate::webcore::streams::StreamResult::Err(
+                crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
+                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
+                    &self_.global,
+                )),
+            ));
+            return;
+        }
+        if has_more {
+            self_.feed.deliver(chunk.list.as_slice());
+            return;
+        }
+        let Some(bytes) = self_.feed.stream.take() else {
+            return;
+        };
+        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
+            // chunk.list is borrowed for the duration of on_data.
+            bun_ptr::RawSlice::new(chunk.list.as_slice()),
+        ));
+    }
+}
+
 /// The stream an S3 download feeds, and the download: chunk delivery and the receive
-/// backpressure. An S3 body has one download. A form body runs one per S3 part.
+/// backpressure. An S3 body has one download. A form body runs one for each S3 part.
 #[derive(Default)]
 pub(crate) struct S3DownloadFeed {
     pub(crate) stream: crate::webcore::byte_stream::ProducerHold,
@@ -1387,11 +1444,11 @@ impl S3DownloadFeed {
 
     /// Nothing reads the rest. Touches no JS cell (safe inside a GC sweep).
     pub(crate) fn cancel(&self) {
-        // The download may still be in progress, but its callback will see no stream and skip
-        // delivery.
+        // The download may still be in progress, but the callback will see no stream and skip
+        // delivery. When the download finishes (has_more == false) the task lets its owner go.
         self.stream.release();
         // Abort the in-flight HTTP request so the HTTP thread delivers a final
-        // callback with `has_more == false`, which frees the task and lets the owner go.
+        // callback with `has_more == false`, which frees the task and its owner.
         // Without this, a server that never sends the terminal chunk would leak both.
         let task = self.task.replace(core::ptr::null_mut());
         if !task.is_null() {
@@ -1412,62 +1469,7 @@ impl S3DownloadFeed {
     }
 }
 
-pub struct S3DownloadStreamWrapper {
-    /// The last callback of the download frees this wrapper, so `feed.task` never dangles.
-    feed: S3DownloadFeed,
-    pub path: Box<[u8]>,
-    pub global: GlobalRef, // JSC_BORROW
-}
-
 impl S3DownloadStreamWrapper {
-    fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
-    /// `this` is the heap pointer from `new` (write and dealloc provenance): the terminal
-    /// callback frees the wrapper through it, so no reference derived from it may outlive
-    /// this call.
-    fn callback(
-        chunk: &MutableString,
-        has_more: bool,
-        request_err: Option<Error::S3Error>,
-        this: *mut Self,
-    ) {
-        let _guard = scopeguard::guard(this, move |s| {
-            if !has_more {
-                // SAFETY: `s` is the live allocation from `new`; the HTTP thread does not call
-                // back after the terminal chunk, so this is the only owner left.
-                drop(unsafe { bun_core::heap::take(s) });
-            }
-        });
-        // SAFETY: live until the guard runs, which is after the last use of this borrow.
-        let self_ = unsafe { &*this };
-
-        if let Some(err) = request_err {
-            let Some(bytes) = self_.feed.stream.take() else {
-                return;
-            };
-            bytes.on_data(crate::webcore::streams::StreamResult::Err(
-                crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
-                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
-                    &self_.global,
-                )),
-            ));
-            return;
-        }
-        if has_more {
-            self_.feed.deliver(chunk.list.as_slice());
-            return;
-        }
-        let Some(bytes) = self_.feed.stream.take() else {
-            return;
-        };
-        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-            // chunk.list is borrowed for the duration of on_data.
-            bun_ptr::RawSlice::new(chunk.list.as_slice()),
-        ));
-    }
-
     pub(crate) fn on_stream_drained(&self) {
         self.feed.on_stream_drained();
     }

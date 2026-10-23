@@ -22,6 +22,9 @@ pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let loc = convert_loc(expr.loc);
     match &expr.data {
         Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
@@ -422,7 +425,9 @@ fn lower_logical(
     let test_block = builder.reserve(BlockKind::Value);
     let test_block_id = test_block.id;
     let place = build_temporary_place(builder, loc);
-    let left_loc = convert_loc(bin.left.loc);
+    let around_left = (builder.parentheses_around(bin.left.loc))
+        .or_else(|| builder.type_cast_around(bin.left.loc));
+    let left_loc = convert_loc(around_left.unwrap_or(bin.left.loc));
     let left_place = build_temporary_place(builder, left_loc);
 
     let consequent_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
@@ -614,6 +619,10 @@ fn lower_sequence(
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
+            if !builder.environment().has_stack() {
+                return Err(crate::lowering::nested_too_deeply().into());
+            }
+
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
                     flatten_comma(builder, &b.left)?;
@@ -668,10 +677,11 @@ fn lower_simple_assignment(
         Data::EImportIdentifier(ident) => {
             lower_simple_assignment_identifier(builder, ident.ref_, &bin.right, bin.left.loc)
         }
+        // Unlike upstream: JS evaluates the target's object and key before the right-hand side.
         Data::EDot(d) => {
-            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let left_loc = convert_loc(bin.left.loc);
             let object = lower_expression_to_temporary(builder, &d.target)?;
+            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let temp = lower_value_to_temporary(
                 builder,
                 InstructionValue::PropertyStore {
@@ -687,10 +697,10 @@ fn lower_simple_assignment(
             })
         }
         Data::EIndex(i) => {
-            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let left_loc = convert_loc(bin.left.loc);
             let object = lower_expression_to_temporary(builder, &i.target)?;
             let temp = if let Data::ENumber(num) = &i.index.data {
+                let right = lower_expression_to_temporary(builder, &bin.right)?;
                 lower_value_to_temporary(
                     builder,
                     InstructionValue::PropertyStore {
@@ -702,6 +712,7 @@ fn lower_simple_assignment(
                 )?
             } else {
                 let prop = lower_expression_to_temporary(builder, &i.index)?;
+                let right = lower_expression_to_temporary(builder, &bin.right)?;
                 lower_value_to_temporary(
                     builder,
                     InstructionValue::ComputedStore {
@@ -930,33 +941,40 @@ fn lower_compound_assignment_identifier(
                 effect: Effect::Unknown,
                 loc: ident_loc,
             };
+            // Unlike upstream: the value is the store itself, as for `x = y`, so it prints in place.
             if builder.is_context_identifier(ref_) {
-                lower_value_to_temporary(
+                let temp = lower_value_to_temporary(
                     builder,
                     InstructionValue::StoreContext {
                         lvalue: LValue {
                             kind: InstructionKind::Reassign,
-                            place: place.clone(),
+                            place,
                         },
                         value: binary_place,
                         loc,
                     },
                 )?;
-                Ok(InstructionValue::LoadContext { place, loc })
+                Ok(InstructionValue::LoadLocal {
+                    loc: temp.loc,
+                    place: temp,
+                })
             } else {
-                lower_value_to_temporary(
+                let temp = lower_value_to_temporary(
                     builder,
                     InstructionValue::StoreLocal {
                         lvalue: LValue {
                             kind: InstructionKind::Reassign,
-                            place: place.clone(),
+                            place,
                         },
                         value: binary_place,
                         type_annotation: None,
                         loc,
                     },
                 )?;
-                Ok(InstructionValue::LoadLocal { place, loc })
+                Ok(InstructionValue::LoadLocal {
+                    loc: temp.loc,
+                    place: temp,
+                })
             }
         }
         _ => {
@@ -1335,6 +1353,9 @@ fn is_reorderable_expression(
     expr: &Expr,
     allow_local_identifiers: bool,
 ) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &expr.data {
         Data::EIdentifier(ident) => {
             if is_module_level_or_global(builder, ident.ref_) {
@@ -1405,6 +1426,11 @@ fn is_reorderable_expression(
             }
             stmts.is_empty()
         }
+        Data::ECall(call)
+            if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>
+        {
+            false
+        }
         Data::ECall(call) if call.optional_chain.is_none() => {
             is_reorderable_expression(builder, &call.target, allow_local_identifiers)
                 && call
@@ -1466,17 +1492,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    if let Some(member) = builder
-        .host()
-        .module_scope()
-        .members
-        .get(sym.original_name.slice())
-    {
-        if member.ref_ == ref_ {
-            return true;
-        }
-    }
-    false
+    builder.host().is_module_level(ref_)
 }
 
 // =============================================================================

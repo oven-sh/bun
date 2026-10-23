@@ -1,0 +1,79 @@
+------------------
+{ printWidth: 80 }
+------------------
+export type A = 1;
+
+// comment
+a;
+export import B = C;
+
+/* comment */
+b;
+export declare function c(): void;
+// comment
+d;
+namespace E {
+  export type F = 1;
+
+  // comment
+  e;
+}
+type G = 1;
+// comment
+
+f;
+import H = I;
+// comment
+
+g;
+export type J = 1;
+
+// comment
+h;
+export type K = 1;
+
+// prettier-ignore
+i;
+export type L = 1;
+// comment
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export type A = 1;
+
+// comment
+a;
+export import B = C;
+
+/* comment */
+b;
+export declare function c(): void;
+// comment
+d;
+namespace E {
+  export type F = 1;
+
+  // comment
+  e;
+}
+type G = 1;
+// comment
+
+f;
+import H = I;
+// comment
+
+g;
+export type J = 1;
+
+// comment
+h;
+export type K = 1;
+
+// prettier-ignore
+i;
+export type L = 1;
+// comment
+
+===================== End =====================

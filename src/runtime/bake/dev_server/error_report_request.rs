@@ -500,8 +500,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 }
 
 /// `DevServer.readString32` — local zero-copy variant over the body slice
-/// reader (the canonical allocating version lives in the gated `DevServer.rs`
-/// draft and is not yet re-exported from `super`).
+/// reader.
 #[inline]
 fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> crate::Result<&'a [u8]> {
     let len = r.read_int_le::<u32>()? as usize;

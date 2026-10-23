@@ -65,7 +65,7 @@ fn argv_contains(target: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Version {
+pub(crate) struct Version {
     pub(crate) zip_url: Box<[u8]>,
     pub(crate) tag: Box<[u8]>,
     pub(crate) size: u32,
@@ -73,7 +73,7 @@ pub struct Version {
 }
 
 impl Version {
-    pub fn name(&self) -> Option<Vec<u8>> {
+    pub(crate) fn name(&self) -> Option<Vec<u8>> {
         if self.tag.len() <= b"bun-v".len() || !self.tag.starts_with(b"bun-v") {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;
@@ -265,6 +265,7 @@ impl UpgradeCommand {
             headers_buf,
             b"",
             http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -656,6 +657,7 @@ impl UpgradeCommand {
                 b"",
                 b"",
                 http_proxy,
+                HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the
@@ -820,7 +822,7 @@ impl UpgradeCommand {
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
+                        filesystem.top_level_dir(),
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);
@@ -844,8 +846,6 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     }) {
                         Ok(Ok(r)) => r,
@@ -947,7 +947,6 @@ impl UpgradeCommand {
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
                         windows: spawn_windows_options(),
                         ..Default::default()
                     });
@@ -1079,7 +1078,6 @@ impl UpgradeCommand {
             // Keep the `&ZStr` form for Windows `sys::rename` (needs
             // a NUL-terminated path); `destination_executable` (bytes view) is
             // used everywhere else.
-            #[cfg_attr(not(windows), allow(unused_variables))]
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();

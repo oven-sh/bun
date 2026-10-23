@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -19,9 +19,10 @@ const files = {
   "partial.txt": "0123456789ABCDEF",
   "bytes256.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
 };
+const ifRangeValidators = { "ETag": '"v1"', "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT" };
 
 describe("Bun.file in serve routes", () => {
-  let server: Server;
+  let server: Server<undefined>;
   let tempDir: string;
   let handler = mock(req => {
     return new Response(`fallback: ${req.url}`, {
@@ -104,6 +105,18 @@ describe("Bun.file in serve routes", () => {
         new Response(Bun.file(join(tempDir, "partial.txt")), {
           headers: { "Cache-Control": "max-age=3600", "X-Custom": "abc" },
         }),
+      // If-Range tests: the same validators on a file route and on a handler response.
+      "/if-range-route": new Response(Bun.file(join(tempDir, "partial.txt")), { headers: ifRangeValidators }),
+      "/if-range-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")), { headers: ifRangeValidators }),
+      // Responds after the request callback returned, when the server no longer has the request's header buffer.
+      "/if-range-async-handler": async () => {
+        const file = Bun.file(join(tempDir, "partial.txt"));
+        await file.exists();
+        return new Response(file, { headers: ifRangeValidators });
+      },
+      "/if-range-weak-route": new Response(Bun.file(join(tempDir, "partial.txt")), { headers: { ETag: 'W/"v1"' } }),
+      "/if-range-weak-handler": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")), { headers: { ETag: 'W/"v1"' } }),
     } as const;
 
     server = Bun.serve({
@@ -943,6 +956,109 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
+  // RFC 9110 §13.1.5: If-Range carries the validator of the partial copy the
+  // client already has. Only a match may get a 206. Anything else means that
+  // copy is of another version, so the server ignores Range and sends the
+  // full 200 body.
+  describe.concurrent.each([
+    ["FileRoute", "/if-range-route", "/if-range-weak-route"],
+    ["fetch handler", "/if-range-handler", "/if-range-weak-handler"],
+    ["async fetch handler", "/if-range-async-handler", "/if-range-weak-handler"],
+  ])("If-Range via %s", (_label, path, weakPath) => {
+    const partial = { status: 206, contentRange: "bytes 4-7/16", body: "4567" };
+    const full = { status: 200, contentRange: null, body: files["partial.txt"] };
+
+    async function get(path: string, headers: Record<string, string>) {
+      const res = await fetch(new URL(path, server.url), { headers });
+      return { status: res.status, contentRange: res.headers.get("content-range"), body: await res.text() };
+    }
+
+    it.each([
+      ["the ETag", '"v1"', partial],
+      ["another ETag", '"v2"', full],
+      ["the ETag as a weak tag", 'W/"v1"', full],
+      ["the Last-Modified date", "Wed, 21 Oct 2015 07:28:00 GMT", partial],
+      ["the Last-Modified date in the rfc850 form", "Wednesday, 21-Oct-15 07:28:00 GMT", partial],
+      ["a date after Last-Modified", "Wed, 21 Oct 2015 07:28:01 GMT", full],
+      ["a date before Last-Modified", "Wed, 21 Oct 2015 07:27:59 GMT", full],
+      // No zone: the parse would depend on the server's time zone, so it never matches.
+      ["the Last-Modified date in the asctime form", "Wed Oct 21 07:28:00 2015", full],
+      ["the Last-Modified date with no zone", "Wed, 21 Oct 2015 07:28:00", full],
+      ["neither an entity-tag nor a date", "v1", full],
+    ])("If-Range is %s", async (_name, ifRange, expected) => {
+      expect(await get(path, { "Range": "bytes=4-7", "If-Range": ifRange })).toEqual(expected);
+    });
+
+    it("a weak ETag on the response never matches", async () => {
+      expect(await get(weakPath, { "Range": "bytes=4-7", "If-Range": 'W/"v1"' })).toEqual(full);
+      expect(await get(weakPath, { "Range": "bytes=4-7", "If-Range": '"v1"' })).toEqual(full);
+    });
+
+    it("a failed If-Range also turns off 416", async () => {
+      expect(await get(path, { "Range": "bytes=100-200", "If-Range": '"v2"' })).toEqual(full);
+      expect(await get(path, { "Range": "bytes=100-200", "If-Range": '"v1"' })).toEqual({
+        status: 416,
+        contentRange: "bytes */16",
+        body: "",
+      });
+    });
+
+    it("If-Range without Range changes nothing", async () => {
+      expect(await get(path, { "If-Range": '"v2"' })).toEqual(full);
+    });
+  });
+
+  describe.concurrent("If-Range edge cases", () => {
+    it("HEAD on a FileRoute mirrors GET", async () => {
+      const head = async (ifRange: string) => {
+        const res = await fetch(new URL("/if-range-route", server.url), {
+          method: "HEAD",
+          headers: { "Range": "bytes=4-7", "If-Range": ifRange },
+        });
+        return {
+          status: res.status,
+          contentRange: res.headers.get("content-range"),
+          contentLength: res.headers.get("content-length"),
+        };
+      };
+      expect(await head('"v1"')).toEqual({ status: 206, contentRange: "bytes 4-7/16", contentLength: "4" });
+      expect(await head('"v2"')).toEqual({ status: 200, contentRange: null, contentLength: "16" });
+    });
+
+    it("FileRoute compares a date with the Last-Modified it sends", async () => {
+      const url = new URL("/partial.txt", server.url);
+      const lastModified = (await fetch(url)).headers.get("last-modified")!;
+      expect(lastModified).not.toBeEmpty();
+
+      const same = await fetch(url, { headers: { "Range": "bytes=4-7", "If-Range": lastModified } });
+      expect(same.status).toBe(206);
+      expect(await same.text()).toBe("4567");
+
+      const earlier = new Date(Date.parse(lastModified) - 1000).toUTCString();
+      const stale = await fetch(url, { headers: { "Range": "bytes=4-7", "If-Range": earlier } });
+      expect(stale.status).toBe(200);
+      expect(await stale.text()).toBe(files["partial.txt"]);
+    });
+
+    it.each([
+      ["FileRoute", "/partial.txt"],
+      ["fetch handler", "/range-handler"],
+    ])("an entity-tag cannot match a %s response with no ETag", async (_label, path) => {
+      const res = await fetch(new URL(path, server.url), { headers: { "Range": "bytes=4-7", "If-Range": '"v1"' } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBeNull();
+      expect(await res.text()).toBe(files["partial.txt"]);
+    });
+
+    it("a date cannot match a fetch handler response with no Last-Modified", async () => {
+      const res = await fetch(new URL("/range-handler", server.url), {
+        headers: { "Range": "bytes=4-7", "If-Range": "Wed, 21 Oct 2015 07:28:00 GMT" },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(files["partial.txt"]);
+    });
+  });
+
   describe.concurrent("Range with custom headers (fetch handler)", () => {
     it("416 preserves user headers", async () => {
       const res = await fetch(new URL("/range-custom-headers", server.url), { headers: { Range: "bytes=100-200" } });
@@ -996,6 +1112,40 @@ describe("Bun.file in serve routes", () => {
       expect(res.headers.get("content-range")).not.toContain("/256");
     });
   });
+});
+
+// What If-Range is for: the client has part of a file, and the file changes on
+// disk before the client asks for the rest. A 206 here would splice the old
+// first half onto the new second half.
+test.concurrent("a download resumed with If-Range after the file changed gets the new file in full", async () => {
+  using dir = tempDir("serve-if-range-resume", { "asset.bin": Buffer.alloc(400, "A") });
+  const assetPath = join(String(dir), "asset.bin");
+  utimesSync(assetPath, new Date("2020-01-02T03:04:05Z"), new Date("2020-01-02T03:04:05Z"));
+
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/asset.bin": new Response(Bun.file(assetPath)) },
+  });
+  const url = new URL("/asset.bin", server.url);
+
+  const first = await fetch(url, { headers: { "Range": "bytes=0-199" } });
+  const validator = first.headers.get("last-modified")!;
+  expect(validator).toBe("Thu, 02 Jan 2020 03:04:05 GMT");
+  expect(await first.text()).toBe(Buffer.alloc(200, "A").toString());
+
+  const unchanged = await fetch(url, { headers: { "Range": "bytes=200-", "If-Range": validator } });
+  expect(unchanged.status).toBe(206);
+  expect(await unchanged.text()).toBe(Buffer.alloc(200, "A").toString());
+
+  writeFileSync(assetPath, Buffer.alloc(400, "B"));
+  utimesSync(assetPath, new Date("2021-06-07T08:09:10Z"), new Date("2021-06-07T08:09:10Z"));
+
+  const resumed = await fetch(url, { headers: { "Range": "bytes=200-", "If-Range": validator } });
+  expect({
+    status: resumed.status,
+    contentRange: resumed.headers.get("content-range"),
+    body: await resumed.text(),
+  }).toEqual({ status: 200, contentRange: null, body: Buffer.alloc(400, "B").toString() });
 });
 
 // A body write that returns backpressure must pause the reader until the
@@ -1177,7 +1327,7 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
     let wire = "";
     const client = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         open(s) {
           s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
@@ -1264,7 +1414,7 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     let captured = "";
     await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         open(socket) {
           socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
@@ -1302,6 +1452,24 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     "slice(100)": { blob: exactly(""), stream: exactly("") },
     "whole file": { blob: exactly("0123456789ABCDEF"), stream: exactly("0123456789ABCDEF") },
   });
+});
+
+// kqueue doesn't wake a FIFO reader when an empty pipe's last writer closes.
+test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arrives after the data", async () => {
+  using dir = tempDir("serve-fifo-eof", {});
+  const fifo = join(String(dir), "body.fifo");
+  mkfifo(fifo);
+  // Open for read and write so that neither the open nor the write blocks until the server opens the FIFO.
+  const writer = openSync(fifo, "r+");
+  writeSync(writer, "hello");
+  await using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(fifo)) });
+
+  const response = await fetch(server.url);
+  const reader = response.body!.getReader();
+  const first = await reader.read();
+  closeSync(writer);
+  const last = await reader.read();
+  expect({ first: Buffer.from(first.value!).toString(), done: last.done }).toEqual({ first: "hello", done: true });
 });
 
 // A request that declares a body arms the request-body (onData) callback on
@@ -1755,3 +1923,147 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   expect(body.length).toBe(data.length);
   expect(body.compare(data)).toBe(0);
 });
+
+// Sends a request, waits for the response head and then resets the connection.
+async function abortAfterResponseHead(port: number) {
+  const { promise: sawBytes, resolve } = Promise.withResolvers<void>();
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: {
+      open(s) {
+        s.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      },
+      data: () => resolve(),
+      close: () => resolve(),
+      error: () => resolve(),
+    },
+  });
+  await sawBytes;
+  client.terminate();
+}
+
+test.skipIf(isWindows)("aborted Response(Bun.file(FIFO)) without a writer closes its fd", async () => {
+  using dir = tempDir("serve-fifo-abort-leak", {});
+  const fifoPath = join(String(dir), "unwritten.fifo");
+  mkfifo(fifoPath);
+
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response(Bun.file(fifoPath)),
+  });
+
+  const countFds = () => readdirSync(isLinux ? "/proc/self/fd" : "/dev/fd").length;
+  const baseline = countFds();
+  for (let i = 0; i < 16; i++) await abortAfterResponseHead(server.port);
+
+  const deadline = Date.now() + 5000;
+  while (countFds() > baseline + 4 && Date.now() < deadline) await Bun.sleep(10);
+  expect(countFds()).toBeLessThanOrEqual(baseline + 4);
+});
+
+test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Response(Bun.file(fd))", async () => {
+  using dir = tempDir("serve-fifo-fd-abort", {});
+  const fifoPath = join(String(dir), "fd.fifo");
+  mkfifo(fifoPath);
+  const fd = openSync(fifoPath, constants.O_RDONLY | constants.O_NONBLOCK);
+  // Without a writer, macOS reads EOF and the first response ends before the abort.
+  const writer = openSync(fifoPath, "w");
+  try {
+    const aborted = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        return new Response(Bun.file(fd));
+      },
+    });
+    await abortAfterResponseHead(server.port);
+    await aborted.promise;
+
+    writeSync(writer, "hello");
+    closeSync(writer);
+    expect(await fetch(server.url).then(res => res.text())).toBe("hello");
+  } finally {
+    closeSync(fd);
+  }
+});
+
+test.concurrent.skipIf(isWindows)(
+  "a handler that answers with Bun.file(FIFO) while its request body fails on maxRequestBodySize",
+  async () => {
+    using dir = tempDir("serve-fifo-body-limit", {
+      "fixture.ts": `
+import { closeSync, constants, openSync, writeSync } from "node:fs";
+const fifo = process.argv[2];
+// A writer that stays open, so the read end waits for bytes and sees no end.
+const writer = openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+const answer = Promise.withResolvers<void>();
+const bodyOfX = Promise.withResolvers<ReadableStream>();
+const attached = Promise.withResolvers<void>();
+using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  development: false,
+  maxRequestBodySize: 32,
+  error() {
+    answer.resolve();
+    return new Response("err", { status: 500 });
+  },
+  async fetch(req) {
+    if (req.method === "GET") return new Response("ok");
+    if (new URL(req.url).pathname === "/x") {
+      bodyOfX.resolve(req.body!);
+      await answer.promise;
+      return new Response(Bun.file(fifo));
+    }
+    const other = await bodyOfX.promise;
+    // One turn of the event loop later the server has taken the response of /y.
+    setImmediate(attached.resolve);
+    return new HTMLRewriter().on("p", { element() {} }).transform(new Response(other));
+  },
+});
+function post(path: string) {
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  const status = fetch(server.url.origin + path, {
+    method: "POST",
+    body: new ReadableStream<Uint8Array>({ start: c => void (body = c) }),
+  }).then(
+    res => res.status,
+    e => e.code,
+  );
+  return { status, overflow: () => body.enqueue(new Uint8Array(48)) };
+}
+const y = post("/y");
+const x = post("/x");
+await attached.promise;
+x.overflow();
+await x.status;
+const status = await y.status;
+// The FIFO becomes readable after the connection of /x is gone.
+for (let i = 0; i < 10; i++) await fetch(server.url).then(res => res.text());
+writeSync(writer, Buffer.alloc(4096, "z"));
+const later = await fetch(server.url).then(res => res.text());
+closeSync(writer);
+console.log(JSON.stringify({ status, later, pendingRequests: server.pendingRequests }));
+`,
+    });
+    const fifoPath = join(String(dir), "body.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ status: 500, later: "ok", pendingRequests: 0 });
+    expect(exitCode).toBe(0);
+  },
+);

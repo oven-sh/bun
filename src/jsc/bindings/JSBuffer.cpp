@@ -115,6 +115,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
 JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
 JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
 JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_of);
 
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_compare);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_copy);
@@ -2731,6 +2732,25 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom, (JSGlobalObj
     return jsBufferConstructorFunction_copyBytesFromBody(lexicalGlobalObject, callFrame);
 }
 
+// Node's `of` is an arrow function, so it never reads `this`: https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L420-L427
+JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_of, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    size_t length = callFrame->argumentCount();
+    // JS cannot reach the buffer before the return, so the loop writes every byte or a throw drops the buffer.
+    auto* buffer = createUninitializedBuffer(lexicalGlobalObject, length);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    for (size_t i = 0; i < length; i++) {
+        buffer->setIndex(lexicalGlobalObject, i, callFrame->uncheckedArgument(i));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(buffer);
+}
+
 static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetVal, size_t byteLength, bool viewHasLength = true)
 {
     // Node's checkBounds/boundsError validates the offset's type and
@@ -3775,6 +3795,7 @@ const ClassInfo JSBufferPrototype::s_info = {
     from            JSBuiltin                                      Builtin|Function 1
     isBuffer        JSBuiltin                                      Builtin|Function 1
     isEncoding      jsBufferConstructorFunction_isEncoding         Function 1
+    of              jsBufferConstructorFunction_of                 Function 0
 @end
 */
 #include "JSBuffer.lut.h"

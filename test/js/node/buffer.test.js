@@ -5030,6 +5030,153 @@ describe("Buffer.copyBytesFrom", () => {
   });
 });
 
+// Node has its own Buffer.of that never reads `this`. The expected values are those of Node v26.3.0.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L420-L427
+describe("Buffer.of", () => {
+  const summarize = buffer => ({
+    isBuffer: Buffer.isBuffer(buffer),
+    prototype: Object.getPrototypeOf(buffer) === Buffer.prototype,
+    bytes: [...buffer],
+    byteOffset: buffer.byteOffset,
+    arrayBufferByteLength: buffer.buffer.byteLength,
+  });
+  // A Buffer of this realm that does not share its ArrayBuffer.
+  const plainBuffer = bytes => ({
+    isBuffer: true,
+    prototype: true,
+    bytes,
+    byteOffset: 0,
+    arrayBufferByteLength: bytes.length,
+  });
+
+  it("is an own method of Buffer, not %TypedArray%.of", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Buffer, "of");
+    expect(descriptor).toEqual({ value: expect.any(Function), writable: true, enumerable: true, configurable: true });
+    expect(descriptor.value).not.toBe(Uint8Array.of);
+    expect(Object.keys(Buffer)).toContain("of");
+    expect({
+      length: Buffer.of.length,
+      name: Buffer.of.name,
+      ownPrototype: Object.hasOwn(Buffer.of, "prototype"),
+    }).toEqual({ length: 0, name: "of", ownPrototype: false });
+    expect(() => new Buffer.of(1)).toThrow(TypeError);
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["Uint8Array", Uint8Array],
+    ["Float64Array", Float64Array],
+    ["Array", Array],
+    ["a function that is not a constructor", () => {}],
+  ])("returns a Buffer when `this` is %s", (_, receiver) => {
+    expect(summarize(Buffer.of.call(receiver, 1.5, 258))).toEqual(plainBuffer([1, 2]));
+  });
+
+  it("works as a detached function and as a callback", async () => {
+    const { of } = Buffer;
+    expect(summarize(of(1, 2))).toEqual(plainBuffer([1, 2]));
+    expect(summarize(Reflect.apply(Buffer.of, undefined, [1, 2, 3]))).toEqual(plainBuffer([1, 2, 3]));
+    // Array.prototype.map calls it with (value, index, array).
+    expect([65, 66].map(Buffer.of).map(summarize)).toEqual([plainBuffer([65, 0, 0]), plainBuffer([66, 1, 0])]);
+    expect(summarize(await Promise.resolve(65).then(Buffer.of))).toEqual(plainBuffer([65]));
+    expect(summarize(vm.runInNewContext("const f = B.of; f(3, 4)", { B: Buffer }))).toEqual(plainBuffer([3, 4]));
+  });
+
+  it("works on a plain object that copies the statics of Buffer, as safer-buffer does", () => {
+    const copy = {};
+    for (const key in Buffer) {
+      if (Object.hasOwn(Buffer, key)) copy[key] = Buffer[key];
+    }
+    expect(summarize(copy.of(1, 2))).toEqual(plainBuffer([1, 2]));
+  });
+
+  it("does not construct through a subclass or a Proxy", () => {
+    let constructed = 0;
+    class Sub extends Buffer {
+      constructor(...args) {
+        constructed++;
+        super(...args);
+      }
+    }
+    const proxy = new Proxy(Buffer, {
+      construct(target, args, newTarget) {
+        constructed++;
+        return Reflect.construct(target, args, newTarget);
+      },
+    });
+    expect(Sub.of).toBe(Buffer.of);
+    expect(summarize(Sub.of(1, 2))).toEqual(plainBuffer([1, 2]));
+    expect(summarize(proxy.of(3, 4))).toEqual(plainBuffer([3, 4]));
+    expect(constructed).toBe(0);
+  });
+
+  it("converts each argument to a byte, in order", () => {
+    const log = [];
+    const object = (name, value) => ({
+      valueOf() {
+        log.push(name);
+        return value;
+      },
+    });
+    const reentrant = {
+      valueOf() {
+        log.push("reentrant");
+        return Buffer.of(9, 8, 7)[1];
+      },
+    };
+    const [first, last] = [object("a", 1), object("b", 7)];
+    const args = [first, "3", 300, -1, 1.9, NaN, Infinity, undefined, null, true, "0x10", reentrant, last];
+    expect(summarize(Buffer.of(...args))).toEqual(plainBuffer([1, 3, 44, 255, 1, 0, 0, 0, 0, 1, 16, 8, 7]));
+    expect(log).toEqual(["a", "reentrant", "b"]);
+  });
+
+  it("stops at the first argument that throws", () => {
+    const log = [];
+    const error = new RangeError("boom");
+    const object = (name, fn) => ({
+      valueOf() {
+        log.push(name);
+        return fn();
+      },
+    });
+    const fail = () => {
+      throw error;
+    };
+    const args = [object("a", () => 1), object("b", fail), object("c", () => 3)];
+    let thrown;
+    try {
+      Buffer.of(...args);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBe(error);
+    expect(log).toEqual(["a", "b"]);
+    expect(() => Buffer.of(1, Symbol("s"))).toThrow(TypeError);
+    expect(() => Buffer.of(1, 2n)).toThrow(TypeError);
+  });
+
+  // A typed array of up to 1000 bytes keeps its bytes in the GC heap. A longer one allocates them apart.
+  it.each([0, 1, 1000, 1001, 5000])("takes %d arguments", length => {
+    const bytes = Array.from({ length }, (_, i) => (i * 7) & 255);
+    expect(summarize(Buffer.of(...bytes))).toEqual(plainBuffer(bytes));
+  });
+
+  it.each([3, 2000])("keeps the new Buffer of %d bytes alive when valueOf() collects garbage", length => {
+    const bytes = Array.from({ length }, (_, i) => (i * 7) & 255);
+    const collect = {
+      valueOf() {
+        Bun.gc(true);
+        return 99;
+      },
+    };
+    const args = bytes.with(length - 2, collect);
+    for (let i = 0; i < 5; i++) {
+      expect(summarize(Buffer.of(...args))).toEqual(plainBuffer(bytes.with(length - 2, 99)));
+    }
+  });
+});
+
 describe("Buffer.prototype.toString binary-to-text encodings", () => {
   // Reference implementations (scalar, independent of Bun's native encoders) so
   // the SIMD/bulk paths for hex and base64 are checked byte-for-byte, including

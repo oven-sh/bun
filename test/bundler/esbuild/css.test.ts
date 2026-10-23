@@ -2554,8 +2554,8 @@ c {
       },
       out: '@layer first;@import "https://example.com/e.css";@import "https://example.com/f.css";@layer first;@unknown x;@import "https://example.com/e.css";.a{c:d}',
     },
+    // An "@import" that closes a cycle is not loaded, but it still declares its layer.
     CyclicLayeredImportAheadOfAStatement: {
-      todo: 'the "@import" that closes the cycle is not loaded, and its layer "w" is not declared, as in esbuild',
       files: {
         "/entry.css": `@import "./f2.css";`,
         "/f2.css": /* css */ `
@@ -2570,6 +2570,19 @@ c {
         "/f4.css": `.t { color: red }`,
       },
       out: "@layer w;@layer b;@layer w{.t{color:red}}@layer b{.t{color:#00f}}",
+    },
+    CyclicLayeredImport: {
+      todo: 'no file has a statement ahead of an "@import", so the layer "w" is not declared, as on main and in esbuild',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer(w);
+          @import "./b.css" layer(b);
+          @import "./c.css" layer(w);
+        `,
+        "/b.css": `.t { color: blue }`,
+        "/c.css": `.t { color: red }`,
+      },
+      out: "@layer w;@layer b{.t{color:#00f}}@layer w{.t{color:red}}",
     },
     EmptyLayerBlock: {
       todo: "the minifier removes the empty block of g.css and its layer with it (#38480 keeps it)",
@@ -2588,8 +2601,8 @@ c {
       },
       out: "@layer a;@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
     },
+    // g.css declares "a" only when the page is printed. It does not stand for the list of the first copy of x.css.
     NameDeclaredOnlyUnderMedia: {
-      todo: 'g.css counts as a file that declares "a", so the list for the first copy of x.css is removed',
       files: {
         "/entry.css": /* css */ `
           @import "./g.css";
@@ -2606,8 +2619,8 @@ c {
       },
       out: "@media print{@layer a{.g{color:green}}}@layer a;@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
     },
+    // A list of layer names cannot say that "theme" is only declared in dark mode, so both copies of tokens.css print.
     NameDeclaredOnlyUnderMediaInAFileImportedTwice: {
-      todo: 'the list for the first copy of tokens.css declares "theme" with no "@media" around it',
       files: {
         "/entry.css": /* css */ `
           @import "./tokens.css";
@@ -2624,7 +2637,7 @@ c {
           @layer base { .t { color: blue } }
         `,
       },
-      out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer base,theme;@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
+      out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer base,theme;@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
     },
     // A copy under "layer(w)" or "layer" is kept when a later copy has no layer: its rules are in another layer.
     LayeredCopyBehindABareCopy: {

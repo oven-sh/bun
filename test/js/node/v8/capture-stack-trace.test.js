@@ -1085,6 +1085,84 @@ test("the default Error.prepareStackTrace heads the stack with the error's name 
   expect({ byHand, insideACallback }).toEqual({ byHand: expected, insideACallback: expected });
 });
 
+// A wrapper that only forwards to the default Error.prepareStackTrace (source-map-support, depd, Babel's
+// rewrite-stack-trace) must not change the frames: both render the one record of each frame. This also
+// pins the text of a frame that has no file: a builtin keeps its position, a host function says unknown.
+test("a wrapper around the default Error.prepareStackTrace leaves the frames as they are", async () => {
+  const frames = stack => stack.split("\n").slice(1, 3).map(line => line.trim());
+  class Box {
+    constructor() {
+      this.error = new Error("box");
+    }
+  }
+  async function later() {
+    await 1;
+    return new Error("later");
+  }
+  const shapes = {
+    builtin: () => [1].map(() => new Error("map"))[0],
+    host: () => JSON.parse("1", () => new Error("parse")),
+    constructor: () => new Box().error,
+    eval: () => eval('new Error("eval")'),
+    "function code": () => new Function('return new Error("fn")')(),
+    async: () => later(),
+  };
+  // One call site for every way of formatting, so the positions can be compared. The stack is read while
+  // the formatter is installed: it is formatted on the first read.
+  const madeWith = async (make, prepareStackTrace) => {
+    const error = await make();
+    Error.prepareStackTrace = prepareStackTrace;
+    try {
+      return { error, stack: error.stack };
+    } finally {
+      Error.prepareStackTrace = origPrepareStackTrace;
+    }
+  };
+  const plain = {};
+  const wrapped = {};
+  const calledByHand = {};
+  const site = {};
+  const position = {};
+  for (const [shape, make] of Object.entries(shapes)) {
+    let { error, stack } = await madeWith(make, origPrepareStackTrace);
+    plain[shape] = frames(stack);
+    position[shape] = [error.line, error.column, error.sourceURL];
+    ({ error, stack } = await madeWith(make, (error, callSites) => origPrepareStackTrace(error, callSites)));
+    wrapped[shape] = frames(stack);
+    // error.line, error.column and error.sourceURL are those of the first frame that has a position, under a wrapper too.
+    expect([error.line, error.column, error.sourceURL]).toEqual(position[shape]);
+    // The header is read from the error, the frames from the call sites: each line is a call site's toString().
+    ({ stack } = await madeWith(make, (error, callSites) =>
+      ["Error: x", ...callSites.map(callSite => "    at " + callSite)].join("\n"),
+    ));
+    calledByHand[shape] = frames(stack);
+    ({ stack } = await madeWith(make, (error, callSites) => callSites));
+    site[shape] = stack.slice(0, 2).map(callSite => [callSite.isNative(), callSite.getFileName()]);
+  }
+  expect({ wrapped, calledByHand }).toEqual({ wrapped: plain, calledByHand: plain });
+  expect(plain.builtin[0]).toMatch(/^at map \(native:\d+:\d+\)$/);
+  expect(plain.host[0]).toBe("at parse (unknown)");
+  expect(plain.constructor[0]).toStartWith("at new Box (");
+  expect(plain.eval[1]).toBe("at eval (unknown)");
+  expect(position.host.slice(0, 2)).toEqual([expect.any(Number), expect.any(Number)]);
+  expect(site.builtin[0]).toEqual([true, "[unknown]"]);
+  expect(site.host[0]).toEqual([true, "[native code]"]);
+  expect(site.constructor[0]).toEqual([false, import.meta.path]);
+});
+
+// `new X()` is at `new`, where V8 has it, whichever way the stack is formatted.
+test("a frame made with new is at the new keyword", () => {
+  const where = error => error.stack.split("\n")[1].match(/:(\d+):(\d+)\)?$/).slice(1).map(Number);
+  const text = "\n\nconst made = new Error('made');\nmade";
+  Error.prepareStackTrace = origPrepareStackTrace;
+  const plain = where((0, eval)(text));
+  Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+  const wrapped = where((0, eval)(text));
+  Error.prepareStackTrace = (error, callSites) => callSites[0].getLineNumber() + ":" + callSites[0].getColumnNumber();
+  const callSite = (0, eval)(text).stack;
+  expect({ plain, wrapped, callSite }).toEqual({ plain: [3, 14], wrapped: [3, 14], callSite: "3:14" });
+});
+
 // As V8: a caller of the default formatter gets the throw, and the error.stack a prepareStackTrace
 // callback sees describes it, so reading .stack does not throw because a callback is installed.
 // A message that throws is read lazily here (V8 captured it at construction) and still throws.

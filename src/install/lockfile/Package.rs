@@ -3488,6 +3488,7 @@ pub mod serializer {
 
         let really_begin_at = stream.get_pos()?;
         let mut sliced = list.slice();
+        debug_assert!(has_unread || !sliced.items::<"meta", Meta>().iter().any(Meta::is_unread));
 
         for field in PackageField::ALL {
             // SAFETY: no other borrow of the column is live; it is only read, as raw bytes.
@@ -3701,7 +3702,8 @@ pub mod serializer {
                 if matches!(field, PackageField::Meta) {
                     // Same hardening as `Resolution` above: `Meta` embeds two
                     // `#[repr(u8)]` enums (`Origin` = 0..=2 and
-                    // `HasInstallScript` = 0..=2). Copying an out-of-range byte
+                    // `HasInstallScript` = 0..=2, because `save` never writes
+                    // `Unread`). Copying an out-of-range byte
                     // into either field and reading it back as the enum would
                     // be immediate UB, so check the raw stream bytes first.
                     let stride = mem::size_of::<Meta>();

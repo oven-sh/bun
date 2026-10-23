@@ -28,8 +28,8 @@ use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
-use crate::package_manager_real::unread_packages::Described;
 use crate::package_manager_real::progress_strings::ProgressStrings;
+use crate::package_manager_real::unread_packages::Described;
 use crate::package_manager_task as task;
 use crate::patch_install::{self, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
@@ -143,7 +143,12 @@ impl UnreadRows {
     fn strings_of(&self, package_id: PackageID) -> Option<(&[u8], &[bun_semver::ExternalString])> {
         (self.described.iter())
             .find(|(id, _)| *id == package_id)
-            .map(|(_, package)| (package.string_bytes.as_slice(), package.extern_strings.as_slice()))
+            .map(|(_, package)| {
+                (
+                    package.string_bytes.as_slice(),
+                    package.extern_strings.as_slice(),
+                )
+            })
     }
 
     /// The column to link from. `rows` is the lockfile's, which can have grown.
@@ -808,11 +813,14 @@ impl<'a> PackageInstaller<'a> {
             debug_assert!(package_id != invalid_package_id);
             let bin = self.bins[package_id as usize];
             debug_assert!(bin.tag != bin::Tag::None);
-            let (bin_strings, bin_extern_strings) =
-                match self.unread.as_ref().and_then(|unread| unread.strings_of(package_id)) {
-                    Some(described) => described,
-                    None => (string_buf, lockfile.buffers.extern_strings.as_slice()),
-                };
+            let (bin_strings, bin_extern_strings) = match self
+                .unread
+                .as_ref()
+                .and_then(|unread| unread.strings_of(package_id))
+            {
+                Some(described) => described,
+                None => (string_buf, lockfile.buffers.extern_strings.as_slice()),
+            };
 
             let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
                 .name

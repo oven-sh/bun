@@ -81,7 +81,11 @@ impl PackageManager {
 
     /// `describe` for the package.json in `package_dir`, an absolute path. `None`: it cannot be
     /// read.
-    pub(crate) fn describe_in(&mut self, package_dir: &[u8], tag: ResolutionTag) -> Option<Described> {
+    pub(crate) fn describe_in(
+        &mut self,
+        package_dir: &[u8],
+        tag: ResolutionTag,
+    ) -> Option<Described> {
         let dir = bun_sys::Dir::open(package_dir).ok()?;
         match crate::git_runner::read_package_json_in(&dir) {
             Ok(contents) => {

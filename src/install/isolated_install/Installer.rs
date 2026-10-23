@@ -416,11 +416,8 @@ impl<'a> Installer<'a> {
 
     /// The `bin` of a package, and the buffers of its strings. See `described`.
     fn bin_of(&self, pkg_id: PackageID) -> (bin_real::Bin, &[u8], &[bun_semver::ExternalString]) {
-        let lockfile = self.lockfile();
-        let bin = lockfile.packages.items_bin()[pkg_id as usize];
-        if bin.tag == bin::Tag::None
-            && let Some(described) = (self.described.as_deref())
-                .and_then(|slots| slots.get(pkg_id as usize)?.get()?.as_ref())
+        if let Some(described) = (self.described.as_deref())
+            .and_then(|slots| slots.get(pkg_id as usize)?.get()?.as_ref())
         {
             return (
                 described.bin,
@@ -428,8 +425,9 @@ impl<'a> Installer<'a> {
                 described.extern_strings.as_slice(),
             );
         }
+        let lockfile = self.lockfile();
         (
-            bin,
+            lockfile.packages.items_bin()[pkg_id as usize],
             lockfile.buffers.string_bytes.as_slice(),
             lockfile.buffers.extern_strings.as_slice(),
         )

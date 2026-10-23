@@ -143,9 +143,13 @@ pub(crate) fn existing_cache_directory(this: &mut PackageManager) -> Option<Fd> 
     if this.cache_directory.is_none() {
         let exists = if this.options.enable.contains(Enable::CACHE) {
             fetch_cache_directory_path(this.env_mut(), Some(this.options.cache_directory))
-                .is_ok_and(|dir| sys::directory_exists_at(Fd::cwd(), &ZBox::from_bytes(&dir.path)).unwrap_or(false))
+                .is_ok_and(|dir| {
+                    sys::directory_exists_at(Fd::cwd(), &ZBox::from_bytes(&dir.path))
+                        .unwrap_or(false)
+                })
         } else {
-            sys::directory_exists_at(Fd::cwd(), bun_core::zstr!("node_modules/.cache")).unwrap_or(false)
+            sys::directory_exists_at(Fd::cwd(), bun_core::zstr!("node_modules/.cache"))
+                .unwrap_or(false)
         };
         if !exists {
             return None;

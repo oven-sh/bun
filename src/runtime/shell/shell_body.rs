@@ -307,6 +307,13 @@ pub(crate) fn shell_cmd_from_js(
 
 const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
 
+/// No command reads an S3 object at once, and a redirect does not stream one.
+fn throw_s3_redirect(global: &JSGlobalObject) -> jsc::JsError {
+    global.throw(format_args!(
+        "An S3-backed Blob is not supported as a shell redirect yet. Buffer it first, e.g. `< ${{await blob.bytes()}}`, or use Bun.spawn({{ stdin: blob.stream() }})"
+    ))
+}
+
 pub(crate) fn handle_template_value(
     global: &JSGlobalObject,
     template_value: JSValue,
@@ -337,27 +344,32 @@ pub(crate) fn handle_template_value(
 
         if let Some(blob) = template_value.as_class_ref::<crate::webcore::Blob>() {
             if let Some(store) = blob.store.get().as_deref() {
-                if let crate::webcore::blob::store::Data::File(file) = &store.data {
-                    if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
-                        let path: &[u8] = p.slice();
+                use crate::webcore::blob::store::Data;
+                match &store.data {
+                    Data::File(file) => {
+                        if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
+                            let path: &[u8] = p.slice();
 
-                        // Check for null bytes in path (security: prevent null byte injection)
-                        if strings::index_of_char(path, 0).is_some() {
-                            return Err(global
-                                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
-                                    "The shell argument must be a string without null bytes. Received {}",
-                                    bun_core::fmt::quote(path)
-                                ))
-                                .throw());
-                        }
+                            // Check for null bytes in path (security: prevent null byte injection)
+                            if strings::index_of_char(path, 0).is_some() {
+                                return Err(global
+                                    .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
+                                        "The shell argument must be a string without null bytes. Received {}",
+                                        bun_core::fmt::quote(path)
+                                    ))
+                                    .throw());
+                            }
 
-                        if !builder.append_utf8::<true>(path)? {
-                            return Err(global.throw(format_args!(
-                                "Shell script string contains invalid UTF-16"
-                            )));
+                            if !builder.append_utf8::<true>(path)? {
+                                return Err(global.throw(format_args!(
+                                    "Shell script string contains invalid UTF-16"
+                                )));
+                            }
+                            return Ok(());
                         }
-                        return Ok(());
                     }
+                    Data::S3(_) => return Err(throw_s3_redirect(global)),
+                    Data::Bytes(_) => {}
                 }
             }
 
@@ -383,7 +395,11 @@ pub(crate) fn handle_template_value(
             )));
         }
 
-        if let Some(_req) = template_value.as_::<crate::webcore::Response>() {
+        if let Some(response) = template_value.as_class_ref::<crate::webcore::Response>() {
+            let body = response.get_body_value();
+            if matches!(body, crate::webcore::body::Value::Blob(blob) if blob.is_s3()) {
+                return Err(throw_s3_redirect(global));
+            }
             let idx = out_jsobjs.size();
             out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);

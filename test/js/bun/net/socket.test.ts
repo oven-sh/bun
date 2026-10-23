@@ -1193,6 +1193,141 @@ it("reload() of a stopped listener says that the listener is closed", () => {
   expect(() => listener.reload({ socket })).toThrow("Listener is closed");
 });
 
+// write() and end() take the bytes of a Blob at once. A file- or S3-backed Blob has none in memory.
+describe.concurrent.each([
+  ["tcp", {}, {}],
+  ["tls", { tls }, { tls: { rejectUnauthorized: false } }],
+] as const)("a Blob given to write() and end() over %s", (transport, listenOptions, connectOptions) => {
+  // Runs `use` on a connected client socket, ends it, and resolves with what the listener received.
+  async function received(use: (socket: Socket) => void): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      ...listenOptions,
+      socket: {
+        data: (_, chunk) => void chunks.push(Buffer.from(chunk)),
+        end: socket => void socket.end(),
+        close: () => resolve(Buffer.concat(chunks).toString()),
+        error: (_, error) => reject(error),
+      },
+    });
+    const run = (socket: Socket) => {
+      try {
+        use(socket);
+      } catch (error) {
+        reject(error);
+      } finally {
+        socket.end();
+      }
+    };
+    await connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      ...connectOptions,
+      socket: {
+        data() {},
+        ...(transport === "tls" ? { handshake: run } : { open: run }),
+        error: (_, error) => reject(error),
+        connectError: (_, error) => reject(error),
+      },
+    });
+    return await promise;
+  }
+  const outcome = (call: () => unknown) => {
+    try {
+      return `returned ${call()}`;
+    } catch (error: any) {
+      return `${error.name}: ${error.message}`;
+    }
+  };
+
+  it("refuses a file- or S3-backed Blob, sends nothing and stays open", async () => {
+    // Stands in for S3 on the loopback, and records each request.
+    const requests: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        requests.push(`${request.method} ${new URL(request.url).pathname}`);
+        return new Response("from-s3");
+      },
+    });
+    const client = new Bun.S3Client({
+      endpoint: server.url.href,
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+    });
+    using dir = tempDir("socket-write-file-blob", { "file.txt": "from-a-file" });
+    const s3file = () => client.file("key");
+    const file = () => Bun.file(join(String(dir), "file.txt"));
+    const request = (body: Blob) => new Request("http://example.com/", { method: "POST", body });
+    const unread: Record<string, () => unknown> = {
+      "an S3File": s3file,
+      "a slice of an S3File": () => s3file().slice(0, 4),
+      "a Blob made of one S3File": () => new Blob([s3file()]),
+      "a Request with an S3File body": () => request(s3file()),
+      "a Request whose S3File body has a size of 0": () => {
+        const inspected = request(s3file());
+        // Bun.inspect() resolves the size of the body, and the size of an S3 file resolves to 0.
+        Bun.inspect(inspected);
+        return inspected;
+      },
+      "a Response made of one S3File": () => new Response([s3file()] as any),
+      "a Bun.file()": file,
+      "a Request with a Bun.file() body": () => request(file()),
+    };
+
+    const outcomes: Record<string, string[]> = {};
+    const bytes = await received(socket => {
+      for (const [name, make] of Object.entries(unread)) {
+        outcomes[name] = [outcome(() => socket.write(make() as any)), outcome(() => socket.end(make() as any))];
+      }
+      outcomes["a string, after every refusal"] = [outcome(() => socket.write("still-open"))];
+    });
+
+    const refused = (method: string) =>
+      `Error: Socket.${method} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first`;
+    expect({ outcomes, bytes, requests }).toEqual({
+      outcomes: {
+        ...Object.fromEntries(Object.keys(unread).map(name => [name, [refused("write"), refused("end")]])),
+        "a string, after every refusal": ["returned 10"],
+      },
+      bytes: "still-open",
+      requests: [],
+    });
+  });
+
+  it("sends an in-memory Blob and the buffered body of a Request or Response, in order", async () => {
+    const outcomes: string[] = [];
+    const bytes = await received(socket => {
+      outcomes.push(
+        outcome(() => socket.write("a")),
+        outcome(() => socket.write(new Blob(["bcd"]))),
+        outcome(() => socket.write(new Response("ef") as any)),
+        outcome(() => socket.write(new Request("http://example.com/", { method: "POST", body: "ghij" }) as any)),
+        outcome(() => socket.write(new Blob([]))),
+        outcome(() => socket.write(new Response(new ReadableStream({ pull() {} })) as any)),
+        outcome(() => socket.end(new Blob(["k"]))),
+      );
+    });
+    expect({ outcomes, bytes }).toEqual({
+      outcomes: [
+        "returned 1",
+        "returned 3",
+        "returned 2",
+        "returned 4",
+        "returned 0",
+        "TypeError: Only buffered Request/Response bodies are supported for now.",
+        "returned 1",
+      ],
+      bytes: "abcdefghijk",
+    });
+  });
+});
+
 it("getPeerCertificate and exportKeyingMaterial accept undefined for optional arguments", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });

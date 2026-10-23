@@ -2889,17 +2889,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             Err(_) => return WriteResult::Fail,
         };
-        // `buffer` Drop frees.
-        if matches!(&buffer, BlobOrStringOrBuffer::Blob(b) if b.needs_to_read_file()) {
-            let _ = global.throw(format_args!(
-                "File blob not supported yet in this function."
-            ));
-            return WriteResult::Fail;
-        }
-
         // Rust can't reference an outer `const` generic in a nested `const` item
         // (E0401), so precompute the full label per branch.
         let label: &'static str = if IS_END { "Socket.end" } else { "Socket.write" };
+
+        // `buffer` Drop frees.
+        if buffer.in_memory_view().is_none() {
+            let _ = global.throw(format_args!(
+                "{label} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
+            ));
+            return WriteResult::Fail;
+        }
 
         let byte_offset: usize = 'brk: {
             if offset_value.is_undefined() {

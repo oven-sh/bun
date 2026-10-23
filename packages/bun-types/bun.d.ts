@@ -7842,6 +7842,9 @@ declare module "bun" {
        * - `ArrayBufferView`, `Blob`: The process reads from the buffer
        * - `number`: The process reads from the file descriptor
        *
+       * An {@link S3File} throws, because its bytes are not in memory. Pass
+       * `s3file.stream()` to `Bun.spawn`, or read it first with `await s3file.bytes()`.
+       *
        * @default "ignore"
        */
       stdin?: In;

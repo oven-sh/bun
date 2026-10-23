@@ -1384,6 +1384,130 @@ describe("close handling", () => {
   });
 });
 
+// The bytes of an S3 file are not in memory, and stdin takes the bytes of a Blob at once.
+describe("an S3-backed Blob as stdin", () => {
+  const refusal = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message:
+      "An S3-backed Blob cannot be used as stdin. Read it first with await blob.bytes(), or pass blob.stream() to Bun.spawn",
+  });
+  const echoStdin = [bunExe(), "-e", "process.stdin.pipe(process.stdout)"];
+
+  // Stands in for S3 on the loopback, and records each request.
+  function s3StandIn() {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        requests.push(`${request.method} ${new URL(request.url).pathname}`);
+        return new Response("from-s3");
+      },
+    });
+    const client = new Bun.S3Client({
+      endpoint: server.url.href,
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+    });
+    return { requests, file: () => client.file("key"), [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  const inputs: [string, (file: () => Blob) => Blob | Request | Response][] = [
+    ["an S3File", file => file()],
+    ["a slice of an S3File", file => file().slice(0, 4)],
+    ["a Blob made of one S3File", file => new Blob([file()])],
+    ["a Request with an S3File body", file => new Request("http://example.com/", { method: "POST", body: file() })],
+    ["a Response made of one S3File", file => new Response([file()] as any)],
+    [
+      "a Request whose S3File body has a size of 0",
+      file => {
+        const request = new Request("http://example.com/", { method: "POST", body: file() });
+        // Bun.inspect() resolves the size of the body, and the size of an S3 file resolves to 0.
+        Bun.inspect(request);
+        return request;
+      },
+    ],
+  ];
+
+  it.each(inputs)("%s is refused, and nothing is read from S3", (_, make) => {
+    using s3 = s3StandIn();
+    const options = { cmd: [bunExe(), "-e", ""], env: bunEnv, stdout: "ignore", stderr: "ignore" } as const;
+    expect(() => spawn({ ...options, stdin: make(s3.file) })).toThrow(refusal);
+    expect(() => spawn({ ...options, stdio: [make(s3.file), "ignore", "ignore"] })).toThrow(refusal);
+    expect(() => spawnSync({ ...options, stdin: make(s3.file) })).toThrow(refusal);
+    expect(() => spawnSync({ ...options, stdio: [make(s3.file), "ignore", "ignore"] })).toThrow(refusal);
+    expect(s3.requests).toEqual([]);
+  });
+
+  it("is refused for stdout and for stdio[3] like an in-memory Blob", () => {
+    using s3 = s3StandIn();
+    const cmd = [bunExe(), "-e", ""];
+    expect(() => spawn({ cmd, env: bunEnv, stdout: s3.file() as any })).toThrow(
+      "Blobs are immutable, and cannot be used for stdout/stderr",
+    );
+    expect(() => spawn({ cmd, env: bunEnv, stdio: ["ignore", "ignore", "ignore", s3.file() as any] })).toThrow(
+      "Blob cannot be used for stdio[3] yet",
+    );
+    expect(s3.requests).toEqual([]);
+  });
+
+  it("the child reads the object from blob.stream() and from await blob.bytes()", async () => {
+    using s3 = s3StandIn();
+    const options = { cmd: echoStdin, env: bunEnv, stdout: "pipe", stderr: "pipe" } as const;
+    await using streamed = spawn({ ...options, stdin: s3.file().stream() });
+    await using buffered = spawn({ ...options, stdin: await s3.file().bytes() });
+    const results = await Promise.all(
+      [streamed, buffered].map(async proc => {
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }),
+    );
+    const read = { stdout: "from-s3", stderr: "", exitCode: 0 };
+    expect(results).toEqual([read, read]);
+    expect(s3.requests).toEqual(["GET /bucket/key", "GET /bucket/key"]);
+  });
+
+  // `new Response([blob])` moves the bytes out of `blob` and leaves its size. On the pipe path (memfd off, or any
+  // platform but Linux) a stdin with a size and no bytes was a pipe that never closed.
+  it.concurrent.each(["spawn", "spawnSync"])(
+    "Bun.%s gives the child what a Blob holds after its bytes moved out, and the child ends",
+    async method => {
+      const collect =
+        method === "spawnSync"
+          ? `[proc.stdout.toString(), proc.exitCode]`
+          : `await Promise.all([proc.stdout.text(), proc.exited])`;
+      const fixture = `
+        const blob = new Blob(["0123456789"]);
+        new Response([blob]);
+        const held = await blob.text();
+        const proc = Bun.${method}({
+          cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: blob,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = ${collect};
+        console.log(JSON.stringify({ childReadWhatTheBlobHolds: stdout === held, exitCode }));
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: JSON.stringify({ childReadWhatTheBlobHolds: true, exitCode: 0 }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+});
+
 it("resourceUsage has records with no prototype", () => {
   const usage = spawnSync({ cmd: [bunExe(), "-e", "1"], env: bunEnv }).resourceUsage;
   const shape = (record: object) => [

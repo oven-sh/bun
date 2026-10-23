@@ -178,6 +178,16 @@ You can redirect from these JavaScript objects:
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
 - `Response` (reads from the body)
 
+The shell throws for an [`S3File`](/runtime/s3) in a redirect. Read the object first, and redirect from its bytes:
+
+```js
+import { $, s3 } from "bun";
+
+const bytes = await s3.file("input.txt").bytes();
+
+await $`cat < ${bytes}`;
+```
+
 ### Example: Redirect stdin -> file
 
 ```js

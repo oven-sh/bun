@@ -16,7 +16,8 @@ use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
-use crate::webcore::{Blob, Request, Response};
+use crate::webcore::body::Value as BodyValue;
+use crate::webcore::{AnyBlob, Blob, BlobExt as _, Request, Response};
 
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
 use jsc::PinnedArrayBuffer;
@@ -87,10 +88,10 @@ pub(crate) enum StringObjects {
     Reject,
 }
 
-/// What [`BlobOrStringOrBuffer`] parsing does with a file-backed `Blob`
-/// (`Bun.file(..)`). Nothing here reads the file: an allowed one is returned
-/// as [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its `slice()`
-/// is empty.
+/// What [`BlobOrStringOrBuffer`] parsing does with a file- or S3-backed `Blob`
+/// (`Bun.file(..)`, `s3.file(..)`). Nothing here reads it: an allowed one is
+/// returned as [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its
+/// `slice()` is empty.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum FileBlobs {
     Allow,
@@ -126,6 +127,14 @@ impl BlobOrStringOrBuffer {
         }
     }
 
+    /// [`Self::slice`], or `None` for a file- or S3-backed Blob, which has to be read first.
+    pub(crate) fn in_memory_view(&self) -> Option<&[u8]> {
+        match self {
+            Self::Blob(blob) => blob.in_memory_view(),
+            Self::StringOrBuffer(str) => Some(str.slice()),
+        }
+    }
+
     pub(crate) fn byte_length(&self) -> usize {
         self.slice().len()
     }
@@ -142,7 +151,7 @@ impl BlobOrStringOrBuffer {
         let Some(blob) = value.as_class_ref::<Blob>() else {
             return Ok(None);
         };
-        if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
+        if file_blobs == FileBlobs::Reject && blob.in_memory_view().is_none() {
             return Err(
                 global.throw_invalid_arguments(format_args!("File blob cannot be used here"))
             );
@@ -155,6 +164,28 @@ impl BlobOrStringOrBuffer {
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
+    }
+
+    /// Takes the body of a `Request` or `Response`.
+    fn from_buffered_body(
+        global: &JSGlobalObject,
+        body_value: &mut BodyValue,
+    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
+        body_value.to_blob_if_possible();
+
+        let Some(mut any_blob) = body_value.try_use_as_any_blob() else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Only buffered Request/Response bodies are supported for now.",
+            )));
+        };
+        let blob = match &any_blob {
+            // `to_blob` returns an empty Blob for a size of 0, and an S3-backed Blob can have
+            // that size before it is read.
+            AnyBlob::Blob(blob) if blob.in_memory_view().is_none() => blob.dupe(),
+            _ => any_blob.to_blob(global),
+        };
+        any_blob.detach();
+        Ok(Some(Self::Blob(Box::new(blob))))
     }
 
     pub(crate) fn from_js_with_encoding_value_allow_request_response(
@@ -173,33 +204,11 @@ impl BlobOrStringOrBuffer {
                 }
                 if allow_request_response {
                     if let Some(request) = value.as_class_ref::<Request>() {
-                        let body_value = request.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
-                        }
-
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Only buffered Request/Response bodies are supported for now.",
-                        )));
+                        return Self::from_buffered_body(global, request.get_body_value());
                     }
 
                     if let Some(response) = value.as_class_ref::<Response>() {
-                        let body_value = response.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
-                        }
-
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Only buffered Request/Response bodies are supported for now.",
-                        )));
+                        return Self::from_buffered_body(global, response.get_body_value());
                     }
                 }
             }

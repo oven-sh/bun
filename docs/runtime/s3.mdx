@@ -603,6 +603,15 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 
 Because `S3File` extends `Blob`, `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
 
+The bytes of an `S3File` are not in memory until you read them. These APIs take the bytes of a `Blob` at once, so they throw for an `S3File`:
+
+- `stdin` of [`Bun.spawn` and `Bun.spawnSync`](/runtime/child-process)
+- a redirect in the [Bun Shell](/runtime/shell)
+- `write()` and `end()` of a [TCP socket](/runtime/networking/tcp)
+- `files` of [`Bun.build`](/bundler)
+
+Read the object first with `await s3file.bytes()`. For the `stdin` of `Bun.spawn`, you can also pass `s3file.stream()`.
+
 ### Partial reads with `slice`
 
 To read a partial range of a file, use the `slice` method.

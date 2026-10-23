@@ -237,6 +237,43 @@ describe("bundler files option", () => {
     ).toThrow("File blob cannot be used here");
   });
 
+  test("in-memory file with an S3-backed Blob is rejected", () => {
+    // An S3 file would have to be downloaded. Nothing is requested: a local server stands in for S3 and counts.
+    let requests = 0;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        requests++;
+        return new Response(`console.log("from s3");`);
+      },
+    });
+    const client = new Bun.S3Client({
+      endpoint: server.url.href,
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+    });
+
+    for (const content of [client.file("entry.js"), client.file("entry.js").slice(0, 8)]) {
+      expect(() =>
+        Bun.build({
+          entrypoints: ["/entry.js"],
+          files: {
+            "/entry.js": content,
+          },
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "File blob cannot be used here",
+        }),
+      );
+    }
+    expect(requests).toBe(0);
+  });
+
   test("in-memory file with Uint8Array content", async () => {
     const encoder = new TextEncoder();
     const result = await Bun.build({

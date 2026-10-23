@@ -52,6 +52,8 @@ console.log(text); // "const input = "hello world".repeat(400); ..."
 | `Blob`                   | Use a blob as input                              |
 | `number`                 | Read from the file with a given file descriptor  |
 
+`Bun.spawn` and `Bun.spawnSync` throw for an [`S3File`](/runtime/s3) as `stdin`, because its bytes are not in memory. To stream the object to the subprocess, pass `s3file.stream()` to `Bun.spawn`. To read the object first, pass `await s3file.bytes()`.
+
 With `"pipe"`, the parent process can incrementally write to the subprocess's input stream.
 
 ```ts

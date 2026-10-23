@@ -622,9 +622,12 @@ impl Stdio {
             )));
         }
 
+        // `None` is an S3-backed Blob: a file-backed one returned above.
+        let in_memory_len = blob.in_memory_view().map(<[u8]>::len);
+
         // Nothing to write: treat an empty blob the same as "ignore"
         // (/dev/null at fds 0-2, left closed at extra slots).
-        if blob.fast_size() == 0 {
+        if in_memory_len == Some(0) {
             *self = Stdio::Ignore;
             return Ok(());
         }
@@ -634,6 +637,12 @@ impl Stdio {
             // pipe (`Writable::Buffer` / memfd) is only wired up for stdin.
             return Err(global
                 .throw_invalid_arguments(format_args!("Blob cannot be used for stdio[{i}] yet")));
+        }
+
+        if in_memory_len.is_none() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "An S3-backed Blob cannot be used as stdin. Read it first with await blob.bytes(), or pass blob.stream() to Bun.spawn"
+            )));
         }
 
         *self = Stdio::Blob(blob);

@@ -5,7 +5,7 @@
 //! **not** a full bindgen dump. When the bindgen pipeline lands this module
 //! is replaced wholesale.
 
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
+use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque-type helper — thin sugar over the canonical
@@ -926,20 +926,12 @@ pub const BIO_TYPE_SOURCE_SINK: c_int = 0x0400;
 // ═══════════════════════════════════════════════════════════════════════════
 
 opaque!(
-    /// `struct ssl_method_st` (`typedef ... SSL_METHOD`).
-    SSL_METHOD
-);
-opaque!(
     /// `struct x509_store_st` (`typedef ... X509_STORE`).
     X509_STORE
 );
 opaque!(
     /// `struct x509_store_ctx_st` (`typedef ... X509_STORE_CTX`).
     X509_STORE_CTX
-);
-opaque!(
-    /// `struct X509_crl_st` (`typedef ... X509_CRL`).
-    X509_CRL
 );
 opaque!(
     /// `struct rsa_st` (`typedef ... RSA`).
@@ -963,7 +955,6 @@ unsafe extern "C" {
     pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
 
     // ── SSL_CTX ──────────────────────────────────────────────────────────
-    pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
     pub fn SSL_CTX_set_session_id_context(
@@ -988,7 +979,6 @@ unsafe extern "C" {
     pub fn CRYPTO_BUFFER_POOL_new() -> *mut CRYPTO_BUFFER_POOL;
 
     // ── SSL ──────────────────────────────────────────────────────────────
-    pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
     pub fn SSL_free(ssl: *mut SSL);
     pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
     pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
@@ -999,7 +989,6 @@ unsafe extern "C" {
     pub fn SSL_get_error(ssl: *const SSL, ret_code: c_int) -> c_int;
     pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
     pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
-    pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
     pub fn SSL_set_session_id_context(
         ssl: *mut SSL,
         sid_ctx: *const u8,
@@ -1014,16 +1003,6 @@ unsafe extern "C" {
         protos_len: usize,
     ) -> c_int;
     pub fn SSL_CTX_get_cert_store(ctx: *const SSL_CTX) -> *mut X509_STORE;
-    /// Frees the context's current store and takes ownership of `store`.
-    pub fn SSL_CTX_set_cert_store(ctx: *mut SSL_CTX, store: *mut X509_STORE);
-    pub fn SSL_CTX_add0_chain_cert(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
-    pub fn SSL_CTX_clear_chain_certs(ctx: *mut SSL_CTX) -> c_int;
-    pub fn PEM_read_bio_X509_AUX(
-        bp: *mut BIO,
-        x: *mut *mut X509,
-        cb: Option<pem_password_cb>,
-        u: *mut c_void,
-    ) -> *mut X509;
     pub fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
@@ -1196,10 +1175,6 @@ unsafe extern "C" {
 // ═══════════════════════════════════════════════════════════════════════════
 
 opaque!(
-    /// `struct evp_pkey_st` (`typedef ... EVP_PKEY`).
-    EVP_PKEY
-);
-opaque!(
     /// `struct ssl_session_st` (`typedef ... SSL_SESSION`).
     SSL_SESSION
 );
@@ -1208,13 +1183,9 @@ opaque!(
 pub const TLS1_3_VERSION: u16 = 0x0304;
 
 unsafe extern "C" {
-    pub safe fn TLS_method() -> *const SSL_METHOD;
-
     pub fn SSL_CTX_set_min_proto_version(ctx: *mut SSL_CTX, version: u16) -> c_int;
     pub fn SSL_CTX_set_max_proto_version(ctx: *mut SSL_CTX, version: u16) -> c_int;
     pub fn SSL_CTX_set_verify(ctx: *mut SSL_CTX, mode: c_int, callback: SSL_verify_cb);
-    pub fn SSL_CTX_use_certificate(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
-    pub fn SSL_CTX_use_PrivateKey(ctx: *mut SSL_CTX, pkey: *mut EVP_PKEY) -> c_int;
 
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
 
@@ -1244,33 +1215,8 @@ unsafe extern "C" {
     pub fn X509_LAZY_CERT_SET_can_index(der: *const u8, len: usize) -> c_int;
     pub safe fn X509_get_default_cert_file() -> *const c_char;
     pub safe fn X509_get_default_cert_dir() -> *const c_char;
-    pub fn PEM_read_bio_X509(
-        bp: *mut BIO,
-        x: *mut *mut X509,
-        cb: Option<pem_password_cb>,
-        u: *mut c_void,
-    ) -> *mut X509;
-    pub fn PEM_read_bio_PrivateKey(
-        bp: *mut BIO,
-        x: *mut *mut EVP_PKEY,
-        cb: Option<pem_password_cb>,
-        u: *mut c_void,
-    ) -> *mut EVP_PKEY;
-    pub fn EVP_PKEY_free(pkey: *mut EVP_PKEY);
 
     pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
-
-    pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
-    pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
-    pub fn X509_STORE_set_flags(store: *mut X509_STORE, flags: c_ulong) -> c_int;
-    pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
-    pub fn X509_CRL_free(crl: *mut X509_CRL);
-    pub fn PEM_read_bio_X509_CRL(
-        bp: *mut BIO,
-        x: *mut *mut X509_CRL,
-        cb: Option<pem_password_cb>,
-        u: *mut c_void,
-    ) -> *mut X509_CRL;
 
     /// Returns a NEW reference (caller frees) or null when the peer sent no
     /// certificate.

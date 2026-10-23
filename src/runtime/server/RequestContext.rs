@@ -3234,7 +3234,22 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                         return;
                     }
 
-                    match stream.ptr {
+                    // A source that something has started feeds the stream's queue, so the stream is read like one script made.
+                    let source = match stream.ptr {
+                        readable_stream::Source::Bytes(_)
+                            if !stream.try_lock_native(global_this) =>
+                        {
+                            // The source failed before a byte of the body was sent, so error() can still answer.
+                            let failure = stream.ptr.bytes().and_then(|b| b.take_pending_error());
+                            if let Some(err) = failure {
+                                this.run_error_handler(err.to_js(global_this));
+                                return;
+                            }
+                            readable_stream::Source::JavaScript
+                        }
+                        source => source,
+                    };
+                    match source {
                         readable_stream::Source::Invalid => {
                             this.response_body_readable_stream_ref
                                 .with_mut(|s| s.deinit());
@@ -3292,7 +3307,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                             byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
                                 AnyRequestContext::init(this.as_ctx_ptr()),
                             ));
-                            stream.lock_native(global_this);
                             byte_stream.signal_consumer_attached();
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory

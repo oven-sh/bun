@@ -154,6 +154,11 @@ describe("fetch data urls", () => {
       await fetch(url);
     }).toThrow("failed to fetch the data URL");
   });
+  it("a media type with many parameters is serialized in linear time", async () => {
+    const parameters = Array.from({ length: 200_000 }, (_, i) => `;p${i}=1`).join("");
+    const res = await fetch(`data:text/plain${parameters};P7=2,x`);
+    expect(res.headers.get("content-type") === "text/plain" + parameters).toBe(true);
+  });
   it("emoji", async () => {
     var url = "data:,😀";
 

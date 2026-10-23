@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_core::strings;
 
 use crate::is_token;
@@ -1693,7 +1694,7 @@ pub fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
     out.push(b'/');
     out.extend(subtype.iter().map(u8::to_ascii_lowercase));
 
-    let mut seen: Vec<Vec<u8>> = Vec::new();
+    let mut seen = CaseInsensitiveAsciiStringArrayHashMap::<()>::new();
     while pos < input.len() {
         pos += 1; // consume ';'
         while pos < input.len() && HTTP_WHITESPACE.contains(&input[pos]) {
@@ -1703,23 +1704,20 @@ pub fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
         while pos < input.len() && input[pos] != b';' && input[pos] != b'=' {
             pos += 1;
         }
-        let name: Vec<u8> = input[name_start..pos]
-            .iter()
-            .map(u8::to_ascii_lowercase)
-            .collect();
+        let name = &input[name_start..pos];
 
         if pos >= input.len() || input[pos] == b';' {
             continue;
         }
         pos += 1; // consume '='
 
-        let value: Vec<u8> = if pos < input.len() && input[pos] == b'"' {
+        let value: Cow<'_, [u8]> = if pos < input.len() && input[pos] == b'"' {
             pos += 1;
             let v = collect_quoted_string_value(input, &mut pos);
             while pos < input.len() && input[pos] != b';' {
                 pos += 1;
             }
-            v
+            Cow::Owned(v)
         } else {
             let value_start = pos;
             while pos < input.len() && input[pos] != b';' {
@@ -1729,24 +1727,24 @@ pub fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
             if v.is_empty() {
                 continue;
             }
-            v.to_vec()
+            Cow::Borrowed(v)
         };
 
-        if !is_token(&name)
+        if !is_token(name)
             || !value.iter().all(|&c| is_http_quoted_string_token(c))
-            || seen.iter().any(|n| n == &name)
+            || bun_core::handle_oom(seen.get_or_put(name)).found_existing
         {
             continue;
         }
 
         out.push(b';');
-        out.extend_from_slice(&name);
+        out.extend(name.iter().map(u8::to_ascii_lowercase));
         out.push(b'=');
         if is_token(&value) {
             out.extend_from_slice(&value);
         } else {
             out.push(b'"');
-            for &c in &value {
+            for &c in value.iter() {
                 if c == b'"' || c == b'\\' {
                     out.push(b'\\');
                 }
@@ -1754,7 +1752,6 @@ pub fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
             }
             out.push(b'"');
         }
-        seen.push(name);
     }
 
     Some(out)

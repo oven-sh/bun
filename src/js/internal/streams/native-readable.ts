@@ -67,11 +67,25 @@ let debugId = 0;
 
 function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
-  const bunNativePtr = (readableStream as any).$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
-  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
+  return fromNativeHandle(transferToNativeReadable(readableStream), options);
+}
 
-  const stream = new Readable(options) as NativeReadable;
+// Readable.fromWeb(): returns undefined for a stream that something has started, whose queue only a reader can empty.
+function tryConstructNativeReadable(readableStream: ReadableStream, options): NativeReadable | undefined {
+  const bunNativePtr = transferToNativeReadable(readableStream);
+  return bunNativePtr === undefined ? undefined : fromNativeHandle(bunNativePtr, options);
+}
+
+// The caller took the handle first, because a getter in `options` could start the stream.
+function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeReadable {
+  let stream: NativeReadable;
+  try {
+    stream = new Readable(options) as NativeReadable;
+  } catch (error) {
+    bunNativePtr?.cancel(error);
+    throw error;
+  }
   stream._read = read;
   stream._destroy = destroy;
 
@@ -97,13 +111,6 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
     // Only used by node:tty on Windows
     stream.$start = ensureConstructed;
   }
-
-  // https://github.com/oven-sh/bun/pull/12801
-  // https://github.com/oven-sh/bun/issues/9555
-  // There may be a ReadableStream.Strong handle to the ReadableStream.
-  // We can't update those handles to point to the NativeReadable from JS
-  // So we instead mark it as no longer usable, and create a new NativeReadable
-  transferToNativeReadable(readableStream);
 
   $debug(`[${stream.debugId}] constructed!`);
 
@@ -304,4 +311,4 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+export default { constructNativeReadable, tryConstructNativeReadable };

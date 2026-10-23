@@ -799,13 +799,11 @@ impl Response {
             //
             // - `Init` field drop glue releases `headers` (HeadersRef::Drop →
             //   C++ deref) and `status_text` (WTF deref).
-            // - `Body` has NO `Drop`; `reset()` is the explicit cleanup API
-            //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
-            //   would leak refcounted payloads (WTFStringImpl, Blob store).
+            // - `body` — assignment drops the old `Value`, a locked one's owned fields included.
             // - `url` — assignment drops the old value (WTF deref).
             // - `JsRef` — assignment drops the `Strong` arm (block slot released).
             (*this).init.set(Init::default());
-            (*this).body.get_mut().reset();
+            (*this).body.set(Body::default());
             (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
             (*this).abort_listener.set(None);

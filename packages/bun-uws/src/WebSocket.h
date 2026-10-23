@@ -123,20 +123,6 @@ public:
         return Super::getAsyncSocketData()->buffer.totalLength() + sizeof(WebSocket);
     }
 
-    /* Sending fragmented messages puts a bit of effort on the user; you must not interleave regular sends
-     * with fragmented sends and you must sendFirstFragment, [sendFragment], then finally sendLastFragment. */
-    SendStatus sendFirstFragment(std::string_view message, OpCode opCode = OpCode::BINARY, bool compress = false) {
-        return send(message, opCode, compress, false);
-    }
-
-    SendStatus sendFragment(std::string_view message, bool compress = false) {
-        return send(message, CONTINUATION, compress, false);
-    }
-
-    SendStatus sendLastFragment(std::string_view message, bool compress = false) {
-        return send(message, CONTINUATION, compress, true);
-    }
-
     /* Send or buffer a WebSocket frame, compressed or not. Returns BACKPRESSURE on increased user space backpressure,
      * DROPPED on dropped message (due to backpressure) or SUCCCESS if you are free to send even more now. */
     SendStatus send(std::string_view message, OpCode opCode = OpCode::BINARY, bool compress = false, bool fin = true) {

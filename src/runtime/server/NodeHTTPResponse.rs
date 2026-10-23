@@ -2350,19 +2350,8 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
     // Like llhttp, the framing decides, not the method. CONNECT has no body: no byte after its head is parsed.
     if method != HttpMethod::CONNECT {
-        let req_len: usize = 'brk: {
-            if let Some(content_length) = request_ref.header(b"content-length") {
-                scoped_log!(
-                    NodeHTTPResponse,
-                    "content-length: {}",
-                    BStr::new(content_length)
-                );
-                break 'brk bun_http_types::parse_content_length(content_length);
-            }
-            break 'brk 0;
-        };
-
-        *has_body = req_len > 0 || request_ref.has_transfer_encoding();
+        *has_body =
+            request_ref.content_length().unwrap_or(0) > 0 || request_ref.has_transfer_encoding();
     }
 
     let raw_response = if is_ssl != 0 {

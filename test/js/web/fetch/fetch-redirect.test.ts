@@ -445,7 +445,7 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // allocates the full URL into HTTPClient.redirect while the request sent
   // on the wire stays tiny (fragments are never transmitted), which keeps
   // the server under its request-line limit and lets keep-alive reuse one
-  // socket for every hop. Stays under MAX_REDIRECT_URL_LENGTH (128 KiB).
+  // socket for every hop.
   const PAD = Buffer.alloc(96 * 1024, "a").toString();
 
   // Server runs in the parent so its allocations are excluded from the

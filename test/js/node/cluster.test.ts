@@ -785,9 +785,9 @@ if (cluster.isPrimary) {
     },
   };
   const lines = [];
-  for (const [name, create] of Object.entries(servers)) {
+  for (const name of process.env.SERVERS.split(",")) {
     for (const [label, run] of Object.entries(cases)) {
-      const server = create();
+      const server = servers[name]();
       const events = [];
       for (const event of ["listening", "close", "error"]) server.on(event, () => events.push(event));
       const closed = once(server, "close");
@@ -804,9 +804,11 @@ if (cluster.isPrimary) {
 }
 `,
     });
+    // On Windows a worker's http server binds its own port and doesn't ask the primary.
+    const servers = isWindows ? ["net", "tls"] : ["net", "http", "https", "tls"];
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.mjs"],
-      env: { ...bunEnv, POLICY, CERT: tlsCerts.cert, KEY: tlsCerts.key },
+      env: { ...bunEnv, POLICY, CERT: tlsCerts.cert, KEY: tlsCerts.key, SERVERS: servers.join(",") },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -814,7 +816,7 @@ if (cluster.isPrimary) {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
       stdout: [
-        ...["net", "http", "https", "tls"].flatMap(name => [
+        ...servers.flatMap(name => [
           `${name}: listen(0), close(cb): close, callback ERR_SERVER_NOT_RUNNING`,
           `${name}: listen(0, host), close(cb): close, callback ERR_SERVER_NOT_RUNNING`,
           `${name}: listen({ signal }), abort(): close`,

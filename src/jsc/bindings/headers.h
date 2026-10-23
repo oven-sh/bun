@@ -245,7 +245,6 @@ CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* arg0);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 
 CPP_DECL void FFI__ptr__put(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 
@@ -426,22 +425,6 @@ ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
-
-CPP_DECL JSC::EncodedJSValue FileSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
-
-#ifdef __cplusplus
-
-ZIG_DECL JSC::EncodedJSValue FileSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
-BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
-BUN_DECLARE_HOST_FUNCTION(FileSink__end);
-ZIG_DECL JSC::EncodedJSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
-ZIG_DECL void FileSink__finalize(void* arg0);
-BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
-BUN_DECLARE_HOST_FUNCTION(FileSink__start);
-ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
-BUN_DECLARE_HOST_FUNCTION(FileSink__write);
-
-#endif
 CPP_DECL JSC::EncodedJSValue NetworkSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void* NetworkSink__fromJS(JSC::EncodedJSValue JSValue1);
 
@@ -597,11 +580,6 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 extern "C" SYSV_ABI void Bun__ConsoleObject__count(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);
 extern "C" SYSV_ABI void Bun__ConsoleObject__countReset(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);
 extern "C" SYSV_ABI void Bun__ConsoleObject__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC::JSGlobalObject* arg3, JSC::EncodedJSValue* arg4, size_t arg5);
-extern "C" SYSV_ABI void Bun__ConsoleObject__profile(void* arg0, JSC::JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-extern "C" SYSV_ABI void Bun__ConsoleObject__profileEnd(void* arg0, JSC::JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-extern "C" SYSV_ABI void Bun__ConsoleObject__record(void* arg0, JSC::JSGlobalObject* arg1, ScriptArguments* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__recordEnd(void* arg0, JSC::JSGlobalObject* arg1, ScriptArguments* arg2);
-extern "C" SYSV_ABI void Bun__ConsoleObject__screenshot(void* arg0, JSC::JSGlobalObject* arg1, ScriptArguments* arg2);
 extern "C" SYSV_ABI void Bun__ConsoleObject__takeHeapSnapshot(void* arg0, JSC::JSGlobalObject* arg1);
 extern "C" SYSV_ABI void Bun__ConsoleObject__time(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);
 extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(void* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2);

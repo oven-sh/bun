@@ -735,13 +735,19 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
-#ifndef _WIN32
 /* One bit per descriptor a socket in this process owns, on any thread's loop. */
 #define BSD_OWNED_PAGE_BITS (1u << 15)
-static _Atomic(_Atomic(uint64_t) *) bsd_owned_pages[(1u << 31) / BSD_OWNED_PAGE_BITS];
+#ifdef _WIN32
+/* The key of a handle is its index in the process's handle table, which holds 2^24. A SOCKET past that isn't tracked. */
+#define BSD_OWNED_KEYS (1u << 24)
+#define BSD_OWNED_KEY(fd) ((uintptr_t) (fd) >> 2)
+#else
+#define BSD_OWNED_KEYS (1u << 31)
+#endif
+static _Atomic(_Atomic(uint64_t) *) bsd_owned_pages[BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS];
 
-static _Atomic(uint64_t) *bsd_owned_word(LIBUS_SOCKET_DESCRIPTOR fd) {
-    _Atomic(_Atomic(uint64_t) *) *slot = &bsd_owned_pages[(unsigned int) fd / BSD_OWNED_PAGE_BITS];
+static _Atomic(uint64_t) *bsd_owned_word(unsigned int key) {
+    _Atomic(_Atomic(uint64_t) *) *slot = &bsd_owned_pages[key / BSD_OWNED_PAGE_BITS];
     _Atomic(uint64_t) *page = atomic_load(slot);
     if (UNLIKELY(!page)) {
         _Atomic(uint64_t) *fresh = us_calloc(BSD_OWNED_PAGE_BITS / 64, sizeof(uint64_t));
@@ -754,9 +760,8 @@ static _Atomic(uint64_t) *bsd_owned_word(LIBUS_SOCKET_DESCRIPTOR fd) {
             us_free(fresh);
         }
     }
-    return &page[(unsigned int) fd % BSD_OWNED_PAGE_BITS / 64];
+    return &page[key % BSD_OWNED_PAGE_BITS / 64];
 }
-#endif
 
 int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type) {
     if (type) {
@@ -773,7 +778,13 @@ int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type) {
             return -1;
         }
     }
-#ifndef _WIN32
+#ifdef _WIN32
+    /* Only bsd_shutdown_owned_sockets() reads the bits here. */
+    uintptr_t key = BSD_OWNED_KEY(fd);
+    if (key < BSD_OWNED_KEYS) {
+        atomic_fetch_or(bsd_owned_word((unsigned int) key), 1ull << (key % 64));
+    }
+#else
     if (fd < 0) {
         errno = EBADF;
         return -1;
@@ -788,12 +799,34 @@ int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd, int type) {
 }
 
 void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
-#ifndef _WIN32
+#ifdef _WIN32
+    uintptr_t key = BSD_OWNED_KEY(fd);
+    if (key < BSD_OWNED_KEYS) {
+        atomic_fetch_and(bsd_owned_word((unsigned int) key), ~(1ull << (key % 64)));
+    }
+#else
     if (fd >= 0) {
         atomic_fetch_and(bsd_owned_word(fd), ~(1ull << (fd % 64)));
     }
 #endif
 }
+
+#ifdef _WIN32
+void bsd_shutdown_owned_sockets(void) {
+    for (unsigned int i = 0; i < BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS; i++) {
+        _Atomic(uint64_t) *page = atomic_load(&bsd_owned_pages[i]);
+        for (unsigned int word = 0; page && word < BSD_OWNED_PAGE_BITS / 64; word++) {
+            uint64_t rest;
+            /* Read again for each socket: its thread is running and may have closed it by now. */
+            for (unsigned int bit = 0; bit < 64 && (rest = atomic_load(&page[word]) >> bit); bit++) {
+                if (rest & 1) {
+                    shutdown((SOCKET) ((uintptr_t) (i * BSD_OWNED_PAGE_BITS + word * 64 + bit) << 2), SD_SEND);
+                }
+            }
+        }
+    }
+}
+#endif
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
     bsd_winsock_ensure();
@@ -831,6 +864,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
+    bsd_adopt_socket(created_fd, 0);
     return bsd_set_nonblocking(created_fd);
 #else
     do {
@@ -850,11 +884,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
 }
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* Before close(): the kernel can hand the number to another thread right after it. */
+    bsd_disown_socket(fd);
 #ifdef _WIN32
     closesocket(fd);
 #else
-    /* Before close(): the kernel can hand the number to another thread right after it. */
-    bsd_disown_socket(fd);
     close(fd);
 #endif
 }

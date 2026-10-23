@@ -639,6 +639,42 @@ describe("undici dispatchers", () => {
         expect(await (await request(url)).body.json()).toMatchObject({ url: "/echo?a=1" });
       }
     });
+
+    describe("validates a UrlObject's members like undici", () => {
+      const port = "Invalid URL: port must be a valid integer or a string representation of an integer.";
+      const protocol = "Invalid URL protocol: the URL must start with `http:` or `https:`.";
+      const text = (member: string) => `Invalid URL ${member}: the ${member} must be a string or null/undefined.`;
+      it.each<[string, unknown, string]>([
+        ...["80@localhost", "80/", "abc", "1e3", "0x50", -1, 65536, 1.5, NaN, true, {}, [], [80, 1]].map(
+          (value): [string, unknown, string] => ["port", value, port],
+        ),
+        ...[undefined, null, "", "ftp:", "http", "HTTP:", "httpx:", 1, {}, ["http:"]].map(
+          (value): [string, unknown, string] => ["protocol", value, protocol],
+        ),
+        ...["hostname", "path", "pathname", "origin"].flatMap(member =>
+          [1, true, {}, ["x"]].map((value): [string, unknown, string] => [member, value, text(member)]),
+        ),
+        ["origin", "ftp://127.0.0.1", protocol],
+        ["origin", "HTTP://127.0.0.1", protocol],
+      ])("%s, row %#", async (member, value, message) => {
+        const url = { protocol: "http:", hostname: "127.0.0.1", port: server.port, [member]: value };
+        for (const send of [() => request(url as never), () => stream(url as never, { method: "GET" }, () => null!)]) {
+          await expect(send()).rejects.toMatchObject({
+            name: "InvalidArgumentError",
+            code: "UND_ERR_INVALID_ARG",
+            message,
+          });
+        }
+      });
+
+      it.each([() => String(server.port), () => `0${server.port}`, () => [server.port]])(
+        "takes a port that converts to an integer",
+        async port => {
+          const url = { protocol: "http:", hostname: "127.0.0.1", port: port(), path: "/echo" };
+          expect(await (await request(url as never)).body.json()).toMatchObject({ url: "/echo" });
+        },
+      );
+    });
   });
 
   describe("signal", () => {
@@ -1177,6 +1213,70 @@ describe("undici dispatchers", () => {
           e => e.code,
         ),
       ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    });
+
+    describe("sends every request through its proxy, whatever the environment says", () => {
+      const discard = () => new Writable({ write: (_chunk, _encoding, callback) => callback() });
+      const target = () => `127.0.0.1:${server.port}`;
+
+      async function withEnv(env: Record<string, string>, fn: () => Promise<void>) {
+        const previous = Object.keys(env).map(name => [name, process.env[name]] as const);
+        Object.assign(process.env, env);
+        try {
+          await fn();
+        } finally {
+          for (const [name, value] of previous) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+          }
+        }
+      }
+
+      it.each<[string, (dispatcher: ProxyAgent) => Promise<unknown>, number]>([
+        ["fetch()", dispatcher => undiciFetch(`${origin}/echo`, { dispatcher }).then(res => res.text()), 1],
+        [
+          "fetch() that follows a redirect",
+          d => undiciFetch(`${origin}/redirect`, { dispatcher: d }).then(r => r.text()),
+          2,
+        ],
+        ["request()", dispatcher => request(`${origin}/echo`, { dispatcher }).then(res => res.body.text()), 1],
+        ["its own request()", d => d.request({ origin, path: "/echo", method: "GET" }).then(res => res.body.text()), 1],
+        ["stream()", dispatcher => stream(`${origin}/echo`, { dispatcher, method: "GET" }, discard), 1],
+        [
+          "dispatch()",
+          dispatcher =>
+            new Promise((resolve, reject) => {
+              dispatcher.dispatch(
+                { origin, path: "/echo", method: "GET" },
+                { onConnect() {}, onHeaders: () => true, onData: () => true, onComplete: resolve, onError: reject },
+              );
+            }),
+          1,
+        ],
+      ])("%s", async (_, send, hops) => {
+        for (const exempt of ["127.0.0.1", "*"]) {
+          await withEnv({ NO_PROXY: exempt, no_proxy: exempt }, async () => {
+            takeProxied();
+            await send(new ProxyAgent(proxyUrl));
+            expect(takeProxied()).toEqual(Array.from({ length: hops }, () => ({ target: target() })));
+          });
+        }
+      });
+
+      it("EnvHttpProxyAgent follows the environment", async () => {
+        const seen: unknown[] = [];
+        for (const exempt of ["", "127.0.0.1"]) {
+          await withEnv(
+            { HTTP_PROXY: proxyUrl, http_proxy: proxyUrl, NO_PROXY: exempt, no_proxy: exempt },
+            async () => {
+              takeProxied();
+              await (await undiciFetch(`${origin}/echo`, { dispatcher: new EnvHttpProxyAgent() })).text();
+              seen.push(takeProxied());
+            },
+          );
+        }
+        expect(seen).toEqual([[{ target: target() }], []]);
+      });
     });
 
     it.each([

@@ -4533,6 +4533,101 @@ describe.each([
   });
 });
 
+// A Worker that ends closes the sockets it left open, and so does the main thread
+// with BUN_DESTRUCT_VM_ON_EXIT. Otherwise the process ends with them open. fetch()'s
+// pooled connection belongs to the HTTP thread, which outlives a Worker. The relay
+// in front of the server sees the TCP connection: what the client sent after the
+// server's greeting, and how it ended.
+describe.each([
+  ["a worker", "worker", ["tls", "tcp"]],
+  ["a process", "process", ["tls", "tcp", "fetch"]],
+  ["a process that calls process.exit()", "exit", ["tls", "tcp", "fetch"]],
+  ["a process with BUN_DESTRUCT_VM_ON_EXIT", "teardown", ["tls", "tcp", "fetch"]],
+] as const)("when %s exits with a connection open", (_name, kind, protocols) => {
+  it.concurrent.each(protocols)("the %s connection ends with a FIN, not a reset", async protocol => {
+    let greeted = false;
+    const greet = (socket: net.Socket) => {
+      socket.on("error", () => {});
+      if (protocol === "fetch") return void socket.once("data", () => greetWith(socket, keepAliveResponse));
+      greetWith(socket, "ready");
+    };
+    const greetWith = (socket: net.Socket, greeting: string) => {
+      greeted = true;
+      socket.write(greeting);
+    };
+    const keepAliveResponse = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 5\r\n\r\nready";
+    // A TLS 1.2 record shows its type.
+    await using server =
+      protocol === "tls"
+        ? tls.createServer({ ...COMMON_CERT_, maxVersion: "TLSv1.2" }, greet)
+        : net.createServer(greet);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const seen = Promise.withResolvers<{ events: string[]; sentLast: number[] }>();
+    await using relay = net.createServer({ allowHalfOpen: true }, client => {
+      const events: string[] = [];
+      const sentLast: Buffer[] = [];
+      const upstream = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      upstream.on("error", () => {});
+      upstream.on("data", chunk => client.write(chunk));
+      // The server must not answer the client's last record: the client's socket is closed by then.
+      client.on("data", chunk => void (greeted ? sentLast.push(chunk) : upstream.write(chunk)));
+      client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      client.on("end", () => {
+        events.push("end");
+        client.destroy();
+      });
+      client.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        upstream.destroy();
+        seen.resolve({ events, sentLast: tlsRecords(Buffer.concat(sentLast)).map(record => record.type) });
+      });
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+
+    const options = { port: (relay.address() as AddressInfo).port, host: "127.0.0.1" };
+    using dir = tempDir("ends-with-open-connection", {
+      "client.mjs": `
+        import net from "node:net";
+        import tls from "node:tls";
+        // Once the greeting is read, so is everything the server sent, and the kernel has no reason of its own to reset.
+        const leave = () => ${kind === "exit" ? "process.exit(0)" : "socket.unref()"};
+        ${
+          protocol === "fetch"
+            ? `await (await fetch("http://127.0.0.1:${options.port}/")).text(); ${kind === "exit" ? "process.exit(0);" : ""}`
+            : protocol === "tls"
+              ? `const socket = tls.connect(${JSON.stringify({ ...options, servername: "localhost", ca: COMMON_CERT_.cert })});
+                 socket.once("data", leave);`
+              : `const socket = net.connect(${JSON.stringify(options)});
+                 socket.once("data", leave);`
+        }
+      `,
+      "worker.mjs": `
+        const worker = new Worker(new URL("./client.mjs", import.meta.url).href);
+        await new Promise(resolve => worker.addEventListener("close", resolve));
+        // The connection has to end with the Worker, not with this process.
+        process.stdin.on("data", () => {}).on("end", () => process.exit(0));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), kind === "worker" ? "worker.mjs" : "client.mjs"],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: kind === "teardown" ? "1" : undefined },
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const result = await seen.promise;
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+    // 21 is an alert: a socket that its thread closes sends the close_notify ahead of the FIN.
+    const sentLast = protocol === "tls" && (kind === "worker" || kind === "teardown") ? [21] : [];
+    expect(result).toEqual({ events: ["end", "close false"], sentLast });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Runs report(mode, version) of a fixture module in node, for every row at
 // once. Resolves with node's version and the reports in the order of the rows.
 async function reportsFromNode(fixture: string, rows: (readonly [version: string, mode: string])[]) {

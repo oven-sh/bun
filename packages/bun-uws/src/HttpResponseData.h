@@ -232,7 +232,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         READ_PAUSE_FLOOD = 4,
         /* node:http: the JS socket stopped reading. */
         READ_PAUSE_SOCKET = 8,
-        READ_PAUSE_ALL = 15,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -249,15 +248,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* node:http: 'connect' or 'upgrade' has the socket, and responses ahead of that request are still owed. Nothing is parsed, and the socket's handle gets every read. */
     bool isParserDetached() const {
         return (state & (HTTP_NODE_PARSING_STOPPED | HTTP_NODE_RAW_READS)) == (HTTP_NODE_PARSING_STOPPED | HTTP_NODE_RAW_READS);
-    }
-
-    /* Set or clear a flag from a runtime bool. */
-    void setFlag(uint32_t flag, bool value) {
-        if (value) {
-            state |= flag;
-        } else {
-            state &= ~flag;
-        }
     }
 
     /* Shared context pointer for onAborted/onTimeout/onData */

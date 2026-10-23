@@ -150,13 +150,51 @@ class BodyReadable extends ReadableFromWeb {
   }
 }
 
-// https://github.com/nodejs/undici/blob/v6.21.3/lib/core/util.js#L134-L203
+// https://github.com/nodejs/undici/blob/v6.21.3/lib/core/util.js#L108-L203
+function isValidPort(port) {
+  const value = parseInt(port, 10);
+  return value === Number(port) && value >= 0 && value <= 65535;
+}
+
+function isHttpOrHttpsPrefixed(value) {
+  return (
+    value != null &&
+    value[0] === "h" &&
+    value[1] === "t" &&
+    value[2] === "t" &&
+    value[3] === "p" &&
+    (value[4] === ":" || (value[4] === "s" && value[5] === ":"))
+  );
+}
+
 function parseURL(url) {
   if (typeof url === "string" || url instanceof URL) return new URL(url);
   if (!url || typeof url !== "object") throw new TypeError("url must be a string, URL, or UrlObject");
-  const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
-  let origin = url.origin != null ? String(url.origin) : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-  let path = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+  let { port, path, origin } = url;
+  const { pathname, hostname, protocol, search } = url;
+  if (port != null && port !== "" && !isValidPort(port)) {
+    throw new InvalidArgumentError(
+      "Invalid URL: port must be a valid integer or a string representation of an integer.",
+    );
+  }
+  if (path != null && typeof path !== "string") {
+    throw new InvalidArgumentError("Invalid URL path: the path must be a string or null/undefined.");
+  }
+  if (pathname != null && typeof pathname !== "string") {
+    throw new InvalidArgumentError("Invalid URL pathname: the pathname must be a string or null/undefined.");
+  }
+  if (hostname != null && typeof hostname !== "string") {
+    throw new InvalidArgumentError("Invalid URL hostname: the hostname must be a string or null/undefined.");
+  }
+  if (origin != null && typeof origin !== "string") {
+    throw new InvalidArgumentError("Invalid URL origin: the origin must be a string or null/undefined.");
+  }
+  if (!isHttpOrHttpsPrefixed(origin || protocol)) {
+    throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
+  }
+  port ??= protocol === "https:" ? 443 : 80;
+  origin ??= `${protocol || ""}//${hostname || ""}:${port}`;
+  path ??= `${pathname || ""}${search || ""}`;
   if (origin[origin.length - 1] === "/") origin = origin.slice(0, -1);
   if (path && path[0] !== "/") path = `/${path}`;
   // new URL(path, origin) would let an absolute URL in `path` replace the origin.
@@ -717,7 +755,9 @@ class ProxyAgent extends DispatcherBase {
       headers["proxy-authorization"] = token;
     }
     // fetch()'s `tls` also covers the connection to an https: proxy, which requestTls must not relax.
-    super({ connect: url.startsWith("https:") ? undefined : opts.requestTls }, undefined, { url, headers });
+    const connect = url.startsWith("https:") ? undefined : opts.requestTls;
+    // Only EnvHttpProxyAgent follows NO_PROXY.
+    super({ connect }, undefined, { url, headers, respectNoProxy: false });
   }
 }
 

@@ -401,7 +401,11 @@ private:
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RAW_READS) && httpResponseData->socketData) [[unlikely]] {
                 httpContextData->nodeHttpHooks->onRawRead(httpResponseData->socketData, data, length);
                 /* That ran JavaScript: a closed or upgraded socket no longer has an HttpResponseData. */
-                if (us_socket_is_closed(s) || us_socket_kind(s) != socketKind()) {
+                if (us_socket_is_closed(s)) {
+                    return s;
+                }
+                if (us_socket_kind(s) != socketKind()) {
+                    us_socket_unref(s);
                     return s;
                 }
             }
@@ -891,6 +895,13 @@ private:
         if (httpContextData->upgradedWebSocket) {
             /* This path is only for upgraded websockets */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
+
+            /* The socket of 'connect' or 'upgrade' holds the loop through its own handle, which unref() and the peer's FIN release. */
+            if constexpr (IsNodeHttp) {
+                if (!us_socket_is_closed((us_socket_t *) asyncSocket)) {
+                    us_socket_unref((us_socket_t *) asyncSocket);
+                }
+            }
 
             /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
             asyncSocket->uncork();

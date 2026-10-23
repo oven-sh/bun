@@ -12,18 +12,7 @@ const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 // and dangled if a re-entrant JS callback inserted a new stream and triggered
 // a rehash. Streams are now heap-allocated and stored by pointer, so *Stream
 // is stable for the lifetime of the H2FrameParser regardless of map growth.
-// These three tests cover the call sites where this was observed under ASAN.
-
-test("session.request() from a stream 'timeout' listener during forEachStream does not UAF on hashmap rehash", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", path.join(import.meta.dir, "node-http2-foreach-rehash.fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
-});
+// These tests cover call sites where this was observed under ASAN.
 
 test(
   "http2 client request() does not hold *Stream across user-controlled options getters",

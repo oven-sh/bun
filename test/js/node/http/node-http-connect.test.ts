@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
-import { getDefaultHighWaterMark, Writable } from "node:stream";
+import { getDefaultHighWaterMark, PassThrough, Writable } from "node:stream";
 import tls from "node:tls";
 import { WebSocketServer } from "ws";
 
@@ -2406,6 +2406,105 @@ test("the two-pipe proxy of Node's docs keeps no tunnel whose client sends on af
     origin.close();
     proxy.close();
   }
+});
+
+// With a listener every row is Node.js v26's. Without one, Node.js emits 'error' all the same.
+describe.each(["http", "https"] as const)("%s: a socket handed to a listener, when its connection fails", proto => {
+  const requests = {
+    upgrade: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+    connect: "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n\r\n",
+  };
+  const rows = (["upgrade", "connect"] as const).flatMap(event =>
+    [false, true].flatMap(listens =>
+      [false, true].map(
+        writes =>
+          [
+            `'${event}', ${writes ? "writing" : "reading"}, ${listens ? "with" : "without"} an 'error' listener`,
+            event,
+            listens,
+            writes,
+          ] as const,
+      ),
+    ),
+  );
+
+  test.each(rows)("%s", async (_name, event, listens, writes) => {
+    const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
+    await using server = proto === "https" ? https.createServer({ ...tlsCert }) : http.createServer();
+    server.on(event, (_req, socket) => {
+      socket.write("HTTP/1.1 200 OK\r\n\r\n");
+      onHandedOff(socket as net.Socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const client = proto === "https" ? tls.connect({ socket: raw, host: "127.0.0.1", ca: tlsCert.cert }) : raw;
+    try {
+      raw.on("error", () => {});
+      client.on("error", () => {}).write(requests[event]);
+      const [socket] = await Promise.all([handedOff, once(client, "data")]);
+
+      const events: string[] = [];
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<unknown>();
+      if (listens) socket.on("error", () => events.push("error"));
+      const listeners = socket.listenerCount("error");
+      socket.on("end", () => events.push("end"));
+      socket.on("close", onClosed).resume();
+      raw.resetAndDestroy();
+      let callbacks = 0;
+      if (writes) for (const chunk of ["a", "b"]) socket.write(chunk, () => callbacks++);
+
+      expect({ hadError: await closed, events, callbacks, listeners }).toEqual({
+        hadError: listens,
+        events: [listens ? "error" : "end"],
+        callbacks: writes ? 2 : 0,
+        // A TLSSocket has one of its own, as in Node.js.
+        listeners: Number(listens) + Number(proto === "https"),
+      });
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  });
+
+  test.each(
+    (["upgrade", "connect"] as const).flatMap(event =>
+      [false, true].map(both => [`'${event}', ${both ? "piped into and from" : "piped into"}`, event, both] as const),
+    ),
+  )("%s, without an 'error' listener", async (_name, event, both) => {
+    const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
+    await using server = proto === "https" ? https.createServer({ ...tlsCert }) : http.createServer();
+    server.on(event, (_req, socket) => {
+      socket.write("HTTP/1.1 200 OK\r\n\r\n");
+      onHandedOff(socket as net.Socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const client = proto === "https" ? tls.connect({ socket: raw, host: "127.0.0.1", ca: tlsCert.cert }) : raw;
+    try {
+      raw.on("error", () => {});
+      client.on("error", () => {}).write(requests[event]);
+      const [socket] = await Promise.all([handedOff, once(client, "data")]);
+
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      const source = new PassThrough();
+      const sink = new PassThrough();
+      source.pipe(socket);
+      if (both) socket.pipe(sink).resume();
+      socket.on("close", () => onClosed());
+      raw.resetAndDestroy();
+      source.write("a");
+      source.write("b");
+      await closed;
+      expect({ destroyed: socket.destroyed, sinkEnded: sink.writableEnded }).toEqual({
+        destroyed: true,
+        // As in Node.js, a TLSSocket closes without 'end' here.
+        sinkEnded: both && proto === "http",
+      });
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  });
 });
 
 test("unref() on the socket that 'upgrade' got lets the process exit with the connection open", async () => {

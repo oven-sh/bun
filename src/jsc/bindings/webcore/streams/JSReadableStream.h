@@ -127,6 +127,11 @@ public:
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
     }
+    // Nothing has started or locked the native source: every byte is behind its handle, none in a controller's queue.
+    bool hasPendingNativeSource() const
+    {
+        return m_bunMode == BunStreamMode::NativePending && m_state == ReadableStreamState::Readable && !m_reader && !m_lockedWithoutReader && !nativeHandleDetached();
+    }
     // A Body consumer holds this stream now. It stays disturbed and locked after the consumer lets go of it.
     void markConsumedAsBody()
     {

@@ -431,13 +431,15 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->nativeHandleDetached())
         return;
+    // No chunk can come out of a stream that was errored or cancelled first, so its source stays unstarted.
+    if (stream->m_state != ReadableStreamState::Readable)
+        return;
     JSObject* handle = stream->m_nativePtr.get().getObject();
     if (!handle)
         return;
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
 
-    stream->m_disturbed = true;
     size_t autoAllocateChunkSize = stream->m_autoAllocateChunkSize ? static_cast<size_t>(stream->m_autoAllocateChunkSize) : nativeSourceDefaultChunkSize;
 
     MarkedArgumentBuffer startArgs;
@@ -991,11 +993,11 @@ static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObj
     return true;
 }
 
-// Writes values[start..length); false = suspended on backpressure (or an exception is pending).
-static bool rsisWriteChunkArrayFrom(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSObject* values, unsigned start, unsigned length)
+// Writes values[0..length); false = suspended on backpressure (or an exception is pending).
+static bool rsisWriteChunkArray(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSObject* values, unsigned length)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    for (unsigned i = start; i < length; i++) {
+    for (unsigned i = 0; i < length; i++) {
         JSValue chunk = values->getIndex(globalObject, i);
         RETURN_IF_EXCEPTION(scope, false);
         auto step = rsisWriteChunk(vm, globalObject, op, chunk, values, i + 1, length);
@@ -1029,7 +1031,7 @@ static void rsisContinueAfterReady(JSC::VM& vm, JSGlobalObject* globalObject, JS
     if (!tail) {
         RELEASE_AND_RETURN(scope, rsisIssueRead(globalObject, op));
     }
-    bool completed = rsisWriteChunkArrayFrom(vm, globalObject, op, tail, 0, tail->length());
+    bool completed = rsisWriteChunkArray(vm, globalObject, op, tail, tail->length());
     RETURN_IF_EXCEPTION(scope, );
     if (!completed)
         return;
@@ -1085,7 +1087,7 @@ static void rsisContinueWithMany(JSC::VM& vm, JSGlobalObject* globalObject, JSRe
         RETURN_IF_EXCEPTION(scope, );
     }
     if (length) {
-        bool completed = rsisWriteChunkArrayFrom(vm, globalObject, op, values, 0, length);
+        bool completed = rsisWriteChunkArray(vm, globalObject, op, values, length);
         RETURN_IF_EXCEPTION(scope, );
         if (!completed)
             return;

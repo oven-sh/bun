@@ -314,6 +314,29 @@ for (const { body, fn } of bodyTypes) {
         });
       });
 
+      test("a read or a cancel sets bodyUsed, and a lock doesn't", async () => {
+        const locked = fn("bye");
+        const reader = locked.body!.getReader();
+        expect([locked.bodyUsed, locked.body!.locked]).toEqual([false, true]);
+        expect(await locked.text().catch(error => error)).toBeInstanceOf(TypeError);
+        expect(locked.bodyUsed).toBe(false);
+        reader.releaseLock();
+        expect(await locked.text()).toBe("bye");
+        expect(locked.bodyUsed).toBe(true);
+
+        const read = fn("bye");
+        const secondReader = read.body!.getReader();
+        await secondReader.read();
+        secondReader.releaseLock();
+        expect(read.bodyUsed).toBe(true);
+        expect(await read.text().catch(error => error)).toBeInstanceOf(TypeError);
+
+        const cancelled = fn("bye");
+        await cancelled.body!.cancel();
+        expect(cancelled.bodyUsed).toBe(true);
+        expect(await cancelled.text().catch(error => error)).toBeInstanceOf(TypeError);
+      });
+
       test("text() after the body getter returns a string body's bytes", async () => {
         const subject = fn("bye");
         expect(subject.body).toBeInstanceOf(ReadableStream);
@@ -1376,6 +1399,29 @@ describe.concurrent("string body consumption does not leak", () => {
   }
 });
 
+// Same measurement as above. The body of such a Response stays locked until the Response is collected.
+test("blob() of a stream body frees its copy of the Content-Type with the Response", async () => {
+  const src = `
+    const SZ = 2_000_000, WARM = 50, BLOCK = 40;
+    const mb = () => (process.memoryUsage.rss() / 1048576) | 0;
+    const headers = { "content-type": "text/x-test; a=" + "z".repeat(SZ) };
+    const stream = () => new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1)); c.close(); } });
+    const run = async n => { for (let i = 0; i < n; i++) await new Response(stream(), { headers }).blob(); };
+    await run(WARM); Bun.gc(true); const a = mb();
+    await run(BLOCK); Bun.gc(true); const b = mb();
+    await run(BLOCK); Bun.gc(true); const c = mb();
+    console.log("BLOCK1:" + (b - a) + " BLOCK2:" + (c - b));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
+  expect(m).not.toBeNull();
+  // A leak adds 40 x 2 MB per block.
+  expect(Number(m![2])).toBeLessThan(40);
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/6860
 describe("constructing a body from an unusable ReadableStream", () => {
   const bytes = () =>
@@ -2057,6 +2103,119 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     });
     release();
     expect(await text).toBe("payload");
+  });
+});
+
+// Acquiring a reader reads nothing: https://streams.spec.whatwg.org/#acquire-readable-stream-reader
+describe("a body whose stream had a reader that read nothing", () => {
+  const whole = "the first part, the second part";
+  const collect = async (chunks: AsyncIterable<Uint8Array>) => Buffer.concat(await Array.fromAsync(chunks)).toString();
+
+  type Source = { owner: Response; sendRest?: () => void } & Disposable;
+  const inMemory = (body: Bun.BodyInit): Source => ({ owner: new Response(body), [Symbol.dispose]() {} });
+  const sources: Record<string, () => Source | Promise<Source>> = {
+    string: () => inMemory(whole),
+    Blob: () => inMemory(new Blob([whole])),
+    Uint8Array: () => inMemory(new TextEncoder().encode(whole)),
+    "Bun.file()": () => {
+      const dir = tempDir("body-released-reader", { "whole.txt": whole });
+      return {
+        owner: new Response(file(join(String(dir), "whole.txt"))),
+        [Symbol.dispose]: () => dir[Symbol.dispose](),
+      };
+    },
+    // The first part comes with the head, and the second once the reader was released.
+    "fetch()": async () => {
+      const accepted = Promise.withResolvers<net.Socket>();
+      const server = net.createServer(socket => {
+        socket.once("data", () => {
+          socket.write(
+            `HTTP/1.1 200 OK\r\nContent-Length: ${whole.length}\r\nConnection: close\r\n\r\nthe first part, `,
+          );
+          accepted.resolve(socket);
+        });
+      });
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      const owner = await fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`);
+      const socket = await accepted.promise;
+      return { owner, sendRest: () => socket.end("the second part"), [Symbol.dispose]: () => void server.close() };
+    },
+  };
+
+  async function served(response: () => Response) {
+    using server = Bun.serve({ port: 0, fetch: response });
+    return await (await fetch(server.url)).text();
+  }
+  const consumers: Record<string, (owner: Response) => Promise<string | string[]>> = {
+    "Bun.serve() sending it": owner => served(() => owner),
+    "Bun.serve() sending new Response(body)": owner => served(() => new Response(owner.body)),
+    "text()": owner => owner.text(),
+    "arrayBuffer()": async owner => Buffer.from(await owner.arrayBuffer()).toString(),
+    "blob()": async owner => (await owner.blob()).text(),
+    "clone()": owner => Promise.all([owner.clone().text(), owner.text()]),
+    "body.tee()": owner => Promise.all(owner.body!.tee().map(collect)),
+    "new Response(body)": owner => new Response(owner.body).text(),
+    "new Request(url, { body })": owner =>
+      new Request("http://example.com/", { method: "POST", body: owner.body }).text(),
+    "fetch() uploading it": async owner => {
+      using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+      return await (await fetch(server.url, { method: "POST", body: owner.body })).text();
+    },
+    "Bun.write()": async owner => {
+      using dir = tempDir("body-released-reader-out", {});
+      await Bun.write(join(String(dir), "out.txt"), owner);
+      return await file(join(String(dir), "out.txt")).text();
+    },
+    "S3Client.write()": async owner => {
+      let uploaded = "";
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          uploaded += await req.text();
+          return new Response("", { headers: { ETag: '"etag"' } });
+        },
+      });
+      const endpoint = `http://127.0.0.1:${server.port}`;
+      await new Bun.S3Client({ accessKeyId: "key", secretAccessKey: "secret", bucket: "bucket", endpoint }).write(
+        "key",
+        owner,
+      );
+      return uploaded;
+    },
+    "Bun.readableStreamToText()": owner => Bun.readableStreamToText(owner.body!),
+    "body.bytes()": async owner => Buffer.from(await owner.body!.bytes()).toString(),
+    "HTMLRewriter": owner => new HTMLRewriter().transform(owner).text(),
+    "Bun.spawn() reading it as stdin": async owner => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        env: bunEnv,
+        stdin: owner,
+      });
+      return await proc.stdout.text();
+    },
+    "Readable.fromWeb()": owner => collect(Readable.fromWeb(owner.body as any)),
+    "for await": owner => collect(owner.body!),
+  };
+
+  describe.each(Object.keys(sources))("%s", source => {
+    test.concurrent.each(Object.keys(consumers))("is whole for %s", async consumer => {
+      using made = await sources[source]();
+      made.owner.body!.getReader().releaseLock();
+      expect(made.owner.bodyUsed).toBe(false);
+      made.sendRest?.();
+      expect([await consumers[consumer](made.owner)].flat()).toEqual(
+        consumer === "clone()" || consumer === "body.tee()" ? [whole, whole] : [whole],
+      );
+    });
+
+    test("Bun.serve() sends what a reader left", async () => {
+      using made = await sources[source]();
+      const reader = made.owner.body!.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      made.sendRest?.();
+      expect(Buffer.from(value!).toString() + (await served(() => made.owner))).toBe(whole);
+    });
   });
 });
 

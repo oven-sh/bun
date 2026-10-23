@@ -64,16 +64,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// uWS has let go of `s`, which is open. `unsent` is what uWS accepted and the kernel hasn't taken.
+    /// uWS has let go of `s`, which is open, and has destructed its ext: nothing here may ask the `UwsHttp` transport. `unsent` is what uWS accepted and the kernel hasn't taken.
     fn leave_http(
         this: ThisPtr<Self>,
         s: *mut us_socket_t,
         unsent: &[u8],
         reads_paused: bool,
         bytes_read: u64,
+        response_bytes_written: u64,
     ) {
         this.bytes_read.set(bytes_read);
-        this.bytes_written.set(this.total_bytes_written());
+        this.bytes_written
+            .set(this.bytes_written.get() + response_bytes_written);
         let handlers = this.get_handlers();
         let vm = VirtualMachine::get();
         let loop_ = vm.uws_loop();
@@ -412,6 +414,7 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__leaveHttp(
     unsent_length: usize,
     reads_paused: bool,
     bytes_read: u64,
+    response_bytes_written: u64,
 ) {
     // SAFETY: the caller's contract.
     let unsent = unsafe { bun_core::ffi::slice(unsent, unsent_length) };
@@ -420,6 +423,7 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__leaveHttp(
         s,
         unsent,
         reads_paused,
-        bytes_read
+        bytes_read,
+        response_bytes_written
     ))
 }

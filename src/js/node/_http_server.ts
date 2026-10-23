@@ -1545,7 +1545,8 @@ function detachFromHttp(socket, req) {
   socket.removeListener("data", noopOnData);
   delete socket._onTimeout;
   delete socket._final;
-  delete socket._destroy;
+  socket._destroy = handedOffSocketDestroy;
+  socket.emit = handedOffSocketEmit;
   const server = socket.server;
   server[kTrackedConnections].delete(socket);
   // In Node each socket holds the process itself. Here unref() on the server has always let go of these sockets too.
@@ -1564,6 +1565,30 @@ function detachFromHttp(socket, req) {
 // Node keeps a socket with bytes that nobody reads for good, and server.close() waits for it: in the two-pipe proxy of its docs, unpipe() pauses the client's socket once the origin has closed.
 function destroyUnreadSocket(this: any) {
   if (this.readableLength > 0 && !this.readableFlowing) this.destroy();
+}
+// Without an 'error' listener of the program's, a failed read or write ends the socket and closes it, as it always has here. Node emits 'error'.
+function handedOffSocketDestroy(this: any, err, callback) {
+  // node:tls keeps a listener of its own on a socket that a server accepted, and next to a listener node:net adds one for a failed read.
+  const notTheProgram = !this.encrypted ? 0 : err?.syscall === "read" ? 2 : 1;
+  if (err?.syscall !== undefined && this.listenerCount("error") === notTheProgram) {
+    err = null;
+    this._readableState.errored = null;
+    this.push(null);
+    this.read(0);
+  }
+  NetSocket.prototype._destroy.$call(this, err, callback);
+}
+// The same for a listener that passes the failure on when no other is left, as pipe()'s does.
+function handedOffSocketEmit(this: any, event, err) {
+  if (event !== "error" || err?.syscall === undefined || this.listenerCount("error") !== 0) {
+    return NetSocket.prototype.emit.$apply(this, arguments);
+  }
+  const state = this._readableState;
+  if (!state.endEmitted && state.length === 0) {
+    state.ended = state.endEmitted = true;
+    NetSocket.prototype.emit.$call(this, "end");
+  }
+  return false;
 }
 function handOffSocket(socket, req, isPipelined) {
   detachFromHttp(socket, req);

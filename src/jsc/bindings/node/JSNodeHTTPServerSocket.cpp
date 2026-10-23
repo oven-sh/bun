@@ -30,7 +30,7 @@ extern "C" void Bun__NodeHTTPSocket__onWritable(void* handle, bool ssl);
 extern "C" void Bun__NodeHTTPSocket__forgetConnection(void* handle, bool ssl);
 extern "C" void Bun__NodeHTTPSocket__forgetWebSocket(void* handle, bool ssl, bool sentEverything);
 extern "C" void Bun__NodeHTTPSocket__onClose(void* handle, bool ssl, int readError, bool runScript);
-extern "C" void Bun__NodeHTTPSocket__leaveHttp(void* handle, bool ssl, us_socket_t* socket, const char* unsent, size_t unsentLength, bool readsPaused, uint64_t bytesRead);
+extern "C" void Bun__NodeHTTPSocket__leaveHttp(void* handle, bool ssl, us_socket_t* socket, const char* unsent, size_t unsentLength, bool readsPaused, uint64_t bytesRead, uint64_t responseBytesWritten);
 extern "C" Zig::GlobalObject* Bun__NodeHTTPSocket__globalObject(void* handle, bool ssl);
 
 namespace Bun {
@@ -394,6 +394,8 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
 
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
 {
+    // A VM that ends drops the task that onClose() posted without running it.
+    closeSocketHandle(false);
     if (socket && is_ssl) {
         reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->socketData = nullptr;
     } else if (socket) {
@@ -805,11 +807,11 @@ extern "C" uint64_t Bun__NodeHTTPServerSocket__bytesRead(us_socket_t* socket, bo
 }
 
 template<bool SSL>
-static void handOverToSocketHandle(us_socket_t* socket, void* handle, bool restOfReadTaken)
+static void handOverToSocketHandle(us_socket_t* socket, void* handle, bool restOfReadTaken, uint64_t responseBytesWritten)
 {
     auto* contextData = uWS::HttpContext<SSL>::getSocketContextDataS(socket);
     auto left = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->leaveHttp();
-    Bun__NodeHTTPSocket__leaveHttp(handle, SSL, socket, left.backpressure.data(), left.backpressure.length(), left.readsPaused, left.bytesRead);
+    Bun__NodeHTTPSocket__leaveHttp(handle, SSL, socket, left.backpressure.data(), left.backpressure.length(), left.readsPaused, left.bytesRead, responseBytesWritten);
     contextData->socketLeft(socket, restOfReadTaken);
 }
 
@@ -822,8 +824,10 @@ bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)
     if (us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
+    uint64_t responseBytesWritten = 0;
     if (auto* res = currentResponse()) {
         Bun__NodeHTTPResponse_takeBackConnection(res->wrapped(), JSValue::encode(res));
+        responseBytesWritten = Bun__NodeHTTPResponse_bytesWritten(res->wrapped());
     }
     // The responses queued behind the one that leaves never get the connection.
     WTF::Vector<JSNodeHTTPResponse*, 2> queued;
@@ -841,9 +845,9 @@ bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)
     us_socket_t* leaving = std::exchange(socket, nullptr);
     void* handle = std::exchange(m_socketHandle, nullptr);
     if (is_ssl) {
-        handOverToSocketHandle<true>(leaving, handle, restOfReadTaken);
+        handOverToSocketHandle<true>(leaving, handle, restOfReadTaken, responseBytesWritten);
     } else {
-        handOverToSocketHandle<false>(leaving, handle, restOfReadTaken);
+        handOverToSocketHandle<false>(leaving, handle, restOfReadTaken, responseBytesWritten);
     }
     detach();
     return true;

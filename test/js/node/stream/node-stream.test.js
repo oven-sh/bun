@@ -651,6 +651,65 @@ it.each(["before the first read", "after a chunk"])(
   },
 );
 
+describe("Readable.fromWeb() of a native stream that something has started", () => {
+  // Each block has its own fill byte, so a chunk that is missing, repeated or out of order shows.
+  const payload = Buffer.concat(Array.from({ length: 16 }, (_, i) => Buffer.alloc(64 * 1024, i)));
+  const collect = async readable => Buffer.concat(await Array.fromAsync(readable));
+  const sources = {
+    "Bun.file().stream()": path => Bun.file(path).stream(),
+    "new Response(Bun.file()).body": path => new Response(Bun.file(path)).body,
+    "new Blob().stream()": () => new Blob([payload]).stream(),
+    "new Response(bytes).body": () => new Response(payload).body,
+  };
+
+  describe.each(Object.keys(sources))("%s", name => {
+    const make = () => {
+      const dir = tempDir("fromweb-started", { "payload.bin": payload });
+      return { web: sources[name](join(String(dir), "payload.bin")), [Symbol.dispose]: () => dir[Symbol.dispose]() };
+    };
+
+    it("reads everything after a reader that read nothing", async () => {
+      using made = make();
+      made.web.getReader().releaseLock();
+      expect((await collect(Readable.fromWeb(made.web))).equals(payload)).toBe(true);
+    });
+
+    it("reads the rest after a reader that read one chunk", async () => {
+      using made = make();
+      const reader = made.web.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      expect(Buffer.concat([value, await collect(Readable.fromWeb(made.web))]).equals(payload)).toBe(true);
+    });
+
+    it("ends without data after a reader that read to the end", async () => {
+      using made = make();
+      expect((await collect(made.web)).equals(payload)).toBe(true);
+      expect((await collect(Readable.fromWeb(made.web))).length).toBe(0);
+    });
+
+    it("ends without data after cancel()", async () => {
+      using made = make();
+      await made.web.cancel();
+      expect((await collect(Readable.fromWeb(made.web))).length).toBe(0);
+    });
+
+    it("reads everything if a getter in the options starts the stream", async () => {
+      using made = make();
+      let reads = 0;
+      const readable = Readable.fromWeb(made.web, {
+        get highWaterMark() {
+          reads++;
+          made.web.getReader().releaseLock();
+          return 64 * 1024;
+        },
+      });
+      expect(reads).toBe(1);
+      expect((await collect(readable)).equals(payload)).toBe(true);
+    });
+  });
+});
+
 // A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
 // buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
 // emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so

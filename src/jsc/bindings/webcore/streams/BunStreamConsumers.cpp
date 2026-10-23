@@ -929,7 +929,7 @@ JSValue tryUseReadableStreamBufferedFastPath(JSGlobalObject* globalObject, WebCo
     JSObject* handle = nativePtr.getObject();
     if (!handle)
         return {};
-    if (stream->m_disturbed)
+    if (!stream->hasPendingNativeSource())
         return {};
     JSValue methodValue = handle->get(globalObject, method);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1452,11 +1452,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToFormData, (JSGlobalObject * g
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObject*, CallFrame* callFrame))
 {
-    if (auto* stream = dynamicDowncast<JSReadableStream>(callFrame->argument(0))) {
-        stream->m_transferred = true;
-        stream->m_disturbed = true;
-    }
-    return JSValue::encode(jsUndefined());
+    auto* stream = dynamicDowncast<JSReadableStream>(callFrame->argument(0));
+    if (!stream || !stream->hasPendingNativeSource())
+        return JSValue::encode(jsUndefined());
+    JSValue handle = stream->nativePtrForJS();
+    if (!handle || !handle.isObject())
+        return JSValue::encode(jsUndefined());
+    stream->m_transferred = true;
+    stream->m_disturbed = true;
+    return JSValue::encode(handle);
 }
 
 // [reaction-convention] handlers (FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS).

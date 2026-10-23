@@ -208,6 +208,8 @@ struct HttpResponseData;
         bool hasTransferEncoding;
         /* Written right before the request handler runs. */
         uint64_t contentLength;
+        /* Written once the head is complete. */
+        bool connectionClose;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
@@ -246,6 +248,12 @@ struct HttpResponseData;
         uint64_t getContentLength()
         {
             return contentLength;
+        }
+
+        /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. Bun.serve does not read it from Proxy-Connection. */
+        bool getConnectionClose()
+        {
+            return connectionClose;
         }
 
         /* Iteration over headers (key, value) */
@@ -305,12 +313,6 @@ struct HttpResponseData;
                 }
             }
             return std::string_view(nullptr, 0);
-        }
-
-        /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. Bun.serve does not read it from Proxy-Connection. */
-        bool hasConnectionClose(bool orProxyConnection)
-        {
-            return hasConnectionToken("close", orProxyConnection);
         }
 
         /* llhttp 9.4.2's Connection grammar for one field (Node 26): `lowerToken` is a whole item of the list, SP and HTAB around an item are skipped, and a control byte ends the list. */
@@ -1357,7 +1359,8 @@ struct HttpResponseData;
                 req->bf.add(h->key);
                 hostHeaderCount += h->key.length() == 4 && !strncasecmp(h->key.data(), "host", 4);
             }
-            if (req->isAncient() || req->hasConnectionClose(IsNodeHttp)) {
+            req->connectionClose = req->hasConnectionToken("close", IsNodeHttp);
+            if (req->isAncient() || req->connectionClose) {
                 sawConnectionClose = true;
             }
             /* RFC 9112 6.3

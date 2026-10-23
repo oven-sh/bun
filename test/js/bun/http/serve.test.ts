@@ -4001,6 +4001,8 @@ describe("idle timeout with a forced sweep", () => {
     };
     const clients = [connect("disabled", disabled.port!), connect("short", short.port!)];
     try {
+      // The handshake has a deadline of its own, whatever idleTimeout is, and sweeps during it would run that out.
+      if (secure) await Promise.all(clients.map(client => once(client, "secureConnect")));
       // However many turns of the loop the accept takes.
       while (closed.length === 0) await sweep();
       // 20 seconds' worth of sweeps for a connection that both servers have accepted by now.

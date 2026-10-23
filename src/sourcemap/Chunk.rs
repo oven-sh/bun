@@ -620,6 +620,7 @@ impl NewBuilder<'_, VLQSourceMap> {
     }
 
     /// Marks the end of `output` as the generated position of `loc`. Adds no mapping.
+    #[inline(never)]
     pub fn mark(&mut self, kind: MarkKind, decision: u32, loc: Loc, output: &[u8]) {
         // exclude generated code from source
         if loc.start == Loc::EMPTY.start {
@@ -635,7 +636,12 @@ impl NewBuilder<'_, VLQSourceMap> {
                 lines: Ordinal::from_zero_based(self.prev_state.generated_line),
                 columns: Ordinal::from_zero_based(self.generated_column.max(0)),
             };
-            internal.mark(Mark::new(kind, decision, generated, original));
+            internal.append_mark(Mark {
+                generated,
+                original,
+                kind: kind as u32,
+                decision,
+            });
         }
     }
 

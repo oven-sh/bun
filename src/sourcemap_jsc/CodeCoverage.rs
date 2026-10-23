@@ -25,7 +25,6 @@ pub struct Report<'a> {
     /// Indexed in step with `functions_which_have_executed`.
     pub(crate) functions: Vec<ByteRange>,
     pub(crate) functions_which_have_executed: Bitset,
-    /// Sorted.
     pub(crate) branches: Vec<(Branch, u32)>,
     /// Indexed in step with `stmts_which_have_executed`.
     pub(crate) stmts: Vec<ByteRange>,
@@ -77,6 +76,10 @@ impl<'a> Report<'a> {
             return 1.0;
         }
         (self.functions_which_have_executed.count() as f64) / total_count
+    }
+
+    pub fn branches_found(&self) -> usize {
+        self.branches.len()
     }
 
     pub fn branches_hit(&self) -> usize {
@@ -428,10 +431,11 @@ pub mod text {
         for (value, threshold, width) in [
             (vals.functions, failing.functions, 7),
             (vals.lines, failing.lines, 7),
-            (vals.branches, failing.branches, 10),
+            (vals.branches, failing.branches, 8),
         ] {
             writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
-            if ENABLE_COLORS {
+            // Without a threshold there is nothing to pass or fail.
+            if ENABLE_COLORS && threshold > 0.0 {
                 if value < threshold {
                     writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
                 } else {
@@ -478,6 +482,15 @@ pub mod text {
 
         // This sets statements in executed scopes
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
+
+        // As Istanbul does: when every line ran, the lines with a branch that was not taken.
+        if executable_lines_that_havent_been_executed.count() == 0 {
+            for &(branch, hits) in &report.branches {
+                if hits == 0 {
+                    executable_lines_that_havent_been_executed.set(branch.line as usize);
+                }
+            }
+        }
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
 
@@ -831,7 +844,7 @@ impl ByteRangeMapping {
             });
         }
 
-        let branches = self.count_branches(&counts, &functions, source_map.as_deref(), &mut lines);
+        let branches = self.count_branches(&counts, &functions, source_map.is_some(), &mut lines);
 
         let (executable_lines, lines_which_have_executed) = lines.bitsets()?;
         let (functions, functions_which_have_executed) = split_executed(&functions)?;
@@ -850,15 +863,15 @@ impl ByteRangeMapping {
         })
     }
 
-    /// `functions` is sorted. `source_map` is `None` to report the lines of the text JSC compiled.
+    /// `functions` is sorted. Without a source map, the lines are those of the text JSC compiled.
     fn count_branches(
         &self,
         counts: &ExecutionCounts,
         functions: &[CountedRange],
-        source_map: Option<&ParsedSourceMap>,
+        has_source_map: bool,
         lines: &mut LineCounts,
     ) -> Vec<(Branch, u32)> {
-        // JSC starts a branch's block a unit early, as a function that starts it has its own block.
+        // At a function is the function's own block. JSC starts the branch's block a unit earlier.
         let count_at = |offset: u32| {
             let starts_a_function = functions
                 .binary_search_by_key(&offset, |function| function.range.start)
@@ -870,43 +883,45 @@ impl ByteRangeMapping {
 
         let mut branches = Vec::with_capacity(self.branch_marks.len());
         for marks in self.branch_marks.chunk_by(|a, b| a.decision == b.decision) {
-            let [decision, branch_marks @ ..] = marks else {
+            let [first, rest @ ..] = marks else {
                 continue;
             };
-            let has_implicit_branch = match decision.kind {
-                MarkKind::Decision => false,
-                MarkKind::DecisionWithImplicitBranch => true,
-                _ => continue,
-            };
-            let line = match (source_map, decision.original_line) {
-                (Some(_), Some(line)) => Some(line),
-                (Some(source_map), None) => branch_marks.first().and_then(|branch| {
-                    self.original_line_of_decision(source_map, decision.offset, branch.offset)
-                }),
-                (None, _) => {
-                    u32::try_from(self.line_and_column_of(decision.offset).0.zero_based()).ok()
-                }
+            let (decision_mark, marks_of_branches, has_implicit_branch, mut fell_through) =
+                match (first.kind, rest) {
+                    (MarkKind::Decision, _) => (first, rest, false, 0),
+                    (MarkKind::DecisionWithImplicitBranch, _) => (first, rest, true, 0),
+                    // The condition is the decision, and `do` falls through to the body.
+                    (MarkKind::DoWhile, [body, condition]) => {
+                        let entered = count_at(first.offset);
+                        (condition, core::slice::from_ref(body), true, entered)
+                    }
+                    _ => continue,
+                };
+            // A `// @bun` file has none: its source map has the lines of several files at once.
+            let line = if has_source_map {
+                decision_mark.original_line
+            } else {
+                u32::try_from(self.line_and_column_of(decision_mark.offset).0.zero_based()).ok()
             };
             let Some(line) = line else {
                 continue;
             };
-            let reached = count_at(decision.offset);
+            let reached = count_at(decision_mark.offset);
             // genhtml rejects a `BRDA` on a line with no `DA`, such as a lone `{` of a pattern.
             lines.add(line as usize, reached);
 
             let mut index = 0;
             let mut push = |hits: u32| {
                 let branch = Branch {
-                    decision: decision.decision,
+                    decision: decision_mark.decision,
                     index,
                     line,
                 };
                 branches.push((branch, hits));
                 index += 1;
             };
-            let mut fell_through = 0u32;
             let mut total = 0u32;
-            for mark in branch_marks {
+            for mark in marks_of_branches {
                 let ran = count_at(mark.offset);
                 let hits = ran.saturating_sub(fell_through);
                 fell_through = match mark.kind {
@@ -923,30 +938,8 @@ impl ByteRangeMapping {
         branches
     }
 
-    /// For a `// @bun` file with a source map. `None`: the map does not say where the decision is.
-    fn original_line_of_decision(
-        &self,
-        source_map: &ParsedSourceMap,
-        decision: u32,
-        first_branch: u32,
-    ) -> Option<u32> {
-        let position = |at: bun_sourcemap::LineColumnOffset| (at.lines, at.columns);
-        let mapping_at = |(line, column)| source_map.find_mapping(line, column);
-        let start = self.line_and_column_of(decision);
-        let before = mapping_at(start)?;
-        // In the `E ||= {}` that `bun build` makes of an `enum`, `{}` has the position of `E`.
-        let branch = mapping_at(self.line_and_column_of(first_branch))
-            .filter(|mapping| position(mapping.generated) > start)?;
-        // The `{` of a pattern has no mapping. It is between these two, so on a line they share.
-        if position(before.generated) != start && before.original.lines != branch.original.lines {
-            return None;
-        }
-        u32::try_from(before.original.lines.zero_based()).ok()
-    }
-
-    /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: the `{`
-    /// of a loop body shares a line with a header that runs once, and after a `return` JSC has
-    /// the `}` in a block of its own that never runs.
+    /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: after a
+    /// `return` JSC has the `}` in a block of its own that never runs.
     fn count_line(
         &self,
         counts: &ExecutionCounts,
@@ -1035,7 +1028,7 @@ impl ByteRangeMapping {
         match kind {
             // `scan` sets no brace.
             MarkKind::ObjectBrace => return self.executable_units.set(offset as usize),
-            MarkKind::Decision | MarkKind::DecisionWithImplicitBranch => {}
+            MarkKind::Decision | MarkKind::DecisionWithImplicitBranch | MarkKind::DoWhile => {}
             MarkKind::Branch | MarkKind::EmptyCase => {
                 let len = u32::try_from(self.executable_units.bit_length()).expect("int cast");
                 while offset + 1 < len && is_white_space(source.char_at(offset as usize)) {

@@ -1643,7 +1643,7 @@ pub(crate) mod __gated_printer {
     pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
     }
-    /// Whether the last of `stmts`, or of the block it is, leaves, so nothing after them runs.
+    /// Whether `stmts` end in a `break`, `continue`, `return` or `throw`, also inside a last block.
     fn ends_in_jump(stmts: &[Stmt]) -> bool {
         match stmts.last().map(|stmt| &stmt.data) {
             Some(
@@ -1700,6 +1700,9 @@ pub(crate) mod __gated_printer {
         pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
         pub(crate) decision_count: u32,
+        /// Of the labelled statement that is about to be printed, if it is a branch.
+        pub(crate) decision_of_label: u32,
+        pub(crate) is_in_case_value: bool,
 
         pub(crate) stack_check: bun_core::StackCheck,
         pub(crate) stack_overflowed: bool,
@@ -2478,7 +2481,7 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        pub(crate) fn mark_object_brace(&mut self, loc: bun_ast::Loc) {
+        fn mark_object_brace(&mut self, loc: bun_ast::Loc) {
             if !self.code_coverage() {
                 return;
             }
@@ -2488,36 +2491,36 @@ pub(crate) mod __gated_printer {
 
         /// Starts a decision at `loc`, which is about to be printed.
         #[inline]
-        pub(crate) fn mark_decision(
+        fn mark_decision(
             &mut self,
             kind: MarkKind,
             loc: bun_ast::Loc,
             branches: &[bun_ast::Loc],
         ) -> u32 {
-            self.mark_decision_at(self.writer.written(), kind, loc, branches)
+            self.mark_decision_at_offset(self.writer.written(), kind, loc, branches)
         }
 
-        /// For what was just printed: marks its last character, one byte in `ASCII_ONLY` output.
+        /// Starts a decision at the last byte printed, a whole character in `ASCII_ONLY` output.
         #[inline]
-        pub(crate) fn mark_decision_after(
+        fn mark_decision_at_last_byte(
             &mut self,
             decision_loc: bun_ast::Loc,
             branch_loc: bun_ast::Loc,
         ) -> u32 {
-            let last_character = self.writer.written() - 1;
-            self.mark_decision_at(
-                last_character,
+            let last_byte = self.writer.written() - 1;
+            self.mark_decision_at_offset(
+                last_byte,
                 MarkKind::DecisionWithImplicitBranch,
                 decision_loc,
                 &[branch_loc],
             )
         }
 
-        /// Returns 0, which `mark_branch` ignores, for generated code: a branch is not after `loc`.
+        /// Returns 0 for generated code: a branch is not after `loc`. `mark_branch` ignores 0.
         #[inline]
-        fn mark_decision_at(
+        fn mark_decision_at_offset(
             &mut self,
-            written: i32,
+            offset: i32,
             kind: MarkKind,
             loc: bun_ast::Loc,
             branches: &[bun_ast::Loc],
@@ -2526,7 +2529,11 @@ pub(crate) mod __gated_printer {
             if !self.code_coverage() || self.stack_overflowed {
                 return 0;
             }
-            if loc.start < 0 || branches.iter().any(|branch| branch.start <= loc.start) {
+            // JSC counts the value of a `case` with its clause, not each time it is compared.
+            if self.is_in_case_value {
+                return 0;
+            }
+            if loc.is_empty() || branches.iter().any(|branch| branch.start <= loc.start) {
                 return 0;
             }
             self.decision_count += 1;
@@ -2534,24 +2541,35 @@ pub(crate) mod __gated_printer {
                 kind,
                 self.decision_count,
                 loc,
-                &self.writer.slice()[..written as usize],
+                &self.writer.slice()[..offset as usize],
             );
             self.decision_count
         }
 
         /// What is about to be printed is a branch of `decision`. `loc` is in it.
         #[inline]
-        pub(crate) fn mark_branch(&mut self, decision: u32, loc: bun_ast::Loc) {
-            self.mark_branch_as(MarkKind::Branch, decision, loc);
+        fn mark_branch(&mut self, decision: u32, loc: bun_ast::Loc) {
+            self.mark_branch_of_kind(MarkKind::Branch, decision, loc);
         }
 
         #[inline]
-        pub(crate) fn mark_branch_as(&mut self, kind: MarkKind, decision: u32, loc: bun_ast::Loc) {
-            if !GENERATE_SOURCE_MAP || !ASCII_ONLY || decision == 0 {
+        fn mark_branch_of_kind(&mut self, kind: MarkKind, decision: u32, loc: bun_ast::Loc) {
+            if !self.code_coverage() || decision == 0 {
                 return;
             }
             self.source_map_builder
                 .mark(kind, decision, loc, self.writer.slice());
+        }
+
+        /// `stmt` is about to be printed and is a branch of `decision`.
+        #[inline]
+        fn mark_branch_stmt(&mut self, decision: u32, stmt: &Stmt) {
+            // JSC starts the block of `x: f()` at `f`, so the mark goes after the labels.
+            if matches!(stmt.data, StmtData::SLabel(_)) {
+                self.decision_of_label = decision;
+            } else {
+                self.mark_branch(decision, stmt.loc);
+            }
         }
 
         fn mark_binary(&mut self, v: &mut BinaryExpressionVisitor<'a>) {
@@ -2576,7 +2594,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// `target` was just printed and `?.` is about to be. `rest` is in what is after the `?.`.
+        /// Called between printing `target` and `?.`. `rest` is a position after the `?.`.
         #[inline]
         fn mark_optional_chain(&mut self, target: Expr, rest: bun_ast::Loc) {
             if !self.code_coverage() {
@@ -2591,7 +2609,7 @@ pub(crate) mod __gated_printer {
                 ExprData::EIndex(e) => e.index.loc,
                 _ => target.loc,
             };
-            let decision = self.mark_decision_after(end_of_target, rest);
+            let decision = self.mark_decision_at_last_byte(end_of_target, rest);
             self.mark_branch(decision, rest);
         }
 
@@ -3854,7 +3872,6 @@ pub(crate) mod __gated_printer {
                         if let Some(inlined) =
                             self.try_to_get_imported_enum_value(e.target, &e.name)
                         {
-                            self.add_source_mapping(expr.loc);
                             self.print_inlined_enum(inlined, &e.name, level);
                             return;
                         }
@@ -3917,7 +3934,6 @@ pub(crate) mod __gated_printer {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
                                 {
-                                    self.add_source_mapping(expr.loc);
                                     self.print_inlined_enum(value, str.slice8(), level);
                                     return;
                                 }
@@ -5349,7 +5365,7 @@ pub(crate) mod __gated_printer {
             target_loc: Option<bun_ast::Loc>,
         ) {
             let decision = match target_loc {
-                Some(target_loc) => self.mark_decision_after(target_loc, initial.loc),
+                Some(target_loc) => self.mark_decision_at_last_byte(target_loc, initial.loc),
                 None => 0,
             };
             self.print_whitespacer(ws!(b" = "));
@@ -6084,7 +6100,10 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
+                    let decision =
+                        self.mark_decision(MarkKind::DoWhile, stmt.loc, &[s.body.loc, s.test.loc]);
                     self.print(b"do");
+                    self.mark_branch_stmt(decision, &s.body);
                     match s.body.data {
                         StmtData::SBlock(block) => {
                             self.print_space();
@@ -6108,6 +6127,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"while");
                     self.print_space();
                     self.print(b"(");
+                    self.mark_branch(decision, s.test.loc);
                     self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
                     self.print_semicolon_after_statement();
@@ -6116,6 +6136,7 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
+                    let decision = self.mark_decision(MarkKind::Decision, stmt.loc, &[s.body.loc]);
                     self.print(b"for");
                     self.print_space();
                     self.print(b"(");
@@ -6126,12 +6147,14 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
+                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SForOf(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
+                    let decision = self.mark_decision(MarkKind::Decision, stmt.loc, &[s.body.loc]);
                     self.print(b"for");
                     if s.is_await {
                         self.print(b" await");
@@ -6149,6 +6172,7 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Comma, ExprFlag::none());
                     self.print(b")");
+                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SWhile(s) => {
@@ -6158,8 +6182,14 @@ pub(crate) mod __gated_printer {
                     self.print(b"while");
                     self.print_space();
                     self.print(b"(");
+                    let decision = self.mark_decision(
+                        MarkKind::DecisionWithImplicitBranch,
+                        s.test.loc,
+                        &[s.body.loc],
+                    );
                     self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
+                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SWith(s) => {
@@ -6181,12 +6211,22 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print_symbol(s.name.ref_);
                     self.print(b":");
+                    let decision = core::mem::take(&mut self.decision_of_label);
+                    self.mark_branch_stmt(decision, &s.stmt);
                     self.print_body(s.stmt);
                 }
                 StmtData::STry(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
+                    let decision = match &s.catch {
+                        Some(catch) => self.mark_decision(
+                            MarkKind::DecisionWithImplicitBranch,
+                            stmt.loc,
+                            &[catch.loc],
+                        ),
+                        None => 0,
+                    };
                     self.print(b"try");
                     self.print_space();
                     self.print_block(s.body_loc, slice_of(s.body), None);
@@ -6194,6 +6234,7 @@ pub(crate) mod __gated_printer {
                     if let Some(catch) = &s.catch {
                         self.print_space();
                         self.add_source_mapping(catch.loc);
+                        self.mark_branch(decision, catch.loc);
                         self.print(b"catch");
                         if let Some(binding) = &catch.binding {
                             self.print_space();
@@ -6229,7 +6270,13 @@ pub(crate) mod __gated_printer {
 
                     self.print(b";");
 
+                    let mut decision = 0;
                     if let Some(test) = &s.test {
+                        decision = self.mark_decision(
+                            MarkKind::DecisionWithImplicitBranch,
+                            test.loc,
+                            &[s.body.loc],
+                        );
                         self.print_expr(*test, Level::Lowest, ExprFlag::none());
                     }
 
@@ -6241,6 +6288,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b")");
+                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SSwitch(s) => {
@@ -6263,7 +6311,7 @@ pub(crate) mod __gated_printer {
                         self.print_semicolon_if_needed();
                         self.print_indent();
                         self.add_source_mapping(c.loc);
-                        self.mark_branch_as(
+                        self.mark_branch_of_kind(
                             if c.body.is_empty() {
                                 MarkKind::EmptyCase
                             } else {
@@ -6276,7 +6324,10 @@ pub(crate) mod __gated_printer {
                         if let Some(val) = &c.value {
                             self.print(b"case");
                             self.print_space();
+                            let was_in_case_value =
+                                core::mem::replace(&mut self.is_in_case_value, true);
                             self.print_expr(*val, Level::LogicalAnd, ExprFlag::none());
+                            self.is_in_case_value = was_in_case_value;
                         } else {
                             self.print(b"default");
                         }
@@ -6807,7 +6858,7 @@ pub(crate) mod __gated_printer {
             self.print(b"(");
             self.print_expr(s.test, Level::Lowest, ExprFlag::none());
             self.print(b")");
-            self.mark_branch(decision, s.yes.loc);
+            self.mark_branch_stmt(decision, &s.yes);
 
             match &s.yes.data {
                 StmtData::SBlock(block) => {
@@ -6860,7 +6911,7 @@ pub(crate) mod __gated_printer {
                 self.print_space_before_identifier();
                 self.add_source_mapping(s.else_loc.to_nullable().unwrap_or(no_block.loc));
                 self.print(b"else");
-                self.mark_branch(decision, no_block.loc);
+                self.mark_branch_stmt(decision, no_block);
 
                 match &no_block.data {
                     StmtData::SBlock(block) => {
@@ -7269,6 +7320,8 @@ pub(crate) mod __gated_printer {
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
                 decision_count: 0,
+                decision_of_label: 0,
+                is_in_case_value: false,
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,

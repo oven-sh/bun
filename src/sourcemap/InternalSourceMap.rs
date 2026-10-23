@@ -140,7 +140,7 @@ const _: () = assert!(size_of::<SyncEntry>() == 24);
 pub struct Mark {
     pub generated: LineColumnOffset,
     pub original: LineColumnOffset,
-    kind: u32,
+    pub(crate) kind: u32,
     /// Which decision this is, or is a part of. 0 for an `ObjectBrace`.
     pub decision: u32,
 }
@@ -148,35 +148,23 @@ pub struct Mark {
 const _: () = assert!(size_of::<Mark>() == 24);
 
 #[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug, strum::FromRepr)]
+#[derive(Copy, Clone, strum::FromRepr)]
 pub enum MarkKind {
     /// Of an object literal, which is code. A block's is not, and it is the same character.
     ObjectBrace,
     /// Where control goes one of several ways, each a `Branch`: `if`, `?:`, `switch`.
     Decision,
-    /// One more branch has no code. It ran as often as this position, less the other branches.
+    /// A `Decision` with one more branch, which has no code. Its count is what the others leave.
     DecisionWithImplicitBranch,
+    /// The `do` of a `do`-`while`. Its two `Branch` marks are the body and the condition.
+    DoWhile,
     /// The start of a branch, or the white space before it.
     Branch,
-    /// A `case` without statements. It falls through, so the next clause's count includes its own.
+    /// A `case` with no statements. Control falls through, so the next clause's count includes it.
     EmptyCase,
 }
 
 impl Mark {
-    pub(crate) fn new(
-        kind: MarkKind,
-        decision: u32,
-        generated: LineColumnOffset,
-        original: LineColumnOffset,
-    ) -> Mark {
-        Mark {
-            generated,
-            original,
-            kind: kind as u32,
-            decision,
-        }
-    }
-
     pub fn kind(&self) -> Option<MarkKind> {
         MarkKind::from_repr(self.kind)
     }
@@ -877,7 +865,7 @@ impl Builder {
         }
     }
 
-    pub(crate) fn mark(&mut self, mark: Mark) {
+    pub(crate) fn append_mark(&mut self, mark: Mark) {
         self.marks.push(mark);
     }
 

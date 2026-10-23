@@ -1595,7 +1595,6 @@ fn print_coverage_table<const COLORS: bool>(
     for f in fractions {
         avg.functions += f.functions;
         avg.lines += f.lines;
-        avg.branches += f.branches;
         avg.stmts += f.stmts;
     }
     let avg_thresholds = if fractions.is_empty() {
@@ -1604,8 +1603,15 @@ fn print_coverage_table<const COLORS: bool>(
         let n = fractions.len() as f64;
         avg.functions /= n;
         avg.lines /= n;
-        avg.branches /= n;
         avg.stmts /= n;
+        // Of all branches: in a mean of the files, one without branches would count as 100%.
+        let found: usize = reports.iter().map(|r| r.branches_found()).sum();
+        let hit: usize = reports.iter().map(|r| r.branches_hit()).sum();
+        avg.branches = if found == 0 {
+            1.0
+        } else {
+            hit as f64 / found as f64
+        };
         thresholds
     };
 
@@ -1617,7 +1623,7 @@ fn print_coverage_table<const COLORS: bool>(
         let _ = bun_core::write_pretty!(
             out,
             COLORS,
-            "|---------|---------|------------|-------------------<r>\n"
+            "|---------|---------|----------|-------------------<r>\n"
         );
     };
     separator(&mut out);
@@ -1626,7 +1632,7 @@ fn print_coverage_table<const COLORS: bool>(
     let _ = bun_core::write_pretty!(
         out,
         COLORS,
-        " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> % Branches <d>|<r> Uncovered Line #s\n"
+        " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> % Branch <d>|<r> Uncovered Line #s\n"
     );
     separator(&mut out);
     let _ = text::write_format_with_values::<COLORS>(

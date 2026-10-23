@@ -12,23 +12,23 @@ Bun's test runner has built-in code coverage reporting. Use it to see how much o
 ```bash terminal icon="terminal"
 bun test --coverage
 
--------------|---------|---------|------------|-------------------
-File         | % Funcs | % Lines | % Branches | Uncovered Line #s
--------------|---------|---------|------------|-------------------
-All files    |   38.89 |   42.11 |      31.25 |
- index-0.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-1.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-10.ts |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-2.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-3.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-4.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-5.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-6.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-7.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-8.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index-9.ts  |   33.33 |   36.84 |      25.00 | 10-15,19-24
- index.ts    |  100.00 |  100.00 |     100.00 |
--------------|---------|---------|------------|-------------------
+-------------|---------|---------|----------|-------------------
+File         | % Funcs | % Lines | % Branch | Uncovered Line #s
+-------------|---------|---------|----------|-------------------
+All files    |   38.89 |   42.11 |    31.25 |
+ index-0.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-1.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-10.ts |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-2.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-3.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-4.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-5.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-6.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-7.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-8.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index-9.ts  |   33.33 |   36.84 |    25.00 | 10-15,19-24
+ index.ts    |  100.00 |  100.00 |   100.00 |
+-------------|---------|---------|----------|-------------------
 ```
 
 ### Enable by Default
@@ -91,7 +91,7 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 
 ### LCOV Coverage Reporter
 
-The lcov reporter writes an `lcov.info` file to the coverage directory, with the function totals (`FNF`, `FNH`) of each file, and how often each branch (`BRDA`) and each line (`DA`) ran.
+The lcov reporter writes an `lcov.info` file to the coverage directory, with the function totals (`FNF`, `FNH`) of each file, how often each branch was taken (`BRDA`), and how often each line ran (`DA`).
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -293,21 +293,23 @@ test:coverage:
 ### Text Output Explanation
 
 ```
--------------|---------|---------|------------|-------------------
-File         | % Funcs | % Lines | % Branches | Uncovered Line #s
--------------|---------|---------|------------|-------------------
-All files    |   85.71 |   90.48 |      80.56 |
- src/        |   85.71 |   90.48 |      80.56 |
-  utils.ts   |  100.00 |  100.00 |     100.00 |
-  api.ts     |   75.00 |   85.71 |      66.67 | 15-18,25
-  main.ts    |   80.00 |   88.89 |      75.00 | 42,50-52
--------------|---------|---------|------------|-------------------
+-------------|---------|---------|----------|-------------------
+File         | % Funcs | % Lines | % Branch | Uncovered Line #s
+-------------|---------|---------|----------|-------------------
+All files    |   85.71 |   90.48 |    77.78 |
+ src/        |   85.71 |   90.48 |    77.78 |
+  utils.ts   |  100.00 |  100.00 |   100.00 |
+  api.ts     |   75.00 |   85.71 |    66.67 | 15-18,25
+  main.ts    |   80.00 |   88.89 |    75.00 | 42,50-52
+-------------|---------|---------|----------|-------------------
 ```
 
 - **% Funcs**: Percentage of functions called during tests
 - **% Lines**: Percentage of executable lines run during tests
-- **% Branches**: Percentage of branches taken during tests
-- **Uncovered Line #s**: Line numbers that were never executed
+- **% Branch**: Percentage of branches taken during tests
+- **Uncovered Line #s**: Line numbers that were never executed. For a file where every line ran, the lines with a branch that was not taken
+
+In the `All files` row, `% Branch` is the percentage of all branches in all files. `% Funcs` and `% Lines` are the averages of the files' percentages.
 
 ### Branches
 
@@ -329,7 +331,18 @@ test("greets a user", () => {
 });
 ```
 
-Wherever the code goes one of several ways, each way is a branch, whether or not it has code of its own:
+```
+-----------|---------|---------|----------|-------------------
+File       | % Funcs | % Lines | % Branch | Uncovered Line #s
+-----------|---------|---------|----------|-------------------
+All files  |  100.00 |  100.00 |    50.00 |
+ greet.ts  |  100.00 |  100.00 |    50.00 | 2-3
+-----------|---------|---------|----------|-------------------
+```
+
+`greet` has four branches, and the test takes two of them: `!user` is false, and `"stranger"` is skipped. The `lcov` reporter has the count of each branch.
+
+Wherever the code can go one of several ways, each way is a branch, whether or not it has code of its own:
 
 | Code                                                          | Branches                                                      |
 | ------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -340,17 +353,28 @@ Wherever the code goes one of several ways, each way is a branch, whether or not
 | `a?.b`, `a?.[b]`, `a?.()`                                     | The rest of the chain is evaluated, the rest is skipped       |
 | A default value, of a parameter or in a destructuring pattern | The default is used, the default is not used                  |
 | `switch`                                                      | Each `case`, `default`, and no match if there is no `default` |
-
-`greet` has four branches, and the test takes two of them: `!user` is false, and `"stranger"` is skipped.
+| `while`, `do`...`while`, and `for` with a condition           | The condition is true, the condition is false                 |
+| `for`...`in`, `for`...`of`                                    | The body runs                                                 |
+| `try`...`catch`                                               | An error is caught, no error is caught                        |
 
 In a `switch`, a `case` counts when it matches. The exception is a `case` that has statements and falls through to the next one, because it does not end in `break`, `continue`, `return` or `throw`:
 
 - The next `case` counts those runs too.
 - That `switch` has no branch for "no match".
 
-The body of a loop and a `catch` block are not branches. Line coverage shows whether they ran.
+Bun does not report:
 
-Bun counts code in blocks that run together. When a call throws, Bun still reports the rest of its block as run. An `if` without `else` right after the call counts as reached with its condition false.
+- A branch in the value of a `case`, such as the `&&` in `case a && b:`. The `case` itself is a branch of its `switch`.
+- The branches of a file that `bun build` made with a source map. Its lines are reported.
+
+A branch without code of its own, such as a missing `else`, has what is left of the times Bun reached the decision. In two cases that reads as taken when it was not:
+
+- The condition throws, as in `if (check()) return;` where `check()` throws.
+- A call right before the decision throws. Bun counts code in blocks that run together, and still reports the rest of the block as run.
+
+#### Compared with other tools
+
+Tools do not agree on what a branch is, so the same tests give a different percentage in each. Bun lists both outcomes of `&&`, `||`, `??`, `?.`, the logical assignments, default values and loop conditions, so a file has more branches than in Istanbul, which Jest and nyc use, and the percentage is often lower. Set a `branches` threshold from what Bun reports for your project, not from the number another tool gave.
 
 ### What to Aim For
 

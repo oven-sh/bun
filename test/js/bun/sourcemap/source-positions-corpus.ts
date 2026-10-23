@@ -462,12 +462,12 @@ export const cases: Record<string, Case> = {
  1|first([]);
 `,
   },
-  // Each part of the head of a loop has its own count, and so has the test of a `case` that is not a constant or a name.
-  "heads.ts": {
+  // Each part of a loop header has its own count.
+  "loop-headers.ts": {
     functions: "1/1",
     lines: `
-11|function f() {
-11|  return true;
+10|function f() {
+10|  return true;
  -|}
  1|let i = 0;
  1|while (
@@ -507,15 +507,6 @@ export const cases: Record<string, Case> = {
  1|  in { a: 1, b: 2 }
  -|) {
  2|  f();
- -|}
- 1|switch (i as number) {
- 1|  case f() &&
- 1|    9:
- 0|    f();
- 1|  case i + 1:
- 0|    f();
- 0|  case 7:
- 0|    f();
  -|}
 `,
   },

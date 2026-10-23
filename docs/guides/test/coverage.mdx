@@ -10,7 +10,7 @@ Bun's test runner has built-in _code coverage reporting_. Use it to see how much
 
 Pass the `--coverage` flag to `bun test` to print a coverage report after the test run.
 
-The report lists the source files the tests executed, the percentage of functions, lines and branches that ran, and the line ranges that never ran.
+The report lists the source files the tests executed, the percentage of functions called, lines run and branches taken, and the line ranges that never ran.
 
 ```sh terminal icon="terminal"
 bun test --coverage
@@ -22,13 +22,13 @@ test.test.ts:
 ✓ math > add [0.71ms]
 ✓ math > multiply [0.03ms]
 ✓ random [0.13ms]
--------------|---------|---------|------------|-------------------
-File         | % Funcs | % Lines | % Branches | Uncovered Line #s
--------------|---------|---------|------------|-------------------
-All files    |   50.00 |   66.67 |     100.00 |
- math.ts     |   50.00 |   66.67 |     100.00 |
- random.ts   |   50.00 |   66.67 |     100.00 |
--------------|---------|---------|------------|-------------------
+-------------|---------|---------|----------|-------------------
+File         | % Funcs | % Lines | % Branch | Uncovered Line #s
+-------------|---------|---------|----------|-------------------
+All files    |   50.00 |   66.67 |   100.00 |
+ math.ts     |   50.00 |   66.67 |   100.00 |
+ random.ts   |   50.00 |   66.67 |   100.00 |
+-------------|---------|---------|----------|-------------------
 
  3 pass
  0 fail

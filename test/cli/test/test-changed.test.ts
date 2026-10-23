@@ -396,13 +396,14 @@ describe.concurrent("bun test --changed", () => {
   });
 
   // The scan resolves as the test run does: for bun. A "browser" field and a
-  // "browser" map in package.json are for a browser build.
-  test("package.json browser fields do not redirect the module graph", async () => {
+  // "browser" map in package.json are for a browser build, and bun also looks
+  // for `.node` files.
+  test("the module graph is resolved for bun, not for a browser", async () => {
     const testFile = (name: string, specifier: string) =>
       `import { test, expect } from "bun:test";\nimport { which } from "${specifier}";\ntest("${name}", () => expect(which).toBe("${name}"));\n`;
-    using dir = tempDir("test-changed-browser-fields", {
+    using dir = tempDir("test-changed-resolves-for-bun", {
       "package.json": JSON.stringify({
-        name: "browser-fields",
+        name: "resolves-for-bun",
         type: "module",
         browser: { "./mapped.ts": "./mapped.browser.ts", "./disabled.ts": false },
       }),
@@ -413,20 +414,28 @@ describe.concurrent("bun test --changed", () => {
       "mapped.ts": `export const which = "mapped";\n`,
       "mapped.browser.ts": `export const which = "mapped.browser";\n`,
       "disabled.ts": `export const which = "disabled";\n`,
+      // Resolved by the scan, and never loaded: it is not an addon.
+      "native.node": "not an addon\n",
       "main.test.ts": testFile("main", "./lib"),
       "mapped.test.ts": testFile("mapped", "./mapped.ts"),
       "disabled.test.ts": testFile("disabled", "./disabled.ts"),
+      "native.test.ts": `import { test, expect } from "bun:test";\nconst load = () => require("./native");\ntest("native", () => expect(load).toBeFunction());\n`,
       "unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
     });
     initRepo(String(dir));
-    for (const file of ["lib/main.ts", "mapped.ts", "disabled.ts"]) {
+    for (const file of ["lib/main.ts", "mapped.ts", "disabled.ts", "native.node"]) {
       appendFileSync(join(String(dir), file), "// touched\n");
     }
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    const testNames = ["main.test.ts", "mapped.test.ts", "disabled.test.ts", "unrelated.test.ts"];
-    expect(ranFiles(stderr, testNames)).toEqual(["disabled.test.ts", "main.test.ts", "mapped.test.ts"]);
-    expect(stderr).toContain("3 pass");
+    const testNames = ["main.test.ts", "mapped.test.ts", "disabled.test.ts", "native.test.ts", "unrelated.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual([
+      "disabled.test.ts",
+      "main.test.ts",
+      "mapped.test.ts",
+      "native.test.ts",
+    ]);
+    expect(stderr).toContain("4 pass");
     expect(exitCode).toBe(0);
   });
 

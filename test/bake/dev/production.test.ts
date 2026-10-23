@@ -2,12 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
-import {
-  minimalFramework,
-  platformPackagesFor,
-  platformPackagesResolved,
-  tempDirWithBakeDeps,
-} from "../bake-harness";
+import { minimalFramework, platformPackagesFor, platformPackagesResolved, tempDirWithBakeDeps } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);

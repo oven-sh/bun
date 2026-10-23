@@ -84,7 +84,12 @@ export function platformPackagesFor(graph: string): Record<string, string> {
   for (const [shape, [fields, ...resolved]] of Object.entries(platformPackages)) {
     const name = `${graph}-${shape}`;
     const ownPath = (file: string) => JSON.stringify(`${name}/${file}`);
-    files[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", main: "./main.js", ...fields });
+    files[`node_modules/${name}/package.json`] = JSON.stringify({
+      name,
+      version: "1.0.0",
+      main: "./main.js",
+      ...fields,
+    });
     for (const file of resolved) {
       files[`node_modules/${name}/${file}`] = `export const file = ${ownPath(file)};`;
     }

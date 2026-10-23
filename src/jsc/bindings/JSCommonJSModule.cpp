@@ -58,6 +58,7 @@
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
 #include <JavaScriptCore/JSWithScope.h>
 
@@ -332,6 +333,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return false;
         (void)scope.tryClearException();
+        this->failedToEvaluate = true;
 
         // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
@@ -1573,7 +1575,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     this->evaluate(globalObject, key, source, false);
 }
 
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(Zig::GlobalObject*, JSCommonJSModule*, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -1644,24 +1646,25 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(globalObject, moduleObject, sourceOrigin, sourceURL, graph);
 }
 
-// The module is the entry for the record's key in the require cache of the loader that fetched
-// it: `graph`'s, or the global object's.
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
+// The loader makes a record for the module when its fetch settles, and the module's body runs where the graph that
+// imports it evaluates that record, in import order. An ES module that runs first can require() the module (it runs
+// then, once) or delete or replace its require.cache entry, so the record holds on to the module it was made for.
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
 {
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::createDeferred(
-            [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
+            [graph = JSC::Weak<JSModuleGraph>(graph), module = JSC::Strong<JSCommonJSModule>(JSC::getVM(globalObject), moduleObject)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
+                JSCommonJSModule* moduleObject = module.get();
 
-                JSValue keyValue = identifierToJSValue(vm, moduleKey);
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
                 // (The graph's loader, which is evaluating this, keeps the graph alive.)
                 Bun::throwIfModuleGraphDisposed(globalObject, scope, graph.get());
@@ -1669,40 +1672,15 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 // The loader reaches this from its pipeline, which carries no async context:
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
-                JSMap* requireMap = requireMapOf(globalObject, graph.get());
-                JSValue entry = requireMap->get(globalObject, keyValue);
-                RETURN_IF_EXCEPTION(scope, void());
 
-                if (entry) {
-                    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
-                            if (auto exception = scope.exception()) {
-                                if (vm.hasPendingTerminationException()) [[unlikely]]
-                                    return;
-                                (void)scope.tryClearException();
-
-                                // On error, remove the module from the require map
-                                // so that it can be re-evaluated on the next require.
-                                requireMap->remove(globalObject, moduleObject->filename());
-                                RETURN_IF_EXCEPTION(scope, void());
-
-                                scope.throwException(globalObject, exception);
-                                return;
-                            }
-                        }
-
-                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
-                        RETURN_IF_EXCEPTION(scope, void());
-                    }
-                } else {
-                    // require map was cleared of the entry
+                if (moduleObject->failedToEvaluate || (!moduleObject->hasEvaluated && moduleObject->sourceCode.isNull())) [[unlikely]] {
+                    throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
+                    return;
                 }
+                moduleObject->load(vm, globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+
+                RELEASE_AND_RETURN(scope, moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues));
             },
             sourceOrigin,
             sourceURL));
@@ -1759,7 +1737,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(globalObject, moduleObject, sourceOrigin, sourceURL, graph);
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)

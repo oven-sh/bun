@@ -149,6 +149,8 @@ public:
     }
 
     bool hasEvaluated = false;
+    // load() threw. The module is not in the require map any more, and an ES module that imported it earlier gets an error.
+    bool failedToEvaluate = false;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)

@@ -799,7 +799,8 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
         return false;
     if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
         return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
-    // SyntheticModuleRecord is "evaluated" once linked (it has an environment).
+    // A SyntheticModuleRecord has an environment once it has its exports. The record of a CommonJS module gets them
+    // when the graph that imports it evaluates it, which runs the module.
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
@@ -838,7 +839,10 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
         return false;
     if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
         return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated;
-    return record->moduleEnvironmentMayBeNull() != nullptr;
+    // A synthetic record has no load of its own in flight. The record of a CommonJS module that has not run yet, or
+    // never will (its importer failed to link, or the module threw), is evicted like any other: a graph that is still
+    // going to evaluate the record has it, and the next import or require() loads the file again.
+    return true;
 }
 
 // The loader whose registry require.cache / require() of `requirer` (a CommonJS module, or

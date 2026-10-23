@@ -2611,28 +2611,18 @@ impl<'a> Parser<'a> {
 
         while cursor < end {
             match contents[cursor] {
-                b'\n' => break,
-                b'@' => {
-                    cursor += 1;
-                    if cursor >= contents.len() {
-                        break;
-                    }
-                    if contents[cursor] != b'b' {
-                        cursor += 1;
-                        continue;
-                    }
-                    let slice = &contents[cursor..];
-                    if slice.starts_with(b"bun-cjs") {
-                        state.seen_cjs = true;
-                        cursor += b"bun-cjs".len();
-                    } else if slice.starts_with(b"bytecode") {
-                        state.seen_bytecode = true;
-                        cursor += b"bytecode".len();
-                    }
+                // JSC gets this text as Latin-1, where only `\r` and `\n` end the comment.
+                b'\n' | b'\r' => break,
+                b'@' if contents[cursor..].starts_with(b"@bun-cjs") => {
+                    state.seen_cjs = true;
+                    cursor += b"@bun-cjs".len();
                 }
-                _ => {}
+                b'@' if contents[cursor..].starts_with(b"@bytecode") => {
+                    state.seen_bytecode = true;
+                    cursor += b"@bytecode".len();
+                }
+                _ => cursor += 1,
             }
-            cursor += 1;
         }
 
         if state.seen_cjs {

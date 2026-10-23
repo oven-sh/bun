@@ -579,9 +579,12 @@ describe("an error with a circular reference to itself", () => {
 });
 
 // `Malloc=1` lets ASAN catch a read past the end of the source.
-test.concurrent("prints the source preview for an error positioned at the end of the source text", async () => {
+test.concurrent.each([
+  ["the source text", "xyz"],
+  ["a 16-bit source text", "中文"],
+])("prints the source preview for an error positioned at the end of %s", async (_, source) => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `(0, eval)("xyz");`],
+    cmd: [bunExe(), "-e", `(0, eval)(${JSON.stringify(source)});`],
     env: { ...bunEnv, NO_COLOR: "1", Malloc: "1" },
     stdout: "pipe",
     stderr: "pipe",
@@ -589,7 +592,11 @@ test.concurrent("prints the source preview for an error positioned at the end of
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, excerpt: stderr.split("\n").slice(0, 3) }).toEqual({
     stdout: "",
-    excerpt: ["1 | xyz", "       ^", "ReferenceError: xyz is not defined"],
+    excerpt: [
+      `1 | ${source}`,
+      Buffer.alloc(4 + source.length, " ").toString() + "^",
+      `ReferenceError: ${source} is not defined`,
+    ],
   });
   expect(exitCode).toBe(1);
 });

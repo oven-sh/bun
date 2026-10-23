@@ -2747,6 +2747,34 @@ describe("css tests", () => {
       );
     }
 
+    // A browser needs its prefix for `stretch` until the version that has the keyword. Chrome and Edge have it in 138.
+    for (const [name, targets, prefixed] of [
+      ["firefox-133", { firefox: 133 << 16 }, ["-moz-available"]],
+      ["firefox-140", { firefox: 140 << 16 }, ["-moz-available"]],
+      ["safari-18-1", { safari: (18 << 16) | (1 << 8) }, ["-webkit-fill-available"]],
+      ["safari-26", { safari: 26 << 16 }, ["-webkit-fill-available"]],
+      ["ios-18-1", { ios_saf: (18 << 16) | (1 << 8) }, ["-webkit-fill-available"]],
+      ["ios-26", { ios_saf: 26 << 16 }, ["-webkit-fill-available"]],
+      ["chrome-131", { chrome: 131 << 16 }, ["-webkit-fill-available"]],
+      ["chrome-137", { chrome: 137 << 16 }, ["-webkit-fill-available"]],
+      ["chrome-138", { chrome: 138 << 16 }, []],
+      ["edge-128", { edge: 128 << 16 }, ["-webkit-fill-available"]],
+      ["edge-137", { edge: 137 << 16 }, ["-webkit-fill-available"]],
+      ["edge-138", { edge: 138 << 16 }, []],
+      ["samsung-26", { samsung: 26 << 16 }, ["-webkit-fill-available"]],
+      [
+        "chrome-137-firefox-140-safari-26",
+        { chrome: 137 << 16, firefox: 140 << 16, safari: 26 << 16 },
+        ["-webkit-fill-available", "-moz-available"],
+      ],
+    ] as const) {
+      prefix_test(
+        `.${name} { width: stretch }`,
+        `.${name} { ${[...prefixed, "stretch"].map(value => `width: ${value};`).join(" ")} }`,
+        targets,
+      );
+    }
+
     minify_test(".foo { aspect-ratio: auto }", ".foo{aspect-ratio:auto}");
     minify_test(".foo { aspect-ratio: 2 / 3 }", ".foo{aspect-ratio:2/3}");
     minify_test(".foo { aspect-ratio: auto 2 / 3 }", ".foo{aspect-ratio:auto 2/3}");
@@ -3058,6 +3086,18 @@ describe("css tests", () => {
         safari: 14 << 16,
       },
     );
+
+    // The last versions of Safari that need the prefix are 13.1 and iOS 13.4.
+    for (const [name, targets] of [
+      ["safari-13-1", { safari: (13 << 16) | (1 << 8) }],
+      ["ios-13-4", { ios_saf: (13 << 16) | (4 << 8) }],
+    ] as const) {
+      prefix_test(
+        `.${name} { background-clip: text }`,
+        `.${name} { -webkit-background-clip: text; background-clip: text; }`,
+        targets,
+      );
+    }
 
     prefix_test(
       `
@@ -5498,6 +5538,21 @@ describe("css tests", () => {
         firefox: 50 << 16,
       },
     );
+
+    // Firefox has `:is()` from 78. Chrome 80 does not have it, so the rule is still lowered for Chrome.
+    for (const [name, targets, fallbacks] of [
+      ["firefox-77", { firefox: 77 << 16 }, ["-moz-any"]],
+      ["chrome-80-firefox-77", { chrome: 80 << 16, firefox: 77 << 16 }, ["-webkit-any", "-moz-any"]],
+      ["chrome-80-firefox-78", { chrome: 80 << 16, firefox: 78 << 16 }, ["-webkit-any"]],
+      [
+        "default-targets",
+        { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 },
+        ["-webkit-any"],
+      ],
+    ] as const) {
+      const rule = (pseudo: string) => `.${name}:${pseudo}(.b, .c) { color: red; }`;
+      prefix_test(rule("is"), [...fallbacks, "is"].map(rule).join(" "), targets);
+    }
 
     prefix_test(
       "a:is(.foo > .bar) {color:red}",

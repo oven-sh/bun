@@ -276,6 +276,68 @@ pub(crate) fn encode(
     })
 }
 
+/// The bit depth of the indices: the least PNG allows for `colors` entries, and 8 with alpha.
+fn index_bit_depth(colors: u16, has_alpha: bool) -> u8 {
+    match colors {
+        // pdfkit and jsPDF misread tRNS on packed indices.
+        _ if has_alpha => 8,
+        0..=2 => 1,
+        3..=4 => 2,
+        5..=16 => 4,
+        _ => 8,
+    }
+}
+
+/// Packs each group of 8, 4 or 2 indices of `src` (`depth` 1, 2 or 4) into one byte of `dst`.
+#[inline(never)] // As parameters the slices cannot overlap, which the loops need to vectorise.
+fn pack_groups(src: &[u8], dst: &mut [u8], depth: u8) {
+    // One factor bit per index shifts it into the top byte. No two of the products overlap.
+    match depth {
+        1 => {
+            for (byte, group) in dst.iter_mut().zip(src.as_chunks::<8>().0) {
+                let v = u64::from_le_bytes(*group);
+                *byte = (v.wrapping_mul(0x8040_2010_0804_0201) >> 56) as u8;
+            }
+        }
+        2 => {
+            for (byte, group) in dst.iter_mut().zip(src.as_chunks::<4>().0) {
+                let v = u32::from_le_bytes(*group);
+                *byte = (v.wrapping_mul(0x4010_0401) >> 24) as u8;
+            }
+        }
+        _ => {
+            for (byte, group) in dst.iter_mut().zip(src.as_chunks::<2>().0) {
+                let v = u16::from_le_bytes(*group);
+                *byte = (v.wrapping_mul(0x1001) >> 8) as u8;
+            }
+        }
+    }
+}
+
+/// Packs rows of one index per byte to `depth` bits per index in place. Returns the new length.
+fn pack_indices(indices: &mut [u8], width: usize, depth: u8) -> usize {
+    let per = usize::from(8 / depth);
+    let stride = width.div_ceil(per);
+    let height = indices.len().checked_div(width).unwrap_or(0);
+    for y in 0..height {
+        let (src, dst) = (y * width, y * stride);
+        // The whole groups of a row that starts after its own packed bytes end.
+        let mut done = 0;
+        if dst + stride <= src {
+            let (packed, rows) = indices.split_at_mut(src);
+            done = width / per;
+            pack_groups(&rows[..done * per], &mut packed[dst..dst + done], depth);
+        }
+        // The first rows, which overlap their packed bytes, and a last group that is not whole.
+        for i in done..stride {
+            let group = &indices[src + i * per..src + width.min((i + 1) * per)];
+            let bits = group.iter().fold(0u8, |acc, &index| (acc << depth) | index);
+            indices[dst + i] = bits << (usize::from(depth) * (per - group.len()));
+        }
+    }
+    stride * height
+}
+
 /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
 /// with PLTE + tRNS. The quantizer is a small median-cut — see
 /// quantize.rs. `icc_profile` carries the source colour space; median
@@ -291,7 +353,7 @@ pub(crate) fn encode_indexed(
     dither: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    let q = quantize::quantize(
+    let mut q = quantize::quantize(
         rgba,
         w,
         h,
@@ -301,6 +363,7 @@ pub(crate) fn encode_indexed(
         },
     )
     .map_err(|_| codecs::Error::OutOfMemory)?;
+    let depth = index_bit_depth(q.colors, q.has_alpha);
 
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
     let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
@@ -323,7 +386,7 @@ pub(crate) fn encode_indexed(
     let ihdr = Ihdr {
         width: w,
         height: h,
-        bit_depth: 8,
+        bit_depth: depth,
         color_type: SPNG_COLOR_TYPE_INDEXED,
         ..Default::default()
     };
@@ -363,12 +426,18 @@ pub(crate) fn encode_indexed(
         return Err(codecs::Error::EncodeFailed);
     }
 
-    // SAFETY: ctx is valid; q.indices is a valid readable buffer.
+    // libspng does not pack: it takes the rows as the file stores them.
+    let rows_len = if depth < 8 {
+        pack_indices(&mut q.indices, w as usize, depth)
+    } else {
+        q.indices.len()
+    };
+    // SAFETY: ctx is valid; q.indices is a valid readable buffer of at least rows_len bytes.
     if unsafe {
         spng_encode_image(
             ctx,
             q.indices.as_ptr(),
-            q.indices.len(),
+            rows_len,
             SPNG_FMT_PNG,
             SPNG_ENCODE_FINALIZE,
         )

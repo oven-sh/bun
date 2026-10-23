@@ -115,6 +115,8 @@ img.avif({ quality: 60 }); // macOS / Windows only
 
 `palette: true` quantizes to a ≤256-color palette and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. The indexed PNG is typically 3–5× smaller than truecolor for screenshots and UI assets.
 
+Bun writes an opaque palette of at most 16 entries at 1, 2 or 4 bits per pixel. A palette with transparency uses 8 bits per pixel.
+
 ## Terminals
 
 A pipeline does no work until you await one of these:

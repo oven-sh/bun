@@ -9603,7 +9603,11 @@ declare module "bun" {
       compressionLevel?: number;
       /** Quantize to a palette and emit indexed (colour-type 3) PNG. */
       palette?: boolean;
-      /** Max palette size when `palette: true`. 2–256. @default 256 */
+      /**
+       * Max palette size when `palette: true`. 2–256. An opaque palette of at
+       * most 16 entries is written at 1, 2 or 4 bits per pixel.
+       * @default 256
+       */
       colors?: number;
       /** Floyd–Steinberg error-diffusion dither (only with `palette: true`). */
       dither?: boolean;

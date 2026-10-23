@@ -347,7 +347,7 @@ fn package_name_in(tree: &Tree) -> Vec<u8> {
 fn package_json_name(bytes: &[u8]) -> Option<Vec<u8>> {
     let bump = Bump::new();
     let src: &[u8] = bump.alloc_slice_copy(bytes);
-    let json = bun_parsers::json::parse_utf8(
+    let json = bun_parsers::json::parse_package_json_utf8(
         &bun_ast::Source::init_path_string(b"package.json", src),
         &mut bun_ast::Log::init(),
         &bump,
@@ -624,7 +624,7 @@ fn read_dir_tree(
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
-            if let Ok(json) = bun_parsers::json::parse_utf8(
+            if let Ok(json) = bun_parsers::json::parse_package_json_utf8(
                 &bun_ast::Source::init_path_string(b"package.json", src),
                 &mut bun_ast::Log::init(),
                 &bump,
@@ -2248,18 +2248,20 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
 
 fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors: bool) {
     let bump = Bump::new();
-    let parse = |bytes: &[u8]| {
+    let source = |bytes: &[u8]| {
         let src: &[u8] = bump.alloc_slice_copy(bytes);
-        bun_parsers::json::parse_utf8(
-            &bun_ast::Source::init_path_string(b"package.json", src),
-            &mut bun_ast::Log::init(),
-            &bump,
-        )
-        .ok()
+        bun_ast::Source::init_path_string(b"package.json", src)
+    };
+    let parse_file = |bytes: &[u8]| {
+        bun_parsers::json::parse_package_json_utf8(&source(bytes), &mut bun_ast::Log::init(), &bump)
+            .ok()
+    };
+    let parse_entry = |bytes: &[u8]| {
+        bun_parsers::json::parse_utf8(&source(bytes), &mut bun_ast::Log::init(), &bump).ok()
     };
     let mut side = |tree: &Tree| -> Option<Manifest> {
-        let file = parse(tree.files.get(b"package.json".as_slice())?)?;
-        let entry = tree.registry_entry.as_deref().and_then(parse);
+        let file = parse_file(tree.files.get(b"package.json".as_slice())?)?;
+        let entry = tree.registry_entry.as_deref().and_then(parse_entry);
         let mut overridden = Vec::new();
         for field in INSTALL_FIELDS {
             let Some(entry) = &entry else { break };

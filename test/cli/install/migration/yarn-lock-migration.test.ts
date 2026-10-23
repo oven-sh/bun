@@ -39,6 +39,10 @@ afterAll(() => {
   npm.stop(true);
 });
 
+// yarn.lock records neither the bins nor the scripts of a package, and `bun pm migrate` downloads nothing. A git,
+// GitHub or tarball row therefore says that its package.json was not read yet. `bun install` completes the row.
+const unread = { hasInstallScript: null };
+
 function migrateEnv(dir: string | { toString(): string }) {
   return { ...bunEnv, BUN_CONFIG_REGISTRY: npm.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
 }
@@ -1113,7 +1117,7 @@ y@1.0.0:
     expect(packages).toStrictEqual({
       "lodash": [
         `lodash-fork@github:me/lodash-fork#${forkCommit.slice(0, 7)}`,
-        {},
+        unread,
         `me-lodash-fork-${forkCommit.slice(0, 7)}`,
       ],
       "my-lodash": ["lodash@4.17.21", "", {}, lodashIntegrity],
@@ -1192,7 +1196,7 @@ y@1.0.0:
     const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
     expect(lock.packages).toStrictEqual(
       Object.fromEntries(
-        Object.entries(rows).map(([dependency, [url, packageName]]) => [dependency, [`${packageName}@${url}`, {}]]),
+        Object.entries(rows).map(([dependency, [url, packageName]]) => [dependency, [`${packageName}@${url}`, unread]]),
       ),
     );
     expect(registryRequests).toStrictEqual([]);
@@ -2443,8 +2447,12 @@ ${yarnLockEntries}`,
 `,
     );
 
-    expect(bunLock).toContain(`"leaf": ["leaf@${registryUrl}", {}, "sha1-+PLIh60Qv2f2NPAFtph/7TF5qsg="]`);
-    expect(bunLock).toContain(`"gh-tar": ["gh-tar@${githubUrl}", {}, "sha1-+PLIh60Qv2f2NPAFtph/7TF5qsg="]`);
+    expect(bunLock).toContain(
+      `"leaf": ["leaf@${registryUrl}", { "hasInstallScript": null }, "sha1-+PLIh60Qv2f2NPAFtph/7TF5qsg="]`,
+    );
+    expect(bunLock).toContain(
+      `"gh-tar": ["gh-tar@${githubUrl}", { "hasInstallScript": null }, "sha1-+PLIh60Qv2f2NPAFtph/7TF5qsg="]`,
+    );
   });
 
   test("a git dependency hosted on github.com is still migrated as git", async () => {
@@ -2457,7 +2465,7 @@ ${yarnLockEntries}`,
     );
 
     expect(bunLock).toContain(
-      `"abbrev": ["abbrev-js@github:isaacs/abbrev-js#3f9802e", {}, "isaacs-abbrev-js-3f9802e"]`,
+      `"abbrev": ["abbrev-js@github:isaacs/abbrev-js#3f9802e", { "hasInstallScript": null }, "isaacs-abbrev-js-3f9802e"]`,
     );
   });
 });

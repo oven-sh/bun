@@ -2579,6 +2579,10 @@ pub(crate) fn install_isolated_packages(
                     };
 
                     if !missing_from_cache {
+                        if installer.described.is_some() {
+                            installer
+                                .describe(pkg_id, installer::PackageJson::Cached(cache_subpath_z));
+                        }
                         match installer.apply_package_patch(entry_id, &patch_info) {
                             Ok(()) => installer.start_task(entry_id),
                             Err(err) => installer.on_task_fail(entry_id, &err),

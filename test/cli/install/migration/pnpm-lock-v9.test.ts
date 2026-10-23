@@ -121,6 +121,9 @@ const NORMAL_DEP_AND_DEV_DEP_1_0_1_INTEGRITY =
   "sha512-MzZS9lLNBdqXf/lI+TKlXGeWrcDkOjzdSPJtvkRUN1FUjXg2DcGVldEqx9D8kNwF87Hxf2cRLvLv4a8GqZ6zPg==";
 const LOCAL_TARBALL_INTEGRITY =
   "sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==";
+// pnpm-lock.yaml records neither the bins nor the scripts of a package, and `bun pm migrate` downloads nothing. A git
+// or tarball row says that its package.json was not read yet, until `bun install` completes it.
+const UNREAD = `{ "hasInstallScript": null }`;
 
 function registryLockfileWithTarball(tarball: string) {
   return `lockfileVersion: '9.0'
@@ -1526,10 +1529,10 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(String(dir));
-      expect(bunLock).toContain(`["tar-pkg@../tar-pkg-1.0.0.tgz", {}, "${LOCAL_TARBALL_INTEGRITY}"]`);
-      expect(bunLock).toContain(`["tar-gz-pkg@../tar-gz-pkg-1.0.0.tar.gz", {}, "sha512-`);
-      expect(bunLock).toContain(`["plain@../plain-1.0.0.tar", {}, "sha512-`);
-      expect(bunLock).toContain(`["upper@../UPPER-1.0.0.TGZ", {}, "sha512-`);
+      expect(bunLock).toContain(`["tar-pkg@../tar-pkg-1.0.0.tgz", ${UNREAD}, "${LOCAL_TARBALL_INTEGRITY}"]`);
+      expect(bunLock).toContain(`["tar-gz-pkg@../tar-gz-pkg-1.0.0.tar.gz", ${UNREAD}, "sha512-`);
+      expect(bunLock).toContain(`["plain@../plain-1.0.0.tar", ${UNREAD}, "sha512-`);
+      expect(bunLock).toContain(`["upper@../UPPER-1.0.0.TGZ", ${UNREAD}, "sha512-`);
       expect(bunLock).not.toContain("tar-gz-pkg@file:");
       expect(bunLock).not.toContain("plain@file:");
       expect(bunLock).not.toContain("upper@file:");
@@ -1569,7 +1572,7 @@ snapshots:
         expect(exitCode).toBe(0);
 
         const bunLock = await bunLockOf(String(dir));
-        expect(bunLock).toContain(`["pkg@vendor/${file}", {}, "${LOCAL_TARBALL_INTEGRITY}"]`);
+        expect(bunLock).toContain(`["pkg@vendor/${file}", ${UNREAD}, "${LOCAL_TARBALL_INTEGRITY}"]`);
         expect(bunLock).not.toContain(`pkg@file:vendor/${file}`);
       },
     );
@@ -3371,7 +3374,7 @@ snapshots:
     expect(exitCode).toBe(0);
 
     const bunLock = await bunLockOf(String(dir));
-    expect(bunLock).toContain(`"c": ["c@${repo}#${commit}", {}`);
+    expect(bunLock).toContain(`"c": ["c@${repo}#${commit}", ${UNREAD}`);
     expect(bunLock).not.toContain("git+git+");
   });
 

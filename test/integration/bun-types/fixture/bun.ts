@@ -103,3 +103,14 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
+
+// bun.lock: `hasInstallScript` is `null` until Bun has read the package.json of a migrated git or tarball package.
+const unreadRow = [
+  "pkg@https://example.com/pkg.tgz",
+  { hasInstallScript: null },
+] satisfies Bun.BunLockFilePackageArray;
+tsd.expectType(unreadRow[1].hasInstallScript).is<null>();
+declare const lockfilePackage: Bun.BunLockFilePackageInfo;
+tsd.expectType(lockfilePackage.hasInstallScript).is<true | null | undefined>();
+// @ts-expect-error - a package without install scripts has no key
+({ hasInstallScript: false }) satisfies Bun.BunLockFilePackageInfo;

@@ -10725,7 +10725,12 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
-    hasInstallScript?: true;
+    /**
+     * `null` for a git, GitHub or tarball package whose `package.json` Bun has not read yet, so
+     * its `bin` is not recorded either. A lockfile migrated from another package manager starts
+     * that way. The first `bun install` that installs the package records both.
+     */
+    hasInstallScript?: true | null;
     bundled?: true;
   };
 

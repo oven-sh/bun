@@ -135,8 +135,9 @@ pub struct Installer<'a> {
     /// `Some` if the lockfile has a row that no package.json was read for. The slot of such a
     /// package, by package id, gets what its package.json says: the tasks read the lockfile's
     /// buffers, so the strings of a `bin` cannot go there before `adopt_described`. The main
-    /// thread fills a slot before a task of the package starts.
-    pub(crate) described: Option<Box<[std::sync::OnceLock<Described>]>>,
+    /// thread fills a slot before a task of the package starts, with `None` if the package.json
+    /// cannot be read.
+    pub(crate) described: Option<Box<[std::sync::OnceLock<Option<Described>>]>>,
 
     /// Main-thread only: the tasks to start once every package that is already in the store is
     /// described. A dependency cycle lets a task link the bins of a package that is not done.
@@ -363,24 +364,13 @@ impl<'a> Installer<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn describe(&self, pkg_id: PackageID, package_json: PackageJson<'_>) {
-        let Some(slots) = &self.described else {
+        let Some(slot) = (self.described.as_deref()).and_then(|slots| slots.get(pkg_id as usize))
+        else {
             return;
         };
         let pkgs = self.lockfile().packages.slice();
-        assert!((pkg_id as usize) < pkgs.len());
-        // SAFETY: in bounds; raw column pointer, so no `&mut Lockfile` is formed. Only the main
-        // thread writes this byte (below), and only this package's tasks read it, none of which
-        // has started.
-        let has_install_script = unsafe {
-            core::ptr::addr_of_mut!(
-                (*pkgs
-                    .items_raw::<"meta", package::Meta>()
-                    .add(pkg_id as usize))
-                .has_install_script
-            )
-        };
-        // SAFETY: see above.
-        if unsafe { has_install_script.read() } != package::HasInstallScript::Unread {
+        // A package with several entries is described once, before its first task.
+        if slot.get().is_some() || !pkgs.items_meta()[pkg_id as usize].is_unread() {
             return;
         }
         let tag = pkgs.items_resolution()[pkg_id as usize].tag;
@@ -390,6 +380,16 @@ impl<'a> Installer<'a> {
                 // A repository needs no package.json.
                 None => tag.is_git().then(Described::default),
             },
+            PackageJson::Cached(folder) => {
+                let manager = self.manager_mut();
+                let package_dir = [
+                    strings::without_trailing_slash(manager.cache_directory_path.as_bytes()),
+                    paths::SEP_STR.as_bytes(),
+                    folder.as_bytes(),
+                ]
+                .concat();
+                manager.describe_in(&package_dir, tag)
+            }
             PackageJson::Stored(entry_id) => {
                 let mut package_dir = AutoAbsPath::init_top_level_dir();
                 self.append_real_store_path(&mut package_dir, entry_id, Which::Final)
@@ -397,12 +397,21 @@ impl<'a> Installer<'a> {
                     .and_then(|()| self.manager_mut().describe_in(package_dir.slice(), tag))
             }
         };
-        let Some(described) = described else {
-            return;
-        };
-        // SAFETY: see above.
-        unsafe { has_install_script.write(described.has_install_script.into()) };
-        let _ = slots[pkg_id as usize].set(described);
+        if let Some(described) = &described {
+            // SAFETY: `slot` is in bounds of `described`, which has a slot for each package.
+            // Raw column pointer, so no `&mut Lockfile` is formed. Only this package's tasks
+            // read the byte, and none of them has started: `slot` was empty.
+            unsafe {
+                core::ptr::addr_of_mut!(
+                    (*pkgs
+                        .items_raw::<"meta", package::Meta>()
+                        .add(pkg_id as usize))
+                    .has_install_script
+                )
+                .write(described.has_install_script.into());
+            }
+        }
+        let _ = slot.set(described);
     }
 
     /// The `bin` of a package, and the buffers of its strings. See `described`.
@@ -411,7 +420,7 @@ impl<'a> Installer<'a> {
         let bin = lockfile.packages.items_bin()[pkg_id as usize];
         if bin.tag == bin::Tag::None
             && let Some(described) = (self.described.as_deref())
-                .and_then(|slots| slots.get(pkg_id as usize)?.get())
+                .and_then(|slots| slots.get(pkg_id as usize)?.get()?.as_ref())
         {
             return (
                 described.bin,
@@ -445,7 +454,7 @@ impl<'a> Installer<'a> {
         let described: Vec<(PackageID, Described)> = Vec::from(slots)
             .into_iter()
             .enumerate()
-            .filter_map(|(pkg_id, slot)| Some((pkg_id as PackageID, slot.into_inner()?)))
+            .filter_map(|(pkg_id, slot)| Some((pkg_id as PackageID, slot.into_inner()??)))
             .collect();
         self.manager_mut().adopt_described(&described);
     }
@@ -1060,6 +1069,8 @@ impl<'a> Installer<'a> {
 pub(crate) enum PackageJson<'a> {
     /// What the extraction of the package read.
     Extracted(&'a install::ExtractData),
+    /// The package's folder in the cache, which its files are about to be linked from.
+    Cached(&'a ZStr),
     /// An earlier install put the package into the store.
     Stored(StoreEntryId),
 }

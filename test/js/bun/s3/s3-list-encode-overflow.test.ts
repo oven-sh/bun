@@ -112,6 +112,10 @@ describe("S3Client endpoint option", () => {
     "http://127.1:1",
     "https://acct.supabase.co/storage/v1/s3",
     "https://[::1]:9000",
+    "http:/127.0.0.1:1",
+    "http:127.0.0.1:1",
+    "http:///127.0.0.1:1",
+    "  http://127.0.0.1:1  ",
   ])("signs for the origin and path that new URL(%j) names", endpoint => {
     const expected = new URL(endpoint);
     const presigned = new S3Client({ ...options, endpoint }).presign("key.txt");
@@ -120,9 +124,21 @@ describe("S3Client endpoint option", () => {
     expect(presigned.split("?")[0]).toBe(`${expected.origin}${expected.pathname.replace(/\/$/, "")}/bucket/key.txt`);
   });
 
-  it("defaults to https when the endpoint has no scheme", () => {
-    const presigned = new S3Client({ ...options, endpoint: "s3.example.com" }).presign("key.txt");
-    expect(presigned.split("?")[0]).toBe("https://s3.example.com/bucket/key.txt");
+  // new URL() reads these as a scheme (localhost:) or not at all.
+  it.each([
+    ["s3.example.com", "https://s3.example.com"],
+    ["localhost:9000", "https://localhost:9000"],
+    ["127.0.0.1:9000/prefix/", "https://127.0.0.1:9000/prefix"],
+    ["[::1]:9000", "https://[::1]:9000"],
+  ])("defaults %j to https", (endpoint, origin) => {
+    const presigned = new S3Client({ ...options, endpoint }).presign("key.txt");
+    expect(presigned.split("?")[0]).toBe(`${origin}/bucket/key.txt`);
+  });
+
+  it("rejects an endpoint without a host", () => {
+    expect(() => new S3Client({ ...options, endpoint: "//127.0.0.1:1" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 
   it("applies the same parsing to S3_ENDPOINT", async () => {

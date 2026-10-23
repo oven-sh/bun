@@ -29,17 +29,17 @@ fn has_evaluated_key(prop: &G::Property) -> bool {
         && !matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
 }
 
-/// True if `key` means the same in a `static {}` of its class: it has no `this`, `await` or function, among others.
+/// True if `key` means the same in a `static {}` of its class: it has no `this`, `await` or arrow function, among others.
 fn is_same_in_static_block(key: &Expr, symbols: &[js_ast::Symbol]) -> bool {
     use js_ast::ExprData as Data;
     let is_same = |expr: &Expr| is_same_in_static_block(expr, symbols);
     match &key.data {
-        Data::EIdentifier(id) => {
+        Data::EIdentifier(id) => !matches!(
             symbols[id.ref_.inner_index() as usize]
                 .original_name
-                .slice()
-                != b"arguments"
-        }
+                .slice(),
+            b"arguments" | b"await"
+        ),
         Data::EImportIdentifier(_)
         | Data::EPrivateIdentifier(_)
         | Data::EString(_)
@@ -47,12 +47,17 @@ fn is_same_in_static_block(key: &Expr, symbols: &[js_ast::Symbol]) -> bool {
         | Data::EBigInt(_)
         | Data::EBoolean(_)
         | Data::ENull(_)
-        | Data::EUndefined(_) => true,
+        | Data::EUndefined(_)
+        | Data::ERegExp(_)
+        | Data::EFunction(_) => true,
         Data::EDot(dot) => is_same(&dot.target),
         Data::EIndex(index) => is_same(&index.target) && is_same(&index.index),
         Data::ECall(call) => {
             !call.is_direct_eval && is_same(&call.target) && call.args.slice().iter().all(is_same)
         }
+        Data::ENew(new) => is_same(&new.target) && new.args.slice().iter().all(is_same),
+        Data::ESpread(spread) => is_same(&spread.value),
+        Data::EArray(array) => array.items.slice().iter().all(is_same),
         Data::EUnary(unary) => is_same(&unary.value),
         Data::EBinary(binary) => is_same(&binary.left) && is_same(&binary.right),
         Data::EIf(it) => is_same(&it.test) && is_same(&it.yes) && is_same(&it.no),
@@ -129,31 +134,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Without a `super()` statement to follow, the constructor has no place for initializers.
         let has_no_place = class.extends.is_some()
             && constructor.is_some_and(|it| !has_super_statement(it.func.body.stmts.slice()));
-        let is_assigned = |prop: &G::Property| {
+        let is_static = |prop: &G::Property| prop.flags.contains(Flags::Property::IsStatic);
+        let is_assignable = |prop: &G::Property| {
             is_field(prop)
-                && match prop.flags.contains(Flags::Property::IsStatic) {
+                && match is_static(prop) {
                     true => !is_private(prop),
                     false => !(has_no_place && prop.initializer.is_some()),
                 }
         };
         let hoisted_key = |prop: &G::Property| {
             let is_computed = prop.flags.contains(Flags::Property::IsComputed);
-            (prop.key).filter(|key| is_assigned(prop) && is_computed && !is_constant_key(key))
+            (prop.key).filter(|key| is_assignable(prop) && is_computed && !is_constant_key(key))
         };
-        // A key is evaluated with the next key that stays, or else in a `static {}`. If that differs, the fields stay.
+        // A key is evaluated with the next key that stays, or else in a `static {}`. If it can differ there, it stays.
         let members = class.properties.slice();
-        let last_key = members
-            .iter()
-            .rposition(|prop| has_evaluated_key(prop) && !is_assigned(prop));
-        let assigns_fields = !use_define
-            && (members[last_key.map_or(0, |last| last + 1)..].iter())
+        let has_place_for_temps = !self.is_param_default_or_field_initializer();
+        let can_hoist_keys = |of_static: bool| {
+            (members.iter().filter(|prop| is_static(prop) == of_static))
                 .filter_map(hoisted_key)
-                .all(|key| is_same_in_static_block(&key, &self.symbols))
-            && !(members.iter().any(|prop| hoisted_key(prop).is_some())
-                && self.is_param_default_or_field_initializer());
-        if !args.iter().any(is_parameter_property)
-            && !(assigns_fields && members.iter().any(is_assigned))
-        {
+                .all(|key| has_place_for_temps && is_same_in_static_block(&key, &self.symbols))
+        };
+        let assigns_static = !use_define && can_hoist_keys(true);
+        let assigns_instance = !use_define && can_hoist_keys(false);
+        // A decorator can put an accessor on the prototype, which only an assignment reaches.
+        let is_decorated = |prop: &G::Property| {
+            !use_define && prop.ts_decorators.len() > 0 && hoisted_key(prop).is_none()
+        };
+        let is_assigned = |prop: &G::Property| {
+            is_assignable(prop)
+                && match is_static(prop) {
+                    true => assigns_static || is_decorated(prop),
+                    false => assigns_instance || is_decorated(prop),
+                }
+        };
+        if !args.iter().any(is_parameter_property) && !members.iter().any(is_assigned) {
             return;
         }
 
@@ -204,10 +218,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         for slot in class.properties.slice_mut().iter_mut() {
             let mut prop = core::mem::take(slot);
-            let is_static = prop.flags.contains(Flags::Property::IsStatic);
+            let is_static = is_static(&prop);
             let is_computed = prop.flags.contains(Flags::Property::IsComputed);
             let is_private = is_private(&prop);
-            if !assigns_fields || !is_assigned(&prop) {
+            if !is_assigned(&prop) {
                 if let Some(key) = prop
                     .key
                     .filter(|_| has_evaluated_key(&prop) && !keys.is_empty())

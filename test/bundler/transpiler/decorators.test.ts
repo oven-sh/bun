@@ -1011,6 +1011,19 @@ test.concurrent.each([
   expect({ stdout: out, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
 });
 
+test.concurrent("a variable called await in the key of a field that is assigned", async () => {
+  using dir = tempDir("decorators-await-name", {
+    "tsconfig.json": `{ "compilerOptions": { "useDefineForClassFields": false } }`,
+    "index.cts": `
+      function f() { var await = "k"; class A { [await] = 1 } return Object.keys(new A()); }
+      console.log(f());
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "index.cts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '[ "k" ]\n', stderr: "", exitCode: 0 });
+});
+
 test.concurrent.skipIf(!canCompareWithTypeScript).each([false, true])(
   "classes run as those that TypeScript compiles, bundled: %p",
   async bundle => {

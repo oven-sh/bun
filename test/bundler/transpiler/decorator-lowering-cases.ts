@@ -620,6 +620,41 @@ show(Object.keys(new (new (F as any)().C)()));`,
     { assign: [`"y" ["sent"]`, `[[["arg"], []], [[], ["arg"]]]`, `["true"]`] },
   ),
   ...lowering(
+    "a static key that uses a function, next to instance fields",
+    `class Base { y: any = "base y"; set x(v: any) { log("set x " + v); } }
+const key = (name: string, f: () => any) => name;
+class A extends Base { x = 1; y: any; static [key("k", () => 1)] = 3; }
+show(Object.keys(new A()), new A().y, Object.keys(A));
+const f = (B = class extends Base { x = 1; y: any; static [key("k", Object)] = 3; }) => B;
+show(Object.keys(new (f())()), new (f())().y, Object.keys(f()));`,
+  ),
+  ...lowering(
+    "decorators that put an accessor on the prototype, next to a key that uses this",
+    `const accessor = (target: any, key: string) => {
+  Object.defineProperty(target, key, { set(v) { log("set " + key + " " + v); }, get() { return "got " + key; }, configurable: true });
+};
+function f(this: any) {
+  class A { @accessor x = 1; @accessor y: any; @accessor static z = 2; [this.k] = 3; static [this.k] = 4; }
+  return A;
+}
+const A = f.call({ k: "k" });
+const a = new A();
+show(Object.keys(a), a.x, a.y, Object.keys(A), A.z);`,
+  ),
+  ...lowering(
+    "keys that use new, a function, an array or a regular expression",
+    `class Base { set x(v: any) { log("set x " + v); } }
+class K { k = "made"; }
+class A extends Base {
+  x = 1;
+  [new K().k] = 2;
+  [(function () { return "called"; })()] = 3;
+  [["a", ...["b"]].join("")] = 4;
+  static [/source/.source] = 5;
+}
+show(Object.keys(new A()), Object.keys(A));`,
+  ),
+  ...lowering(
     "keys of fields after the last key of a method",
     `${keys}class A extends (log("extends"), Object) { [k("m")]() {} [k("a")] = 1; static [k("b")] = 2; [k("c")]?: number; static { log("block"); } }
 show(Object.keys(new A()), Object.keys(A));

@@ -2581,6 +2581,9 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            let mut pages = (sources.iter().zip(loaders))
+                .filter(|(source, loader)| **loader == Loader::Html && source.path.is_file())
+                .map(|(source, _)| source.path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))
@@ -2597,6 +2600,7 @@ pub mod bv2_impl {
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
+                pages: &mut pages,
                 sources: &mut sources,
             };
             if type_check(checked, self.transpiler.log_mut()) {

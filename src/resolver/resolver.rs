@@ -573,6 +573,23 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
+/// Returned by [`Resolver::directory_cache_scope`]. Its drop forgets every directory that a resolver of this process has read since, and every one that a resolver did not find: the next lookup reads the directory from disk.
+pub struct DirectoryCacheScope {
+    dir_infos: bun_alloc::BSSMapMark,
+    entries: bun_alloc::BSSMapMark,
+}
+
+impl Drop for DirectoryCacheScope {
+    fn drop(&mut self) {
+        let _unlock = RESOLVER_MUTEX.lock_guard();
+        // SAFETY: the process-lifetime map of every resolver, which the mutex of the resolvers guards.
+        unsafe { &mut *DirInfo::hash_map_instance() }.forget_since(self.dir_infos);
+        Fs::FileSystem::instance()
+            .fs
+            .forget_entries_since(self.entries);
+    }
+}
+
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
 /// `Resolver::log` pointer on drop.
 pub struct ResolverLogScope {
@@ -2489,6 +2506,15 @@ impl<'a> Resolver<'a> {
             second_bust
         );
         first_bust || second_bust
+    }
+
+    /// What the process-wide directory caches hold now: see [`DirectoryCacheScope`].
+    pub fn directory_cache_scope(&mut self) -> DirectoryCacheScope {
+        let _unlock = self.mutex.lock_guard();
+        DirectoryCacheScope {
+            dir_infos: self.dir_cache_mut().mark(),
+            entries: self.fs_mut().fs.entries_mark(),
+        }
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve

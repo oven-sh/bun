@@ -49,7 +49,8 @@ pub use tsconfig_json::TSConfigJSON;
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
-    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    AnyResolveWatcher, BrowserMapPathKind, Bufs, DirectoryCacheScope, Dirname, Resolver,
+    module_type_from_ext,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -887,6 +888,12 @@ pub mod fs {
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
         }
+        pub(crate) fn mark(&mut self) -> bun_alloc::BSSMapMark {
+            self.inner().mark()
+        }
+        pub(crate) fn forget_since(&mut self, mark: bun_alloc::BSSMapMark) {
+            self.inner().forget_since(mark)
+        }
     }
 
     /// The active filesystem backend (always the real filesystem).
@@ -1205,6 +1212,16 @@ pub mod fs {
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
             self.entries.remove(file_path)
+        }
+
+        pub(crate) fn entries_mark(&mut self) -> bun_alloc::BSSMapMark {
+            let _g = self.entries_mutex.lock_guard();
+            self.entries.mark()
+        }
+
+        pub(crate) fn forget_entries_since(&mut self, mark: bun_alloc::BSSMapMark) {
+            let _g = self.entries_mutex.lock_guard();
+            self.entries.forget_since(mark)
         }
 
         /// lstat + (if symlink) open + fstat +

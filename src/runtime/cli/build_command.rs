@@ -160,6 +160,7 @@ impl BuildCommand {
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
+                pages: &mut core::iter::empty(),
                 sources: &mut core::iter::empty(),
             };
             if !crate::cli::check_command::check_for_build_command(checked, log_ref) {

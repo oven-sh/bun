@@ -5535,6 +5535,12 @@ maybe(() => { return f; });
             byId.get(id)!.add(raw ?? unescaped(plain));
           }
         }
+        // An empty line after a message means that its text ends in a line break.
+        const ofOxlint = readFileSync(join(root, "oxlint_messages.txt"), "utf8");
+        for (const [, id, text, empty] of ofOxlint.matchAll(/^([\w-]+) (.*)\n(\n?)/gm)) {
+          if (!byId.has(id)) byId.set(id, new Set());
+          byId.get(id)!.add(text + empty);
+        }
         const key = (rule: string, id: string, text: string) => {
           const low = (hash: number | bigint) => Number(BigInt.asUintN(32, BigInt(hash)));
           const message = low(Bun.hash.wyhash(text, BigInt(Bun.hash.wyhash(id, 0n))));

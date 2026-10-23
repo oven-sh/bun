@@ -469,6 +469,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       "src/lint/linter/deprecated.txt",
       "src/lint/linter/schema/schemas.txt",
       "src/lint/oxlint_help.txt",
+      "src/lint/oxlint_messages.txt",
       "src/sema/messages.txt",
       "src/lint/js_plugin/worker/eslint_patch.js",
     ].map(rel => ({ inputs: [resolve(cfg.cwd, rel)], name: rel })),

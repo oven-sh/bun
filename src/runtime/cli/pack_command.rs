@@ -5,6 +5,7 @@ use std::io::Write as _;
 use crate::cli::Command;
 use crate::cli::publish_command as Publish;
 use bun_alloc::AllocError;
+use bun_archive::tar;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
@@ -14,10 +15,6 @@ use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::{
-    Archive, Entry as ArchiveEntry, GrowingBuffer, Result as ArchiveResult, WriteArchive,
-    archive_write_open2,
-};
 use bun_parsers::json as JSON;
 use bun_paths::{self as path, SEP_STR};
 use bun_ptr::cow_slice::CowSlice;
@@ -1662,18 +1659,7 @@ fn fail_file(err: impl bun_core::output::ErrName, action: &str, path: &[u8]) -> 
     Global::crash();
 }
 
-fn expect_archive_ok(archive: &Archive, status: ArchiveResult, action: &str) {
-    if matches!(
-        status,
-        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn
-    ) {
-        Output::err_generic(
-            "failed to {}: {}",
-            (action, bstr::BStr::new(archive.error_string())),
-        );
-        Global::crash();
-    }
-}
+type TarballWriter<'a> = tar::writer::Writer<tar::gzip::Encoder<&'a mut dyn FnMut(&[u8])>>;
 
 /// `Some` exactly when `for_publish`.
 #[inline(never)]
@@ -1894,53 +1880,18 @@ pub(crate) fn pack(
         }));
     }
 
-    let archive = WriteArchive::new();
-
-    expect_archive_ok(
-        &archive,
-        archive.write_set_format_pax_restricted(),
-        "set archive format",
-    );
-    expect_archive_ok(
-        &archive,
-        archive.write_add_filter_gzip(),
-        "set archive compression to gzip",
-    );
-
     // default is 9
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L12
-    let compression_level: &[u8] = ctx.manager.options.pack_gzip_level.unwrap_or(b"9");
-    match archive.write_set_filter_option(
-        None,
-        bun_core::zstr!("compression-level"),
-        &ZBox::from_bytes(compression_level),
-    ) {
-        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
+    let compression_level: u8 = match ctx.manager.options.pack_gzip_level.unwrap_or(b"9") {
+        &[digit @ b'0'..=b'9'] => digit - b'0',
+        level => {
             Output::err_generic(
                 "compression level must be between 0 and 9, received {}",
-                format_args!("{}", bstr::BStr::new(compression_level)),
+                format_args!("{}", bstr::BStr::new(level)),
             );
             Global::crash();
         }
-        _ => {}
-    }
-
-    expect_archive_ok(
-        &archive,
-        archive.write_set_filter_option(None, bun_core::zstr!("os"), bun_core::zstr!("Unknown")),
-        "set os to `Unknown`",
-    );
-    expect_archive_ok(
-        &archive,
-        archive.write_set_options(bun_core::zstr!("gzip:!timestamp")),
-        "unset gzip timestamp option",
-    );
-    // Same as `archive_write_open_filename` set for a file, so the output stays byte-identical.
-    expect_archive_ok(
-        &archive,
-        archive.write_set_bytes_in_last_block(1),
-        "set archive block padding",
-    );
+    };
 
     // `bun publish` uploads the bytes from memory. Only `bun pm pack` writes a file.
     let mut dest_buf = bun_paths::path_buffer_pool::get();
@@ -1978,33 +1929,24 @@ pub(crate) fn pack(
             fail_write_tarball(err, dest);
         }
     };
-    let mut tarball_buffer = GrowingBuffer::forward_to(&mut write_tarball);
-    // Rebound here so that it is dropped before `tarball_buffer`. Closing the archive, which its
-    // `Drop` also does, writes into that buffer.
-    let archive = archive;
-
-    if archive_write_open2(
-        &archive,
-        (&raw mut tarball_buffer).cast(),
-        Some(GrowingBuffer::open_callback),
-        Some(GrowingBuffer::write_callback),
-        Some(GrowingBuffer::close_callback),
-        None,
-    ) != 0
-    {
-        Output::err_generic(
-            "failed to open archive for writing: {}",
-            format_args!("{}", bstr::BStr::new(archive.error_string())),
-        );
-        Global::crash();
-    }
+    let names = if cfg!(windows) {
+        tar::writer::Names::Utf8
+    } else {
+        tar::writer::Names::Binary
+    };
+    let mut writer: TarballWriter<'_> = tar::writer::Writer::new(
+        tar::gzip::Encoder::new(
+            &mut write_tarball as &mut dyn FnMut(&[u8]),
+            compression_level,
+        )
+        .unwrap_or_else(|err| archive_write_failed(err)),
+        names,
+    );
 
     // append removed items from `pack_queue` with their file size
     let mut pack_list: PackList = Vec::new();
 
     let mut read_buf = vec![0u8; 512 * 1024];
-
-    let mut entry = ArchiveEntry::new2(&archive);
 
     {
         let mut progress = Progress::Progress::default();
@@ -2016,7 +1958,7 @@ pub(crate) fn pack(
             node = Some(started);
         }
 
-        entry = archive_package_json(&mut ctx, &archive, entry, &root_dir, &edited_package_json);
+        archive_package_json(&mut ctx, &mut writer, &root_dir, &edited_package_json);
         if let Some(node) = node.as_mut() {
             node.complete_one();
         }
@@ -2046,14 +1988,13 @@ pub(crate) fn pack(
                 size: usize::try_from(stat.st_size).expect("int cast"),
             });
 
-            entry = add_archive_entry(
+            add_archive_entry(
                 &mut ctx,
                 fd,
                 &stat,
                 &item.path,
                 &mut read_buf,
-                &archive,
-                entry,
+                &mut writer,
                 &bins,
                 None,
             );
@@ -2071,14 +2012,13 @@ pub(crate) fn pack(
                 .stat()
                 .unwrap_or_else(|err| fail_file(err, "stat", path));
 
-            entry = add_archive_entry(
+            add_archive_entry(
                 &mut ctx,
                 file.handle,
                 &stat,
                 &item.path,
                 &mut read_buf,
-                &archive,
-                entry,
+                &mut writer,
                 &bins,
                 item.edited.as_deref(),
             );
@@ -2093,16 +2033,10 @@ pub(crate) fn pack(
         }
     }
 
-    ArchiveEntry::opaque_ref(entry).free();
-
-    match archive.write_close() {
-        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-            archive_write_failed(&archive);
-        }
-        _ => {}
+    // The archive ends right behind its two end-of-archive blocks, with no padding to a full record.
+    if let Err(err) = writer.finish(false).and_then(|encoder| encoder.finish()) {
+        archive_write_failed(err);
     }
-
-    drop(archive);
 
     let mut shasum: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
     sha1.r#final(&mut shasum);
@@ -2441,20 +2375,16 @@ fn write_tarball_in_place(abs_tarball_dest: &ZStr, tarball_bytes: &[u8], is_type
 }
 
 #[cold]
-fn archive_write_failed(archive: &Archive) -> ! {
-    Output::err_generic(
-        "failed to write tarball: {}",
-        format_args!("{}", bstr::BStr::new(archive.error_string())),
-    );
+fn archive_write_failed(err: tar::Error) -> ! {
+    Output::err_generic("failed to write tarball: {}", format_args!("{err}"));
     Global::crash();
 }
 
-/// `archive_write_data` returns the byte count, or a negative status when the write fails.
-fn write_archive_data(archive: &Archive, data: &[u8]) -> usize {
-    match usize::try_from(archive.write_data(data)) {
-        Ok(written) => written,
-        Err(_) => archive_write_failed(archive),
-    }
+/// Returns how much was taken, which stops at the size in the entry's header.
+fn write_archive_data(writer: &mut TarballWriter<'_>, data: &[u8]) -> usize {
+    writer
+        .data(data)
+        .unwrap_or_else(|err| archive_write_failed(err))
 }
 
 fn stat_package_json(root_dir: &Dir) -> bun_sys::Stat {
@@ -2468,39 +2398,24 @@ fn stat_package_json(root_dir: &Dir) -> bun_sys::Stat {
 
 fn archive_package_json(
     ctx: &mut Context<'_>,
-    archive: &Archive,
-    entry: *mut ArchiveEntry,
+    writer: &mut TarballWriter<'_>,
     root_dir: &Dir,
     edited_package_json: &[u8],
-) -> *mut ArchiveEntry {
-    // `entry` is the same pointer after `.clear()`.
-    let entry = ArchiveEntry::opaque_ref(entry);
+) {
     let stat = stat_package_json(root_dir);
 
-    entry.set_pathname(bun_core::zstr!("package/package.json"));
-    entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
-    // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
-    entry.set_filetype(0o100000);
-    entry.set_perm(stat.st_mode as bun_sys::Mode);
-    // '1985-10-26T08:15:00.000Z'
-    // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
-    entry.set_mtime(499162500, 0);
+    writer
+        .header(&tar::writer::File {
+            path: b"package/package.json",
+            size: edited_package_json.len() as u64,
+            perm: stat.st_mode as u32,
+            // '1985-10-26T08:15:00.000Z'
+            // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
+            mtime: 499162500,
+        })
+        .unwrap_or_else(|err| archive_write_failed(err));
 
-    match archive.write_header(entry) {
-        ArchiveResult::Fatal => archive_write_failed(archive),
-        ArchiveResult::Failed | ArchiveResult::Warn => {
-            Output::err_generic(
-                "failed to write tarball header: {}",
-                format_args!("{}", bstr::BStr::new(archive.error_string())),
-            );
-            Global::crash();
-        }
-        _ => {}
-    }
-
-    ctx.stats.unpacked_size += write_archive_data(archive, edited_package_json);
-
-    entry.clear()
+    ctx.stats.unpacked_size += write_archive_data(writer, edited_package_json);
 }
 
 fn add_archive_entry(
@@ -2509,52 +2424,33 @@ fn add_archive_entry(
     stat: &bun_sys::Stat,
     filename: &ZStr,
     read_buf: &mut [u8],
-    archive: &Archive,
-    entry: *mut ArchiveEntry,
+    writer: &mut TarballWriter<'_>,
     bins: &[BinInfo],
     // If set, these bytes are archived instead of the contents of `file`.
     edited: Option<&[u8]>,
-) -> *mut ArchiveEntry {
-    // `entry` is the same pointer after `.clear()`.
-    let entry = ArchiveEntry::opaque_ref(entry);
-    let pathname = [b"package/".as_slice(), filename.as_bytes_with_nul()].concat();
-    let pathname = ZBox::from_vec_with_nul(pathname);
-    #[cfg(windows)]
-    entry.set_pathname_utf8(&pathname);
-    #[cfg(not(windows))]
-    entry.set_pathname(&pathname);
+) {
+    let pathname = [b"package/".as_slice(), filename.as_bytes()].concat();
 
-    entry.set_size(edited.map_or(stat.st_size as i64, |edited| edited.len() as i64));
-
-    // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
-    entry.set_filetype(0o100000);
-
-    let mut perm: bun_sys::Mode = stat.st_mode as bun_sys::Mode;
+    let mut perm = stat.st_mode as u32;
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
     if is_package_bin(bins, filename.as_bytes()) {
         perm |= 0o111;
     }
-    entry.set_perm(perm);
 
-    // '1985-10-26T08:15:00.000Z'
-    // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
-    entry.set_mtime(499162500, 0);
-
-    match archive.write_header(entry) {
-        ArchiveResult::Fatal => archive_write_failed(archive),
-        ArchiveResult::Failed => {
-            Output::err_generic(
-                "failed to write tarball header: {}",
-                format_args!("{}", bstr::BStr::new(archive.error_string())),
-            );
-            Global::crash();
-        }
-        _ => {}
-    }
+    writer
+        .header(&tar::writer::File {
+            path: &pathname,
+            size: edited.map_or(stat.st_size as u64, |edited| edited.len() as u64),
+            perm,
+            // '1985-10-26T08:15:00.000Z'
+            // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
+            mtime: 499162500,
+        })
+        .unwrap_or_else(|err| archive_write_failed(err));
 
     if let Some(edited) = edited {
-        ctx.stats.unpacked_size += write_archive_data(archive, edited);
-        return entry.clear();
+        ctx.stats.unpacked_size += write_archive_data(writer, edited);
+        return;
     }
 
     let mut written: usize = 0;
@@ -2566,12 +2462,12 @@ fn add_archive_entry(
         };
         // The size of each write reaches the compressor, so it is part of what keeps the bytes stable.
         for chunk in read_buf[..read].chunks(8192) {
-            written += write_archive_data(archive, chunk);
+            written += write_archive_data(writer, chunk);
         }
     }
     ctx.stats.unpacked_size += written;
 
-    // libarchive drops bytes past the size in the header, and pads an entry that is too short with
+    // The writer drops bytes past the size in the header, and pads an entry that is too short with
     // zeros, so a file that shrank has to be caught here.
     if (written as i64) < stat.st_size as i64 {
         Output::err_generic(
@@ -2580,8 +2476,6 @@ fn add_archive_entry(
         );
         Global::crash();
     }
-
-    entry.clear()
 }
 
 /// What replaces a `workspace:` or `catalog:` specifier in the tarball's package.json.
@@ -3213,100 +3107,55 @@ pub(crate) mod bindings {
         }
         let mut entries_info: Vec<EntryInfo> = Vec::new();
 
-        let archive = Archive::opaque_ref(Archive::read_new());
-        let check = |status: ArchiveResult, action: &str| -> JsResult<()> {
-            match status {
-                ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => Err(global
-                    .throw(format_args!(
-                        "failed to {}: {}",
-                        action,
-                        bstr::BStr::new(archive.error_string())
-                    ))),
-                _ => Ok(()),
-            }
-        };
-
-        check(archive.read_support_format_tar(), "support tar")?;
-        check(archive.read_support_format_gnutar(), "support gnutar")?;
-        check(
-            archive.read_support_filter_gzip(),
-            "support gzip compression",
-        )?;
-        check(
-            archive.read_set_options(c"read_concatenated_archives"),
-            "set read_concatenated_archives option",
-        )?;
-        check(archive.read_open_memory(&tarball), "open archive in memory")?;
-
-        let mut archive_entry: *mut ArchiveEntry = core::ptr::null_mut();
-        let mut header_status = archive.read_next_header(&mut archive_entry);
-
+        let mut reader = bun_core::handle_oom(
+            bun_archive::open_memory(&tarball, false).map_err(|_| bun_alloc::AllocError),
+        );
         let mut read_buf: Vec<u8> = Vec::new();
 
-        while header_status != ArchiveResult::Eof {
-            match header_status {
-                ArchiveResult::Eof => unreachable!(),
-                ArchiveResult::Retry => {
-                    header_status = archive.read_next_header(&mut archive_entry);
-                    continue;
+        loop {
+            let entry = match reader.next_entry() {
+                Ok(None) => break,
+                Ok(Some(entry)) => entry,
+                Err(err) => {
+                    return Err(global.throw(format_args!("failed to read archive header: {err}")));
                 }
-                ArchiveResult::Failed | ArchiveResult::Fatal => {
+            };
+            #[cfg(windows)]
+            let pathname_string = {
+                let mut wide = Vec::new();
+                let pathname_w = bun_core::handle_oom(
+                    bun_archive::os_path(entry, &mut wide).map_err(|_| bun_alloc::AllocError),
+                );
+                let result =
+                    bun_core::handle_oom(strings::to_utf8_list_with_type(Vec::new(), pathname_w));
+                BunString::clone_utf8(&result)
+            };
+            #[cfg(not(windows))]
+            let pathname_string = BunString::clone_utf8(entry.path());
+
+            let kind = bun_archive::entry_kind(entry);
+            let size: usize = usize::try_from(entry.size()).expect("int cast");
+            let mut entry_info = EntryInfo {
+                pathname: pathname_string,
+                kind,
+                perm: entry.perm() as bun_sys::Mode,
+                contents: None,
+            };
+
+            if kind == bun_sys::FileKind::File {
+                if let Err(err) = reader.read_data(size, &mut read_buf) {
+                    let pathname_utf8 = entry_info.pathname.to_utf8();
                     return Err(global.throw(format_args!(
-                        "failed to read archive header: {}",
-                        bstr::BStr::new(archive.error_string()),
+                        "failed to read archive entry \"{}\": {err}",
+                        bstr::BStr::new(pathname_utf8.slice()),
                     )));
                 }
-                _ => {
-                    let archive_entry_ref = ArchiveEntry::opaque_mut(archive_entry);
-                    #[cfg(windows)]
-                    let pathname_string = {
-                        let pathname_w = archive_entry_ref.pathname_w();
-                        let result = bun_core::handle_oom(strings::to_utf8_list_with_type(
-                            Vec::new(),
-                            pathname_w,
-                        ));
-                        BunString::clone_utf8(&result)
-                    };
-                    #[cfg(not(windows))]
-                    let pathname_string = BunString::clone_utf8(archive_entry_ref.pathname());
-
-                    let kind = bun_sys::kind_from_mode(archive_entry_ref.filetype());
-                    let perm = archive_entry_ref.perm();
-
-                    let mut entry_info = EntryInfo {
-                        pathname: pathname_string,
-                        kind,
-                        perm,
-                        contents: None,
-                    };
-
-                    if kind == bun_sys::FileKind::File {
-                        let size: usize =
-                            usize::try_from(archive_entry_ref.size()).expect("int cast");
-                        read_buf.resize(size, 0);
-
-                        let read = archive.read_data(&mut read_buf);
-                        if read < 0 {
-                            let pathname_utf8 = entry_info.pathname.to_utf8();
-                            return Err(global.throw(format_args!(
-                                "failed to read archive entry \"{}\": {}",
-                                bstr::BStr::new(pathname_utf8.slice()),
-                                bstr::BStr::new(archive.error_string()),
-                            )));
-                        }
-                        read_buf.truncate(usize::try_from(read).expect("int cast"));
-                        entry_info.contents = Some(BunString::clone_utf8(&read_buf));
-                        read_buf.clear();
-                    }
-
-                    entries_info.push(entry_info);
-                }
+                entry_info.contents = Some(BunString::clone_utf8(&read_buf));
+                read_buf.clear();
             }
-            header_status = archive.read_next_header(&mut archive_entry);
-        }
 
-        check(archive.read_close(), "close read archive")?;
-        check(archive.read_free(), "close read archive")?;
+            entries_info.push(entry_info);
+        }
 
         let entries = JSArray::create_empty(global, entries_info.len())?;
 

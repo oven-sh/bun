@@ -72,7 +72,7 @@ pub struct NetworkTask {
     pub(crate) next: bun_threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
-    /// to a worker running libarchive. `None` when streaming extraction is
+    /// to a worker that extracts them. `None` when streaming extraction is
     /// disabled or this task is not a tarball download.
     pub(crate) tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
@@ -949,10 +949,10 @@ impl NetworkTask {
             // Tell the HTTP client to invoke `notify` for every body chunk
             // instead of buffering the whole response. `notify` pushes each
             // chunk into `tarball_stream`, which schedules a drain task on
-            // `thread_pool`; the drain task calls into libarchive until it
-            // reports ARCHIVE_RETRY (out of input), then returns so the
+            // `thread_pool`; the drain task runs the decoder until it is
+            // out of input, then returns so the
             // worker can be reused for other install work. The next chunk
-            // reschedules it and libarchive — whose state lives on the heap
+            // reschedules it and the decoder — whose state lives on the heap
             // — resumes exactly where it stopped.
             //
             // The stream itself is created by the caller (see

@@ -32,6 +32,8 @@ pub enum Error {
     SizeOverflow,
     #[error("Malformed sparse map data")]
     MalformedSparseMap,
+    #[error("Encountered out-of-order sparse blocks")]
+    OutOfOrderSparse,
     #[error("Unreasonably large sparse map")]
     SparseMapTooLarge,
     #[error("Oversized AppleDouble extension")]

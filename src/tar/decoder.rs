@@ -234,6 +234,55 @@ impl<'a> MemoryDecoder<'a> {
         self.decoder.skip_entry();
     }
 
+    /// Moves to the next entry, past whatever is left of the current one. `None` at the end of the
+    /// archive.
+    pub fn next_entry(&mut self) -> Result<Option<&Entry>> {
+        self.skip_entry();
+        loop {
+            match self.next()? {
+                Event::Entry(_) => break,
+                Event::EndOfArchive => return Ok(None),
+                Event::NeedInput | Event::Data { .. } | Event::EndOfEntry { .. } => {}
+            }
+        }
+        Ok(Some(self.entry()))
+    }
+
+    /// Appends the first `size` bytes of the current entry's contents to `out`, or all of them if
+    /// there are fewer. Holes read as zeros.
+    pub fn read_data(&mut self, size: usize, out: &mut Vec<u8>) -> Result<()> {
+        let start = out.len();
+        let zeros_up_to = |out: &mut Vec<u8>, offset: i64| -> Result<()> {
+            let have = out.len().saturating_sub(start);
+            let offset = usize::try_from(offset).map_err(|_| Error::OutOfOrderSparse)?;
+            if offset < have {
+                return Err(Error::OutOfOrderSparse);
+            }
+            let zeros = offset.min(size).saturating_sub(have);
+            out.try_reserve(zeros).map_err(|_| Error::OutOfMemory)?;
+            out.resize(out.len().saturating_add(zeros), 0);
+            Ok(())
+        };
+        while out.len().saturating_sub(start) < size {
+            match self.next()? {
+                Event::Data { offset, bytes } => {
+                    zeros_up_to(out, offset)?;
+                    let room = size.saturating_sub(out.len().saturating_sub(start));
+                    let bytes = bytes.get(..room.min(bytes.len())).unwrap_or_default();
+                    out.try_reserve(bytes.len())
+                        .map_err(|_| Error::OutOfMemory)?;
+                    out.extend_from_slice(bytes);
+                }
+                Event::EndOfEntry { size: end } => {
+                    zeros_up_to(out, end)?;
+                    break;
+                }
+                Event::NeedInput | Event::Entry(_) | Event::EndOfArchive => break,
+            }
+        }
+        Ok(())
+    }
+
     /// Never returns [`Event::NeedInput`].
     pub fn next(&mut self) -> Result<Event<'_>> {
         if let Some(error) = self.failed {

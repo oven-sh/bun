@@ -34,6 +34,22 @@ pub struct Options {
     pub detect: bool,
 }
 
+impl Options {
+    /// What the platform this was compiled for has always done.
+    pub fn for_host(dialect: Dialect, detect: bool) -> Self {
+        Self {
+            dialect,
+            charset: if cfg!(windows) {
+                Charset::Utf8
+            } else {
+                Charset::Ascii
+            },
+            mac_metadata: cfg!(target_os = "macos"),
+            detect,
+        }
+    }
+}
+
 pub const S_IFMT: u32 = 0o170000;
 pub const S_IFREG: u32 = 0o100000;
 pub const S_IFDIR: u32 = 0o040000;

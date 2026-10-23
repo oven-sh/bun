@@ -1,8 +1,8 @@
+//! Extracts tar archives to disk. The format itself is `bun_tar`'s.
 #![warn(unused_must_use)]
-use core::ptr;
 
 use bun_collections::StringArrayHashMap;
-use bun_core::{MutableString, slice_to_nul, strings};
+use bun_core::{MutableString, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
@@ -12,6 +12,64 @@ use bun_wyhash::hash;
 
 pub mod error;
 pub use error::{Error, Result};
+
+pub use bun_tar as tar;
+use bun_tar::{Dialect, Entry, Event, MemoryDecoder, Options};
+
+/// The entry's path the way the file system takes it. `buf` is scratch space for Windows.
+#[cfg(not(windows))]
+pub fn os_path<'a>(entry: &'a Entry, _buf: &'a mut Vec<OSPathChar>) -> Result<&'a [OSPathChar]> {
+    Ok(entry.path())
+}
+#[cfg(windows)]
+pub fn os_path<'a>(entry: &'a Entry, buf: &'a mut Vec<OSPathChar>) -> Result<&'a [OSPathChar]> {
+    buf.clear();
+    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf)
+        .map_err(|_| Error::Alloc(bun_alloc::AllocError))?;
+    Ok(buf)
+}
+
+pub fn entry_kind(entry: &Entry) -> bun_sys::FileKind {
+    bun_sys::kind_from_mode(entry.filetype() as bun_sys::Mode)
+}
+
+/// A reader for an archive that is all in memory, gzipped or not.
+pub fn open_memory(bytes: &[u8], npm: bool) -> Result<MemoryDecoder<'_>> {
+    let dialect = if npm { Dialect::Npm } else { Dialect::General };
+    MemoryDecoder::new(bytes, Options::for_host(dialect, true))
+        .map_err(|_| Error::Alloc(bun_alloc::AllocError))
+}
+
+/// Writes the contents of the current entry to `fd`.
+pub fn read_data_into_fd(
+    reader: &mut MemoryDecoder<'_>,
+    fd: Fd,
+    strategy: &mut lib::WriteStrategy,
+) -> core::result::Result<(), ReadDataError> {
+    let mut writer = lib::EntryWriter::new(fd);
+    loop {
+        match reader.next().map_err(ReadDataError::Archive)? {
+            Event::Data { offset, bytes } => writer
+                .write(strategy, offset, bytes)
+                .map_err(ReadDataError::Sys)?,
+            Event::EndOfEntry { size } => return writer.finish(size).map_err(ReadDataError::Sys),
+            Event::NeedInput | Event::Entry(_) | Event::EndOfArchive => return Ok(()),
+        }
+    }
+}
+
+fn log_archive_error(path: &[OSPathChar], err: bun_tar::Error) {
+    Output::err(
+        "archive error",
+        "extracting {}: {}",
+        (bun_core::fmt::fmt_os_path(path, Default::default()), err),
+    );
+}
+
+pub enum ReadDataError {
+    Archive(bun_tar::Error),
+    Sys(bun_sys::Error),
+}
 
 pub mod lib {
     use super::*;
@@ -89,7 +147,7 @@ pub mod lib {
                     Err(_) => {
                         strategy.pwrite = false;
                         bun_core::debug_warn!(
-                            "libarchive: falling back to write() after pwrite() failure",
+                            "archive: falling back to write() after pwrite() failure",
                         );
                     }
                 }
@@ -111,8 +169,7 @@ pub mod lib {
             Ok(())
         }
 
-        /// `end` is the offset that libarchive returned with `ARCHIVE_EOF`, which is the length of
-        /// the file.
+        /// `end` is the length of the file, which the last write need not have reached.
         pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
             if end > self.end {
                 self.before_hole();
@@ -181,11 +238,10 @@ pub fn first_path_component(path: &[OSPathChar]) -> &[OSPathChar] {
 #[cfg(unix)]
 pub fn is_symlink_target_safe(
     symlink_path: &[u8],
-    link_target: &ZStr,
+    link_target_bytes: &[u8],
     symlink_join_buf: &mut Option<bun_paths::path_buffer_pool::Guard>,
 ) -> bool {
     // Absolute symlink targets are never safe - they could point anywhere
-    let link_target_bytes = link_target.as_bytes();
     if link_target_bytes.is_empty() || link_target_bytes[0] == b'/' {
         return false;
     }
@@ -453,12 +509,7 @@ impl Archiver {
         // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
-        let mut entry: *mut lib::Entry = ptr::null_mut();
-
-        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read(false);
-        let archive = stream.archive;
+        let mut reader = open_memory(file_buffer, false)?;
 
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
         let dir: Fd = 'brk: {
@@ -482,28 +533,20 @@ impl Archiver {
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
-
-            match r {
-                lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
+            match reader.next_entry() {
+                Ok(None) => break 'loop_,
+                Err(_) => {
                     return Err(crate::Error::Fail);
                 }
-                _ => {
-                    // do not use the utf8 name there
-                    // it will require us to pull in libiconv
-                    // though we should probably validate the utf8 here nonetheless
-                    // SAFETY: entry was just populated by read_next_header
+                Ok(Some(entry)) => {
                     #[cfg(not(windows))]
-                    let pathname_bytes = lib::Entry::opaque_ref(entry).pathname().as_bytes();
+                    let pathname_bytes = entry.path();
                     // The name `extract_to_dir` writes to.
                     #[cfg(windows)]
-                    let pathname_utf8 = strings::to_utf8_list_with_type(
-                        Vec::new(),
-                        lib::Entry::opaque_ref(entry).pathname_w().as_slice(),
-                    )?;
+                    let pathname_utf8 = {
+                        let mut wide = Vec::new();
+                        strings::to_utf8_list_with_type(Vec::new(), os_path(entry, &mut wide)?)?
+                    };
                     #[cfg(windows)]
                     let pathname_bytes: &[u8] = &pathname_utf8;
 
@@ -540,8 +583,7 @@ impl Archiver {
                         }
                     }
 
-                    // pathname = sliceTo(remaining[..len :0], 0)
-                    let pathname = slice_to_nul(remaining);
+                    let pathname = remaining;
                     if pathname.is_empty() || pathname.len() >= normalized_buf.len() {
                         continue 'loop_;
                     }
@@ -561,9 +603,7 @@ impl Archiver {
                     let dirname =
                         strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
 
-                    // SAFETY: entry valid
-                    let size: usize =
-                        usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
+                    let size: usize = usize::try_from(entry.size().max(0)).unwrap();
                     let in_the_way = leaves_root(pathname)?
                         || (size > 0
                             && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
@@ -614,12 +654,8 @@ impl Archiver {
         appender: &mut A,
         options: ExtractOptions,
     ) -> crate::Result<u32> {
-        let mut entry: *mut lib::Entry = ptr::null_mut();
-
-        // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read(options.npm);
-        let archive = stream.archive;
+        let mut reader = open_memory(file_buffer, options.npm)?;
+        let mut os_path_buf: Vec<OSPathChar> = Vec::new();
         let mut count: u32 = 0;
         let dir_fd = dir;
 
@@ -636,34 +672,17 @@ impl Archiver {
         let mut write_strategy = lib::WriteStrategy::default();
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
-
-            match r {
-                lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
+            match reader.next_entry() {
+                Ok(None) => break 'loop_,
+                Err(_) => {
                     return Err(crate::Error::Fail);
                 }
-                _ => {
-                    // TODO:
-                    // Due to path separator replacement and other copies that happen internally, libarchive changes the
-                    // storage type of paths on windows to wide character strings. Using `archive_entry_pathname` or `archive_entry_pathname_utf8`
-                    // on an wide character string will return null if there are non-ascii characters.
-                    // (this can be seen by installing @fastify/send, which has a path "@fastify\send\test\fixtures\snow ☃")
-                    //
-                    // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
-                    // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
-                    // SAFETY: entry was just populated by read_next_header
-                    #[cfg(windows)]
-                    let pathname_z = lib::Entry::opaque_ref(entry).pathname_w();
-                    // SAFETY: entry was just populated by read_next_header
-                    #[cfg(not(windows))]
-                    let pathname_z = lib::Entry::opaque_ref(entry).pathname();
+                Ok(Some(entry)) => {
+                    let pathname_z = os_path(entry, &mut os_path_buf)?;
 
                     if A::HAS_ON_FIRST_DIRECTORY_NAME {
                         if appender.needs_first_dirname() {
-                            let root = first_path_component(&pathname_z[..]);
+                            let root = first_path_component(pathname_z);
                             #[cfg(windows)]
                             {
                                 let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
@@ -677,8 +696,7 @@ impl Archiver {
                         }
                     }
 
-                    // SAFETY: entry valid
-                    let kind = bun_sys::kind_from_mode(lib::Entry::opaque_ref(entry).filetype());
+                    let kind = entry_kind(entry);
 
                     if options.npm {
                         // - ignore entries other than files (`true` can only be returned if type is file)
@@ -696,10 +714,7 @@ impl Archiver {
                     }
 
                     // strip and normalize the path
-                    // `pathname_z` is `&ZStr` on POSIX (`as_bytes() → &[u8]`)
-                    // and `&WStr` on Windows (`as_slice() → &[u16]`); both
-                    // deref to `&[OSPathChar]`.
-                    let pathname_slice: &[OSPathChar] = &pathname_z[..];
+                    let pathname_slice: &[OSPathChar] = pathname_z;
                     let mut remaining: &[OSPathChar] = pathname_slice;
                     {
                         let sep: OSPathChar = b'/' as OSPathChar;
@@ -730,9 +745,6 @@ impl Archiver {
                             }
                         }
                     }
-                    // pathname = rest.ptr[0..rest.len :0]  (NUL is at original buffer end)
-                    // SAFETY: `remaining` is a tail slice of `pathname_z`, which is NUL-terminated
-                    // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
                     if pathname.len() >= normalized_buf.len() {
@@ -826,8 +838,7 @@ impl Archiver {
                             }
                             #[cfg(not(windows))]
                             {
-                                // SAFETY: entry valid
-                                let mode = directory_mode(lib::Entry::opaque_ref(entry).perm());
+                                let mode = directory_mode(entry.perm() as bun_sys::Mode);
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
                                 // so path_slice is a NUL-terminated [:0]u8.
                                 let path_z: &ZStr = unsafe {
@@ -854,8 +865,7 @@ impl Archiver {
                             }
                         }
                         bun_sys::FileKind::SymLink => {
-                            // SAFETY: entry valid
-                            let link_target = lib::Entry::opaque_ref(entry).symlink();
+                            let link_target = entry.symlink().unwrap_or_default();
                             #[cfg(unix)]
                             {
                                 // Validate that the symlink target doesn't escape the extraction directory.
@@ -876,15 +886,13 @@ impl Archiver {
                                                     Default::default(),
                                                 )
                                             ),
-                                            bun_core::fmt::escape_control_chars(
-                                                link_target.as_bytes()
-                                            ),
+                                            bun_core::fmt::escape_control_chars(link_target),
                                         );
                                     }
                                     continue;
                                 }
                                 deferred_symlinks
-                                    .push(DeferredSymlink::new(path_slice, link_target.as_bytes()));
+                                    .push(DeferredSymlink::new(path_slice, link_target));
                             }
                             #[cfg(not(unix))]
                             {
@@ -899,11 +907,8 @@ impl Archiver {
                             //
                             // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
                             #[cfg(not(windows))]
-                            let mode: bun_sys::Mode = bun_sys::Mode::try_from(
-                                // SAFETY: entry valid
-                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
-                            )
-                            .unwrap();
+                            let mode: bun_sys::Mode =
+                                ((entry.perm() & 0o777) | 0o666) as bun_sys::Mode;
 
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
@@ -963,10 +968,7 @@ impl Archiver {
                                 }
                             };
 
-                            // SAFETY: entry valid
-                            let size: usize =
-                                usize::try_from(lib::Entry::opaque_ref(entry).size().max(0))
-                                    .unwrap();
+                            let size: usize = usize::try_from(entry.size().max(0)).unwrap();
 
                             if size > 0 {
                                 if let Some(ctx_) = ctx.as_deref_mut() {
@@ -979,30 +981,14 @@ impl Archiver {
                                     for plucker_ in ctx_.pluckers.iter_mut() {
                                         if plucker_.filename_hash == h {
                                             plucker_.contents.list.clear();
-                                            // SAFETY: archive valid
-                                            let read_ok = unsafe { &*archive }.read_data_to_vec(
-                                                size,
-                                                &mut plucker_.contents.list,
-                                            )?;
-                                            if !read_ok {
+                                            if let Err(err) =
+                                                reader.read_data(size, &mut plucker_.contents.list)
+                                            {
+                                                if err == bun_tar::Error::OutOfMemory {
+                                                    return Err(bun_alloc::AllocError.into());
+                                                }
                                                 if options.log {
-                                                    // SAFETY: `archive` is the live
-                                                    // `read_new()` handle this
-                                                    // extraction loop is iterating.
-                                                    let archive_error = slice_to_nul(
-                                                        unsafe { &*archive }.error_string(),
-                                                    );
-                                                    Output::err(
-                                                        "libarchive error",
-                                                        "extracting {}: {}",
-                                                        (
-                                                            bun_core::fmt::fmt_os_path(
-                                                                path_slice,
-                                                                Default::default(),
-                                                            ),
-                                                            bstr::BStr::new(archive_error),
-                                                        ),
-                                                    );
+                                                    log_archive_error(path_slice, err);
                                                 }
                                                 return Err(crate::Error::Fail);
                                             }
@@ -1013,55 +999,14 @@ impl Archiver {
                                         }
                                     }
                                 }
-                                let mut retries_remaining: u8 = 5;
-
-                                'possibly_retry: while retries_remaining != 0 {
-                                    // SAFETY: archive valid
-                                    match unsafe {
-                                        (*archive).read_data_into_fd(output.fd, &mut write_strategy)
-                                    } {
-                                        lib::Result::Eof => break 'loop_,
-                                        lib::Result::Ok => break 'possibly_retry,
-                                        lib::Result::Retry => {
-                                            if options.log {
-                                                Output::err(
-                                                    "libarchive error",
-                                                    "extracting {}, retry {} / {}",
-                                                    (
-                                                        bun_core::fmt::fmt_os_path(
-                                                            path_slice,
-                                                            Default::default(),
-                                                        ),
-                                                        retries_remaining,
-                                                        5,
-                                                    ),
-                                                );
-                                            }
-                                        }
-                                        _ => {
-                                            if options.log {
-                                                // SAFETY: `archive` is the live
-                                                // `read_new()` handle this
-                                                // extraction loop is iterating.
-                                                let archive_error = slice_to_nul(
-                                                    unsafe { &*archive }.error_string(),
-                                                );
-                                                Output::err(
-                                                    "libarchive error",
-                                                    "extracting {}: {}",
-                                                    (
-                                                        bun_core::fmt::fmt_os_path(
-                                                            path_slice,
-                                                            Default::default(),
-                                                        ),
-                                                        bstr::BStr::new(archive_error),
-                                                    ),
-                                                );
-                                            }
-                                            return Err(crate::Error::Fail);
-                                        }
+                                if let Err(err) =
+                                    read_data_into_fd(&mut reader, output.fd, &mut write_strategy)
+                                {
+                                    if let (true, ReadDataError::Archive(err)) = (options.log, err)
+                                    {
+                                        log_archive_error(path_slice, err);
                                     }
-                                    retries_remaining -= 1;
+                                    return Err(crate::Error::Fail);
                                 }
                             }
                         }

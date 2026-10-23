@@ -1,22 +1,18 @@
-//! `Bun.Archive` — tar/tgz pack + extract over libarchive.
-
-use std::ffi::CString;
+//! `Bun.Archive` — tar/tgz pack + extract.
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
-use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
+use bun_archive::tar;
+use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
-use bun_libarchive as libarchive;
+use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
-/// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
-/// does not yet expose `FileType`, so mirror the constant locally.
-const FILETYPE_REGULAR: u32 = 0o100000;
+const FILETYPE_REGULAR: u32 = tar::reader::S_IFREG;
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
@@ -94,40 +90,25 @@ impl Archive {
     }
 }
 
-/// Configure archive for reading tar/tar.gz
-fn configure_archive_reader(archive: &libarchive::lib::Archive) {
-    let _ = archive.read_support_format_tar();
-    let _ = archive.read_support_format_gnutar();
-    let _ = archive.read_support_filter_gzip();
-    let _ = archive.read_set_options(c"read_concatenated_archives");
-}
-
-/// Entry pathname as owned UTF-8 bytes. libarchive on Windows keeps a
-/// charset-converted name (every pax `path=`) only in the wide-string slot;
-/// `archive_entry_pathname` lossily narrows that through the "C" locale.
+/// Entry pathname as owned UTF-8 bytes, from the UTF-16 name the entry has on Windows.
 #[cfg(windows)]
-fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())
+fn entry_pathname_utf8(entry: &tar::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
+    let mut wide = Vec::new();
+    let path = bun_archive::os_path(entry, &mut wide).map_err(|_| bun_alloc::AllocError)?;
+    bun_core::strings::to_utf8_list_with_type(Vec::new(), path)
 }
 
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
-    use libarchive::lib;
-    let archive = lib::ReadArchive::new();
-    configure_archive_reader(&archive);
-
-    if archive.read_open_memory(data) != lib::Result::Ok {
+    let Ok(mut reader) = bun_archive::open_memory(data, false) else {
         return 0;
-    }
-
+    };
     let mut count: u32 = 0;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    while archive.read_next_header(&mut entry).succeeded() {
-        if lib::Entry::opaque_ref(entry).filetype() == FILETYPE_REGULAR {
+    while let Ok(Some(entry)) = reader.next_entry() {
+        if entry.filetype() == FILETYPE_REGULAR {
             count += 1;
         }
     }
-
     count
 }
 
@@ -250,45 +231,28 @@ fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
 
 /// Shared helper that builds tarball bytes from a JS object
 fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
-    use libarchive::lib;
-
     let Some(js_obj) = obj.get_object() else {
         return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
     };
 
-    // Set up archive first
-    let mut growing_buffer = lib::GrowingBuffer::init();
-    // errdefer growing_buffer.deinit() — handled by Drop on Vec<u8>
+    let names = if cfg!(windows) {
+        tar::writer::Names::Utf8
+    } else {
+        tar::writer::Names::Binary
+    };
+    let mut writer = tar::writer::Writer::new(Vec::<u8>::new(), names);
+    let fail = |what: &str, err: tar::Error| {
+        global.throw_invalid_arguments(format_args!(
+            "Failed to create tarball: {}",
+            if err == tar::Error::OutOfMemory {
+                "OutOfMemory"
+            } else {
+                what
+            }
+        ))
+    };
 
-    let archive = lib::WriteArchive::new();
-    let archive_ref: &lib::Archive = &archive;
-
-    if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Failed to create tarball: ArchiveFormatError"
-        )));
-    }
-
-    // `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
-    // above); `growing_buffer` is stack-local and outlives all callback invocations
-    // (the archive is closed before this fn returns).
-    let open_rc = lib::archive_write_open2(
-        &archive,
-        (&raw mut growing_buffer).cast(),
-        Some(lib::GrowingBuffer::open_callback),
-        Some(lib::GrowingBuffer::write_callback),
-        Some(lib::GrowingBuffer::close_callback),
-        None,
-    );
-    if open_rc != 0 {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
-    }
-
-    let entry = lib::OwnedEntry::new();
-    let entry_ref: &lib::Entry = &entry;
-
-    let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
+    let now_secs: i64 = bun_core::time::milli_timestamp() / 1000;
 
     // Iterate over object properties and write directly to archive
     let iter = jsc::JSPropertyIterator::init(
@@ -305,61 +269,32 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
             continue;
         }
 
-        // Get the key as a null-terminated string
         let key_slice = key.to_utf8();
-        let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
         let mut array_buffer = None;
         let data_slice = get_entry_data(global, value, &mut array_buffer)?;
-
-        // Write entry to archive
         let data = data_slice.slice();
-        let _ = entry_ref.clear();
-        // Same platform split as `pack_command::add_archive_entry`: the process
-        // locale is always "C", so libarchive's locale-keyed pax writer is only
-        // lossless with raw bytes on POSIX and with the UTF-8 form on Windows.
-        #[cfg(windows)]
-        entry_ref.set_pathname_utf8(key_str.as_zstr());
-        #[cfg(not(windows))]
-        entry_ref.set_pathname(key_str.as_zstr());
-        entry_ref.set_size(i64::try_from(data.len()).expect("int cast"));
-        entry_ref.set_filetype(FILETYPE_REGULAR);
-        entry_ref.set_perm(0o644);
-        entry_ref.set_mtime(now_secs, 0);
 
-        // `Warn` means the header was still written (libarchive fell back to a
-        // per-entry binary hdrcharset for a name its locale machinery could not
-        // convert); only `Failed`/`Fatal` mean no header was produced.
-        if !archive_ref.write_header(entry_ref).succeeded() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveHeaderError"
-            )));
-        }
-        if archive_ref.write_data(data) < 0 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveWriteError"
-            )));
-        }
-        if archive_ref.write_finish_entry() != lib::Result::Ok {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveFinishEntryError"
-            )));
-        }
+        writer
+            .header(&tar::writer::File {
+                path: key_slice.slice(),
+                size: data.len() as u64,
+                perm: 0o644,
+                mtime: now_secs,
+            })
+            .map_err(|err| fail("ArchiveHeaderError", err))?;
+        writer
+            .data(data)
+            .map_err(|err| fail("ArchiveWriteError", err))?;
+        writer
+            .finish_entry()
+            .map_err(|err| fail("ArchiveFinishEntryError", err))?;
     }
 
-    if archive_ref.write_close() != lib::Result::Ok {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveCloseError")));
-    }
-
-    match growing_buffer.to_owned_slice() {
-        Ok(v) => Ok(v),
-        Err(_) => {
-            Err(global
-                .throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory")))
-        }
-    }
+    writer
+        .finish(true)
+        .map_err(|err| fail("ArchiveCloseError", err))
 }
 
 fn get_entry_data<'a>(
@@ -717,12 +652,12 @@ impl ExtractContext {
         }
 
         // Otherwise use the fast path without filtering
-        let count = match libarchive::Archiver::extract_to_disk(
+        let count = match bun_archive::Archiver::extract_to_disk(
             self.store.shared_view(),
             &self.path,
             None,
             &mut (),
-            libarchive::ExtractOptions {
+            bun_archive::ExtractOptions {
                 depth_to_skip: 0,
                 close_handles: true,
                 log: false,
@@ -969,7 +904,7 @@ enum FilesError {
 
 enum FilesResult {
     Success(FileEntryList),
-    LibarchiveErr(CString),
+    ArchiveErr(tar::Error),
     Err(FilesError),
 }
 
@@ -982,44 +917,29 @@ pub(crate) struct FilesContext {
 }
 
 impl FilesContext {
-    fn read_error(archive: &libarchive::lib::Archive) -> FilesResult {
-        let err_str = archive.error_string();
-        match CString::new(err_str) {
-            Ok(err) if !err_str.is_empty() => FilesResult::LibarchiveErr(err),
-            _ => FilesResult::Err(FilesError::ReadError),
-        }
-    }
-
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
-        use libarchive::lib;
-        let archive = lib::ReadArchive::new();
-        configure_archive_reader(&archive);
-
-        if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            return Ok(Self::read_error(&archive));
-        }
+        let read_error = |err: tar::Error| match err {
+            tar::Error::OutOfMemory => Err(bun_alloc::AllocError),
+            err => Ok(FilesResult::ArchiveErr(err)),
+        };
+        let mut reader = bun_archive::open_memory(self.store.shared_view(), false)
+            .map_err(|_| bun_alloc::AllocError)?;
 
         let mut entries: FileEntryList = Vec::new();
-        // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
-        let mut entry: *mut lib::Entry = core::ptr::null_mut();
         loop {
-            match archive.read_next_header(&mut entry) {
-                lib::Result::Eof => break,
-                lib::Result::Retry => continue,
-                lib::Result::Failed | lib::Result::Fatal => return Ok(Self::read_error(&archive)),
-                lib::Result::Ok | lib::Result::Warn => {}
-            }
-            let entry_ref = lib::Entry::opaque_ref(entry);
+            let entry_ref = match reader.next_entry() {
+                Ok(None) => break,
+                Ok(Some(entry)) => entry,
+                Err(err) => return read_error(err),
+            };
             if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
             }
 
-            // POSIX: the raw header/pax bytes; the locale-converting
-            // `archive_entry_pathname_utf8` returns NULL for every non-ASCII
-            // name in the "C" locale, which would key the Map by "".
+            // POSIX: the raw header/pax bytes.
             #[cfg(not(windows))]
-            let pathname = entry_ref.pathname().as_bytes();
+            let pathname = entry_ref.path();
             #[cfg(windows)]
             let pathname_owned = entry_pathname_utf8(entry_ref)?;
             #[cfg(windows)]
@@ -1034,13 +954,12 @@ impl FilesContext {
             let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
 
-            let mut data: Vec<u8> = Vec::new();
-            if !archive.read_data_to_vec(size, &mut data)? {
-                return Ok(Self::read_error(&archive));
-            }
-
             let path_copy: Box<[u8]> = Box::from(pathname);
-            // errdefer free(path_copy) — handled by Drop
+
+            let mut data: Vec<u8> = Vec::new();
+            if let Err(err) = reader.read_data(size, &mut data) {
+                return read_error(err);
+            }
 
             entries.push(FileEntry {
                 path: path_copy,
@@ -1089,8 +1008,8 @@ impl TaskContext for FilesContext {
 
                 Ok(PromiseResult::Resolve(map))
             }
-            FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                EncodedSlice::utf8(err_msg.to_bytes()).to_error_instance(global),
+            FilesResult::ArchiveErr(err) => Ok(PromiseResult::Reject(
+                global.create_error_instance(format_args!("{err}")),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),
@@ -1247,13 +1166,8 @@ fn extract_to_disk_filtered(
     root: &[u8],
     glob_patterns: Option<&[GlobPattern]>,
 ) -> crate::Result<u32> {
-    use libarchive::lib;
-    let archive = lib::ReadArchive::new();
-    configure_archive_reader(&archive);
-
-    if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(crate::Error::ReadError);
-    }
+    use bun_archive::lib;
+    let mut reader = bun_archive::open_memory(file_buffer, false)?;
 
     // Open/create target directory using bun.sys
     let cwd = Fd::cwd();
@@ -1279,28 +1193,22 @@ fn extract_to_disk_filtered(
     let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
 
     let mut count: u32 = 0;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
     let mut write_strategy = lib::WriteStrategy::default();
 
     loop {
-        match archive.read_next_header(&mut entry) {
-            lib::Result::Eof => break,
-            lib::Result::Retry => continue,
-            lib::Result::Failed | lib::Result::Fatal => return Err(crate::Error::ReadError),
-            lib::Result::Ok | lib::Result::Warn => {}
-        }
-        let entry_ref = lib::Entry::opaque_ref(entry);
+        let entry_ref = match reader.next_entry() {
+            Ok(None) => break,
+            Ok(Some(entry)) => entry,
+            Err(_) => return Err(crate::Error::ReadError),
+        };
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
-        let raw_pathname_z = entry_ref.pathname();
+        let raw_pathname = entry_ref.path();
         #[cfg(windows)]
-        let raw_pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
-        );
+        let raw_pathname_owned = entry_pathname_utf8(entry_ref)
+            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         #[cfg(windows)]
-        let raw_pathname_z = raw_pathname_zbox.as_zstr();
-        let raw_pathname = raw_pathname_z.as_bytes();
+        let raw_pathname: &[u8] = &raw_pathname_owned;
 
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
         if raw_pathname.len() >= normalized_buf.len() {
@@ -1325,8 +1233,7 @@ fn extract_to_disk_filtered(
             }
         }
 
-        let filetype = entry_ref.filetype();
-        let kind = bun_sys::kind_from_mode(filetype);
+        let kind = bun_archive::entry_kind(entry_ref);
 
         match kind {
             bun_sys::FileKind::Directory => {
@@ -1373,7 +1280,8 @@ fn extract_to_disk_filtered(
                 };
 
                 let write_success = size == 0
-                    || archive.read_data_into_fd(file_fd, &mut write_strategy) == lib::Result::Ok;
+                    || bun_archive::read_data_into_fd(&mut reader, file_fd, &mut write_strategy)
+                        .is_ok();
                 let _ = file_fd.close();
 
                 if !write_success {
@@ -1384,7 +1292,8 @@ fn extract_to_disk_filtered(
                 count += 1;
             }
             bun_sys::FileKind::SymLink => {
-                let link_target_z = entry_ref.symlink();
+                let link_target = ZBox::from_bytes(entry_ref.symlink().unwrap_or_default());
+                let link_target_z = link_target.as_zstr();
                 // Validate symlink target is also safe
                 if !is_safe_path(link_target_z.as_bytes()) {
                     continue;

@@ -203,6 +203,38 @@ export const key = keys.value.k;
       "use.ts(5,19): error TS6196: 'T' is declared but never used.",
     ],
   },
+  "where a type parameter is in scope, reports a name that does not resolve when it checks the import type": {
+    files: {
+      "use.ts": `type Unread<T> = import("./box").Box<{ a: MissingA }>;
+type Read<T> = import("./box").Box<{ a: MissingB }>;
+export declare const read: Read<string>;
+type Later<T> = import("./box").Box<{ a: MissingC; b: T; c: MissingD }>;
+export declare const later: Later<string>;
+class This { p!: import("./box").Box<{ a: MissingE; b: typeof missingF }> }
+export const ofThis = new This().p;
+type Inner = import("./box").Box<<U>(x: U) => { a: MissingG }>;
+declare const inner: Inner;
+export const called = inner.value(1);
+type Failed<T> = import("./nope").Box<{ a: MissingH }>;
+export type { Unread, Failed };
+`,
+    },
+    errors: [
+      "use.ts(1,43): error TS2304: Cannot find name 'MissingA'.",
+      "use.ts(2,41): error TS2304: Cannot find name 'MissingB'.",
+      "use.ts(4,42): error TS2304: Cannot find name 'MissingC'.",
+      "use.ts(4,61): error TS2304: Cannot find name 'MissingD'.",
+      "use.ts(6,63): error TS2304: Cannot find name 'missingF'.",
+      "use.ts(11,25): error TS2307: Cannot find module './nope' or its corresponding type declarations.",
+    ],
+    tsc: [
+      "use.ts(2,41): error TS2304: Cannot find name 'MissingB'.",
+      "use.ts(4,42): error TS2304: Cannot find name 'MissingC'.",
+      "use.ts(6,63): error TS2304: Cannot find name 'missingF'.",
+      "use.ts(8,52): error TS2304: Cannot find name 'MissingG'.",
+      "use.ts(11,25): error TS2307: Cannot find module './nope' or its corresponding type declarations.",
+    ],
+  },
   "an earlier file that reads reports, a later file does not": {
     order: ["early.ts", "use.ts", "late.ts"],
     files: {
@@ -234,6 +266,52 @@ export {};
 `,
     },
     errors: ["use.ts(2,6): error TS6196: 'Late' is declared but never used."],
+  },
+  "reports nothing below the type arguments of an import type in an expression": {
+    files: {
+      "use.ts": `declare const anyValue: any;
+declare function g<T>(x?: T): T;
+export const cast = anyValue as import("./box").Box<{ a: typeof missingA; b: MissingB }>;
+export const satisfied = anyValue satisfies import("./box").Box<{ a: typeof missingC }>;
+export const called = g<import("./box").Box<{ a: typeof missingD }>>();
+export const instantiated = g<import("./box").Box<{ a: typeof missingE }>>;
+export const arrow = (x: import("./box").Box<{ a: typeof missingF }>) => x;
+`,
+    },
+    errors: [],
+  },
+  "with `declaration`, what the declaration file needs is resolved after every check": {
+    options: { declaration: true, noUnusedLocals: true },
+    order: ["early.ts", "use.ts"],
+    files: {
+      "early.ts": `export const early = G.a.value;
+`,
+      "use.ts": `namespace G {
+  type Local = string;
+  type Emitted = string;
+  export declare const a: import("./box").Box<{ read: Local; emitted: MissingA }>;
+  export declare const b: import("./box").Box<{ emitted: Emitted }>;
+  export const read = a.value.read;
+}
+`,
+    },
+    errors: ["use.ts(3,8): error TS6196: 'Emitted' is declared but never used."],
+  },
+  "does not abort when it checks a binding pattern of another file": {
+    options: { noUnusedLocals: true },
+    order: ["first.ts", "second.ts", "third.ts"],
+    files: {
+      "first.ts": `const early = late;
+`,
+      "second.ts": `declare function f<T>(): T;
+const late = f<({ a: b }: { a: string }) => typeof b>();
+declare function g<T>(): T;
+declare const below: import("./box").Box<{ m: typeof g<({ c: d }: { c: string }) => typeof d> }>;
+`,
+      "third.ts": `const last = below.value.m;
+`,
+    },
+    errors: [],
   },
   "type arguments of `typeof import()` that fit no signature are not resolved": {
     files: {

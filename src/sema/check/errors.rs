@@ -1,5 +1,5 @@
-//! A file's diagnostics. The resolver answers queries and never reports. This pass visits every node of the file once,
-//! queries the resolver, and reports the inconsistencies.
+//! A file's diagnostics. `check_source_file` and the queries it makes report where TypeScript reports. The passes
+//! that follow visit every node of a kind once, query the resolver, and report the inconsistencies.
 //!
 //! The codes are the TypeScript compiler's. An error that depends on something the resolver couldn't resolve isn't
 //! reported. A false negative is better than a false positive.

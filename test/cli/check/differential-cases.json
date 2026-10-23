@@ -18766,6 +18766,30 @@
       "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"noUnusedLocals\":true},\"files\":[\"early.ts\",\"use.ts\",\"late.ts\"]}\n"
     }
   },
+  "names-below-the-type-arguments-of-an-import-type-in-an-expression": {
+    "files": {
+      "use.ts": "declare const anyValue: any;\ndeclare function g<T>(x?: T): T;\nexport const cast = anyValue as import(\"./box\").Box<{ a: typeof missingA; b: MissingB }>;\nexport const satisfied = anyValue satisfies import(\"./box\").Box<{ a: typeof missingC }>;\nexport const called = g<import(\"./box\").Box<{ a: typeof missingD }>>();\nexport const instantiated = g<import(\"./box\").Box<{ a: typeof missingE }>>;\nexport const arrow = (x: import(\"./box\").Box<{ a: typeof missingF }>) => x;\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"}}\n"
+    }
+  },
+  "names-below-the-type-arguments-of-an-import-type-that-a-declaration-file-needs": {
+    "files": {
+      "early.ts": "export const early = G.a.value;\n",
+      "use.ts": "namespace G {\n  type Local = string;\n  type Emitted = string;\n  export declare const a: import(\"./box\").Box<{ read: Local; emitted: MissingA }>;\n  export declare const b: import(\"./box\").Box<{ emitted: Emitted }>;\n  export const read = a.value.read;\n}\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"declaration\":true,\"noUnusedLocals\":true},\"files\":[\"early.ts\",\"use.ts\"]}\n"
+    }
+  },
+  "binding-patterns-in-type-arguments-that-another-file-resolves": {
+    "files": {
+      "first.ts": "const early = late;\n",
+      "second.ts": "declare function f<T>(): T;\nconst late = f<({ a: b }: { a: string }) => typeof b>();\ndeclare function g<T>(): T;\ndeclare const below: import(\"./box\").Box<{ m: typeof g<({ c: d }: { c: string }) => typeof d> }>;\n",
+      "third.ts": "const last = below.value.m;\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"noUnusedLocals\":true},\"files\":[\"first.ts\",\"second.ts\",\"third.ts\"]}\n"
+    }
+  },
   "type-arguments-of-a-typeof-import-type-that-fit-no-signature": {
     "files": {
       "use.ts": "export type None = typeof import(\"./box\").f<MissingA, string>;\nexport type Below = typeof import(\"./box\").f<{ a: MissingB }>;\nexport type Fits = typeof import(\"./box\").f<MissingC>;\n",

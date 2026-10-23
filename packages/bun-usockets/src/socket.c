@@ -637,6 +637,47 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     return written;
 }
 
+/* The code of a send() that just failed for good, or 0. An errno that the kernel also returns from a usable
+ * socket is retried without a bound, as us_socket_write does: us_internal_classify_failed_send counts those,
+ * and its count is only right for a caller that resets it after each send that succeeds. */
+static int us_internal_rejected_send_error(struct us_socket_t *s) {
+#ifndef _WIN32
+    (void) s;
+    return us_internal_send_errno_is_peer_gone(errno) ? errno : 0;
+#else
+    return us_internal_classify_failed_send(s);
+#endif
+}
+
+int us_socket_write_or_reject(struct us_socket_t *s, const char *data, int length, int *rejected_send_error) {
+    if (s->ssl) {
+        int written = us_internal_ssl_write(s, data, length);
+        if (written != length && rejected_send_error) {
+            /* ssl_raw_write armed the close. */
+            int rejected = us_internal_ssl_fatal_write_error(s);
+            if (rejected) *rejected_send_error = rejected;
+        }
+        return written;
+    }
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+        return 0;
+    }
+
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
+    if (written != length) {
+        int rejected = written < 0 && rejected_send_error ? us_internal_rejected_send_error(s) : 0;
+        if (rejected) {
+            *rejected_send_error = rejected;
+            s->send_rejected = 1;
+        } else {
+            s->flags.last_write_failed = 1;
+        }
+        us_internal_rearm_writable(s);
+    }
+
+    return written < 0 ? 0 : written;
+}
+
 int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
     if (s->ssl) {
         return us_internal_ssl_writev(s, iov, count);

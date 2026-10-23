@@ -2,6 +2,8 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
+use core::ffi::c_int;
+
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_uws::{
     AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
@@ -145,8 +147,9 @@ unsafe extern "C" fn us_socket_buffered_js_write(
     ended: bool,
     // uWS still holds response bytes: write through its buffer. The caller defers a shutdown (`shutdownAfterResponseDrains`).
     hold: bool,
-    // A drain call flushes `buffer` (a tunnel). On any other socket the uWS buffer takes what the kernel does not.
-    flushes_buffer_on_drain: bool,
+    // A tunnel: a drain call flushes `buffer`, and a send that no retry can save writes its code here. Null on any
+    // other socket, where the uWS buffer takes what the kernel does not.
+    tunnel_rejected_send_error: *mut c_int,
     buffer: *mut us_socket_stream_buffer_t,
     global_object: &JSGlobalObject,
     data: JSValue,
@@ -218,6 +221,11 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         let write_behind_response = |bytes: &[u8]| unsafe {
             Bun__NodeHTTPServerSocket__writeBehindResponse(socket, ssl, bytes.as_ptr(), bytes.len())
         };
+        // A tunnel waits for a writable event after a short write, and that event must not retry a send that no retry can save.
+        // SAFETY: the caller passes null or a live `int` of the same handle; nothing else reads or writes it during this call.
+        let write = |socket: &mut us_socket_t, bytes: &[u8]| -> i32 {
+            socket.write_or_reject(bytes, unsafe { tunnel_rejected_send_error.as_mut() })
+        };
         if hold {
             // What an earlier write still owes goes first.
             let owed = stream_buffer.slice().len();
@@ -230,7 +238,7 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();
-            let written: u32 = u32::try_from(socket_ref.write(to_flush).max(0)).unwrap();
+            let written: u32 = u32::try_from(write(&mut *socket_ref, to_flush).max(0)).unwrap();
             stream_buffer.wrote(written as usize);
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < to_flush_len {
@@ -242,11 +250,11 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         }
 
         if !data_slice.is_empty() {
-            let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
+            let written: u32 = u32::try_from(write(&mut *socket_ref, data_slice).max(0)).unwrap();
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < data_slice.len() {
                 let rest = &data_slice[written as usize..];
-                if flushes_buffer_on_drain {
+                if !tunnel_rejected_send_error.is_null() {
                     stream_buffer.write(rest);
                 } else {
                     write_behind_response(rest);

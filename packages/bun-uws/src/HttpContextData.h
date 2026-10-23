@@ -57,7 +57,7 @@ private:
     using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
-    /* readError: 0, or the error of the failed read (a peer RST). peerEnded: the peer sent its FIN first. */
+    /* readError: 0, or the error that closed the connection (a failed read such as a peer RST, a rejected send). peerEnded: the peer sent its FIN first. */
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;

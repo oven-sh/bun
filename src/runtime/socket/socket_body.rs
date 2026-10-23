@@ -55,14 +55,15 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
 
 /// The error behind a close that the event loop initiated: the `recv()`
 /// failure or `SO_ERROR` that uSockets closed the socket with (`> 2`, see
-/// `on_close`). uSockets reports it in the platform's own numbering: an errno
-/// on POSIX, a WSA code (`WSAECONNRESET` = 10054) on Windows. `sys::Error`
-/// stores `SystemErrno` discriminants, so the WSA code has to be mapped first
-/// or the error reaches JS with no `code` at all.
-fn read_error_from_close_code(code: c_int) -> sys::Error {
+/// `on_close`), or the `send()` failure that made it close. uSockets reports
+/// it in the platform's own numbering: an errno on POSIX, a WSA code
+/// (`WSAECONNRESET` = 10054) on Windows. `sys::Error` stores `SystemErrno`
+/// discriminants, so the WSA code has to be mapped first or the error reaches
+/// JS with no `code` at all.
+fn error_from_close_code(code: c_int, syscall: sys::Tag) -> sys::Error {
     #[cfg(not(windows))]
     {
-        sys::Error::from_code_int(code, sys::Tag::read)
+        sys::Error::from_code_int(code, syscall)
     }
     #[cfg(windows)]
     {
@@ -76,17 +77,28 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
             Some(errno) if errno != sys::SystemErrno::ECONNABORTED => errno,
             _ => sys::SystemErrno::ECONNRESET,
         };
-        sys::Error::new(errno, sys::Tag::read)
+        sys::Error::new(errno, syscall)
     }
 }
 
-/// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
+fn read_error_from_close_code(code: c_int) -> sys::Error {
+    error_from_close_code(code, sys::Tag::read)
+}
+
+/// `error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
+/// `rejected_send`: the code is that of a failed `send()`, not of a failed read.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
+pub(crate) extern "C" fn Bun__socketErrorFromCloseCode(
     global: &JSGlobalObject,
     code: c_int,
+    rejected_send: bool,
 ) -> JSValue {
-    <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
+    let syscall = if rejected_send {
+        sys::Tag::write
+    } else {
+        sys::Tag::read
+    };
+    <sys::Error as jsc::SysErrorJsc>::to_js(&error_from_close_code(code, syscall), global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

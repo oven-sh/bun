@@ -8,11 +8,11 @@
 #include <wtf/text/WTFString.h>
 #include <cmath>
 
-extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, int* tunnelRejectedSendError, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" void us_socket_shutdown(us_socket_t*);
-extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
+extern "C" JSC::EncodedJSValue Bun__socketErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code, bool rejectedSend);
 
 namespace Bun {
 
@@ -277,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
 
     thisObject->flushResponseBytesAhead();
     const bool hold = thisObject->hasUnsentResponseBytes();
-    auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, hold, thisObject->flushesStreamBufferOnDrain(), &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, hold, thisObject->tunnelRejectedSendError(), &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
     // JS parks the write callback on false only when it has an ondrain (_write in _http_server.ts).
     if (hold && thisObject->functionToCallOnDrain && JSValue::decode(result).isFalse()) {
         thisObject->heldWriteAwaitsDrain = true;
@@ -308,7 +308,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
         if (bufferedSize == 0) {
             us_socket_shutdown(thisObject->socket);
         } else {
-            us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, thisObject->hasUnsentResponseBytes(), thisObject->flushesStreamBufferOnDrain(), &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+            us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, thisObject->hasUnsentResponseBytes(), thisObject->tunnelRejectedSendError(), &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
         }
         thisObject->close();
         return JSValue::encode(JSC::jsUndefined());
@@ -387,14 +387,17 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerCertVerified, (JSC::JSG
     return JSValue::encode(JSC::jsBoolean(thisObject->isPeerCertificateVerified()));
 }
 
-// The error of the read that closed the connection (`read ECONNRESET` for a peer RST), or undefined.
+// The error that closed the connection, or undefined: that of the tunnel send that the kernel rejected (`write EPIPE`), else that of the failed read (`read ECONNRESET` for a peer RST).
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterCloseError, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
     if (!thisObject || !thisObject->closeReadError) {
         return JSValue::encode(JSC::jsUndefined());
     }
-    return Bun__socketReadErrorFromCloseCode(globalObject, thisObject->closeReadError);
+    if (thisObject->rejectedSendError) {
+        return Bun__socketErrorFromCloseCode(globalObject, thisObject->rejectedSendError, true);
+    }
+    return Bun__socketErrorFromCloseCode(globalObject, thisObject->closeReadError, false);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

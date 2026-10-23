@@ -63,11 +63,13 @@ public:
     unsigned tunnelReadEnded : 1 = 0;
     /* write() returned false for bytes that went into the uWS buffer, and JS waits for ondrain. streamBuffer does not show them. */
     unsigned heldWriteAwaitsDrain : 1 = 0;
-    /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
+    /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error that closed the connection. */
     unsigned peer_ended : 1 = 0;
     int closeReadError = 0;
     /* Whether the connection closed before the kernel had taken everything, also after an upgrade to a WebSocket. */
     std::optional<bool> closedWithUnsentData;
+    /* The error of a tunnel send that no retry can save. The close that follows it is that of a failed write, not of a failed read. */
+    int rejectedSendError = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
@@ -156,8 +158,8 @@ public:
     bool hasUnsentResponseBytes() const;
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
     void flushResponseBytesAhead();
-    /* Only a tunnel gets the drain call that flushes streamBuffer. On any other socket the uWS buffer takes what the kernel does not. */
-    bool flushesStreamBufferOnDrain() const { return !!functionToCallOnDrain; }
+    /* Only a tunnel gets the drain call that flushes streamBuffer, and its write takes where to report a rejected send. On any other socket (null) the uWS buffer takes what the kernel does not. */
+    int* tunnelRejectedSendError() { return functionToCallOnDrain ? &rejectedSendError : nullptr; }
     /* The WebSocket that adopted the connection reads from here on. */
     void releaseTunnelReadsForUpgrade();
 

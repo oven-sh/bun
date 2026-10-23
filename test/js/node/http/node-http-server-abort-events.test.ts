@@ -1475,3 +1475,300 @@ describe("req.socket reports how the client closed the connection", () => {
     );
   }
 });
+
+// A socket handed to 'connect' or 'upgrade' is the connection itself. Like Node.js's net.Socket it reports a
+// reset by the client as 'error' and never as 'end'. That 'error' is what rejects `await once(socket, "drain")`.
+describe("a tunnel socket reports how the client closed the connection", () => {
+  const keys = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+  const tlsOptions = {
+    key: readFileSync(path.join(keys, "agent1-key.pem")),
+    cert: readFileSync(path.join(keys, "agent1-cert.pem")),
+  };
+  const requestHead = {
+    connect: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+    upgrade: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n",
+  };
+  const responseHead = {
+    connect: "HTTP/1.1 200 Connection Established\r\n\r\n",
+    upgrade: "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n",
+  };
+  type Handoff = keyof typeof requestHead;
+  // Not below the high water mark of the socket, so every write() returns false.
+  const chunk = Buffer.alloc(1024 * 1024, "x");
+
+  // Opens one tunnel and gives its server socket to `onTunnel` behind the response head, with the TCP socket of the
+  // client. The client takes that head and reads nothing more, so what the server writes next stays in flight.
+  async function openTunnel(secure: boolean, handoff: Handoff, onTunnel: (socket: Socket, tcp: Socket) => void) {
+    const server = secure ? createHttpsServer(tlsOptions) : createServer();
+    server.on(handoff, (_req: IncomingMessage, socket: Socket) => {
+      socket.write(responseHead[handoff]);
+      onTunnel(socket, tcp);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const tcp = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    tcp.on("error", () => {});
+    const client = secure ? tlsConnect({ socket: tcp, rejectUnauthorized: false }) : tcp;
+    client.on("error", () => {});
+    await once(client, secure ? "secureConnect" : "connect");
+    client.write(requestHead[handoff]);
+    // Until the client has the head, or `onTunnel` has closed its connection.
+    await Promise.race([once(client, "readable"), once(tcp, "close")]);
+    return { server, tcp, client };
+  }
+
+  // The back-pressure idiom of the Node.js stream docs. It leaves only when 'error' rejects once().
+  async function writeUntilError(socket: Socket) {
+    try {
+      for (;;) if (!socket.write(chunk)) await once(socket, "drain");
+    } catch (e) {
+      return `left with ${(e as NodeJS.ErrnoException).code}`;
+    }
+  }
+
+  for (const secure of [false, true]) {
+    for (const handoff of ["connect", "upgrade"] as const) {
+      const name = `${secure ? "https" : "http"} '${handoff}'`;
+
+      test.concurrent(`${name}: a writer that waits for 'drain' leaves when the client resets`, async () => {
+        const closed = Promise.withResolvers<{ writer: string; events: string[] }>();
+        const { server, tcp } = await openTunnel(secure, handoff, socket => {
+          const events: string[] = [];
+          let writer = "still waits for 'drain'";
+          socket.on("end", () => events.push("end"));
+          // One turn of the event loop later, the jobs that 'error' and 'close' queued have run.
+          socket.on("close", () => setImmediate(() => closed.resolve({ writer, events })));
+          writeUntilError(socket).then(left => (writer = left!));
+        });
+        try {
+          tcp.resetAndDestroy();
+          expect(await closed.promise).toEqual({ writer: "left with ECONNRESET", events: [] });
+        } finally {
+          tcp.destroy();
+          server.close();
+        }
+      });
+
+      // The client's FIN leaves the tunnel writable. The reset that follows fails the write in flight.
+      test.concurrent(
+        `${name}: a writer that waits for 'drain' leaves when the client ends and then closes`,
+        async () => {
+          const ended = Promise.withResolvers<void>();
+          const closed = Promise.withResolvers<{ writer: string; events: string[] }>();
+          const { server, tcp, client } = await openTunnel(secure, handoff, socket => {
+            const events: string[] = [];
+            let writer = "still waits for 'drain'";
+            socket.on("end", () => {
+              events.push("end");
+              ended.resolve();
+            });
+            socket.on("close", () => setImmediate(() => closed.resolve({ writer, events })));
+            socket.resume();
+            writeUntilError(socket).then(left => (writer = left!));
+          });
+          try {
+            client.end();
+            await ended.promise;
+            // Unread bytes are in its receive buffer, so this close resets the connection.
+            tcp.destroy();
+            const { writer, events } = await closed.promise;
+            expect(events).toEqual(["end"]);
+            // EPIPE where the kernel reports the failed write, ECONNRESET where it reports the reset.
+            expect(writer).toMatch(/^left with (EPIPE|ECONNRESET)$/);
+          } finally {
+            tcp.destroy();
+            server.close();
+          }
+        },
+      );
+
+      test.concurrent(`${name}: a reset of an idle tunnel emits 'error' then 'close'`, async () => {
+        const events: string[] = [];
+        const closed = Promise.withResolvers<void>();
+        const { server, tcp } = await openTunnel(secure, handoff, socket => {
+          socket.on("end", () => events.push("end"));
+          socket.on("error", (e: NodeJS.ErrnoException) =>
+            events.push(`error "${e.message}" code=${e.code} syscall=${e.syscall}`),
+          );
+          socket.on("close", () => {
+            events.push("close");
+            closed.resolve();
+          });
+        });
+        try {
+          tcp.resetAndDestroy();
+          await closed.promise;
+          expect(events).toEqual(['error "read ECONNRESET" code=ECONNRESET syscall=read', "close"]);
+        } finally {
+          tcp.destroy();
+          server.close();
+        }
+      });
+    }
+  }
+
+  // The listener resets the connection itself, so its own send meets the reset before any read does. Not over TLS:
+  // Node.js emits 'drain' there before that send fails, and the writer then waits on a destroyed socket.
+  for (const handoff of ["connect", "upgrade"] as const) {
+    test.concurrent(`http '${handoff}': a writer leaves when its first send meets the reset`, async () => {
+      const closed = Promise.withResolvers<{ writer: string; events: string[] }>();
+      const { server, tcp } = await openTunnel(false, handoff, (socket, tcp) => {
+        const events: string[] = [];
+        let writer = "still waits for 'drain'";
+        socket.on("end", () => events.push("end"));
+        socket.on("close", () => setImmediate(() => closed.resolve({ writer, events })));
+        tcp.resetAndDestroy();
+        writeUntilError(socket).then(left => (writer = left!));
+      });
+      try {
+        const { writer, events } = await closed.promise;
+        expect(events).toEqual([]);
+        // ECONNRESET from the send or from the read behind it, EPIPE from a second send.
+        expect(writer).toMatch(/^left with (EPIPE|ECONNRESET)$/);
+      } finally {
+        tcp.destroy();
+        server.close();
+      }
+    });
+  }
+
+  // Node.js cancels the write in flight after 'error', and the writes queued behind it get the error of the stream.
+  for (const handoff of ["connect", "upgrade"] as const) {
+    test.concurrent(
+      `http '${handoff}': a reset fails the write in flight and the writes queued behind it`,
+      async () => {
+        const events: string[] = [];
+        const queued = Promise.withResolvers<Socket>();
+        const closed = Promise.withResolvers<void>();
+        const record = (name: string) => (e?: Error | null) => events.push(`${name} ${e ? `"${e.message}"` : "ok"}`);
+        const { server, tcp } = await openTunnel(false, handoff, async socket => {
+          socket.on("end", record("end"));
+          socket.on("error", record("error"));
+          socket.on("close", () => {
+            events.push("close");
+            closed.resolve();
+          });
+          // Write until a write stays in flight: its callback has not run one turn of the event loop later.
+          for (let inFlight = true; inFlight;) {
+            const failed = record("write in flight");
+            socket.write(chunk, e => {
+              inFlight = false;
+              if (e) failed(e);
+            });
+            await new Promise(resolve => setImmediate(resolve));
+            inFlight = !inFlight;
+          }
+          socket.write("queued", record("queued write"));
+          socket.end(record("end()"));
+          queued.resolve(socket);
+        });
+        try {
+          const socket = await queued.promise;
+          tcp.resetAndDestroy();
+          await closed.promise;
+          expect(events).toEqual([
+            'error "read ECONNRESET"',
+            'write in flight "write ECANCELED"',
+            'queued write "read ECONNRESET"',
+            'end() "read ECONNRESET"',
+            "close",
+          ]);
+          expect(socket.errored?.message).toBe("read ECONNRESET");
+        } finally {
+          tcp.destroy();
+          server.close();
+        }
+      },
+    );
+  }
+
+  // The reset cuts the body of an Upgrade request short. Like Node.js, that request does not end.
+  test.concurrent("http 'upgrade' with a body: a reset in the body does not end the request", async () => {
+    const events: string[] = [];
+    const gotBody = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const server = createServer();
+    server.on("upgrade", (req: IncomingMessage, socket: Socket) => {
+      req.on("data", chunk => {
+        events.push(`request data ${chunk.length}`);
+        gotBody.resolve();
+      });
+      req.on("end", () => events.push("request end"));
+      socket.on("end", () => events.push("end"));
+      socket.on("error", (e: NodeJS.ErrnoException) => events.push(`error "${e.message}"`));
+      socket.on("close", () => {
+        events.push("close");
+        closed.resolve();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const tcp = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      tcp.on("error", () => {});
+      tcp.write(
+        "POST / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: test\r\nContent-Length: 10\r\n\r\nhello",
+      );
+      await gotBody.promise;
+      tcp.resetAndDestroy();
+      await closed.promise;
+      expect(events).toEqual(["request data 5", 'error "read ECONNRESET"', "close"]);
+    } finally {
+      tcp.destroy();
+      server.close();
+    }
+  });
+
+  // A socket with no 'error' listener of its own: Node.js throws the reset as an uncaught exception. Bun does not,
+  // and the socket ends, so the two pipe() calls of the CONNECT proxy in the Node.js docs still end the other leg.
+  // pipe() has an 'error' listener of its own on the socket. It does not count.
+  // Each case runs in a subprocess because of that uncaught exception.
+  const isBun = !!process.versions.bun;
+  test.concurrent.each([
+    ["with no 'error' listener", { pipes: false, listener: false }, isBun ? ["end"] : ["uncaught ECONNRESET"], false],
+    [
+      "with two pipe() calls and no 'error' listener",
+      { pipes: true, listener: false },
+      isBun ? ["end"] : ["uncaught ECONNRESET"],
+      isBun,
+    ],
+    ["with two pipe() calls and an 'error' listener", { pipes: true, listener: true }, ["error ECONNRESET"], false],
+  ] as const)("http 'connect': a reset of a socket %s", async (_name, options, events, otherLegEnded) => {
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const net = require("node:net");
+      const options = ${JSON.stringify(options)};
+      const events = [];
+      process.on("uncaughtException", e => events.push("uncaught " + e.code));
+      const origin = net.createServer(socket => socket.resume());
+      const proxy = http.createServer();
+      proxy.on("connect", (req, socket) => {
+        const otherLeg = net.connect(origin.address().port, "127.0.0.1", () => {
+          socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+          if (options.pipes) {
+            socket.pipe(otherLeg);
+            otherLeg.pipe(socket);
+          }
+        });
+        otherLeg.on("error", () => {});
+        socket.on("end", () => events.push("end"));
+        if (options.listener) socket.on("error", e => events.push("error " + e.code));
+        // One turn of the event loop later, pipe() has ended the other leg if the socket ended.
+        socket.on("close", () => setImmediate(() => {
+          console.log(JSON.stringify({ events, otherLegEnded: otherLeg.writableEnded }));
+          process.exit(0);
+        }));
+      });
+      origin.listen(0, "127.0.0.1", () => proxy.listen(0, "127.0.0.1", () => {
+        const client = net.connect(proxy.address().port, "127.0.0.1");
+        client.on("error", () => {});
+        client.write("CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n");
+        client.once("data", () => client.resetAndDestroy());
+      }));
+    `;
+    const { stdout } = await promisify(execFile)(process.execPath, ["-e", fixture], {
+      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+    });
+    expect(JSON.parse(stdout)).toEqual({ events: [...events], otherLegEnded });
+  });
+});

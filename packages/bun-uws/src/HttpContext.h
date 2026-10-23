@@ -262,8 +262,14 @@ private:
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
         bool nodeHttpTunnelAfterBody = false;
-        if constexpr (IsNodeHttp) nodeHttpTunnelAfterBody = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) != 0;
-        if(httpResponseData->isConnectRequest || nodeHttpTunnelAfterBody) {
+        /* node:http: above FAST_SHUTDOWN the code is the error that closed the connection (a failed read, a rejected send). */
+        int nodeHttpCloseError = 0;
+        if constexpr (IsNodeHttp) {
+            nodeHttpTunnelAfterBody = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) != 0;
+            nodeHttpCloseError = code > LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN ? code : 0;
+        }
+        /* An error ends neither the stream of a tunnel nor its request body: onSocketClosed and onAborted report it. */
+        if((httpResponseData->isConnectRequest || nodeHttpTunnelAfterBody) && !nodeHttpCloseError) {
             if (httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
             }
@@ -287,15 +293,10 @@ private:
         }
 
         if (httpResponseData->socketData && httpContextData->onSocketClosed) {
-            int readError = 0;
-            bool peerEnded = false;
-            /* A tunnel reports its EOF through onSocketData above. */
-            if (!httpResponseData->isConnectRequest && !nodeHttpTunnelAfterBody) {
-                /* Above FAST_SHUTDOWN the code is the error of the failed read (a peer RST). */
-                readError = code > LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN ? code : 0;
-                peerEnded = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0;
-            }
-            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s, readError, peerEnded);
+            /* A tunnel reports the FIN of its peer through onSocketData. */
+            bool peerEnded = !httpResponseData->isConnectRequest && !nodeHttpTunnelAfterBody
+                && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0;
+            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s, nodeHttpCloseError, peerEnded);
         }
         /* Signal broken HTTP request only if we have a pending request */
         if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {

@@ -670,6 +670,12 @@ int us_socket_raw_write(us_socket_r s, const char *data, int length);
  * write instead of retrying forever. A TLS socket reports the failed send of
  * its ciphertext, or EPROTO for a failed SSL_write, once its handshake was reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
+/* us_socket_write for a writer that waits for a writable event after a short write. The retry of a send that no
+ * retry can save would take the socket error, and the close after it would look clean. So such a send writes its
+ * code (an errno, a WSA code on Windows) to *rejected_send_error, and the dispatch of the socket's next event closes
+ * it with an error code. No write closes under its caller. A send that is not rejected leaves *rejected_send_error
+ * alone. With a null rejected_send_error this is us_socket_write. */
+int us_socket_write_or_reject(us_socket_r s, const char *data, int length, int *rejected_send_error);
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
 void us_socket_long_timeout(us_socket_r s, unsigned int minutes) nonnull_fn_decl;

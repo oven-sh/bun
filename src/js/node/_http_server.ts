@@ -1456,6 +1456,14 @@ function handleBytesWritten(handle) {
   return handle.bytesWritten + (handle.response?.getBytesWritten() ?? 0);
 }
 const kEnableStreaming = Symbol("kEnableStreaming");
+const kOnTunnelClose = Symbol("kOnTunnelClose");
+// handle.onclose of a socket that 'connect' or 'upgrade' got. Native calls it on the handle.
+function onTunnelHandleClose(this: { duplex: { [kOnTunnelClose](closedHandle: unknown): void } }) {
+  this.duplex[kOnTunnelClose](this);
+}
+function failPendingWrite(callback: (err: Error) => void, err: Error) {
+  callback(err);
+}
 // Upgrade request whose body is still being parsed: reading the raw socket also
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
 // can never stall the upgrade data behind it.
@@ -1691,7 +1699,7 @@ function getNodeHTTPServerSocket() {
     declare encrypted: boolean;
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
-    declare _readableState: { emitClose: boolean };
+    declare _readableState: { emitClose: boolean; ended: boolean };
     declare writableBuffer: { chunk: Buffer }[];
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
@@ -1771,6 +1779,7 @@ function getNodeHTTPServerSocket() {
         if (enable) {
           handle.ondata = this.#onData.bind(this);
           handle.ondrain = this.#onDrain.bind(this);
+          handle.onclose = onTunnelHandleClose;
           this[kRememberPeer]();
         } else {
           handle.ondata = undefined;
@@ -1945,6 +1954,53 @@ function getNodeHTTPServerSocket() {
         this.#pendingCallback = null;
         (pendingCallback as Function)(writeFailure);
       }
+    }
+    // An error closed the connection of a tunnel, and uWS sent no end of stream for it. Like Node's net.Socket, a failed
+    // read is 'error' with no 'end' (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L213-L217),
+    // and a failed write is the error of the write in flight, then 'error' (#L86-L92 of that file).
+    // Unlike Node, a socket with no 'error' listener of its own gets 'end' and no 'error': the uncaught exception of
+    // Node would end programs that run today, and pipe() ends the other leg of a relay on that 'end'.
+    [kOnTunnelClose](closedHandle) {
+      if (this.#closeHandled) return;
+      const closeError = closedHandle.closeError;
+      if (closeError === undefined) return this.#onClose(closedHandle);
+      this[kBytesWritten] = handleBytesWritten(closedHandle);
+      this[kClosedWithUnsentData] = closedHandle.closedWithUnsentData;
+      const pendingWrite = this.#pendingCallback as ((err: Error) => void) | null;
+      this.#pendingCallback = null;
+      const ended = this._readableState.ended;
+      // pipe() has its own 'error' listener on its destination, and emits the error again when that is the only one.
+      if (this.listenerCount("error") <= this.listenerCount("unpipe")) {
+        if (!ended) {
+          this.push(null);
+          this.read(0);
+        }
+        // Inside 'close', behind the 'end': a write that fails marks the stream errored, and that stream emits no 'end'.
+        if (pendingWrite) {
+          const failure = this.errored ?? $ERR_STREAM_DESTROYED("write");
+          this.prependOnceListener("close", failPendingWrite.bind(undefined, pendingWrite, failure));
+        }
+        return this.#onClose(null);
+      }
+      // Behind the FIN of the peer nothing is read, so the failure is that of a write.
+      const writeFailed = closeError.syscall === "write" || (ended && pendingWrite !== null);
+      // Node does not watch a socket that neither reads nor writes: no error.
+      if (ended && !writeFailed) return this.#onClose(null);
+      const er = new ErrnoException(closeError.errno, writeFailed ? "write" : "read");
+      const error = (this.#closeError = er.code === closeError.code ? er : closeError);
+      // The listener can leave before destroy() emits the error.
+      this.once("error", noopOnError);
+      if (writeFailed) {
+        this.#onClose(null);
+        if (pendingWrite) pendingWrite(error);
+        return;
+      }
+      // Node cancels the write in flight after 'error' and before 'close'. The writes behind it get the error of the stream.
+      if (pendingWrite) {
+        const canceled = new ErrnoException(process.binding("uv").UV_ECANCELED, "write");
+        this.prependOnceListener("close", failPendingWrite.bind(undefined, pendingWrite, canceled));
+      }
+      this.#onClose(null);
     }
     // The close of a TLS handle waits for ciphertext that write() reported and a stalled peer does not take, but only once.
     destroyNow() {

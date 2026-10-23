@@ -135,6 +135,23 @@ impl us_socket_t {
         (written, fatal)
     }
 
+    /// `write` for a writer that waits for a writable event after a short write.
+    /// A send that no retry can save writes its code to `rejected_send_error`
+    /// (left alone otherwise), and the dispatch of the socket's next event
+    /// closes the socket with an error code. With `None` this is `write`.
+    pub fn write_or_reject(&mut self, data: &[u8], rejected_send_error: Option<&mut i32>) -> i32 {
+        // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
+        // (clamped to i32) and `rejected_send_error` outlives the call.
+        unsafe {
+            c::us_socket_write_or_reject(
+                self,
+                data.as_ptr().cast(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                rejected_send_error,
+            )
+        }
+    }
+
     pub(crate) fn is_shutdown(&self) -> bool {
         c::us_socket_is_shut_down(self) > 0
     }
@@ -586,6 +603,12 @@ mod c {
             data: *const core::ffi::c_char,
             length: i32,
             fatal_write_error: *mut i32,
+        ) -> i32;
+        pub(super) fn us_socket_write_or_reject(
+            s: &mut us_socket_t,
+            data: *const core::ffi::c_char,
+            length: i32,
+            rejected_send_error: Option<&mut i32>,
         ) -> i32;
         pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;

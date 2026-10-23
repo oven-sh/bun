@@ -478,8 +478,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       value: function (stream) {
         let color = this[kColorMode];
         if (color === "auto") {
-          if (Bun.env["FORCE_COLOR"] !== undefined) {
-            color = Bun.enableANSIColors;
+          // Node's `shouldColorize(stream)`, without `internal/util/colors`: loading that creates `process.stderr`.
+          // A program can replace `process.env`, and `process`.
+          const env = globalThis.process?.env ?? Bun.env;
+          if (env.FORCE_COLOR !== undefined) {
+            color = require("internal/tty").getColorDepth(env) > 2;
           } else {
             color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
           }
@@ -500,6 +503,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     [kFormatForStdout]: {
       ...consolePropAttributes,
       value: function (args) {
+        // As in Node: a lone string is logged as it is, and nothing decides about colors.
+        if (args.length === 1 && typeof args[0] === "string") return args[0];
         const opts = this[kGetInspectOptions](this._stdout);
         return formatWithOptions(opts, ...args);
       },
@@ -507,6 +512,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     [kFormatForStderr]: {
       ...consolePropAttributes,
       value: function (args) {
+        if (args.length === 1 && typeof args[0] === "string") return args[0];
         const opts = this[kGetInspectOptions](this._stderr);
         return formatWithOptions(opts, ...args);
       },

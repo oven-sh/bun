@@ -47,6 +47,12 @@ void RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer
     m_entries.clear();
 }
 
+void RejectedPromiseQueue::clear(JSC::JSCell* owner)
+{
+    WTF::Locker locker { owner->cellLock() };
+    m_entries.clear();
+}
+
 template<typename Visitor>
 void RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
 {

@@ -23,6 +23,8 @@ public:
     void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners);
     // Right before a drained promise is reported as unhandled.
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
+    // Drop every entry unreported: a report was fatal, so the run has failed.
+    void clear(JSC::JSCell* owner);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
 

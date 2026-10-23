@@ -1428,6 +1428,16 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     await until(() => seen.length >= 4);
     expect(seen.sort()).toEqual(["A<-reject:A", "A<-timer:A", "B<-reject:B", "B<-timer:B"]);
   });
+  test("a rejection of the same turn still reaches its graph's onError after another graph's onError threw", async () => {
+    const script = `const seen = [];
+      const a = new Bun.ModuleGraph({ onError: e => { seen.push("A:" + e.message); throw new Error("A's onError threw"); } });
+      const b = new Bun.ModuleGraph({ onError: e => { seen.push("B:" + e.message); } });
+      a.run(() => { Promise.reject(new Error("a")); });
+      b.run(() => { Promise.reject(new Error("b")); });
+      process.on("exit", () => console.log(seen.join(" ")));`;
+    const { stdout, exitCode } = await runBun(["-e", script]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "A:a B:b", exitCode: 1 });
+  });
   test("an error taken by onError does not fail the process: natural exit code 0, also with --unhandled-rejections=strict", async () => {
     const script = `const g = new Bun.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "x" }, enumerable: true } }) }, onError: (e, kind) => console.log(kind + ":" + e.message) });
       const m = await g.import(${JSON.stringify(join(dir, "e.mjs"))}); g.run(() => { m.timerThrow(); m.rejection(); });`;

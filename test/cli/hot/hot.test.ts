@@ -1332,3 +1332,58 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+// A rejection that nothing handles cannot end a --hot process. It must still end the rejection pass: a listener
+// that left a new rejection on every call kept the process in that pass, so nothing else got a turn. Nothing
+// edits a file here. The flag alone puts the process in watcher mode, and it answers on stdin to show that it
+// is out of the pass.
+it.each(["unhandledRejection", "uncaughtExceptionMonitor"])(
+  "--unhandled-rejections=strict reports a rejection once and goes on (async '%s' listener that throws)",
+  async event => {
+    using dir = tempDir("hot-strict-rejection", {
+      "main.js": `
+        let calls = 0;
+        process.on("${event}", async () => {
+          // 50 calls are a build that never leaves the pass.
+          if (++calls >= 50) process.exit(42);
+          throw new Error("the listener failed");
+        });
+        process.stdin.once("data", () => {
+          console.log("listener calls: " + calls);
+          process.exit(0);
+        });
+        Promise.reject(new Error("first"));
+      `,
+    });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "--unhandled-rejections=strict", "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+    });
+    const reader = runner.stderr.getReader();
+    let stderr = "";
+    const read = async (until: (lines: string[]) => boolean) => {
+      while (!until(stderr.split("\n").slice(0, -1))) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderr += Buffer.from(value).toString();
+      }
+    };
+    await read(lines => lines.includes("error: first"));
+    runner.stdin.write("how many calls?\n");
+    runner.stdin.end();
+    const [stdout, , exitCode] = await Promise.all([runner.stdout.text(), read(() => false), runner.exited]);
+    expect({
+      stdout,
+      errors: stderr.split("\n").filter(line => line.startsWith("error: ")),
+      exitCode,
+    }).toEqual({
+      stdout: "listener calls: 1\n",
+      errors: ["error: first"],
+      exitCode: 0,
+    });
+  },
+);

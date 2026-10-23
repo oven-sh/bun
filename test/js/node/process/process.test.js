@@ -2339,6 +2339,113 @@ console.log(load());
     expect(exitCode).toBe(0);
   });
 
+  // A report that ends in an uncaught error that no listener took puts the process on its way out: it ends
+  // with status 1 when the turn is over. The listeners of that report ('uncaughtExceptionMonitor', an
+  // 'unhandledRejection' listener under strict, one that throws) can each leave a new rejection. Those are not
+  // reported, or a listener that does so on every call keeps the process in the rejection pass for good.
+  describe("the rejection pass ends after a report that no listener took", () => {
+    // `round()` ends a fixture with status 42 after 50 rounds, so a build that loops fails and does not hang.
+    const prelude = `
+      let calls = 0;
+      const round = () => { if (++calls >= 50) process.exit(42); };
+      process.on("exit", code => console.log(JSON.stringify({ calls, code })));
+    `;
+    const reject = `Promise.reject(new Error("first"));`;
+
+    async function spawnIn(files, args) {
+      using dir = tempDir("fatal-rejection", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: stderr.split("\n"), exitCode, signalCode: proc.signalCode };
+    }
+
+    async function run(args, files = {}) {
+      const { stdout, stderr, exitCode, signalCode } = await spawnIn(files, args);
+      const output = stdout.split("\n").slice(0, -1);
+      // What the 'exit' listener of `prelude` printed.
+      let exit = output.pop();
+      try {
+        exit = JSON.parse(exit);
+      } catch {}
+      return { exit, output, errors: stderr.filter(line => line.startsWith("error: ")), signalCode, exitCode };
+    }
+
+    const ended = (calls, errors, output = []) => ({
+      exit: { calls, code: 1 },
+      output,
+      errors,
+      signalCode: null,
+      exitCode: 1,
+    });
+
+    const strict = "--unhandled-rejections=strict";
+    const throws = "--unhandled-rejections=throw";
+    const asyncListener = `process.on("unhandledRejection", async () => { round(); throw new Error("the listener failed"); });`;
+    const asyncMonitor = `process.on("uncaughtExceptionMonitor", async () => { round(); throw new Error("the monitor failed"); });`;
+    const throwingListener = `process.on("unhandledRejection", () => { round(); Promise.reject(new Error("again")); throw new Error("the listener threw"); });`;
+    const cases = [
+      // Under strict the rejection is an uncaught exception first, and then the listener is called.
+      [
+        "an async 'unhandledRejection' listener that throws",
+        strict,
+        asyncListener + reject,
+        ended(1, ["error: first"]),
+      ],
+      [
+        "an async 'uncaughtExceptionMonitor' listener that throws",
+        strict,
+        asyncMonitor + `process.on("unhandledRejection", () => {});` + reject,
+        ended(1, ["error: first"]),
+      ],
+      [
+        "an async 'uncaughtExceptionMonitor' listener that throws",
+        throws,
+        asyncMonitor + reject,
+        ended(1, ["error: first"]),
+      ],
+      ...[null, throws, "--unhandled-rejections=none"].map(flag => [
+        "an 'unhandledRejection' listener that throws and rejects again",
+        flag,
+        throwingListener + reject,
+        ended(1, ["error: the listener threw"]),
+      ]),
+      [
+        // The pass ends after the batch: a rejection of the same turn is not dropped.
+        "every rejection of the turn is still reported",
+        null,
+        throwingListener + reject + reject + reject,
+        ended(3, Array(3).fill("error: the listener threw")),
+      ],
+      ["throw prints the error once", throws, reject, ended(0, ["error: first"])],
+    ];
+    for (const [name, flag, script, expected] of cases) {
+      it(`${name} (${flag ?? "no flag"})`, async () => {
+        expect(await run([...(flag ? [flag] : []), "main.js"], { "main.js": prelude + script })).toEqual(expected);
+      });
+    }
+
+    it("-p still prints its value", async () => {
+      expect(await run([strict, "-p", prelude + asyncListener + reject + "6 * 7"])).toEqual(
+        ended(1, ["error: first"], ["42"]),
+      );
+    });
+
+    // A reason that is not error-like reaches 'uncaughtException' in a wrapper, which does not show it.
+    it("throw still prints a reason that it had to wrap", async () => {
+      const { stderr, exitCode } = await spawnIn({ "main.js": `Promise.reject({ answer: 42 });` }, [throws, "main.js"]);
+      expect({
+        stderr: stderr.map(line => line.trim()).filter(line => /ERR_UNHANDLED_REJECTION|answer/.test(line)),
+        exitCode,
+      }).toEqual({ stderr: [`code: "ERR_UNHANDLED_REJECTION"`, "answer: 42,"], exitCode: 1 });
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

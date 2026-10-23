@@ -491,6 +491,8 @@ pub mod windows_stdio {
     static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
+    // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
+    const CP_UTF8: u32 = 65001;
 
     #[unsafe(no_mangle)]
     extern "C" fn Bun__restoreWindowsStdio() {
@@ -517,10 +519,10 @@ pub mod windows_stdio {
 
         let out_cp = CONSOLE_OUTPUT_CODEPAGE.load(Ordering::Relaxed);
         let in_cp = CONSOLE_CODEPAGE.load(Ordering::Relaxed);
-        if out_cp != 0 {
+        if out_cp != 0 && out_cp != CP_UTF8 {
             let _ = c::SetConsoleOutputCP(out_cp);
         }
-        if in_cp != 0 {
+        if in_cp != 0 && in_cp != CP_UTF8 {
             let _ = c::SetConsoleCP(in_cp);
         }
     }
@@ -559,13 +561,19 @@ pub mod windows_stdio {
             (*BUFFERED_STDIN.get()).fd = Fd::stdin();
         }
 
-        // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
-        const CP_UTF8: u32 = 65001;
-        CONSOLE_OUTPUT_CODEPAGE.store(c::GetConsoleOutputCP(), Ordering::Relaxed);
-        let _ = c::SetConsoleOutputCP(CP_UTF8);
+        // A console already at UTF-8 is left alone: a write here would undo
+        // another process's restore that landed after the read (#43660).
+        let out_cp = c::GetConsoleOutputCP();
+        CONSOLE_OUTPUT_CODEPAGE.store(out_cp, Ordering::Relaxed);
+        if out_cp != CP_UTF8 {
+            let _ = c::SetConsoleOutputCP(CP_UTF8);
+        }
 
-        CONSOLE_CODEPAGE.store(c::GetConsoleCP(), Ordering::Relaxed);
-        let _ = c::SetConsoleCP(CP_UTF8);
+        let in_cp = c::GetConsoleCP();
+        CONSOLE_CODEPAGE.store(in_cp, Ordering::Relaxed);
+        if in_cp != CP_UTF8 {
+            let _ = c::SetConsoleCP(CP_UTF8);
+        }
 
         let mut mode: w::DWORD = 0;
         // Build the snapshot locally, then publish via `Once::set` — no

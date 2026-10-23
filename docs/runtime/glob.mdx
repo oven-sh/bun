@@ -84,6 +84,17 @@ interface ScanOptions {
 }
 ```
 
+Another process can remove a directory, or replace it with a file, while a scan runs. The scan leaves out the contents of that directory and continues. It keeps the matches that it already found there.
+
+The scan still fails in these cases:
+
+- The scan cannot open or read the directory that it starts in.
+- A directory fails with an error other than `ENOENT` or `ENOTDIR`, such as `EACCES`.
+- A directory that still exists fails to open.
+- A directory fails to open, and the pattern has a `..` component. The same applies when `absolute` is `true` and `cwd` has a `..` component.
+
+These cases are for directories. Without `throwErrorOnBrokenSymlink`, a symbolic link whose target does not open does not fail the scan.
+
 ## Supported Glob Patterns
 
 Bun supports the following glob patterns:

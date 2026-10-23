@@ -310,7 +310,7 @@ impl Stdio {
         body: &mut webcore::body::Value,
         is_sync: bool,
     ) -> JsResult<()> {
-        body.to_blob_if_possible();
+        body.to_blob_for_child_stdio();
 
         if let Some(blob) = body.try_use_as_any_blob() {
             return out_stdio.extract_blob(cx.global(), blob, i);
@@ -500,7 +500,11 @@ impl Stdio {
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, cx.global())? {
             let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(cx.global()) {
+            // The child reads the fd itself, which leaves `Bun.stdin.stream()` to `process.stdin`.
+            if let Some(blob) = stream
+                .shared_blob(cx.global())
+                .or_else(|| stream.to_any_blob(cx.global()))
+            {
                 return out_stdio.extract_blob(cx.global(), blob, i);
             }
 

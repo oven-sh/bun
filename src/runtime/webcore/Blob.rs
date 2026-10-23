@@ -1146,6 +1146,11 @@ impl BlobExt for Blob {
                     // readable streams. in every other case we want `.stream()` to be its
                     // own stream.
                     set_cached(this_value, global_this, stream);
+                    if let Some(reader) =
+                        ReadableStream::from_js_direct(stream).and_then(|s| s.ptr.file())
+                    {
+                        reader.shared.set(true);
+                    }
                 }
             }
         }

@@ -570,6 +570,7 @@ describe("css", () => {
         .shorthand { list-style: thumbs inside; }
         .longhand { list-style-type: thumbs; }
         .none { list-style: none thumbs; }
+        .image { list-style: thumbs linear-gradient(red, blue) inside; }
         .important { list-style-type: thumbs !important; }
         .upper { LIST-STYLE-TYPE: thumbs; }
         @media (min-width: 1px) {
@@ -605,6 +606,7 @@ describe("css", () => {
         `list-style: inside thumbs_${hash};`,
         `list-style-type: thumbs_${hash};`,
         `list-style: thumbs_${hash};`,
+        `list-style: inside linear-gradient(red, #00f) thumbs_${hash};`,
         `list-style-type: thumbs_${hash} !important;`,
         `list-style-type: thumbs_${hash};`,
         // In @media, with a rule that is in @media too.

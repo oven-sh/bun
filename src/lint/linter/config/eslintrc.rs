@@ -1363,10 +1363,10 @@ impl<'c> Legacy<'_, '_, 'c> {
         for &NamedPlugin { ref id, at } in &named.0 {
             let answer_text = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
             if let Some(name) = answer_text(b"name").filter(|_| is_built_in_plugin(registry, id)) {
-                // The answer has the version of typescript-eslint, which isn't loaded.
+                // The answer has the version of typescript-eslint. Version 8 isn't loaded, so its name lacks it.
                 let name = match answer_text(b"version") {
-                    Some(version) => [name, b"@", version].concat(),
-                    None => name.to_vec(),
+                    Some(version) if !name.ends_with(version) => [name, b"@", version].concat(),
+                    _ => name.to_vec(),
                 };
                 self.reader.advise_about_version(id, &name);
             }

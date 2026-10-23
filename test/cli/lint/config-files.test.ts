@@ -1202,6 +1202,14 @@ describe.concurrent("the note about an older installed version of a built-in plu
     expect(await notes(files)).toEqual([
       "note: @typescript-eslint/eslint-plugin 5.62.0 is installed, but bun lint's built-in rules match 8.71.1",
     ]);
+    // Since version 6 the plugin says its name and version itself.
+    const six = {
+      "node_modules/@typescript-eslint/eslint-plugin/package.json": `{ "name": "@typescript-eslint/eslint-plugin", "version": "6.21.0", "main": "index.js" }`,
+      "node_modules/@typescript-eslint/eslint-plugin/index.js": `module.exports = { meta: { name: "@typescript-eslint/eslint-plugin", version: "6.21.0" }, rules: {} };`,
+    };
+    expect(await notes({ ...files, ...six })).toEqual([
+      "note: @typescript-eslint/eslint-plugin 6.21.0 is installed, but bun lint's built-in rules match 8.71.1",
+    ]);
   });
 });
 

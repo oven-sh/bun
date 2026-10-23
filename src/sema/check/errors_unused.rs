@@ -194,6 +194,7 @@ impl Checker<'_, '_> {
             parameters,
         };
         self.note_identifiers(file, &mut u);
+        self.note_type_references_that_an_instantiation_resolves(file, &mut u);
         u.note_exports();
         if u.has_unreferenced_name_below_import_type_arguments() {
             self.task.leave_to_an_earlier_request();
@@ -291,6 +292,46 @@ impl Checker<'_, '_> {
             let diagnostic = self.error_at(node, 2842, &args);
             if let Some(related) = related {
                 diagnostic.add_related_info(related);
+            }
+        }
+    }
+
+    /// `isTypeParameterPossiblyReferenced`: `getSymbolFromTypeReference` of a type reference without type arguments.
+    /// `getObjectTypeInstantiation` calls it the first time `instantiateType` gets to an anonymous type, for each
+    /// type parameter in scope, and `checkSourceFile` has resolved every name it finds, except below the type
+    /// arguments of an import type. `instantiate` doesn't get to every type that `instantiateType` gets to, so
+    /// such a name counts as a reference wherever a type parameter is in scope.
+    fn note_type_references_that_an_instantiation_resolves(
+        &mut self,
+        file: FileId,
+        u: &mut Unused,
+    ) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let below = hir.type_arguments_of_import_types();
+        if below.is_empty() {
+            return;
+        }
+        for (i, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::Ref { name, args } = node.kind else {
+                continue;
+            };
+            if !args.is_empty() || !below.contain(node.pos) || bound.is_unchecked_type(i) {
+                continue;
+            }
+            let scope = bound.type_scope[i];
+            // `tp.isThisType`: a `this` type is no reason to resolve a type reference.
+            let type_parameters = self.type_params_in_scope(file, scope);
+            if !(type_parameters.iter()).any(|&tp| matches!(self.data(tp), TypeData::TypeParam(..)))
+            {
+                continue;
+            }
+            let Some(first) = hir.texts(name).next() else {
+                continue;
+            };
+            // `resolveEntityName`: the first name of `a.b` is a namespace.
+            match name.len() {
+                1 => u.note_name(scope, first, SymFlags::TYPE),
+                _ => u.note_namespace(scope, first),
             }
         }
     }

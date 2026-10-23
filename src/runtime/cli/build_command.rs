@@ -9,7 +9,6 @@ use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
-use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
 use bun_sys::{self, Fd, FdExt as _};
@@ -531,29 +530,8 @@ impl BuildCommand {
             this_transpiler.resolver.opts.jsx.development = false;
         }
 
-        match &ctx.debug.macros {
-            MacroOptions::Disable => {
-                this_transpiler.options.no_macros = true;
-            }
-            MacroOptions::Map(macros) => {
-                // Note: `MacroOptions::Map` carries the
-                // `bun_options_types::context::MacroMap` redeclaration; the
-                // bundler-side `options.macro_remap` is the resolver crate's
-                // `StringArrayHashMap` shape. Re-key into that shape here.
-                use bun_resolver::package_json::{
-                    MacroImportReplacementMap as ResolverInner, MacroMap as ResolverMacroMap,
-                };
-                let mut remap = ResolverMacroMap::default();
-                for (pkg, imports) in macros.iter() {
-                    let mut inner = ResolverInner::default();
-                    for (name, path) in imports.iter() {
-                        inner.insert(name, Box::<[u8]>::from(path.as_ref()));
-                    }
-                    remap.insert(pkg, inner);
-                }
-                this_transpiler.options.macro_remap = remap;
-            }
-            MacroOptions::Unspecified => {}
+        if let Some(table) = ctx.debug.macro_remap() {
+            this_transpiler.options.set_macro_remap(table);
         }
 
         let mut reachable_file_count: usize = 0;

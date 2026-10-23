@@ -36,7 +36,6 @@ use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
 use crate::cli::command::{Context, HotReload};
-use bun_options_types::context::MacroOptions;
 use bun_options_types::offline_mode::OfflineMode;
 
 use bun_bundler::options::OutputKind;
@@ -175,26 +174,8 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
     }
     vm.event_loop_ref().ensure_waker();
-    match &ctx.debug.macros {
-        MacroOptions::Disable => {
-            vm.transpiler.options.no_macros = true;
-        }
-        MacroOptions::Map(macros) => {
-            // Note: the two map types are nominally
-            // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
-            // vs `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`), so
-            // rebuild the resolver-shaped map by cloning value bytes.
-            let mut remap = bun_resolver::package_json::MacroMap::default();
-            for (pkg, inner) in macros.iter() {
-                let mut entry = bun_resolver::package_json::MacroImportReplacementMap::default();
-                for (import_name, path) in inner.iter() {
-                    entry.insert(import_name.as_ref(), Box::<[u8]>::from(path.as_ref()));
-                }
-                remap.insert(pkg.as_ref(), entry);
-            }
-            vm.transpiler.options.macro_remap = remap;
-        }
-        MacroOptions::Unspecified => {}
+    if let Some(table) = ctx.debug.macro_remap() {
+        vm.transpiler.options.set_macro_remap(table);
     }
     if vm.transpiler.configure_defines().is_err() {
         fail_with_build_error(vm);

@@ -65,6 +65,10 @@ foo();
 ./hello.js:3:1 53
 ```
 
+The flag applies to the whole `bun` process it is given to, not only to the file you run: `bun test`, a `Worker`, `Bun.build()`, `Bun.Transpiler`, and an HTML import served by `Bun.serve()` run no macro in that process, and no option of these APIs turns macros back on. Put the flag before the file name: `bun ./index.tsx --no-macros` passes it to your program instead.
+
+A `bun` that a `package.json` script starts, or that your code starts with `Bun.spawn()`, is another process and does not get the flag. To disable macros in every `bun` process that starts from an environment, set `BUN_OPTIONS=--no-macros`.
+
 To reduce the potential attack surface for malicious packages, Bun does not let code inside `node_modules/**/*` invoke macros. If a package attempts to invoke a macro, you'll see an error like this:
 
 ```

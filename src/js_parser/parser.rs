@@ -194,6 +194,8 @@ pub mod Runtime {
         pub inject_jest_globals: bool,
 
         pub no_macros: bool,
+        /// A macro import is an ordinary import, and no macro runs. The output is then not what the program means.
+        pub macro_imports_are_plain: bool,
 
         pub commonjs_named_exports: bool,
 
@@ -289,6 +291,7 @@ pub mod Runtime {
                 inlining: false,
                 inject_jest_globals: false,
                 no_macros: false,
+                macro_imports_are_plain: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
                 minify_identifiers: false,

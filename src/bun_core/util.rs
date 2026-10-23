@@ -2746,6 +2746,7 @@ fn os_entropy(bytes: &mut [u8]) {
 // ── self_exe_path ─────────────────────────────────────────────────────────
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
+/// A `bun` that is started from this path to run a part of the same command gets `process_switches::flags_for_child()`.
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
     static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {

@@ -19,7 +19,7 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::context::{MacroImportReplacementMap, MacroMap};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -1076,11 +1076,11 @@ impl<'a> Parser<'a, '_> {
         if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
                 if !b.value {
-                    self.ctx.debug.macros = MacroOptions::Disable;
+                    bun_core::disable_js_macros();
                 }
             } else {
                 self.ctx.debug.macros =
-                    MacroOptions::Map(parse_macros_json(&expr, self.log, self.source, self.bump));
+                    Some(parse_macros_json(&expr, self.log, self.source, self.bump));
             }
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }

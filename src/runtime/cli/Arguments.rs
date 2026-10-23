@@ -17,7 +17,7 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, Shard};
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
@@ -808,6 +808,14 @@ pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun
             Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
             _ => {}
         }
+    }
+}
+
+/// `--no-macros` for a command that reads its own flags and never comes to [`parse`]: any argument before `--` counts.
+pub(crate) fn disable_macros_if_in_argv() {
+    let mut flags = (bun_core::argv().into_iter().skip(1)).take_while(|arg| *arg != b"--");
+    if flags.any(|arg| arg == b"--no-macros") {
+        bun_core::disable_js_macros();
     }
 }
 
@@ -1676,7 +1684,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     if args.flag(b"--no-macros") {
-        ctx.debug.macros = MacroOptions::Disable;
+        bun_core::disable_js_macros();
     }
 
     opts.output_dir = output_dir.map(Box::<[u8]>::from);

@@ -46,6 +46,8 @@ struct ScriptConfig {
     cwd: Box<[u8]>,
     /// PATH env var value for this script
     path: Box<[u8]>,
+    /// A name that `bun` runs and that starts with one of its commands: the switches of this process go in `BUN_OPTIONS`.
+    switches_in_env: bool,
 }
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
@@ -161,12 +163,28 @@ impl<'a> ProcessHandle<'a> {
                 // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             });
+            // Every command of `bun` reads `BUN_OPTIONS`, also one that refuses a flag on its command line, as `bun x` does.
+            let bun_options = (self.config.switches_in_env)
+                .then(|| bun::process_switches::bun_options_for_child(env.map.get(b"BUN_OPTIONS")))
+                .flatten();
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
             envp = crate::cli::script_or_command::with_package_script(
                 unsafe { &mut *env_ptr },
                 &self.config.name,
                 &self.config.cwd,
-                |env| env.map.create_null_delimited_env_map(),
+                |env| {
+                    let Some(bun_options) = &bun_options else {
+                        return env.map.create_null_delimited_env_map();
+                    };
+                    let before = env.map.get(b"BUN_OPTIONS").map(<[u8]>::to_vec);
+                    env.map.put(b"BUN_OPTIONS", bun_options).unwrap_or_oom();
+                    let envp = env.map.create_null_delimited_env_map();
+                    match before {
+                        Some(before) => env.map.put(b"BUN_OPTIONS", &before).unwrap_or_oom(),
+                        None => env.map.remove(b"BUN_OPTIONS"),
+                    }
+                    envp
+                },
             )?;
             // SAFETY: `argv` and `envp` are null-terminated C-string arrays
             // (argv[0] non-null) owned by locals that outlive this call.
@@ -773,6 +791,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                switches_in_env: false,
             });
         }
 
@@ -787,6 +806,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                switches_in_env: false,
             });
         }
 
@@ -800,16 +820,24 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                switches_in_env: false,
             });
         }
     } else {
         // Not a package.json script - run as a raw command
         // If it looks like a file path, prefix with bun executable
-        let is_file = !raw_name.is_empty()
-            && (raw_name[0] == b'.'
-                || raw_name[0] == b'/'
-                || (cfg!(windows) && raw_name[0] == b'\\')
-                || has_runnable_extension(raw_name));
+        let looks_like_file = |name: &[u8]| {
+            !name.is_empty()
+                && (name[0] == b'.'
+                    || name[0] == b'/'
+                    || (cfg!(windows) && name[0] == b'\\')
+                    || has_runnable_extension(name))
+        };
+        let is_file = looks_like_file(raw_name);
+        // `"test a.test.ts"` is a file by its last word only: its first word is a command of `bun`.
+        let first_word =
+            strings::index_of_any(raw_name, b" \t").map_or(raw_name, |end| &raw_name[..end]);
+        let starts_with_file = looks_like_file(first_word);
         let command_z: Box<[u8]> = if is_file {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");
             // Quote the bun path so that backslashes on Windows are not
@@ -818,6 +846,12 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             v.push(b'"');
             v.extend_from_slice(bun_path);
             v.extend_from_slice(b"\" ");
+            if starts_with_file {
+                for flag in bun::process_switches::flags_for_child() {
+                    v.extend_from_slice(flag.to_bytes());
+                    v.push(b' ');
+                }
+            }
             v.extend_from_slice(raw_name);
             v.push(0);
             v.into_boxed_slice()
@@ -834,6 +868,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),
+            switches_in_env: is_file && !starts_with_file,
         });
     }
 

@@ -152,6 +152,9 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.ignore_module_resolution_errors = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
+    // A process that refuses macros makes each macro call a scan error, and a file with an error has no import records.
+    scan_transpiler.options.macro_imports_are_plain = bun_core::js_macros_disabled()
+        || bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the

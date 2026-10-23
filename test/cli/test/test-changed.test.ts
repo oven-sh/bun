@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -130,6 +130,46 @@ describe.concurrent("bun test --changed", () => {
     expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
     expect(exitCode).toBe(0);
   });
+
+  // A process that refuses macros makes each macro call an error of the scan, and a file with an error
+  // has no import records. So the scan reads a macro import as an ordinary import there: it runs no
+  // macro, and it selects by the change. A test that is selected then fails at its macro call.
+  const macroCalls = {
+    ...fixture,
+    "src/macro.ts": `import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nexport function one() {\n  writeFileSync(join(import.meta.dir, "MACRO_RAN"), "");\n  return 1;\n}\n`,
+    "with-other.test.ts": `import { test, expect } from "bun:test";\nimport { other } from "./src/other";\nimport { one } from "./src/macro" with { type: "macro" };\ntest("with other", () => expect(one()).toBe(other() - 8));\n`,
+    "macro-only.test.ts": `import { test, expect } from "bun:test";\nimport { one } from "./src/macro" with { type: "macro" };\ntest("macro only", () => expect(one()).toBe(1));\n`,
+  };
+  const refusals = [
+    ["--no-macros", "Macros are disabled"],
+    [
+      "--disallow-code-generation-from-strings=strict",
+      "Macros cannot be used with --disallow-code-generation-from-strings=strict",
+    ],
+  ] as const;
+  const changes = [
+    ["a file that one of the two imports", "other.ts", ["b.test.ts", "with-other.test.ts"]],
+    ["the file of the macro", "macro.ts", ["macro-only.test.ts", "with-other.test.ts"]],
+  ] as const;
+  test.each(
+    refusals.flatMap(([flag, refusal]) =>
+      changes.map(([what, changed, selected]) => [flag, what, refusal, changed, selected] as const),
+    ),
+  )(
+    "%s: two tests call a macro, and %s changes: the scan runs no macro",
+    async (flag, _, refusal, changed, selected) => {
+      using dir = tempDir("test-changed-no-macros", macroCalls);
+      initRepo(String(dir));
+
+      appendFileSync(join(String(dir), "src", changed), "// touched\n");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir), [flag]);
+      expect(ranFiles(stderr, [...names, "with-other.test.ts", "macro-only.test.ts"])).toEqual([...selected]);
+      expect(stderr).toContain(refusal);
+      expect(existsSync(join(String(dir), "src", "MACRO_RAN"))).toBe(false);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test("change to a file no test imports runs nothing", async () => {
     using dir = tempDir("test-changed-unrelated", fixture);

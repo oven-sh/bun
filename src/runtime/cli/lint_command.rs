@@ -133,18 +133,9 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         // ESLint, Prettier and oxlint read a configuration in Node, which doesn't read `.env`.
         Box::from(&b"--no-env-file"[..]),
     ];
-    use bun_core::CodeGenerationFromStrings as Level;
-    match bun_core::code_generation_from_strings() {
-        Level::Allowed => {}
-        Level::DisallowedLikeNode => {
-            argv.push(Box::from(&b"--disallow-code-generation-from-strings"[..]));
-        }
-        Level::Strict => {
-            argv.push(Box::from(
-                &b"--disallow-code-generation-from-strings=strict"[..],
-            ));
-        }
-    }
+    argv.extend(
+        bun_core::process_switches::flags_for_child().map(|flag| Box::from(flag.to_bytes())),
+    );
     // Node doesn't read a bunfig.toml either, and its `preload` would run before the configuration. Windows has no path
     // that's always an empty file.
     if cfg!(not(windows)) {

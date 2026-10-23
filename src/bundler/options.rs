@@ -1284,6 +1284,8 @@ pub struct BundleOptions<'a> {
 
     pub macro_remap: MacroRemap,
     pub no_macros: bool,
+    /// For a bundle that is made for its import graph only: a macro import is an ordinary import, and no macro runs.
+    pub macro_imports_are_plain: bool,
 
     pub conditions: ESMConditions,
     pub tree_shaking: bool,
@@ -1421,6 +1423,19 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 }
 
 impl<'a> BundleOptions<'a> {
+    /// Takes the `[macros]` table of bunfig.toml in the shape the command line context keeps it in.
+    pub fn set_macro_remap(&mut self, table: &bun_options_types::context::MacroMap) {
+        let mut remap = MacroRemap::default();
+        for (package, imports) in table.iter() {
+            let mut names = bun_resolver::package_json::MacroImportReplacementMap::default();
+            for (name, path) in imports.iter() {
+                bun_core::handle_oom(names.put(name, path.clone()));
+            }
+            bun_core::handle_oom(remap.put(package, names));
+        }
+        self.macro_remap = remap;
+    }
+
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }
@@ -1521,6 +1536,7 @@ impl<'a> BundleOptions<'a> {
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
+            macro_imports_are_plain: self.macro_imports_are_plain,
             conditions: ESMConditions {
                 default: bun_core::handle_oom(self.conditions.default.clone()),
                 import: bun_core::handle_oom(self.conditions.import.clone()),
@@ -1779,6 +1795,7 @@ impl<'a> BundleOptions<'a> {
             rewrite_jest_for_tests: false,
             macro_remap: MacroRemap::default(),
             no_macros: false,
+            macro_imports_are_plain: false,
             conditions: ESMConditions {
                 default: Default::default(),
                 import: Default::default(),

@@ -716,7 +716,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // this ordering incase someone wants to use a macro in a node_module conditionally
-                        if p.options.features.no_macros {
+                        if p.options.features.no_macros || bun_core::js_macros_disabled() {
                             p.log()
                                 .add_error(Some(p.source), tag.loc, b"Macros are disabled");
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
@@ -2325,7 +2325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
-                if p.options.features.no_macros {
+                if p.options.features.no_macros || bun_core::js_macros_disabled() {
                     p.log()
                         .add_error(Some(p.source), expr.loc, b"Macros are disabled");
                     *e = p.new_expr(E::Undefined {}, expr.loc);

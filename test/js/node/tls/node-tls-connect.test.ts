@@ -10,6 +10,7 @@ import {
   isASAN,
   isWindows,
   nodeExe,
+  nodeExeAtLeast,
   rejectUnauthorizedScope,
   tempDir,
 } from "harness";
@@ -5179,8 +5180,8 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
         "tls.connect({ port, session })": true,
         "tls.connect({ socket, session })": true,
         // Since v26.3.1 node's getSession() puts the host in front of the session, and its constructor is the one
-        // place that does not take it off again. The macOS CI hosts can have an older node.
-        "new TLSSocket(socket, { session })": runtime === "bun" ? true : expect.any(Boolean),
+        // place that does not take it off again.
+        "new TLSSocket(socket, { session })": runtime === "bun" || !nodeExeAtLeast("26.3.1"),
         "tls.connect({ port }), then setSession()": true,
       });
     });

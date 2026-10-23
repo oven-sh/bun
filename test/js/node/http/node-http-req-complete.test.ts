@@ -400,14 +400,9 @@ for (const expectation of ["100-continue", "something-else"]) {
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
-  // Before v26.7.0 node's writableFinished did not wait for 'finish', and the macOS CI hosts can have an older node.
-  const node = (() => {
-    const node = nodeExe();
-    if (!node) return null;
-    const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-    return Bun.semver.order(stdout.toString().trim(), "26.7.0") >= 0 ? node : null;
-  })();
+  const { bunEnv, nodeExeAtLeast } = await import("harness");
+  // Before v26.7.0 node's writableFinished did not wait for 'finish'.
+  const node = nodeExeAtLeast("26.7.0");
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {

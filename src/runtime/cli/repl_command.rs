@@ -77,7 +77,8 @@ impl ReplCommand {
         // not take a caller-provided allocator in the Rust port; `vm.arena` is
         // set below).
         let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
-            transform_options: core::mem::take(&mut ctx.args),
+            // Clone (not take): `Bun.serve` HTML routes read `Command::get().args` after boot.
+            transform_options: ctx.args.clone(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
             global_cache: ctx.debug.global_cache,

@@ -604,6 +604,8 @@ pub struct Files<'s> {
     /// `symbol.Declarations` of a transient symbol: the binder symbols that hold them, in merge
     /// order.
     merged_parts: ArenaHashMap<'s, Sym, ArenaVec<'s, Sym>>,
+    /// See `declarations_of_first_clone`.
+    declarations_of_first_clone: ArenaHashMap<'s, Sym, usize>,
     /// Only used during the symbol merge: see `redirect_name_to`.
     placeholders: ArenaVec<'s, (Sym, SymbolId)>,
     /// The exports of a module or a namespace that couldn't merge with the export of the same name
@@ -6020,6 +6022,7 @@ impl<'s> Files<'s> {
             pattern_augmentations: map_in(arena),
             merged_symbols: map_in(arena),
             merged_parts: map_in(arena),
+            declarations_of_first_clone: map_in(arena),
             placeholders: ArenaVec::new_in(arena),
             rejected_exports: set_in(arena),
             merged_exports: map_in(arena),
@@ -7852,6 +7855,7 @@ impl<'s> Files<'s> {
         let members = self.merged_members.remove(&symbol);
         let arena = self.arena;
         let cloned = self.symbol(symbol);
+        let is_clone = cloned.flags.contains(SymFlags::TRANSIENT);
         let clone = Symbol {
             flags: cloned.flags | SymFlags::MERGED | SymFlags::TRANSIENT,
             decls: slice_in(cloned.decls, arena),
@@ -7864,6 +7868,12 @@ impl<'s> Files<'s> {
         };
         symbols.push(clone, arena);
         let parts = parts.unwrap_or_else(|| vec_from_iter_in([symbol], arena));
+        if is_clone {
+            let earlier = self.declarations_of_first_clone.remove(&symbol);
+            let count = earlier
+                .unwrap_or_else(|| parts.iter().map(|&it| self.symbol(it).decls.len()).sum());
+            self.declarations_of_first_clone.insert(result, count);
+        }
         self.merged_parts.insert(result, parts);
         if let Some(exports) = exports {
             self.merged_exports.insert(result, exports);
@@ -8228,6 +8238,14 @@ impl<'s> Files<'s> {
     #[inline(always)]
     pub fn flags(&self, sym: Sym) -> SymFlags {
         self.symbol(sym).flags
+    }
+
+    /// `len(getSymbolOfDeclaration(d).Declarations)` for the first declaration `d` of `sym`, which is canonical, if
+    /// that's fewer than `sym` has. `mergeSymbol` clones the target of an alias even if it's a clone already: an
+    /// interface that `declare module "m"` has augmented is then augmented through a module that re-exports it.
+    /// `getMergedSymbol` of the binder's symbol stays the first clone, without what's merged into the second one.
+    pub fn declarations_of_first_clone(&self, sym: Sym) -> Option<usize> {
+        self.declarations_of_first_clone.get(&sym).copied()
     }
 
     /// Returns every declaration of `sym`, which is canonical. The list is cached permanently if there are several.

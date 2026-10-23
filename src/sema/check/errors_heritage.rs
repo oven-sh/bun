@@ -781,7 +781,22 @@ impl Checker<'_, '_> {
         let interface_declaration = declarations.first;
         let ty = self.declared_type(sym);
         let name_pos = self.hir(file)[i].name_pos;
-        let bases = self.base_types(sym);
+        let mut bases = self.base_types(sym);
+        // The checks below are those of `getSymbolOfDeclaration(node)`, with the base types that its declarations name.
+        if let Some(count) = self.files().declarations_of_first_clone(sym) {
+            let mut named = Vec::new();
+            for &(f, declaration) in self.files().decls_of(sym).iter().take(count) {
+                let Decl::Interface(id) = declaration else {
+                    continue;
+                };
+                for node in self.hir(f).ids(self.hir(f)[id].extends) {
+                    let base = self.type_from_node(f, node);
+                    named.push(self.reduced(base));
+                }
+            }
+            named.retain(|base| bases.contains(base));
+            bases = List::Own(named);
+        }
         if is_first {
             let at = self.span_of_token(file, name_pos);
             if !self.check_inherited_properties_are_identical(sym, ty, &bases, Some(at)) {

@@ -16791,6 +16791,71 @@ export const { length } = d1(tree, state => {});
       expect(exitCode).toBe(1);
     });
 
+    test("the checks of an interface don't see an augmentation through a re-export that follows a direct augmentation", async () => {
+      using dir = project({
+        "both/expect.ts": `export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T; not: Assertion<T> }
+`,
+        "both/reexport.ts": `import "./direct";
+export { Assertion } from "./expect";
+`,
+        "both/direct.ts": `export {};
+declare module "./expect" {
+  interface Assertion<T> { snapshot(): void }
+}
+`,
+        "both/through.ts": `import { Assertion } from "./reexport";
+import { Assertion as Original } from "./expect";
+interface M<T> { a(): T; extra: T }
+interface N { own: string }
+declare module "./reexport" {
+  interface Assertion<T = any> extends M<T>, N {}
+}
+declare const assertion: Assertion<1>, original: Original<1>;
+export const all = [assertion.extra, assertion.snapshot, assertion.not.extra, original.extra, original.not.extra];
+`,
+        "through/expect.ts": `export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T; not: Assertion<T> }
+`,
+        "through/reexport.ts": `import "./direct";
+export { Assertion } from "./expect";
+`,
+        "through/direct.ts": `export {};
+`,
+        "through/through.ts": `import "./reexport";
+interface M<T> { a(): T }
+declare module "./reexport" {
+  interface Assertion<T = any> extends M<T> {}
+}
+`,
+        "direct/expect.ts": `export interface Base<T> { a(): void }
+export interface Assertion<T = any> extends Base<T> { own: T; not: Assertion<T> }
+`,
+        "direct/reexport.ts": `import "./direct";
+export { Assertion } from "./expect";
+`,
+        "direct/direct.ts": `export {};
+interface M<T> { a(): T }
+declare module "./expect" {
+  interface Assertion<T> extends M<T> {}
+}
+`,
+        "direct/through.ts": `import "./reexport";
+declare module "./reexport" {
+  interface Assertion<T = any> { extra: T }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "direct/expect.ts(2,18): error TS2320: Interface 'Assertion<T>' cannot simultaneously extend types 'Base<T>' and 'M<T>'.
+          Named property 'a' of types 'Base<T>' and 'M<T>' are not identical.
+        through/expect.ts(2,18): error TS2320: Interface 'Assertion<T>' cannot simultaneously extend types 'Base<T>' and 'M<T>'.
+          Named property 'a' of types 'Base<T>' and 'M<T>' are not identical."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
       using dir = project({
         "a.ts": `declare function hold<S>(value: S): S;

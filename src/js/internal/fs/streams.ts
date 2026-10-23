@@ -11,6 +11,7 @@ const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
 };
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;
+  removeListener(event: any, listener: any): FileHandle;
 };
 type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStream, "path" | "_write" | "_writev"> & {
   fd: number | null;
@@ -81,13 +82,41 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
       : function (fd, cb) {
           return fh.sync().then(() => cb(), cb);
         },
-  close: streamFileHandleClose.bind(fh),
+  close: streamFileHandleClose,
+  handle: fh,
+  onClose: undefined as (() => void) | undefined,
+  // True while the stream owns a ref on the handle.
+  held: false,
 });
+type FileHandleLease = ReturnType<typeof fileHandleStreamFs>;
 
-function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void) {
-  $assert(this[kFd] == fd, "fd mismatch");
-  this[kUnref]();
-  this.close().then(() => cb(), cb);
+function streamFileHandleClose(this: FileHandleLease, fd: FD, cb: (err?: any) => void) {
+  if (!this.held) return cb();
+  const handle = this.handle;
+  $assert(handle[kFd] == fd, "fd mismatch");
+  this.held = false;
+  handle[kUnref]();
+  handle.close().then(() => cb(), cb);
+}
+
+function attachFileHandle(stream: FSStream, lease: FileHandleLease) {
+  const handle = lease.handle;
+  handle[kRef]();
+  lease.held = true;
+  handle.on("close", (lease.onClose = stream.close.bind(stream)));
+  stream.fd = handle[kFd];
+}
+
+// Node keeps the ref and the listener when its constructor throws, so the handle can never be closed: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L154-L155
+function releaseFileHandle(stream: FSStream, lease: FileHandleLease) {
+  const { handle, onClose } = lease;
+  if (lease.held) {
+    lease.held = false;
+    handle[kUnref]();
+  }
+  if (onClose !== undefined) handle.removeListener("close", onClose);
+  // A caller can keep the stream (`fs.ReadStream.call(object, ...)`). Its number can go to another file once the handle closes.
+  stream.fd = -1;
 }
 
 function getValidatedPath(p: any) {
@@ -141,6 +170,7 @@ function ReadStream(this: FSStream, path, options): void {
   options.decodeStrings = true;
 
   let { fd, autoClose, fs: customFs, start, end = Infinity } = options;
+  let lease: FileHandleLease | undefined;
 
   if (fd == null) {
     this[kFs] = customFs || fs;
@@ -168,10 +198,9 @@ function ReadStream(this: FSStream, path, options): void {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
-    this[kFs] = fileHandleStreamFs(fd);
-    this.fd = fd[kFd];
-    fd[kRef]();
-    fd.on("close", this.close.bind(this));
+    lease = this[kFs] = fileHandleStreamFs(fd);
+    // The descriptor comes with the ref, in attachFileHandle().
+    this.fd = null;
   } else {
     throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
   }
@@ -205,8 +234,14 @@ function ReadStream(this: FSStream, path, options): void {
     }
   }
 
-  Readable.$call(this, options);
-  return this as unknown as void;
+  try {
+    if (lease !== undefined) attachFileHandle(this, lease);
+    Readable.$call(this, options);
+    return this as unknown as void;
+  } catch (err) {
+    if (lease !== undefined) releaseFileHandle(this, lease);
+    throw err;
+  }
 }
 $toClass(ReadStream, "ReadStream", Readable);
 const readStreamPrototype = ReadStream.prototype;
@@ -384,6 +419,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   options.decodeStrings = true;
 
   let { fd, autoClose, fs: customFs, start, flush } = options;
+  let lease: FileHandleLease | undefined;
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
@@ -413,10 +449,10 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
-    this[kFs] = customFs = fileHandleStreamFs(fd);
-    fd[kRef]();
-    fd.on("close", this.close.bind(this));
-    this.fd = fd = fd[kFd];
+    lease = this[kFs] = customFs = fileHandleStreamFs(fd);
+    // The descriptor comes with the ref, in attachFileHandle().
+    this.fd = null;
+    fd = fd[kFd];
   } else {
     throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
   }
@@ -485,13 +521,19 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     }
   }
 
-  Writable.$call(this, options);
+  try {
+    if (lease !== undefined) attachFileHandle(this, lease);
+    Writable.$call(this, options);
 
-  const encoding = options.encoding;
-  if (encoding) {
-    this.setDefaultEncoding(encoding);
+    const encoding = options.encoding;
+    if (encoding) {
+      this.setDefaultEncoding(encoding);
+    }
+    return this as unknown as void;
+  } catch (err) {
+    if (lease !== undefined) releaseFileHandle(this, lease);
+    throw err;
   }
-  return this as unknown as void;
 }
 $toClass(WriteStream, "WriteStream", Writable);
 const writeStreamPrototype = WriteStream.prototype;

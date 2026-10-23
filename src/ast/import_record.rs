@@ -107,6 +107,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// The `src` of a `<script>` element in an HTML file: the page runs that file at the tag.
+        const HTML_SCRIPT_SRC = 1 << 19;
     }
 }
 

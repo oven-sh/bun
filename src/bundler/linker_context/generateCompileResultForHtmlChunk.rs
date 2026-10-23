@@ -119,6 +119,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         _path: &[u8],
         url_attribute: &[u8],
         _kind: ImportKind,
+        _flags: ImportRecordFlags,
     ) {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(

@@ -996,8 +996,13 @@ impl<'a> LinkerContext<'a> {
                 // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
                 // walks its parts, so seed the bit here to preserve the old
                 // `Part::is_live = true` initializer.
-                if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
-                    bits.set(1);
+                if loaders.get(i).is_some_and(|l| *l == Loader::Html) {
+                    // `call_wrapped_html_scripts` can split part 1: every piece holds import records.
+                    for (part_index, part) in parts.iter().enumerate().skip(1) {
+                        if part_index == 1 || !part.import_record_indices.is_empty() {
+                            bits.set(part_index);
+                        }
+                    }
                 }
                 parts_live.push(bits);
             }
@@ -2381,6 +2386,83 @@ impl<'a> LinkerContext<'a> {
         }
 
         Ok(true)
+    }
+
+    /// Makes an HTML file call `require_foo()` / `init_foo()` for each wrapped `<script src>`, where the tag is.
+    pub(crate) fn call_wrapped_html_scripts(
+        &mut self,
+        source_index: u32,
+    ) -> Result<(), AllocError> {
+        // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the link pass;
+        // detach it so the statements do not borrow `self` across `add_part_to_file` below.
+        let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref::<Bump>(self.arena()) };
+        let flags = self.graph.meta.items_flags();
+        let wrapper_refs = self.graph.ast.items_wrapper_ref();
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        let Some(part) = self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .get(1)
+        else {
+            return Ok(());
+        };
+        let indices = part.import_record_indices.slice();
+
+        // Where each part ends in `indices`, and the call that it makes there.
+        let mut ends: Vec<(usize, bun_ast::StoreSlice<Stmt>)> = Vec::new();
+        for (i, &record_index) in indices.iter().enumerate() {
+            let record = &records[record_index as usize];
+            if !record
+                .flags
+                .contains(bun_ast::ImportRecordFlags::HTML_SCRIPT_SRC)
+                || !record.source_index.is_valid()
+            {
+                continue;
+            }
+            let other = record.source_index.get() as usize;
+            let wrapper_ref = wrapper_refs[other];
+            if flags[other].wrap == WrapKind::None || !wrapper_ref.is_valid() {
+                continue;
+            }
+            // Nothing reads the namespace, so the call is bare: no `__toESM`.
+            let mut call = Expr::allocate(
+                arena,
+                E::Call {
+                    target: Expr::init_identifier(wrapper_ref, Loc::EMPTY),
+                    ..Default::default()
+                },
+                Loc::EMPTY,
+            );
+            if flags[other].wrap == WrapKind::Esm && flags[other].is_async_or_has_async_dependency {
+                call = Expr::allocate(arena, E::Await { value: call }, Loc::EMPTY);
+            }
+            // A part prints after every file that it imports: end it at the call, ahead of the later records.
+            let stmts = arena.alloc_slice_copy(&[Stmt::allocate_expr(arena, call)]);
+            ends.push((i + 1, bun_ast::StoreSlice::new_mut(stmts)));
+        }
+        let Some(&(first_end, first_stmts)) = ends.first() else {
+            return Ok(());
+        };
+        if ends.last().is_some_and(|&(end, _)| end < indices.len()) {
+            ends.push((indices.len(), bun_ast::StoreSlice::EMPTY));
+        }
+
+        let mut begin = first_end;
+        let mut new_parts: Vec<Part> = Vec::with_capacity(ends.len() - 1);
+        for &(end, stmts) in &ends[1..] {
+            new_parts.push(Part {
+                stmts,
+                import_record_indices: bun_alloc::AstAlloc::vec_from_slice(&indices[begin..end]),
+                ..Default::default()
+            });
+            begin = end;
+        }
+        let part = &mut self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice()[1];
+        part.stmts = first_stmts;
+        part.import_record_indices.truncate(first_end);
+        for part in new_parts {
+            self.graph.add_part_to_file(source_index, part)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn print_code_for_file_in_chunk_js(

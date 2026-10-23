@@ -1645,6 +1645,17 @@ impl PipelineTask {
             codecs::DecodeHint::default()
         };
 
+        // What the resize target is resolved against: the hint above can hand
+        // back an M/8 reduction, and a 1007×1520 JPEG at 1/2 derives 753 from
+        // its 504×760 where the file's ratio gives 754. Header only, no scan
+        // data. `None` falls back to the decoded size, which is the same pair
+        // for every format that cannot scale.
+        let mut source = if self.pipeline.resize.is_some() {
+            codecs::probe(input, self.max_pixels).ok().map(|p| (p.width, p.height))
+        } else {
+            None
+        };
+
         let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
             Ok(d) => d,
             Err(e) => {
@@ -1664,6 +1675,10 @@ impl PipelineTask {
                 if let Err(e) = apply_orientation(&mut decoded, orient) {
                     self.result = TaskResult::Err(e);
                     return;
+                }
+                let t = orient.transform();
+                if t.rotate == 90 || t.rotate == 270 {
+                    source = source.map(|(w, h)| (h, w));
                 }
             }
         }
@@ -1686,7 +1701,7 @@ impl PipelineTask {
             return;
         }
 
-        if let Err(e) = self.apply_pipeline(&mut decoded) {
+        if let Err(e) = self.apply_pipeline(&mut decoded, source) {
             self.result = TaskResult::Err(e);
             return;
         }
@@ -1921,7 +1936,11 @@ impl PipelineTask {
     /// `icc_profile == None`, so overwriting `d.*` wholesale would drop the
     /// source's colour profile. Geometry doesn't change colour meaning, so
     /// the profile survives unchanged.
-    fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
+    fn apply_pipeline(
+        &self,
+        d: &mut codecs::Decoded,
+        mut source: Option<(u32, u32)>,
+    ) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
             let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
@@ -1930,6 +1949,10 @@ impl PipelineTask {
             d.rgba = next.rgba;
             d.width = next.width;
             d.height = next.height;
+            // Rotate precedes resize, so the reference dims turn too.
+            if p.rotate == 90 || p.rotate == 270 {
+                source = source.map(|(w, h)| (h, w));
+            }
         }
         if p.flip {
             let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
@@ -1940,7 +1963,9 @@ impl PipelineTask {
             d.rgba = next;
         }
         if let Some(r) = p.resize {
-            let t = resolve_resize(r, d.width, d.height);
+            // The size the caller sees; `d` may be a reduction of it.
+            let (sw, sh) = source.unwrap_or((d.width, d.height));
+            let t = resolve_resize(r, sw, sh);
             // Guard the output canvas AND the H-then-V intermediate (always
             // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
             // source → resize(W,1) has tiny input AND output canvases yet a

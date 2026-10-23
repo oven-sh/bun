@@ -57,6 +57,7 @@ pub use headers::{Headers, HeadersExt};
 pub(crate) use http_cert_error::HTTPCertError;
 pub use http_context::{HTTPContext, HTTPSocket, PeerVerification};
 pub use http_request_body::HTTPRequestBody;
+pub(crate) use http_request_body::ReplayBody;
 pub use http_thread::HttpThread as HTTPThread;
 pub use http_thread::shutdown_for_exit;
 pub use internal_state::InternalState;
@@ -2189,15 +2190,15 @@ impl<'a> HTTPClient<'a> {
 
     pub(crate) fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
+        // A stream the caller produces cannot be sent again, so the refusal stands.
+        let Some(body) = self.replay_body() else {
+            return self.fail_from_h2(crate::Error::HTTP2RefusedStream);
+        };
         self.unregister_abort_tracker();
         self.flags.protocol = Protocol::Http1_1;
         self.h2_retries += 1;
-        let body = core::mem::replace(
-            &mut self.state.original_request_body,
-            HTTPRequestBody::Bytes(b""),
-        );
         self.state.reset();
-        self.start(body);
+        self.start_replay(body);
     }
 
     /// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
@@ -2238,12 +2239,69 @@ impl<'a> HTTPClient<'a> {
         self.is_in_progress()
             && self.allow_retry
             && self.method.is_idempotent()
-            // Only a Bytes body can be rebuilt from `original_request_body`.
-            // Stream/Sendfile bodies are consumed as they are written, so a
+            // A stream the caller produces is consumed as it is written, so a
             // retry would silently replay a truncated request.
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+            && self.replay_body().is_some()
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
+    }
+
+    /// The file this request uploads, as the caller queued it. An attempt advances only its
+    /// own copy of the descriptor.
+    fn file_body_source(&self) -> Option<SendFile> {
+        // SAFETY: every HTTPClient is the `client` field of an AsyncHTTP. `real` is the
+        // caller's AsyncHTTP: it outlives this HTTP-thread copy, and nothing writes its
+        // `request_body` once the request is queued.
+        unsafe {
+            let parent =
+                bun_core::from_field_ptr!(AsyncHTTP<'static>, client, core::ptr::from_ref(self));
+            match &(*parent).real?.as_ref().request_body {
+                HTTPRequestBody::Sendfile(sendfile) => Some(*sendfile),
+                _ => None,
+            }
+        }
+    }
+
+    /// The body that a redirect or a retry sends again. `None` for a stream the caller
+    /// produces: it has no source to start from.
+    pub(crate) fn replay_body(&self) -> Option<ReplayBody<'a>> {
+        match self.state.original_request_body {
+            HTTPRequestBody::Bytes(bytes) => Some(ReplayBody::Bytes(bytes)),
+            // A `Stream` of a file request is that file on a connection `sendfile(2)` cannot write to.
+            HTTPRequestBody::Sendfile(_) | HTTPRequestBody::Stream(_) => {
+                self.file_body_source().map(ReplayBody::File)
+            }
+        }
+    }
+
+    /// Starts the next attempt of this request. Every redirect and retry comes through here.
+    fn start_replay(&mut self, body: ReplayBody<'a>) {
+        let body = match body {
+            ReplayBody::Bytes(bytes) => HTTPRequestBody::Bytes(bytes),
+            ReplayBody::File(file) if file.content_size == 0 => HTTPRequestBody::Bytes(b""),
+            // `sendfile(2)` writes to a plain socket only: not to TLS, and not into a CONNECT tunnel.
+            ReplayBody::File(file)
+                if !self.is_https() && !(self.http_proxy.is_some() && self.url.is_https()) =>
+            {
+                HTTPRequestBody::Sendfile(file)
+            }
+            ReplayBody::File(file) => {
+                HTTPRequestBody::Stream(http_request_body::Stream::for_file(file.content_size))
+            }
+        };
+        self.flags.is_streaming_request_body = body.is_stream();
+        self.start(body);
+    }
+
+    /// The buffer of this attempt's body when that is a file the caller has to stream, once
+    /// per attempt. For the result callback, which runs on the HTTP thread.
+    pub fn take_request_body_buffer_for_producer(
+        &mut self,
+    ) -> Option<RefPtr<ThreadSafeStreamBuffer>> {
+        match &mut self.state.original_request_body {
+            HTTPRequestBody::Stream(stream) => stream.take_for_producer(),
+            _ => None,
+        }
     }
 
     pub(crate) fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -2274,15 +2332,14 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        if self.retries_on_close() {
+        if self.retries_on_close()
+            && let Some(body) = self.replay_body()
+        {
             self.allow_retry = false;
             // we need to retry the request, clean up the response message buffer and start again
             self.state.response_message_buffer = MutableString::default();
-            let body = core::mem::replace(
-                &mut self.state.original_request_body,
-                HTTPRequestBody::Bytes(b""),
-            );
-            self.start(body);
+            self.state.original_request_body.deinit();
+            self.start_replay(body);
             return;
         }
 
@@ -2710,26 +2767,7 @@ impl<'a> HTTPClient<'a> {
             return self.do_redirect_multiplexed();
         }
         bun_core::scoped_log!(fetch, "doRedirect");
-        if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
-            // handleResponseMetadata already rejected every non-303 status with a
-            // stream body (RequestBodyNotReusable). Reaching here means the
-            // redirect downgraded to GET with a null body; drop the streaming
-            // flag so the follow-up request goes out without Transfer-Encoding,
-            // and let state.reset() release the ThreadSafeStreamBuffer ref.
-            self.flags.is_streaming_request_body = false;
-        }
-
-        // TODO: what we do with stream body?
-        let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
-        {
-            match &self.state.original_request_body {
-                HTTPRequestBody::Bytes(b) => b,
-                _ => unreachable!(),
-            }
-        } else {
-            b""
-        };
+        let request_body = self.body_for_redirect();
 
         self.state.response_message_buffer = MutableString::default();
 
@@ -2792,7 +2830,17 @@ impl<'a> HTTPClient<'a> {
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
 
-        self.start(HTTPRequestBody::Bytes(request_body));
+        self.start_replay(request_body);
+    }
+
+    /// A redirect that keeps the method sends the body again. handle_response_metadata already
+    /// rejected that for a stream the caller produces (RequestBodyNotReusable); one that
+    /// downgraded to GET has a null body, and state.reset() releases the stream's buffer.
+    fn body_for_redirect(&self) -> ReplayBody<'a> {
+        if !self.state.flags.resend_request_body_on_redirect {
+            return ReplayBody::Bytes(b"");
+        }
+        self.replay_body().unwrap_or(ReplayBody::Bytes(b""))
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -4504,20 +4552,8 @@ impl<'a> HTTPClient<'a> {
     fn do_redirect_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         bun_core::scoped_log!(fetch, "doRedirectMultiplexed");
-        if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
-            self.flags.is_streaming_request_body = false;
-        }
         self.unix_socket_path = b"";
-        let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
-        {
-            match &self.state.original_request_body {
-                HTTPRequestBody::Bytes(b) => b,
-                _ => unreachable!(),
-            }
-        } else {
-            b""
-        };
+        let request_body = self.body_for_redirect();
         self.state.response_message_buffer = MutableString::default();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
@@ -4533,7 +4569,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
-        self.start(HTTPRequestBody::Bytes(request_body));
+        self.start_replay(request_body);
     }
 
     pub(crate) fn progress_update_h3(&mut self) {
@@ -5183,9 +5219,7 @@ impl<'a> HTTPClient<'a> {
                 // return a network error." A ReadableStream body has no
                 // source to replay from, so only 303 (which drops the body
                 // and switches to GET) may be followed.
-                if status_code != 303
-                    && matches!(self.state.original_request_body, HTTPRequestBody::Stream(_))
-                {
+                if status_code != 303 && self.replay_body().is_none() {
                     return Err(crate::Error::RequestBodyNotReusable);
                 }
                 let hop: RedirectHop;

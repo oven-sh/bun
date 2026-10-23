@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tls } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { truncateSync } from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
+import nodeTls from "node:tls";
 
 // WHATWG HTTP-redirect fetch runs on the response head (status line + Location);
 // the 3xx body is discarded, not awaited. A redirecting server that never finishes
@@ -175,6 +179,334 @@ it("fetch() preserves body on redirect", async () => {
 
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("hello");
+});
+
+// A Bun.file() body of 32 KiB or more is not read into memory: fetch() sends it with
+// sendfile(2). A redirect that keeps the method sends the body again from its first byte,
+// with sendfile(2) where the next connection is plain and as a stream of the file where it
+// is TLS. The next request used to go out with `Content-Length: 0` and no body, and the
+// fetch resolved with that hop's 200.
+describe("fetch() re-sends a Bun.file() body when following a redirect", () => {
+  const FILE = randomBytes(96 * 1024);
+
+  type Hop = { method: string; path: string; contentLength: string | null; bytes: number; matches: boolean };
+
+  // Records every request into `hops`. A path in `redirects` answers with that redirect
+  // after it read the body. Every other path is the final 200.
+  function serveHops(
+    hops: Hop[],
+    expectedBody: Uint8Array,
+    redirects: Record<string, { status: number; location: string }>,
+    tlsOptions?: typeof tls,
+  ) {
+    return Bun.serve({
+      port: 0,
+      tls: tlsOptions,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        const body = Buffer.from(await req.arrayBuffer());
+        hops.push({
+          method: req.method,
+          path: pathname,
+          contentLength: req.headers.get("content-length"),
+          bytes: body.byteLength,
+          matches: body.equals(expectedBody),
+        });
+        const redirect = redirects[pathname];
+        if (redirect) {
+          return new Response(null, { status: redirect.status, headers: { Location: redirect.location } });
+        }
+        return new Response("final");
+      },
+    });
+  }
+
+  const received = (method: string, path: string, body: Uint8Array = FILE): Hop => ({
+    method,
+    path,
+    contentLength: String(body.byteLength),
+    bytes: body.byteLength,
+    matches: true,
+  });
+
+  it.concurrent.each([
+    [307, "POST"],
+    [308, "POST"],
+    [307, "PATCH"],
+    [301, "PUT"],
+    [302, "PUT"],
+    [302, "DELETE"],
+  ])("%d keeps the %s body", async (status, method) => {
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": FILE });
+    const hops: Hop[] = [];
+    using server = serveHops(hops, FILE, { "/start": { status, location: "/final" } });
+
+    const res = await fetch(new URL("/start", server.url), { method, body: Bun.file(join(String(dir), "body.bin")) });
+
+    expect({ status: res.status, redirected: res.redirected, text: await res.text(), hops }).toEqual({
+      status: 200,
+      redirected: true,
+      text: "final",
+      hops: [received(method, "/start"), received(method, "/final")],
+    });
+  });
+
+  // https://fetch.spec.whatwg.org/#http-redirect-fetch: 303, and 301 or 302 for a POST,
+  // switch to GET and drop the body. The file is not sent again there.
+  it.concurrent.each([
+    [303, "POST"],
+    [303, "PUT"],
+    [301, "POST"],
+    [302, "POST"],
+  ])("%d drops the %s body and switches to GET", async (status, method) => {
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": FILE });
+    const hops: Hop[] = [];
+    using server = serveHops(hops, FILE, {
+      "/start": { status, location: "/second" },
+      // A later redirect that keeps the method must not bring the body back.
+      "/second": { status: 307, location: "/final" },
+    });
+
+    const res = await fetch(new URL("/start", server.url), { method, body: Bun.file(join(String(dir), "body.bin")) });
+
+    const bodyless = (path: string): Hop => ({ method: "GET", path, contentLength: null, bytes: 0, matches: false });
+    expect({ status: res.status, redirected: res.redirected, text: await res.text(), hops }).toEqual({
+      status: 200,
+      redirected: true,
+      text: "final",
+      hops: [received(method, "/start"), bodyless("/second"), bodyless("/final")],
+    });
+  });
+
+  it.concurrent("re-sends the same slice of the file on every hop of a chain", async () => {
+    const SLICE_START = 4096;
+    const slice = FILE.subarray(SLICE_START, SLICE_START + 40 * 1024);
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": FILE });
+    const hops: Hop[] = [];
+    using server = serveHops(hops, slice, {
+      "/start": { status: 307, location: "/second" },
+      "/second": { status: 308, location: "/final" },
+    });
+
+    const res = await fetch(new URL("/start", server.url), {
+      method: "POST",
+      body: Bun.file(join(String(dir), "body.bin")).slice(SLICE_START, SLICE_START + slice.byteLength),
+    });
+
+    expect({ status: res.status, text: await res.text(), hops }).toEqual({
+      status: 200,
+      text: "final",
+      hops: [received("POST", "/start", slice), received("POST", "/second", slice), received("POST", "/final", slice)],
+    });
+  });
+
+  it.concurrent("sends an empty slice of the file as an empty body on every hop", async () => {
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": FILE });
+    const hops: Hop[] = [];
+    using server = serveHops(hops, new Uint8Array(0), { "/start": { status: 307, location: "/final" } });
+
+    const res = await fetch(new URL("/start", server.url), {
+      method: "POST",
+      body: Bun.file(join(String(dir), "body.bin")).slice(0, 0),
+    });
+
+    expect({ status: res.status, text: await res.text(), hops }).toEqual({
+      status: 200,
+      text: "final",
+      hops: [received("POST", "/start", new Uint8Array(0)), received("POST", "/final", new Uint8Array(0))],
+    });
+  });
+
+  // sendfile(2) needs a plain socket. On an https hop the same bytes of the file go out as a
+  // stream, and a redirect from there sends them once more.
+  it.concurrent("re-sends the body when the redirect crosses over to https", async () => {
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": FILE });
+    const secureHops: Hop[] = [];
+    using secure = serveHops(secureHops, FILE, { "/secure": { status: 308, location: "/final" } }, tls);
+    const plainHops: Hop[] = [];
+    using plain = serveHops(plainHops, FILE, {
+      "/start": { status: 307, location: `https://127.0.0.1:${secure.port}/secure` },
+    });
+
+    const res = await fetch(new URL("/start", plain.url), {
+      method: "PUT",
+      body: Bun.file(join(String(dir), "body.bin")),
+      tls: { ca: tls.cert },
+    });
+
+    expect({ status: res.status, url: res.url, text: await res.text(), plainHops, secureHops }).toEqual({
+      status: 200,
+      url: `https://127.0.0.1:${secure.port}/final`,
+      text: "final",
+      plainHops: [received("PUT", "/start")],
+      secureHops: [received("PUT", "/secure"), received("PUT", "/final")],
+    });
+  });
+
+  it.concurrent("re-sends a slice of the file on https and then on http again", async () => {
+    const SLICE_START = 12345;
+    const slice = FILE.subarray(SLICE_START, SLICE_START + 70 * 1024);
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": FILE });
+    const plainHops: Hop[] = [];
+    const secureHops: Hop[] = [];
+    let plainPort = 0;
+    using secure = Bun.serve({
+      port: 0,
+      tls,
+      async fetch(req) {
+        const body = Buffer.from(await req.arrayBuffer());
+        secureHops.push({
+          method: req.method,
+          path: new URL(req.url).pathname,
+          contentLength: req.headers.get("content-length"),
+          bytes: body.byteLength,
+          matches: body.equals(slice),
+        });
+        return new Response(null, { status: 307, headers: { Location: `http://127.0.0.1:${plainPort}/final` } });
+      },
+    });
+    using plain = serveHops(plainHops, slice, {
+      "/start": { status: 308, location: `https://127.0.0.1:${secure.port}/secure` },
+    });
+    plainPort = plain.port!;
+
+    const res = await fetch(new URL("/start", plain.url), {
+      method: "POST",
+      body: Bun.file(join(String(dir), "body.bin")).slice(SLICE_START, SLICE_START + slice.byteLength),
+      tls: { ca: tls.cert },
+    });
+
+    expect({ status: res.status, text: await res.text(), plainHops, secureHops }).toEqual({
+      status: 200,
+      text: "final",
+      plainHops: [received("POST", "/start", slice), received("POST", "/final", slice)],
+      secureHops: [received("POST", "/secure", slice)],
+    });
+  });
+
+  // On https the file goes through a buffer that the stream fills and the HTTP thread
+  // drains, many times for a file of this size. Every byte must arrive once and in order.
+  it.concurrent("re-sends a file of several megabytes over https", async () => {
+    const BIG = randomBytes(8 * 1024 * 1024 + 4321);
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": BIG });
+    const secureHops: Hop[] = [];
+    using secure = serveHops(secureHops, BIG, { "/secure": { status: 308, location: "/final" } }, tls);
+    const plainHops: Hop[] = [];
+    using plain = serveHops(plainHops, BIG, {
+      "/start": { status: 308, location: `https://127.0.0.1:${secure.port}/secure` },
+    });
+
+    const res = await fetch(new URL("/start", plain.url), {
+      method: "PUT",
+      body: Bun.file(join(String(dir), "body.bin")),
+      tls: { ca: tls.cert },
+    });
+
+    expect({ status: res.status, text: await res.text(), plainHops, secureHops }).toEqual({
+      status: 200,
+      text: "final",
+      plainHops: [received("PUT", "/start", BIG)],
+      secureHops: [received("PUT", "/secure", BIG), received("PUT", "/final", BIG)],
+    });
+  });
+
+  // A server can redirect as soon as it has the request head, while the file is still on
+  // its way. The next hop gets the whole file, not the rest of the interrupted upload.
+  describe("re-sends the whole file after a redirect that interrupted the upload", () => {
+    const BIG = randomBytes(4 * 1024 * 1024);
+
+    async function run(listen: (onSocket: (socket: net.Socket) => void) => net.Server, scheme: "http" | "https") {
+      using dir = tempDir("fetch-redirect-file-body", { "body.bin": BIG });
+      const hops: Hop[] = [];
+      using final = serveHops(hops, BIG, {});
+
+      const sockets = new Set<net.Socket>();
+      const redirector = listen(socket => {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          // Stop reading, so that the upload backs up. Then redirect it.
+          socket.pause();
+          socket.write(
+            `HTTP/1.1 307 Temporary Redirect\r\nLocation: ${final.url.origin}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+          );
+        });
+      });
+      await once(redirector.listen(0, "127.0.0.1"), "listening");
+      const { port } = redirector.address() as net.AddressInfo;
+      // The upload to an https redirector is a stream only after a redirect from plain http.
+      using entry = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          await req.arrayBuffer();
+          return new Response(null, { status: 307, headers: { Location: `${scheme}://127.0.0.1:${port}/start` } });
+        },
+      });
+
+      try {
+        const res = await fetch(scheme === "https" ? entry.url : `http://127.0.0.1:${port}/start`, {
+          method: "POST",
+          body: Bun.file(join(String(dir), "body.bin")),
+          tls: { ca: tls.cert },
+        });
+        expect({ status: res.status, text: await res.text(), hops }).toEqual({
+          status: 200,
+          text: "final",
+          hops: [received("POST", "/final", BIG)],
+        });
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        redirector.close();
+        await once(redirector, "close");
+      }
+    }
+
+    it.concurrent("on a plain connection", () => run(onSocket => net.createServer(onSocket), "http"));
+    it.concurrent("on a TLS connection", () => run(onSocket => nodeTls.createServer(tls, onSocket), "https"));
+  });
+
+  // Each hop announces the whole file in Content-Length. A file that got shorter after the
+  // first hop cannot fill that, so the fetch fails. It must not send a short body that the
+  // server waits on, and it must not report success.
+  it.concurrent.each([
+    ["a plain", undefined, "Request body file is shorter than the Content-Length of 98304"],
+    ["an https", tls, "Request body of 40960 bytes does not match the Content-Length of 98304"],
+  ] as const)("rejects when the file shrinks before %s hop", async (_label, tlsOptions, message) => {
+    using dir = tempDir("fetch-redirect-file-body", { "body.bin": FILE });
+    const path = join(String(dir), "body.bin");
+    using second = Bun.serve({
+      port: 0,
+      tls: tlsOptions,
+      async fetch(req) {
+        await req.arrayBuffer().catch(() => {});
+        return new Response("final");
+      },
+    });
+    using first = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        truncateSync(path, 40 * 1024);
+        return new Response(null, { status: 307, headers: { Location: new URL("/final", second.url).href } });
+      },
+    });
+
+    const outcome = await fetch(new URL("/start", first.url), {
+      method: "POST",
+      body: Bun.file(path),
+      tls: { ca: tls.cert },
+    }).then(
+      res => ({ rejected: false as const, status: res.status }),
+      e => ({ rejected: true as const, code: e.code, message: e.message }),
+    );
+    // Windows reads the file into memory before the request starts, so it uploads what it read.
+    expect(outcome).toEqual(
+      isWindows
+        ? { rejected: false, status: 200 }
+        : { rejected: true, code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH", message },
+    );
+  });
 });
 
 it.each(["file:/etc/hosts", "file:hosts"])(

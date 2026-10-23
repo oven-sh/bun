@@ -25,6 +25,8 @@ use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
+use crate::node::types::PathOrFileDescriptor;
+use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
@@ -134,6 +136,11 @@ pub struct FetchTasklet {
     pub(crate) request_body: HTTPRequestBody,
     /// This side's ref; the HTTP thread holds the other of the two initial refs.
     pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
+    /// From the HTTP thread, for an attempt that cannot send the file of `request_body` with
+    /// `sendfile(2)`: the buffer that `start_file_body_stream` uploads the file into.
+    pub(crate) file_body_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
+    /// The stream of that upload. Only this keeps its `FileReader` alive.
+    pub(crate) file_body_stream: ReadableStreamStrong,
 
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
@@ -545,8 +552,10 @@ impl FetchTasklet {
         self.check_server_identity.deinit();
         self.fetch_session = None;
         self.clear_abort_signal();
+        self.file_body_buffer = None;
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
+        self.file_body_stream.deinit();
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
@@ -665,44 +674,9 @@ impl FetchTasklet {
         }
 
         let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
-        // `self_ptr` is the live heap tasklet; the +1 above keeps it alive
-        // until `write_end_request`/`finalize` clears `task`.
-        let sink: &mut FetchRequestBodySink = Box::leak(Box::new(FetchRequestBodySink {
-            task: Some(bun_ptr::BackRef::new_mut(self)),
-            high_water_mark: 16384,
-            ..Default::default()
-        }));
-        let sink_handle = SinkHandle::FetchRequestBody(bun_ptr::BackRef::new_mut(sink));
-        self.sink = Some(core::ptr::NonNull::from(&mut *sink));
-
-        // Native ByteStream/FileReader fast-path: wire the SinkHandle
-        // directly, skipping the JS pump.
-        match stream.wire_native_sink(&global_this, sink_handle, JSValue::UNDEFINED, |src| {
-            sink.source = src;
-        }) {
-            crate::webcore::readable_stream::NativeWireResult::Wired => return Ok(()),
-            crate::webcore::readable_stream::NativeWireResult::EndedInline(err) => {
-                // The source finished inside the wire attempt, so leave the
-                // sink in the state `end_from_stream` leaves it: ended, with
-                // the source and task detached. `write_end_request` below is
-                // the single balancing release of the `+1` taken above; a
-                // sink left `ended == false` here would make the terminal
-                // `cancel_request_body_sink` treat it as a live native sink
-                // and release that ref a second time, freeing the tasklet
-                // while it is still in use.
-                sink.ended = true;
-                sink.source.clear();
-                sink.task = None;
-                let err_js = err.map(|err| {
-                    let err_js = err.to_js(&global_this);
-                    err_js.ensure_still_alive();
-                    err_js
-                });
-                self.write_end_request(err_js);
-                return Ok(());
-            }
-            crate::webcore::readable_stream::NativeWireResult::NotNative => {}
-        }
+        let Some(sink) = self.wire_request_body_sink(&stream) else {
+            return Ok(());
+        };
 
         let assignment_result = JSSink::<FetchRequestBodySink>::assign_to_stream(
             &global_this,
@@ -749,6 +723,140 @@ impl FetchTasklet {
         sink.task = None;
         self.write_end_request(None);
         Ok(())
+    }
+
+    /// Makes the sink of an upload and wires it to `stream` when that has a native source.
+    /// Returns the sink when `stream` needs the JS pump instead. The caller took the `+1` on
+    /// the tasklet that `write_end_request` releases.
+    fn wire_request_body_sink(
+        &mut self,
+        stream: &ReadableStream,
+    ) -> Option<&'static mut FetchRequestBodySink> {
+        let global_this = self.global_this;
+        // The +1 of the caller keeps the tasklet alive until
+        // `write_end_request`/`finalize` clears `task`.
+        let sink: &mut FetchRequestBodySink = Box::leak(Box::new(FetchRequestBodySink {
+            task: Some(bun_ptr::BackRef::new_mut(self)),
+            high_water_mark: 16384,
+            ..Default::default()
+        }));
+        let sink_handle = SinkHandle::FetchRequestBody(bun_ptr::BackRef::new_mut(sink));
+        self.sink = Some(core::ptr::NonNull::from(&mut *sink));
+
+        // Native ByteStream/FileReader fast-path: wire the SinkHandle
+        // directly, skipping the JS pump.
+        match stream.wire_native_sink(&global_this, sink_handle, JSValue::UNDEFINED, |src| {
+            sink.source = src;
+        }) {
+            crate::webcore::readable_stream::NativeWireResult::Wired => None,
+            crate::webcore::readable_stream::NativeWireResult::EndedInline(err) => {
+                // The source finished inside the wire attempt, so leave the
+                // sink in the state `end_from_stream` leaves it: ended, with
+                // the source and task detached. `write_end_request` below is
+                // the single balancing release of the caller's `+1`; a
+                // sink left `ended == false` here would make the terminal
+                // `cancel_request_body_sink` treat it as a live native sink
+                // and release that ref a second time, freeing the tasklet
+                // while it is still in use.
+                sink.ended = true;
+                sink.source.clear();
+                sink.task = None;
+                let err_js = err.map(|err| {
+                    let err_js = err.to_js(&global_this);
+                    err_js.ensure_still_alive();
+                    err_js
+                });
+                self.write_end_request(err_js);
+                None
+            }
+            crate::webcore::readable_stream::NativeWireResult::NotNative => Some(sink),
+        }
+    }
+
+    /// Uploads the file of `request_body` for an attempt that cannot use `sendfile(2)`: a
+    /// `FileReader` over the same window of the file fills `buffer`, which the HTTP thread
+    /// made for that attempt.
+    fn start_file_body_stream(&mut self, buffer: RefPtr<ThreadSafeStreamBuffer>) -> JsResult<()> {
+        let HTTPRequestBody::Sendfile(file) = self.request_body else {
+            return Ok(());
+        };
+        // The upload of an earlier attempt filled that attempt's buffer.
+        self.retire_request_body_upload();
+        if self.signal_aborted() {
+            return Ok(());
+        }
+
+        // SAFETY: `buffer` is this side's ref, so the pointee is live. The HTTP thread
+        // already uses it; the setter takes the buffer's mutex.
+        unsafe {
+            (*buffer.as_ptr()).set_drain_callback_shared::<FetchTasklet>(
+                FetchTasklet::on_write_request_data_drain,
+                std::ptr::from_mut(self),
+            );
+        }
+        self.request_body_streaming_buffer = Some(buffer);
+        // The head of this attempt has `Content-Length`, so the stream writes raw bytes.
+        self.declared_request_body_len = Some(file.content_size as u64);
+        self.request_body_len_written = 0;
+        self.request_body_mismatched = false;
+
+        let global_this = self.global_this;
+        // The reader takes its own duplicate of the descriptor and reads at its own offset.
+        let store = bun_core::handle_oom(BlobStore::init_file(
+            PathOrFileDescriptor::Fd(file.fd),
+            None,
+        ));
+        let blob = Blob::init_with_store(store, &global_this);
+        blob.offset.set(file.offset as BlobSizeType);
+        blob.size.set(file.content_size as BlobSizeType);
+        let context = global_this.bun_vm().context_of(self.context);
+        let stream_value =
+            ReadableStream::from_blob_copy_ref(&global_this.js_thread(context), &blob, 0)?;
+        let stream = ReadableStream::from_js_direct(stream_value);
+        if let Some(stream) = &stream {
+            self.file_body_stream = ReadableStreamStrong::init(*stream, &global_this);
+        }
+
+        // Balanced by `write_end_request`, as in `start_request_stream`.
+        self.ref_();
+        let pump_sink = match &stream {
+            Some(stream) => self.wire_request_body_sink(stream),
+            None => None,
+        };
+        // A file stream has a native source. A sink of the JS pump would outlive this attempt.
+        if stream.is_none() || pump_sink.is_some() {
+            if let Some(sink) = pump_sink {
+                sink.ended = true;
+                sink.task = None;
+            }
+            let err = global_this
+                .create_error_instance(format_args!("Failed to read the request body file"));
+            err.ensure_still_alive();
+            self.write_end_request(Some(err));
+        }
+        Ok(())
+    }
+
+    /// Ends the upload of an attempt that a redirect or a retry replaced. The request goes
+    /// on, so this is not `cancel_request_body_sink`.
+    fn retire_request_body_upload(&mut self) {
+        let this_ptr = std::ptr::from_mut(self);
+        if let Some(sink) = self.sink_mut()
+            && !sink.ended
+        {
+            sink.ended = true;
+            sink.done = true;
+            // The reader drops its handle of the sink before it stops, so it does not end it.
+            sink.source.close(None);
+            sink.source.clear();
+            if sink.task.take().is_some() {
+                // The `+1` of the upload's start: `write_end_request` did not run for it.
+                // The caller holds a ref of its own.
+                FetchTasklet::deref(this_ptr);
+            }
+        }
+        self.clear_sink();
+        self.file_body_stream.deinit();
     }
 
     fn on_body_received(&mut self) -> JsResult<()> {
@@ -974,6 +1082,16 @@ impl FetchTasklet {
             }
         };
 
+        if let Some(buffer) = self.file_body_buffer.take()
+            // A result that ends the request has no attempt left to upload for.
+            && !is_done
+            && self.result.is_success()
+            && let Err(err) = self.start_file_body_stream(buffer)
+        {
+            // The VM is being stopped: leave like the `!script_allowed()` gate above does.
+            self.mutex.unlock();
+            return Err(err);
+        }
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
             if let Err(err) = self.start_request_stream() {
@@ -1371,6 +1489,7 @@ impl FetchTasklet {
         }
 
         if fail == http::Error::RequestBodyLengthMismatch
+            && self.request_body_mismatched
             && let Some(declared) = self.declared_request_body_len
         {
             let written = self.request_body_len_written;
@@ -1380,6 +1499,23 @@ impl FetchTasklet {
                     jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
                     format_args!(
                         "Request body of {written} bytes does not match the Content-Length of {declared}"
+                    ),
+                )
+                .to_js();
+            return BodyValueError::JSValue(StrongOptional::create(err, &self.global_this));
+        }
+
+        // `sendfile(2)` reached the end of the file before the bytes that the head announced.
+        if fail == http::Error::RequestBodyLengthMismatch
+            && let HTTPRequestBody::Sendfile(file) = &self.request_body
+        {
+            let declared = file.content_size;
+            let err = self
+                .global_this
+                .err(
+                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+                    format_args!(
+                        "Request body file is shorter than the Content-Length of {declared}"
                     ),
                 )
                 .to_js();
@@ -2005,6 +2141,8 @@ impl FetchTasklet {
             global_this: GlobalRef::from(cx.global()),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
+            file_body_buffer: None,
+            file_body_stream: ReadableStreamStrong::default(),
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
@@ -2198,6 +2336,7 @@ impl FetchTasklet {
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
                     buffer: core::ptr::NonNull::new(buffer),
+                    awaits_producer: false,
                     framing,
                 });
         }
@@ -2587,6 +2726,16 @@ impl FetchTasklet {
             result.has_more,
             result.body.len()
         );
+
+        // The head of an attempt that streams the file body is out: `on_progress_update`
+        // starts the upload into that attempt's buffer.
+        if result.can_stream
+            // SAFETY: as above; this is the HTTP thread, which owns `async_http`.
+            && let Some(buffer) =
+                unsafe { (*async_http).client.take_request_body_buffer_for_producer() }
+        {
+            task_ref.file_body_buffer = Some(buffer);
+        }
 
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();

@@ -1,5 +1,6 @@
 use bun_http_types::ETag::StringPointer;
 use bun_http_types::parse_content_length_strict;
+use bun_ptr::RefPtr;
 
 use crate::Encoding;
 use crate::Headers;
@@ -20,12 +21,21 @@ pub enum HTTPRequestBody<'a> {
     Stream(Stream),
 }
 
+/// What a redirect or a retry of a request sends as its body.
+pub(crate) enum ReplayBody<'a> {
+    Bytes(&'a [u8]),
+    /// From the first byte: this descriptor is the one the caller queued.
+    File(SendFile),
+}
+
 pub struct Stream {
     // ThreadSafeStreamBuffer carries an *intrusive* atomic refcount and is
     // round-tripped as a raw pointer between the main thread and the HTTP
     // thread, so we keep the intrusive form (raw pointer + manual ref/deref)
     // instead of `Arc<T>`.
     pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
+    /// The http thread made `buffer` for a file body and its producer does not have it yet.
+    pub awaits_producer: bool,
     pub framing: StreamFraming,
 }
 
@@ -87,6 +97,29 @@ impl StreamFraming {
 }
 
 impl Stream {
+    /// The body of an attempt that sends `content_length` bytes of a file on a connection
+    /// `sendfile(2)` cannot write to. The producer fills the new buffer once it has it.
+    pub(crate) fn for_file(content_length: usize) -> Stream {
+        Stream {
+            buffer: Some(ThreadSafeStreamBuffer::new_for_http_thread()),
+            awaits_producer: true,
+            framing: StreamFraming {
+                content_length: Some(content_length as u64),
+                transfer_encoding: None,
+            },
+        }
+    }
+
+    /// The producer's own ref on the buffer of a file body, once.
+    pub(crate) fn take_for_producer(&mut self) -> Option<RefPtr<ThreadSafeStreamBuffer>> {
+        if !core::mem::take(&mut self.awaits_producer) {
+            return None;
+        }
+        // SAFETY: this side holds a ref while `buffer` is `Some`, so the pointee is live.
+        self.buffer
+            .map(|buffer| unsafe { RefPtr::init_ref(buffer.as_ptr()) })
+    }
+
     /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
     ///
     /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive

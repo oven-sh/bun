@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { release } from "node:os";
 import { join } from "node:path";
-import { createSecureContext, TLSSocket } from "node:tls";
+import { createSecureContext, createServer as createTlsServer, TLSSocket } from "node:tls";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -354,6 +355,103 @@ test("PUT with a ReadableStream body is not retried on keep-alive disconnect", a
     exitCode: 0,
   });
 });
+
+// An idempotent request on a reused keep-alive connection that the server drops is sent
+// again on a fresh connection. A Bun.file() of 32 KiB or more goes out with sendfile(2),
+// or as a stream of the file on TLS, and was left out of that retry: the same PUT failed
+// with ECONNRESET for a file of 32768 bytes and was sent again for one of 32767 bytes.
+test.concurrent.each([
+  ["32767 bytes over http", 32767, false],
+  ["32768 bytes over http", 32768, false],
+  ["32768 bytes over https after a redirect from http", 32768, true],
+])(
+  "PUT of a Bun.file() of %s is sent again when the server drops a reused connection",
+  async (_label, size, secure) => {
+    const content = randomBytes(size);
+    using dir = tempDir("fetch-keepalive-file-retry", { "body.bin": content });
+    const KEEP_ALIVE_OK = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+
+    const fileRequests: { connection: number; outcome: string }[] = [];
+    const sockets = new Set<Socket>();
+    let connections = 0;
+    const onSocket = (socket: Socket) => {
+      const connection = ++connections;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      let served = 0;
+      let head = "";
+      let request: { path: string; contentLength: number; chunks: Buffer[]; bytes: number } | undefined;
+      socket.on("data", chunk => {
+        if (!request) {
+          head += chunk.toString("latin1");
+          const end = head.indexOf("\r\n\r\n");
+          if (end < 0) return;
+          const rest = Buffer.from(head.slice(end + 4), "latin1");
+          request = {
+            path: head.split(" ")[1],
+            contentLength: Number(/content-length: (\d+)/i.exec(head)![1]),
+            chunks: [rest],
+            bytes: rest.length,
+          };
+          head = "";
+        } else {
+          request.chunks.push(chunk);
+          request.bytes += chunk.length;
+        }
+        if (request.bytes < request.contentLength) return;
+        const isFile = request.path === "/file";
+        if (isFile && served > 0) {
+          // The whole request arrived on a connection that already served one. Drop it.
+          fileRequests.push({ connection, outcome: "dropped" });
+          socket.destroy();
+          return;
+        }
+        if (isFile) {
+          const matches = Buffer.concat(request.chunks).equals(content);
+          fileRequests.push({ connection, outcome: matches ? "received the file" : "received other bytes" });
+        }
+        request = undefined;
+        served++;
+        socket.write(KEEP_ALIVE_OK);
+      });
+    };
+    const server = secure ? createTlsServer(tls, onSocket) : createServer(onSocket);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const base = `${secure ? "https" : "http"}://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    // A file goes to an https origin as a stream only after a redirect from plain http.
+    using entry = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        return new Response(null, { status: 307, headers: { Location: `${base}/file` } });
+      },
+    });
+
+    try {
+      // Park a keep-alive connection so the file PUT reuses it.
+      await (await fetch(`${base}/warm`, { method: "PUT", body: "warm", tls: { ca: tls.cert } })).text();
+      const outcome = await fetch(secure ? entry.url : `${base}/file`, {
+        method: "PUT",
+        body: Bun.file(join(String(dir), "body.bin")),
+        tls: { ca: tls.cert },
+      }).then(
+        async res => ({ status: res.status, text: await res.text() }),
+        e => ({ rejected: e.code ?? e.name }),
+      );
+      expect({ outcome, fileRequests }).toEqual({
+        outcome: { status: 200, text: "ok" },
+        fileRequests: [
+          { connection: 1, outcome: "dropped" },
+          { connection: 2, outcome: "received the file" },
+        ],
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  },
+);
 
 // A server may send its final response (401, 413, ...) while a chunked
 // ReadableStream request body is still uploading. That connection is then

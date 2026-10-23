@@ -60,6 +60,14 @@ impl ThreadSafeStreamBuffer {
         bun_core::heap::into_raw(Box::new(init))
     }
 
+    /// A buffer that only the http thread holds; the main thread takes its own ref when it is
+    /// handed the buffer.
+    pub(crate) fn new_for_http_thread() -> core::ptr::NonNull<Self> {
+        let mut init = Self::default();
+        init.ref_count = bun_ptr::ThreadSafeRefCount::init_exact_refs(1);
+        core::ptr::NonNull::new(Self::new(init)).expect("Box::into_raw is never null")
+    }
+
     /// Upgrade an attached intrusive-ref handle to `&mut Self`.
     ///
     /// INVARIANT: while `p` is held, the HTTP side owns one intrusive ref on
@@ -105,6 +113,12 @@ impl ThreadSafeStreamBuffer {
 
     /// Should only be called in the main thread and before scheduling it to the http thread
     pub fn set_drain_callback<T>(&mut self, callback: fn(*mut T), context: *mut T) {
+        self.callback = Some(Callback::init(callback, context));
+    }
+
+    /// Main thread, for a buffer that the http thread made and already uses.
+    pub fn set_drain_callback_shared<T>(&mut self, callback: fn(*mut T), context: *mut T) {
+        let _guard = self.mutex.lock_guard();
         self.callback = Some(Callback::init(callback, context));
     }
 

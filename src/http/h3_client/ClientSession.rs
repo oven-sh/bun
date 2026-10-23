@@ -163,7 +163,10 @@ impl ClientSession {
                     self.fail(stream_ptr, crate::Error::RequestBodyLengthMismatch);
                     return true;
                 }
-                if let Some(qs) = stream.qstream_mut() {
+                // Before the head is out, a wakeup can only be for an earlier attempt's body.
+                if stream.is_streaming_body
+                    && let Some(qs) = stream.qstream_mut()
+                {
                     encode::drain_send_body(stream, qs);
                 }
             }

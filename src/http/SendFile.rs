@@ -22,6 +22,16 @@ impl SendFile {
         url.is_http() && url.href.len() > 0
     }
 
+    /// A transfer that stops with bytes still owed reached the end of the file early.
+    #[cfg(not(windows))]
+    fn done_or_short(&self) -> Status {
+        if self.remain == 0 {
+            Status::Done
+        } else {
+            Status::Err(crate::Error::RequestBodyLengthMismatch)
+        }
+    }
+
     // Takes the resolved fd directly rather than the socket; callers pass
     // `socket.fd()`.
     pub(crate) fn write(&mut self, socket_fd: Fd) -> Status {
@@ -57,7 +67,7 @@ impl SendFile {
 
             if errcode != bun_sys::E::SUCCESS || self.remain == 0 || val == 0 {
                 if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+                    return self.done_or_short();
                 }
 
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());
@@ -87,7 +97,7 @@ impl SendFile {
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
                 if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+                    return self.done_or_short();
                 }
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
@@ -118,7 +128,7 @@ impl SendFile {
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
                 if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+                    return self.done_or_short();
                 }
 
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());

@@ -377,7 +377,15 @@ impl Checker<'_, '_> {
             let NodeData::Type(around) = hir.data(around) else {
                 continue;
             };
-            if !below.contain(hir[around].pos) {
+            // `getTypeFromImportTypeNode` returns the error type before it gets to the type arguments. Then there is no
+            // type below them to instantiate, unless the import type is in the syntax of one.
+            let Some(import_type) = below.import_type_at(hir[around].pos) else {
+                continue;
+            };
+            let ty = self.p.type_node_types.get(&self.task, &(file, import_type));
+            if !ty.is_some_and(|ty| !self.is_error_type(ty))
+                && !self.is_in_instantiated_type(file, import_type)
+            {
                 continue;
             }
             // `tp.isThisType`: a `this` type is no reason to resolve a type reference.

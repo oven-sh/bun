@@ -13,7 +13,7 @@ use super::errors_statements::is_with_statement;
 use super::shape::ThisAssignmentDeclaration;
 use super::sink::MAX_SERIALIZATION_LEVEL;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -1407,15 +1407,10 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// The names that `isTypeParameterPossiblyReferenced` can resolve below the type arguments `args` of the import type
-    /// `node` of `file`.
-    ///
-    /// `checkImportType` checks no type argument. Where type parameters are in scope, `getObjectTypeInstantiation`
-    /// still resolves names there, the first time `instantiateType` gets to the type around them: the name of each
-    /// type reference without type arguments and the first identifier of each type query, up to the first reference
-    /// to each type parameter. `instantiate` leaves out many types that `instantiateType` gets to, so the check of the
-    /// import type resolves those names itself. A name that doesn't resolve is reported here also where tsc instantiates
-    /// nothing around it.
+    /// `isTypeParameterPossiblyReferenced` below the type arguments `args` of the import type `node` of `file`: with a
+    /// type parameter in scope, the first `getObjectTypeInstantiation` of a type there resolves each type reference
+    /// without type arguments and the first identifier of each type query, up to the first reference to each type
+    /// parameter. This resolves all of them when the import type is checked, also where tsc instantiates nothing.
     fn resolve_names_below_type_arguments(
         &mut self,
         file: FileId,
@@ -1430,14 +1425,59 @@ impl<'s> Checker<'_, 's> {
         // `tp.isThisType`: a `this` type is no reason to resolve a type reference.
         let resolves_type_references =
             (type_parameters.iter()).any(|&tp| matches!(self.data(tp), TypeData::TypeParam(..)));
+        // `getTypeFromImportTypeNode` returns the error type before it gets to the type arguments, so there is no type
+        // below them to instantiate.
+        let ty = self.type_from_node(file, node);
+        if self.is_error_type(ty) {
+            return;
+        }
         let hir = self.hir(file);
         for argument in hir.ids(args) {
-            self.resolve_names_in(file, hir.node(argument), resolves_type_references);
+            self.resolve_names_in(file, hir.node(argument), resolves_type_references, false);
         }
     }
 
-    /// `resolve_names_below_type_arguments` for `node` and what is below it.
-    fn resolve_names_in(&mut self, file: FileId, node: Node, resolves_type_references: bool) {
+    /// True if `node` is in the syntax of a type that `getObjectTypeInstantiation` instantiates for a type parameter
+    /// in scope: a type literal, a function type, a mapped type or a method.
+    pub(super) fn is_in_instantiated_type(&mut self, file: FileId, node: TypeNodeId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut around = hir.parent(hir.node(node));
+        while around.is_some() {
+            let scope = match (hir.kind(around), hir.data(around)) {
+                (
+                    Kind::TypeLiteral
+                    | Kind::FunctionType
+                    | Kind::ConstructorType
+                    | Kind::MappedType,
+                    NodeData::Type(t),
+                ) => bound.type_scope[t.idx()],
+                (Kind::MethodDeclaration | Kind::MethodSignature, _) => {
+                    let func = hir.function_of(around);
+                    match func.is_some() {
+                        true => bound.scopes[bound.fns[func.idx()].scope.idx()].parent,
+                        false => ScopeId::NONE,
+                    }
+                }
+                _ => ScopeId::NONE,
+            };
+            if scope.is_some() && !self.type_params_in_scope(file, scope).is_empty() {
+                return true;
+            }
+            around = hir.parent(around);
+        }
+        false
+    }
+
+    /// `resolve_names_below_type_arguments` for `node` and what is below it. `is_in_anonymous_type`: the syntax of an
+    /// anonymous type below the type arguments is around `node`, and `isTypeParameterPossiblyReferenced` walks all
+    /// of it.
+    fn resolve_names_in(
+        &mut self,
+        file: FileId,
+        node: Node,
+        resolves_type_references: bool,
+        mut is_in_anonymous_type: bool,
+    ) {
         let hir = self.hir(file);
         if let NodeData::Type(t) = hir.data(node) {
             match hir[t].kind {
@@ -1463,11 +1503,22 @@ impl<'s> Checker<'_, 's> {
                         self.type_of_expr(file, first);
                     }
                 }
+                // As in `resolve_names_below_type_arguments`, for an import type that was resolved with the type
+                // arguments it is in.
+                TypeNodeKind::Import { spec, .. } if spec.is_some() && !is_in_anonymous_type => {
+                    let ty = self.p.type_node_types.get(&self.task, &(file, t));
+                    if !ty.is_some_and(|ty| !self.is_error_type(ty)) {
+                        return;
+                    }
+                }
+                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_) => {
+                    is_in_anonymous_type = true;
+                }
                 _ => {}
             }
         }
         hir.for_each_child(node, &mut |child| {
-            self.resolve_names_in(file, child, resolves_type_references);
+            self.resolve_names_in(file, child, resolves_type_references, is_in_anonymous_type);
             false
         });
     }

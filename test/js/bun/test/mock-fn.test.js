@@ -996,6 +996,10 @@ describe("spyOn", () => {
     "works on a lazy export of %s before its first read",
     async modulePath => {
       const name = modulePath === "node:fs" ? "ReadStream" : "Server";
+      // This file also runs under jest, so it does not import bunEnv from harness.
+      const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: undefined, BUN_DEBUG_QUIET_LOGS: "1" };
+      for (const key of Object.keys(env))
+        if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") delete env[key];
       await using proc = Bun.spawn({
         cmd: [
           process.execPath,
@@ -1005,16 +1009,20 @@ const { spyOn } = require("bun:test");
 const mod = require(${JSON.stringify(modulePath)});
 const spy = spyOn(mod, ${JSON.stringify(name)});
 const { value } = Object.getOwnPropertyDescriptor(mod, ${JSON.stringify(name)});
-console.log(value === spy, typeof spy.mock.calls, spy.getMockName());
+const spied = [value === spy, typeof spy.mock.calls, spy.getMockName()];
 spy.mockRestore();
-console.log(typeof mod[${JSON.stringify(name)}], mod[${JSON.stringify(name)}].name);
+console.log(JSON.stringify({ spied, restored: [typeof mod[${JSON.stringify(name)}], mod[${JSON.stringify(name)}].name] }));
 `,
         ],
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: `true object ${name}\nfunction ${name}\n`, stderr: "" });
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({ spied: [true, "object", name], restored: ["function", name] }),
+        stderr: "",
+      });
       expect(exitCode).toBe(0);
     },
   );

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import { openAsBlob } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -983,4 +984,95 @@ test.each([
 ])("new Blob([], { type: %j }).slice().type", (type, expected) => {
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
+});
+
+// A Blob body whose own type is empty adds no Content-Type to a fetch() request.
+// A raw socket receives each request, so that a header with an empty value and
+// no header at all are different results.
+describe("fetch() request Content-Type of a Blob body", () => {
+  async function contentTypes(send: (url: string) => Promise<Response>): Promise<string[]> {
+    let values: string[] | undefined;
+    using listener = Bun.listen<{ received: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { received: "" };
+        },
+        data(socket, chunk) {
+          if (values) return;
+          const received = (socket.data.received += chunk.toString("latin1"));
+          const headEnd = received.indexOf("\r\n\r\n");
+          if (headEnd === -1) return;
+          const head = received.slice(0, headEnd);
+          const bodyLength = Number(/^content-length: *(\d+)/im.exec(head)?.[1] ?? 0);
+          if (received.length < headEnd + 4 + bodyLength) return;
+          values = head
+            .split("\r\n")
+            .filter(line => /^content-type:/i.test(line))
+            .map(line => line.slice("content-type:".length).trim());
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        },
+      },
+    });
+    await (await send(`http://127.0.0.1:${listener.port}/`)).arrayBuffer();
+    return values!;
+  }
+
+  const typed = () => new Blob(["hello world"], { type: "text/x" });
+  const post = (url: string, body: BodyInit, headers?: HeadersInit) => fetch(url, { method: "POST", body, headers });
+
+  // "text/x" is not a registered MIME type, so a slice() without a contentType
+  // does not keep it (see the test above). That gives each row its empty type.
+  test.concurrent.each<[string, (file: string) => Blob | Promise<Blob>]>([
+    ["a slice of a typed Blob", () => typed().slice(0, 5)],
+    ["a slice of a typed File", () => new File(["hello world"], "a.txt", { type: "text/x" }).slice(0, 5)],
+    ["a slice of a slice", () => typed().slice(0, 8).slice(0, 5)],
+    ['slice(0, 5, "")', () => typed().slice(0, 5, "")],
+    ["a slice of Bun.file(path, { type })", file => Bun.file(file, { type: "text/x" }).slice(0, 5)],
+    [
+      "a slice of fs.openAsBlob(path, { type })",
+      async file => (await openAsBlob(file, { type: "text/x" })).slice(0, 5),
+    ],
+    [
+      "new Blob([a slice of Bun.file(path, { type })])",
+      file => new Blob([Bun.file(file, { type: "text/x" }).slice(0, 5)]),
+    ],
+  ])("no header for a Blob whose type is empty: %s", async (_label, make) => {
+    using dir = tempDir("blob-empty-type", { "data.txt": "hello world" });
+    const body = await make(`${dir}/data.txt`);
+    expect(body.type).toBe("");
+    expect(await contentTypes(url => post(url, body))).toEqual([]);
+  });
+
+  test.concurrent.each<[string, (url: string) => Promise<Response>]>([
+    ["with another header", url => post(url, typed().slice(0, 5), { "x-a": "1" })],
+    ["with no bytes and another header", url => post(url, typed().slice(0, 0), { "x-a": "1" })],
+    ["in a Request", url => fetch(new Request(url, { method: "POST", body: typed().slice(0, 5) }))],
+    ["in a clone of a Request", url => fetch(new Request(url, { method: "POST", body: typed().slice(0, 5) }).clone())],
+  ])("no header for a slice whose type is empty, sent %s", async (_label, send) => {
+    expect(await contentTypes(send)).toEqual([]);
+  });
+
+  // The slice has no type of its own, as in Node. Its `.type` still reads the
+  // type of the store that it shares with the blob() result (#35284).
+  test("no header for a slice of a blob() that its Response typed", async () => {
+    const blob = await new Response("hello world", { headers: { "content-type": "application/pdf" } }).blob();
+    expect({
+      blob: await contentTypes(url => post(url, blob)),
+      slice: await contentTypes(url => post(url, blob.slice(0, 5))),
+    }).toEqual({ blob: ["application/pdf"], slice: [] });
+  });
+
+  test.concurrent.each<[string, string, (url: string, file: string) => Promise<Response>]>([
+    ["a typed Blob", "text/x", url => post(url, typed())],
+    ['slice(1, 2, "text/y")', "text/y", url => post(url, typed().slice(1, 2, "text/y"))],
+    ["a slice of Bun.file(path)", "text/plain;charset=utf-8", (url, file) => post(url, Bun.file(file).slice(0, 5))],
+    ["Bun.file(path, { type })", "text/x", (url, file) => post(url, Bun.file(file, { type: "text/x" }))],
+    // A header that the caller gives is sent as it is.
+    ["a slice, with the caller's own empty header", "", url => post(url, typed().slice(0, 5), { "content-type": "" })],
+  ])("%s sends %j", async (_label, expected, send) => {
+    using dir = tempDir("blob-own-type", { "data.txt": "hello world" });
+    expect(await contentTypes(url => send(url, `${dir}/data.txt`))).toEqual([expected]);
+  });
 });

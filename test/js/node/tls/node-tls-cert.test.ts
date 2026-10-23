@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as harnessCert, invalidTls, tmpdirSync } from "harness";
+import https from "https";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
@@ -992,4 +993,87 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     const pem = `-----BEGIN CERTIFICATE-----\n${bad.toString("base64")}\n-----END CERTIFICATE-----\n`;
     expect(() => tls.createSecureContext({ ca: [F.root, pem] })).toThrow();
   });
+});
+
+// A CA with an iPAddress name constraint (RFC 5280, section 4.2.1.10) can issue a leaf whose SAN is an IP address
+// inside the permitted range. Node accepts such a chain. Bun rejected it with UNSUPPORTED_CONSTRAINT_TYPE because the
+// verifier had no iPAddress arm in its name-constraint matcher. A leaf outside a permitted range, or inside an
+// excluded one, must still be rejected.
+describe("CA with an iPAddress name constraint", () => {
+  const dir = join(import.meta.dir, "fixtures", "ip-name-constraint");
+  const read = (name: string) => readFileSync(join(dir, `${name}.pem`), "utf8");
+  const key = read("leaf-key");
+
+  async function withServer<T>(cert: string, fn: (url: string, port: number) => Promise<T>): Promise<T> {
+    const server = https.createServer({ key, cert }, (req, res) => res.end("ok"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    try {
+      return await fn(`https://127.0.0.1:${port}/`, port);
+    } finally {
+      server.close();
+    }
+  }
+
+  const viaFetch = (url: string, ca: string) =>
+    fetch(url, { tls: { ca }, keepalive: false }).then(
+      res => res.text(),
+      (err: NodeJS.ErrnoException) => String(err.code),
+    );
+
+  // node:https and node:tls report verify errors outside Node's named set as UNSPECIFIED, as Node does. The
+  // message tells the cases apart.
+  const describeError = (err: NodeJS.ErrnoException) => `${err.code}: ${err.message}`;
+
+  const viaHttps = (url: string, ca: string) =>
+    new Promise<string>(resolve => {
+      const req = https.get(url, { ca }, res => {
+        res.resume();
+        res.on("end", () => resolve(`status ${res.statusCode}`));
+      });
+      req.on("error", err => resolve(describeError(err)));
+      req.on("close", () => resolve("closed without a response"));
+    });
+
+  const viaTls = (port: number, ca: string) =>
+    new Promise<string>(resolve => {
+      const socket = tls.connect({ host: "127.0.0.1", port, ca }, () => {
+        resolve("authorized");
+        socket.destroy();
+      });
+      socket.on("error", err => resolve(describeError(err)));
+      socket.on("close", () => resolve("closed before the handshake finished"));
+    });
+
+  // [name, CA the client trusts, leaf the server sends, expected result from fetch, node:https, node:tls]
+  const cases: [string, string, string, string[]][] = [
+    // root permits IP:127.0.0.1/32, IP:::1/128 and DNS:localhost
+    ["IP inside the permitted subtree", "root", "leaf", ["ok", "status 200", "authorized"]],
+    // leaf-other-ip also has IP:127.0.0.1, so the chain check is the only reason it fails
+    [
+      "IP outside the permitted subtree",
+      "root",
+      "leaf-other-ip",
+      ["PERMITTED_VIOLATION", "UNSPECIFIED: permitted subtree violation", "UNSPECIFIED: permitted subtree violation"],
+    ],
+    // root-excluded excludes IP:127.0.0.0/8
+    [
+      "IP inside an excluded subtree",
+      "root-excluded",
+      "leaf-excluded",
+      ["EXCLUDED_VIOLATION", "UNSPECIFIED: excluded subtree violation", "UNSPECIFIED: excluded subtree violation"],
+    ],
+  ];
+  for (const [name, root, leaf, expected] of cases) {
+    it(name, async () => {
+      const ca = read(`${root}-cert`);
+      expect(
+        await withServer(read(`${leaf}-cert`), async (url, port) => [
+          await viaFetch(url, ca),
+          await viaHttps(url, ca),
+          await viaTls(port, ca),
+        ]),
+      ).toEqual(expected);
+    });
+  }
 });

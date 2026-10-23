@@ -226,9 +226,7 @@ export function nodeExeAtLeast(version: string): string | null {
   if (!node) return null;
   try {
     const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-    // Only the three numbers: to semver, a nightly or a release candidate is not ">=" any release.
-    const release = probe.stdout.toString().match(/^\d+\.\d+\.\d+/)?.[0];
-    return probe.exitCode === 0 && release && Bun.semver.order(release, version) >= 0 ? node : null;
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
   } catch {
     // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
     return null;

@@ -11,7 +11,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainValues", ExpectedArray::BeforeValue, ContainMsgs::CONTAIN,
             |g, value, expected| {
-                if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(true)); }
+                if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(false)); }
                 let values = value.values(g)?;
                 let count = values.get_length(g)?;
                 let mut itr = expected.array_iterator(g)?;

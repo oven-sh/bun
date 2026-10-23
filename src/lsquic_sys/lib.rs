@@ -546,6 +546,14 @@ impl Stream {
         // SAFETY: as above.
         unsafe { lsquic_stream_wantwrite(self.0, want as c_int) }
     }
+    /// Bytes `write` takes now: the smaller of the stream's and the connection's credit. lsquic calls `on_write` only above 0.
+    pub fn write_avail(&self) -> usize {
+        unsafe extern "C" {
+            fn lsquic_stream_write_avail(s: *mut lsquic_stream) -> usize;
+        }
+        // SAFETY: as above.
+        unsafe { lsquic_stream_write_avail(self.0) }
+    }
     pub fn reset(&self, code: u64) {
         // SAFETY: as above.
         unsafe { us_nq_stream_reset(self.0, code) }

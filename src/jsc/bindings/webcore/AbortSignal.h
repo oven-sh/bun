@@ -133,23 +133,23 @@ public:
     bool hasAliveSourceSignals() const { return m_sourceSignals.begin() != m_sourceSignals.end(); }
 
     // Read-only interested-party probe for GC marker threads: true if anything
-    // would observe this timeout signal aborting. A single atomic so the
-    // marker touches no mutable container.
-    bool hasTimeoutObserver() const
+    // would observe this signal aborting. A single atomic so the marker
+    // touches no mutable container.
+    bool hasAbortObserver() const
     {
-        return m_timeoutObserverCount.load(std::memory_order_relaxed) > 0;
+        return m_abortObserverCount.load(std::memory_order_relaxed) > 0;
     }
 
     // https://github.com/oven-sh/bun/issues/4517
     void incrementPendingActivityCount()
     {
         ++pendingActivityCount;
-        m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+        m_abortObserverCount.fetch_add(1, std::memory_order_relaxed);
     }
     void decrementPendingActivityCount()
     {
         --pendingActivityCount;
-        m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+        m_abortObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
     bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
@@ -217,10 +217,10 @@ private:
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
     std::atomic<uint32_t> pendingActivityCount { 0 };
-    // Everything hasTimeoutObserver() cares about in one counter: abort event
+    // Everything hasAbortObserver() cares about in one counter: abort event
     // listeners (1 while any exist), pending activity, m_algorithms,
     // m_abortAlgorithms, dependent signals.
-    std::atomic<uint32_t> m_timeoutObserverCount { 0 };
+    std::atomic<uint32_t> m_abortObserverCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
     uint8_t m_flags { 0 };

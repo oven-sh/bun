@@ -453,7 +453,7 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
       const code = await closed.promise;
       expect({ writes, code, received, read }).toEqual({
         writes: [-1, -1],
-        code: "ECONNABORTED",
+        code: "ECONNRESET",
         received: "",
         read: "unread",
       });

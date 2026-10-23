@@ -179,7 +179,8 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 // The file half of X509_STORE_set_default_paths ($SSL_CERT_FILE, else X509_get_default_cert_file(), usually
 // /etc/ssl/cert.pem), trusting exactly what X509_load_cert_crl_file would, but read once per process into a lazy set
 // (parsed per certificate on first use, shared by every store) rather than parsed whole into each store, and without
-// the certificates the bundled set already holds byte-for-byte when it is enabled — on most distros that is most of the file.
+// the certificates the bundled set already holds byte-for-byte — on most distros that is most of the file. With
+// --use-openssl-ca the store has no bundled set, so it needs the whole file.
 struct us_openssl_default_cert_file {
   X509_LAZY_CERT_SET *certs = nullptr;
   STACK_OF(X509) *trusted = nullptr; // TRUSTED CERTIFICATE blocks carry auxiliary data the lazy set does not model
@@ -197,15 +198,14 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       return;
     }
 
+    const uint8_t *const *bundled_certs = nullptr;
+    const size_t *bundled_lens = nullptr;
+    size_t bundled_count =
+        Bun__defaultCASources().bundled ? us_bundled_root_certs_der(&bundled_certs, &bundled_lens) : 0;
     std::unordered_set<std::string_view> bundled;
-    if (Bun__defaultCASources().bundled) {
-      const uint8_t *const *bundled_certs;
-      const size_t *bundled_lens;
-      size_t bundled_count = us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
-      bundled.reserve(bundled_count);
-      for (size_t i = 0; i < bundled_count; i++) {
-        bundled.emplace(reinterpret_cast<const char *>(bundled_certs[i]), bundled_lens[i]);
-      }
+    bundled.reserve(bundled_count);
+    for (size_t i = 0; i < bundled_count; i++) {
+      bundled.emplace(reinterpret_cast<const char *>(bundled_certs[i]), bundled_lens[i]);
     }
 
     std::vector<CRYPTO_BUFFER *> certs;
@@ -292,6 +292,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
   us_default_ca_sources_t sources = Bun__defaultCASources();
 
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099
   if (sources.bundled) {
     X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
     if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {

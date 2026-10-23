@@ -1071,6 +1071,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope: Some(handlers.enter()),
         };
 
+        // The peer took nothing of `end(data)`'s tail for the whole timeout.
+        let tail_timed_out = this.waits_to_send_tail();
         let mut handled = Ok(());
         if !callback.is_empty() {
             let global = handlers.global_object;
@@ -1080,10 +1082,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                     handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
             }
         }
-        // The peer took nothing of `end(data)`'s tail for the whole timeout.
         if this.waits_to_send_tail() {
-            this.buffered_data_for_node_net
-                .with_mut(|b| b.fail(sys::SystemErrno::ETIMEDOUT));
+            // `end(data)` in the handler is how a program drops a peer that stopped reading, so its tail doesn't wait another timeout.
+            this.buffered_data_for_node_net.with_mut(|b| {
+                if tail_timed_out {
+                    b.fail(sys::SystemErrno::ETIMEDOUT);
+                } else {
+                    b.clear();
+                }
+            });
             this.close_if_flushed();
         }
         handled

@@ -7532,6 +7532,58 @@ describe.concurrent("end(data) larger than the send buffer", () => {
     },
   );
 
+  // In its own process, and not on Windows, for the same reasons.
+  it.skipIf(isWindows).each(["tcp", "tls"] as const)(
+    "%s: end(data) made in timeout() with nothing queued before closes at once, without an error",
+    async transport => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+          import { sweepSocketTimers } from "bun:internal-for-testing";
+          const { key, cert } = JSON.parse(process.env.TEST_TLS);
+          const full = Promise.withResolvers();
+          const chunk = Buffer.alloc(1 << 20);
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: key ? { key, cert } : undefined,
+            socket: {
+              data(socket) {
+                while (socket.write(chunk) === chunk.length) {}
+                full.resolve();
+              },
+              timeout: socket => console.log("timeout", socket.end(Buffer.alloc(16 << 20))),
+              close: (socket, error) => console.log("close", error?.code),
+            },
+          });
+          function sendRequest(socket) {
+            socket.write("request");
+            socket.pause();
+          }
+          using peer = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            tls: key ? { ca: cert } : undefined,
+            socket: { ...(key ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
+          });
+          await full.promise;
+          // The accepted socket's 120 seconds, and the 10 a TLS close waits for unsent records. Less than a second timeout.
+          sweepSocketTimers(31 + 4);
+          console.log("done");
+          `,
+        ],
+        env: { ...bunEnv, TEST_TLS: JSON.stringify(transport === "tls" ? { key: tls.key, cert: tls.cert } : {}) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `timeout ${16 << 20}\nclose undefined\ndone\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // Windows takes a first send of any size whole, so nothing is queued there.
   it.skipIf(isWindows)(
     "end(data) on the raw half of an upgradeTLS() pair leaves the TLS half's tail alone",

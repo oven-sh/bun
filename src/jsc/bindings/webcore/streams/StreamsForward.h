@@ -120,6 +120,7 @@ enum class SourceKind : uint8_t {
     TextDecode, // Body.textStream() reading from an existing byte stream
                 // (algorithmContext = source JSReadableStreamDefaultReader;
                 // decode state inline on m_algorithms.textDecodeState)
+    TransformErrorWhenDrained, // a Transform readable whose next pull rejects (underlyingObject = the error)
 };
 
 // Which arm runs a writable controller's write/close/abort algorithms.
@@ -149,6 +150,13 @@ enum class CompressionFormat : uint8_t {
     Gzip = 2,
     Brotli = 3,
     Zstd = 4,
+};
+
+// How one step of the coder ended. Matches the `StepEnd` enum in CompressionStreamCoder.rs.
+enum class CodecStepEnd : uint8_t {
+    Done = 0,
+    More = 1, // the coder kept the tail of the chunk: step it again, with no input, before the next chunk
+    TrailingJunk = 2, // trailing junk follows the output: deliver it, then throw the junk error
 };
 
 // JSReadableStream Bun-mode members

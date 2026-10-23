@@ -388,7 +388,7 @@ impl ExtractTarball {
                         None,
                         &mut dirname_reader,
                         ExtractOptions {
-                            // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
+                            // on github.com the root dir is <user>-<repo>-<commit_id>
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
                             skip_symlinks: true,

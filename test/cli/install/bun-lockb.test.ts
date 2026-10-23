@@ -886,6 +886,38 @@ it("loads a lockfile that Bun v0.5 wrote", async () => {
   });
 });
 
+// Bun 1.4.3 saved this bun.lockb for `github:owner/my-lib#v1`, whose tarball has the root directory `my-lib`. That name
+// ends in no commit, and its end (`lib`) is no ref that a host has. bun.lockb has the ref, so the bun.lock that is made
+// from it has the ref after the `#` too. The label of the package still ends in `#lib`. The hash that bun.lockb stores
+// covers the label, so the lockfile does not count as changed.
+it("saves the ref of a GitHub package whose tarball root names no commit when bun.lockb becomes bun.lock", async () => {
+  using dir = tempDir("lockb-github-root-without-commit", {
+    "bun.lockb": await file(join(import.meta.dir, "fixtures", "github-root-without-commit.lockb")).bytes(),
+    "package.json": JSON.stringify({ name: "app", dependencies: { "my-lib": "github:owner/my-lib#v1" } }),
+  });
+  expect(await run(String(dir), "pm", "ls")).toEqual({
+    stdout: expect.stringContaining("└── my-lib@github:owner/my-lib#lib\n"),
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run(String(dir), "install", "--frozen-lockfile", "--lockfile-only")).toEqual({
+    stdout: expect.stringContaining("bun install"),
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run(String(dir), "install", "--save-text-lockfile", "--lockfile-only")).toEqual({
+    stdout: expect.stringContaining("bun install"),
+    stderr: expect.stringContaining("Saved lockfile"),
+    exitCode: 0,
+  });
+  const { packages } = Bun.JSONC.parse(await file(join(String(dir), "bun.lock")).text()) as {
+    packages: Record<string, unknown[]>;
+  };
+  expect(packages).toEqual({
+    "my-lib": ["my-lib@github:owner/my-lib#v1", {}, "my-lib", expect.stringMatching(/^sha512-/)],
+  });
+});
+
 // bun.lockb stores a hash of the packages and of the project's lifecycle scripts. Only an install knows the scripts.
 describe.concurrent("--frozen-lockfile after a migration, with a root postinstall", () => {
   const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";

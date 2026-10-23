@@ -1518,7 +1518,7 @@ impl NodeHTTPResponse {
         if let Some(raw_response) = self.writer() {
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            raw_response.end_without_body(true);
+            raw_response.abandon();
         }
         self.on_request_complete();
     }

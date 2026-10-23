@@ -1,13 +1,14 @@
 //! What a JavaScript rule can learn from `parserServices.getTypeAtLocation(node)` and `checker.getTypeAtLocation(node)`.
 //!
 //! A rule runs on a thread that has a realm, and the type checker belongs to the thread that checked the file. So the
-//! answers are computed up front, for every expression of a file on which a rule runs that has asked for types before.
+//! answers are computed up front, for every node of a file on which a rule runs that has asked for types before.
 //! `typedServices` in `worker/main.js` makes objects that look like TypeScript's from them. Whatever else a rule reads
 //! from these objects is refused by name: see [`Host::asks_for_types`](super::Host::asks_for_types).
 
 use super::ast;
 use crate::ast::File;
-use crate::types::TypeFlags;
+use crate::estree::TypeAtLocation;
+use crate::types::{Type, TypeFlags};
 use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::FxHashMap;
 
@@ -44,23 +45,11 @@ const FLAGS_BEFORE_TYPESCRIPT_6: [(TypeFlags, u32); 29] = [
     (TypeFlags::STRING_MAPPING, 1 << 28),
 ];
 
-/// Which `ts.TypeFlags` the project's rules compare `type.flags` with: those of the `typescript` they import.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub enum FlagValues {
-    BeforeTypeScript6,
-    #[default]
-    SinceTypeScript6,
-}
-
-impl FlagValues {
-    fn of(self, flags: TypeFlags) -> u32 {
-        let known = FLAGS_BEFORE_TYPESCRIPT_6.iter();
-        let set = known.filter(|it| flags.contains(it.0));
-        match self {
-            FlagValues::BeforeTypeScript6 => set.fold(0, |all, it| all | it.1),
-            FlagValues::SinceTypeScript6 => set.fold(0, |all, it| all | it.0.bits()),
-        }
-    }
+/// `flags` as TypeScript 6 and later number them, and as the versions before do.
+fn in_both_numberings(flags: TypeFlags) -> [u32; 2] {
+    let known = FLAGS_BEFORE_TYPESCRIPT_6.iter();
+    let set = known.filter(|it| flags.contains(it.0));
+    set.fold([0, 0], |all, it| [all[0] | it.0.bits(), all[1] | it.1])
 }
 
 /// What rules can learn about the types in a file.
@@ -73,19 +62,23 @@ pub(super) struct Types {
 }
 
 impl Types {
-    /// Appends seven words for each expression and import specifier of `file`, which has types: the start and the end
-    /// of its `range`, its [`NodeType`](crate::estree::NodeType), `type.flags`, the lengths of
-    /// `type.getCallSignatures()` and `type.getConstructSignatures()`, and which of the names `type.symbol.name` is,
-    /// counted from 1, or 0 without a symbol. They're sorted.
-    pub(super) fn add_nodes<'a>(&mut self, file: &'a File<'a>, flag_values: FlagValues) {
+    /// Appends eight words for each node of `file` that [has a type](crate::estree::VNode::type_at_location): the start
+    /// and the end of its `range`, its [`NodeType`](crate::estree::NodeType), `type.flags` [twice](in_both_numberings),
+    /// the lengths of `type.getCallSignatures()` and `type.getConstructSignatures()`, and which of the names
+    /// `type.symbol.name` is, counted from 1, or 0 without a symbol. They're sorted.
+    pub(super) fn add_nodes<'a>(&mut self, file: &'a File<'a>) {
         let offsets = Utf16OffsetTable::without_bom(file.text());
         let writer = ast::walk(file, &offsets, &[]);
         let mut numbers: FxHashMap<&[u8], u32> = FxHashMap::default();
-        let mut rows: Vec<[u32; 7]> = (writer.view().nodes.iter())
+        let mut rows: Vec<[u32; 8]> = (writer.view().nodes.iter())
             .filter_map(|node| {
-                let ty = node.type_at_location()?;
+                let ty = match node.type_at_location() {
+                    TypeAtLocation::Type(ty) => Some(ty),
+                    TypeAtLocation::Error => None,
+                    TypeAtLocation::Unknown => return None,
+                };
                 let (node_type, span) = node.type_and_span();
-                let name = ty.symbol().map_or(0, |symbol| {
+                let name = ty.and_then(Type::symbol).map_or(0, |symbol| {
                     let next = numbers.len() as u32 + 1;
                     *numbers.entry(symbol.name()).or_insert_with(|| {
                         self.names.extend_from_slice(symbol.name());
@@ -93,13 +86,16 @@ impl Types {
                         next
                     })
                 });
+                let [flags, flags_before_6] =
+                    in_both_numberings(ty.map_or(TypeFlags::ANY, Type::flags));
                 Some([
                     offsets.to_utf16(span.start),
                     offsets.to_utf16(span.end),
                     node_type as u32,
-                    flag_values.of(ty.flags()),
-                    ty.get_call_signatures().len() as u32,
-                    ty.get_construct_signatures().len() as u32,
+                    flags,
+                    flags_before_6,
+                    ty.map_or(0, |it| it.get_call_signatures().len() as u32),
+                    ty.map_or(0, |it| it.get_construct_signatures().len() as u32),
                     name,
                 ])
             })

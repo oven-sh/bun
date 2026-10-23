@@ -44,4 +44,3 @@ pub(crate) use rules::has_non_json_value;
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::{eslint_patch, program};
-pub use types::FlagValues;

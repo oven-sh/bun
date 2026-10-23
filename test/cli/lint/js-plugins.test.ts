@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { endChildren, spawn } from "../children";
 import { cases as callCases } from "./oracle/jsplugins/calls/cases.mjs";
 import { cases as codePathCases, fileOf, isTypeScript } from "./oracle/jsplugins/code-paths/cases.mjs";
@@ -14,6 +14,7 @@ import {
 } from "./oracle/jsplugins/scopes/cases.mjs";
 import { cases as tokenCases, fileOf as tokenFileOf } from "./oracle/jsplugins/tokens/cases.mjs";
 import { cases as treeCases } from "./oracle/jsplugins/trees/cases.mjs";
+import { cases as typeCases, linted as typeFiles } from "./oracle/jsplugins/types/cases.mjs";
 
 afterAll(endChildren);
 
@@ -1866,6 +1867,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     // `reads` is what the rule does with the type of the first argument of each `it()`.
     const typed = (reads: string, rules = "") => ({
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "es2022", "types": [] } }`,
+      "node_modules/typescript/package.json": `{ "name": "typescript", "version": "6.0.3" }`,
       "plugin.mjs": `
         // This is what \`getParserServices\` in @typescript-eslint/utils does.
         function services(context) {
@@ -2060,6 +2062,160 @@ declare const either: Shape | Store;
         ]);
         expect(messagesOf(raw)).toEqual(Object.values(names).map(it => `${it} ${it}`));
         expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // Recorded with ESLint 10.12.0, @typescript-eslint/parser 8.72.0 and TypeScript 5.9.3 by record.mjs in that directory.
+    test.concurrent(
+      "a rule gets the type of every kind of node",
+      async () => {
+        const oracle = join(import.meta.dir, "oracle", "jsplugins", "types");
+        const expected = readFileSync(join(oracle, "expected.txt"), "utf8").trim().split("\n");
+        const files = {
+          ...typeCases,
+          "node_modules/typescript/package.json": `{ "name": "typescript", "version": "5.9.3" }`,
+          "ask.cjs": readFileSync(join(oracle, "ask.cjs"), "utf8"),
+          "eslint.config.cjs": `module.exports = [{
+            files: ["**/*.ts", "**/*.tsx"],
+            plugins: { ask: require("./ask.cjs") },
+            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+            rules: { "ask/all": "error" },
+          }];`,
+        };
+        const { raw, stderr, exitCode } = await lint(files, ["-f", "json", ...typeFiles]);
+        type Message = { line: number; column: number; endLine: number; endColumn: number; message: string };
+        const results: { filePath: string; messages: Message[] }[] = JSON.parse(raw);
+        const said = results.flatMap(({ filePath, messages }) =>
+          messages.map(
+            it => `${basename(filePath)} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
+          ),
+        );
+        const isRefused = (line: string) => line.endsWith(": refused");
+        expect(said.map((line, i) => (isRefused(line) ? expected[i] : line))).toEqual(expected);
+        // In this order: the `x = 1` of `({ x = 1 } = y)`, the `A` and the `B` of `implements A.B.C`, the `import` of `import.meta`, the
+        // `a` of `<a:b />`, the `A.B` of `implements A.B.C`, the file, the `import()` of `typeof import()`, the `A.B` of the type
+        // `A.B.C`, the `symbol` of `unique symbol`, the `<T>` of `class A extends B<T>`, the `-1` of the type `-1`.
+        const kinds = said
+          .filter(isRefused)
+          .map(it => it.slice(it.indexOf(" ", it.indexOf(" ") + 1) + 1, -": refused".length));
+        expect([...new Set(kinds)].sort()).toEqual([
+          "AssignmentPattern",
+          "Identifier in MemberExpression.object",
+          "Identifier in MemberExpression.property",
+          "Identifier in MetaProperty.meta",
+          "JSXIdentifier in JSXNamespacedName.namespace",
+          "MemberExpression",
+          "Program",
+          "TSImportType",
+          "TSQualifiedName",
+          "TSSymbolKeyword",
+          "TSTypeParameterInstantiation",
+          "UnaryExpression",
+        ]);
+        expect(said.filter(isRefused).length).toBe(23);
+        expect(stderr).not.toContain(" did not run because");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // `type.flags` is numbered by the `typescript` that the parser finds: with ESLint that one makes the types. Each of these is the same
+    // under ESLint 10.12.0 with @typescript-eslint/parser 8.72.0, TypeScript 5.9.3 for the parser and 6.0.3 elsewhere.
+    describe("the flags are those of the parser's typescript", () => {
+      const version = (version: string) => JSON.stringify({ name: "typescript", version });
+      const store = "node_modules/.pnpm/@typescript-eslint+parser@8.72.0_typescript@5.9.3/node_modules";
+      const parser = {
+        [`${store}/@typescript-eslint/parser/package.json`]: `{ "name": "@typescript-eslint/parser", "version": "8.72.0", "main": "index.js" }`,
+        [`${store}/@typescript-eslint/parser/index.js`]: `module.exports = { meta: { name: "typescript-eslint/parser", version: "8.72.0" } };`,
+        [`${store}/typescript/package.json`]: version("5.9.3"),
+      };
+      const withParser = (files: Record<string, string>) => ({
+        ...files,
+        ...parser,
+        "eslint.config.mjs": `import parser from "@typescript-eslint/parser";\n${files["eslint.config.mjs"].replace(`parser: { meta: { name: "typescript-eslint/parser" } }`, "parser")}`,
+        "a.ts": `declare function it(title: unknown): void;\nit("a");\n`,
+      });
+      const run = async (files: Record<string, string | undefined>) => {
+        using dir = tempDir(
+          "bun-lint-js-plugins",
+          Object.fromEntries(Object.entries(files).filter(it => it[1] !== undefined)),
+        );
+        mkdirSync(join(String(dir), "node_modules/@typescript-eslint"), { recursive: true });
+        // As pnpm links it.
+        symlinkSync(
+          join(String(dir), store, "@typescript-eslint/parser"),
+          join(String(dir), "node_modules/@typescript-eslint/parser"),
+          "junction",
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "json", "a.ts"],
+          env,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { messages: messagesOf(stdout), stderr, exitCode };
+      };
+      const flagsOf = "(services, node) => services.getTypeAtLocation(node).flags";
+
+      test.concurrent(
+        "which only the parser finds",
+        async () => {
+          const files = { ...withParser(typed(flagsOf)), "node_modules/typescript/package.json": undefined };
+          expect(await run(files)).toMatchObject({ messages: ["128"], exitCode: 1 });
+        },
+        timeout,
+      );
+
+      test.concurrent(
+        "and not of the one in the project's node_modules",
+        async () => {
+          expect(await run(withParser(typed(flagsOf)))).toMatchObject({ messages: ["128"], exitCode: 1 });
+        },
+        timeout,
+      );
+
+      test.concurrent(
+        "and not of the one that the plugin finds",
+        async () => {
+          const {
+            "plugin.mjs": plugin,
+            "node_modules/typescript/package.json": _,
+            ...files
+          } = withParser(typed(flagsOf));
+          const moved = {
+            ...files,
+            "eslint.config.mjs": files["eslint.config.mjs"].replace("./plugin.mjs", "./plugins/plugin.mjs"),
+            "plugins/plugin.mjs": plugin,
+            "plugins/node_modules/typescript/package.json": version("6.0.3"),
+          };
+          expect(await run(moved)).toMatchObject({ messages: ["128"], exitCode: 1 });
+        },
+        timeout,
+      );
+    });
+
+    test.concurrent(
+      "without a typescript, a rule that reads the flags is skipped, and another one runs",
+      async () => {
+        const { "node_modules/typescript/package.json": _, ...files } = typed(
+          "(services, node) => services.getTypeAtLocation(node).flags",
+        );
+        const source = { "a.ts": `declare function it(title: unknown): void;\nit(it);\n` };
+        const { raw, stderr, exitCode } = await lint({ ...files, ...source }, ["-f", "json", "a.ts"]);
+        expect(messagesOf(raw)).toEqual([]);
+        expect(stderr).toContain(
+          "1 rule did not run because rules that run in JavaScript cannot read this from a type: demo/title (Type.flags without typescript)",
+        );
+        expect(exitCode).toBe(2);
+        const { "node_modules/typescript/package.json": __, ...others } = typed(
+          "(services, node) => services.getTypeAtLocation(node).getCallSignatures().length",
+        );
+        const other = await lint({ ...others, ...source }, ["-f", "json", "a.ts"]);
+        expect(messagesOf(other.raw)).toEqual(["1"]);
+        expect(other.exitCode).toBe(1);
       },
       timeout,
     );
@@ -2284,7 +2440,7 @@ declare const either: Shape | Store;
         "(services, node) => services.getTypeAtLocation(node).getCallSignatures()[0].getReturnType()",
         "Signature.getReturnType",
       ],
-      ["(services, node) => services.getTypeAtLocation(node.parent.parent)", "getTypeAtLocation(ExpressionStatement)"],
+      ["(services, node) => services.getTypeAtLocation(node.parent.parent.parent)", "getTypeAtLocation(Program)"],
       ["(services, node) => services.getSymbolAtLocation(node)", "getSymbolAtLocation(Identifier)"],
       ["(services, node) => services.program.getCompilerOptions()", "Program.getCompilerOptions"],
       [

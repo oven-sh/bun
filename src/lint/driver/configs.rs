@@ -26,7 +26,7 @@ use crate::run::{Environment, Fatal};
 use crate::{Linter, eslintrc, evaluate, fs, native, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::{Configuration, FlagValues, Host, Route};
+use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::language::InferGlobals;
 use bun_lint::linter::config::json_for_oxlint;
 use bun_lint::linter::{
@@ -910,15 +910,6 @@ impl<'l> Loader<'l> {
                 b" is installed, but bun lint checks types like TypeScript 7.1",
             ];
             self.advise(line.concat());
-        }
-    }
-
-    /// Tells the JavaScript rules' host which `ts.TypeFlags` the project's `typescript` has. It reads one file.
-    pub(crate) fn number_type_flags(&self) {
-        let installed = installed_version(self.cwd(), b"typescript");
-        if installed.is_some_and(|it| minor_of(&it).is_some_and(|it| it < (6, 0))) {
-            self.js_plugins
-                .number_type_flags(FlagValues::BeforeTypeScript6);
         }
     }
 

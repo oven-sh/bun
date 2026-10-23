@@ -381,6 +381,28 @@ function typedServices() {
   return typed.asked.has(currentRule?.position) ? typed.services : null;
 }
 
+// The major version of the `typescript` with which the parser of the file would make the types: TypeScript 6 has renumbered
+// `ts.TypeFlags`. `null` if there is none. By where it is looked for.
+const typescriptMajors = new Map();
+function typescriptMajor() {
+  const here = nodePath.join(cwd, "noop.js");
+  const attempt = get => {
+    try {
+      return get();
+    } catch {
+      return undefined;
+    }
+  };
+  const parser =
+    fileSettings.parser?.module ?? attempt(() => createRequire(here).resolve("@typescript-eslint/parser/package.json"));
+  const from = parser ?? here;
+  if (!typescriptMajors.has(from)) {
+    const versions = [from, here].map(it => attempt(() => createRequire(it)("typescript/package.json").version));
+    typescriptMajors.set(from, parseInt(versions.find(it => it !== undefined)) || null);
+  }
+  return typescriptMajors.get(from);
+}
+
 function readTypes() {
   const { emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations } =
     fileSettings.languageOptions.parserOptions;
@@ -389,10 +411,10 @@ function readTypes() {
   // Where the row of a node begins. The rows are sorted.
   const find = (start, end, type) => {
     let low = 0;
-    let high = (words.length - first) / 7;
+    let high = (words.length - first) / 8;
     while (low < high) {
       const middle = (low + high) >> 1;
-      const at = first + middle * 7;
+      const at = first + middle * 8;
       const order = words[at] - start || words[at + 1] - end || words[at + 2] - type;
       if (order === 0) return at;
       if (order < 0) low = middle + 1;
@@ -413,16 +435,18 @@ function readTypes() {
     if (words[1] === 0) throw new Error("You have used a rule which requires type information.");
     const at = find(node.range[0], node.range[1], native.typeId(node.type));
     if (at === -1) refuse(`getTypeAtLocation(${node.type})`);
-    const flags = words[at + 3];
+    const getFlags = () => words[at + ((typescriptMajor() ?? refuse("Type.flags without typescript")) < 6 ? 4 : 3)];
     return lookAlike("Type", {
-      flags,
-      getFlags: () => flags,
-      getCallSignatures: () => signatures(words[at + 4]),
-      getConstructSignatures: () => signatures(words[at + 5]),
-      get symbol() {
-        return symbol(words[at + 6]);
+      get flags() {
+        return getFlags();
       },
-      getSymbol: () => symbol(words[at + 6]),
+      getFlags,
+      getCallSignatures: () => signatures(words[at + 5]),
+      getConstructSignatures: () => signatures(words[at + 6]),
+      get symbol() {
+        return symbol(words[at + 7]);
+      },
+      getSymbol: () => symbol(words[at + 7]),
     });
   };
   // A node of TypeScript's tree is only good for asking about it.

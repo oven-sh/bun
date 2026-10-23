@@ -2,7 +2,7 @@
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
-use super::types::{FlagValues, Types};
+use super::types::Types;
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
@@ -162,8 +162,6 @@ pub struct Host<'e> {
     measures: bool,
     /// True if any rule [has asked for types](Host::has_asked_for_types).
     has_been_asked_for_types: AtomicBool,
-    /// [`Host::number_type_flags`]
-    numbers_type_flags_as_before_typescript_6: AtomicBool,
     state: Guarded<State>,
 }
 
@@ -235,7 +233,6 @@ impl<'e> Host<'e> {
             cwd: cwd.to_vec(),
             measures: false,
             has_been_asked_for_types: AtomicBool::new(false),
-            numbers_type_flags_as_before_typescript_6: AtomicBool::new(false),
             state: Guarded::new(State::default()),
         }
     }
@@ -410,12 +407,6 @@ impl<'e> Host<'e> {
         rules
     }
 
-    /// Sets which `ts.TypeFlags` rules compare `type.flags` with.
-    pub fn number_type_flags(&self, like: FlagValues) {
-        (self.numbers_type_flags_as_before_typescript_6)
-            .store(like == FlagValues::BeforeTypeScript6, Ordering::Relaxed);
-    }
-
     /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, whether `file` has types, these rules'
     /// positions, and what they can learn about the types in `file`. `None` if none of them has asked.
     ///
@@ -437,15 +428,9 @@ impl<'e> Host<'e> {
             words,
             ..Types::default()
         };
-        if file.types.is_none() {
-            return Some(types);
+        if file.types.is_some() {
+            types.add_nodes(file);
         }
-        let is_before_6 = (self.numbers_type_flags_as_before_typescript_6).load(Ordering::Relaxed);
-        let flag_values = match is_before_6 {
-            true => FlagValues::BeforeTypeScript6,
-            false => FlagValues::SinceTypeScript6,
-        };
-        types.add_nodes(file, flag_values);
         Some(types)
     }
 

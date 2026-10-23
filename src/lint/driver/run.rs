@@ -603,7 +603,6 @@ impl Run<'_> {
             && loader.wants_types(&loaded, config)
             && (has_rules_with_types || context.checks_types);
         if needs_types {
-            loader.number_type_flags();
             let file = Typed {
                 path: &path,
                 config,
@@ -632,7 +631,6 @@ impl Run<'_> {
                 text: Some(text.clone()),
             };
             let result = without_types.or_else(|| {
-                loader.number_type_flags();
                 typed::lint(context, self.environment, &[file], &on_circular_fixes).pop()?
             });
             if let Some(result) = result {
@@ -841,7 +839,6 @@ impl Run<'_> {
             if !is_oxlint {
                 loader.advise_about_typescript();
             }
-            loader.number_type_flags();
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
             for (target, result) in targets.into_iter().zip(linted) {
@@ -921,7 +918,6 @@ impl Run<'_> {
         if !waiting.is_empty() {
             let started = Instant::now();
             loader.advise_about_typescript();
-            loader.number_type_flags();
             let waiting: FxHashSet<Vec<u8>> = waiting.into_iter().collect();
             let waiting = (without_types.iter()).filter(|it| waiting.contains(&it.path));
             let waiting = waiting.filter_map(|target| match &target.status {

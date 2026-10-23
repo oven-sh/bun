@@ -17,8 +17,6 @@
   },
   "scripts": {
     "example": "bun --config=./example/bunfig.toml example/index.html",
-    "lint": "oxlint .",
-    "fmt": "prettier --write .",
     "check:types": "tsc --noEmit",
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
   },

@@ -6,12 +6,21 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
-import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isMacOS, isWindows, readdirSorted, runCommandMaxRSS, tempDir } from "harness";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
-import { join } from "node:path";
-import { createGzip, gzipSync } from "node:zlib";
+import { join, relative, sep } from "node:path";
+import { createGzip, deflateRawSync, gzipSync } from "node:zlib";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -26,7 +35,13 @@ function octal(n: number, width: number): string {
   return n.toString(8).padStart(width - 1, "0") + "\0";
 }
 
-function tarHeader(name: string, size: number, type: "0" | "5" | "x" | "g", mode?: Uint8Array): Buffer {
+function tarHeader(
+  name: string,
+  size: number,
+  type: string,
+  mode?: Uint8Array,
+  change?: (header: Buffer) => void,
+): Buffer {
   const buf = Buffer.alloc(512, 0);
   buf.write(name, 0, 100, "utf8");
   buf.write(octal(0o644, 8), 100); // mode
@@ -39,6 +54,7 @@ function tarHeader(name: string, size: number, type: "0" | "5" | "x" | "g", mode
   buf.write(type, 156);
   buf.write("ustar\0", 257);
   buf.write("00", 263);
+  change?.(buf); // any other field
   let sum = 0;
   for (let i = 0; i < 512; i++) sum += buf[i];
   buf.write(octal(sum, 8), 148);
@@ -77,35 +93,16 @@ function tarFile(name: string, body: Buffer): Buffer[] {
   return [tarHeader(name, body.length, "0"), body, pad512(body.length)];
 }
 
-// One old GNU sparse member, as `tar --sparse` writes it: typeflag 'S',
-// magic "ustar  \0", a map of (offset, length) pairs at 386 and the real
-// size at 483. The size field counts the stored bytes only. `data` sits
-// at offset 0 and the rest of the file, up to `realSize`, is a hole.
-function gnuSparseFile(name: string, realSize: number, data: Buffer): Buffer[] {
-  const buf = Buffer.alloc(512, 0);
-  buf.write(name, 0, 100, "utf8");
-  buf.write(octal(0o644, 8), 100);
-  buf.write(octal(0, 8), 108);
-  buf.write(octal(0, 8), 116);
-  buf.write(octal(data.length, 12), 124);
-  buf.write(octal(0, 12), 136);
-  buf.fill(" ", 148, 156);
-  buf.write("S", 156);
-  buf.write("ustar  \0", 257);
-  // GNU tar closes the map with an empty entry at the real size.
-  const map: [number, number][] = [
-    [0, data.length],
-    [realSize, 0],
-  ];
-  map.forEach(([offset, length], i) => {
-    buf.write(octal(offset, 12), 386 + i * 24);
-    buf.write(octal(length, 12), 398 + i * 24);
-  });
-  buf.write(octal(realSize, 12), 483);
-  let sum = 0;
-  for (let i = 0; i < 512; i++) sum += buf[i];
-  buf.write(octal(sum, 8), 148);
-  return [buf, data, pad512(data.length)];
+// Bytes gzip can't collapse away, the same on every run (xorshift32).
+function incompressible(bytes: number, seed: number): Buffer {
+  const words = new Uint32Array(bytes / 4);
+  for (let i = 0, x = seed; i < words.length; i++) {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    words[i] = x;
+  }
+  return Buffer.from(words.buffer);
 }
 
 type Entry = { path: string; body: Buffer };
@@ -141,18 +138,11 @@ function makeEntries(): Entry[] {
       body: Buffer.from("long path ok\n"),
     },
   ];
-  // Bulk entries: SHA-chained bytes so gzip can't collapse them away.
-  // Sized so the compressed tarball exceeds the default
+  // Bulk entries. Sized so the compressed tarball exceeds the default
   // BUN_INSTALL_STREAMING_MIN_SIZE (2 MB) — streaming only commits
   // when Content-Length is above that threshold.
   for (let i = 0; i < 48; i++) {
-    const bytes = Buffer.alloc(48 * 1024);
-    let seed = createHash("sha256").update(`chunk-${i}`).digest();
-    for (let off = 0; off < bytes.length; off += 32) {
-      seed.copy(bytes, off);
-      seed = createHash("sha256").update(seed).digest();
-    }
-    entries.push({ path: `data/chunk-${i}.bin`, body: bytes });
+    entries.push({ path: `data/chunk-${i}.bin`, body: incompressible(48 * 1024, i + 1) });
   }
   return entries;
 }
@@ -174,12 +164,16 @@ type Faults = {
   chunker?: (offset: number) => number;
   /** Milliseconds to wait between writes (default: none, `setImmediate`). */
   delayMs?: (offset: number) => number;
+  /** The rest of the tarball waits for this after the first write. `isClosed`: bun hung up, nobody reads the rest. */
+  afterFirstWrite?: (isClosed: () => boolean) => Promise<void>;
   /** Destroy the tarball connection after this many body bytes... */
   dropTarballAt?: number;
   /** ...for the first N tarball requests (default: every request). */
   dropTarballTimes?: number;
   /** Destroy the first N manifest connections half-way through the body. */
   dropManifestTimes?: number;
+  /** The `Content-Encoding` of the tarball response. */
+  contentEncoding?: string;
 };
 
 async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number, faults: Faults = {}) {
@@ -229,6 +223,7 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
       if (dropAt >= 0) tarballDropsLeft--;
       res.setHeader("content-type", "application/octet-stream");
       res.setHeader("content-length", String(tgz.length));
+      if (faults.contentEncoding) res.setHeader("content-encoding", faults.contentEncoding);
       // Prevent Nagle coalescing so each write() is its own packet.
       req.socket.setNoDelay(true);
       let i = 0;
@@ -243,7 +238,14 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
         }
         const n = faults.chunker ? Math.max(1, faults.chunker(i)) : chunkBytes;
         res.write(tgz.subarray(i, Math.min(i + n, tgz.length)));
+        const first = i === 0;
         i += n;
+        if (first && faults.afterFirstWrite) {
+          let closed = false;
+          res.once("close", () => (closed = true));
+          void faults.afterFirstWrite(() => closed).then(() => closed || step());
+          return;
+        }
         const delay = faults.delayMs ? faults.delayMs(i) : 0;
         if (delay > 0) setTimeout(step, delay);
         else setImmediate(step);
@@ -268,20 +270,23 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
   };
 }
 
+const installCmd = [bunExe(), "install", "--verbose", "--linker=hoisted"];
+const installEnv = (cwd: string, extraEnv: Record<string, string> = {}) => ({
+  ...bunEnv,
+  BUN_INSTALL_CACHE_DIR: join(cwd, ".cache"),
+  ...extraEnv,
+});
+
 async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+    cmd: installCmd,
     cwd,
-    env: {
-      ...bunEnv,
-      BUN_INSTALL_CACHE_DIR: join(cwd, ".cache"),
-      ...extraEnv,
-    },
+    env: installEnv(cwd, extraEnv),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, resourceUsage: proc.resourceUsage() };
+  return { stdout, stderr, exitCode };
 }
 
 describe("streaming tarball extraction", () => {
@@ -451,6 +456,57 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).toBe(0);
   });
 
+  // npm writes none of these: it skips a name that has a `..` part behind
+  // `package/`, whether or not the name leads out of the package.
+  test.concurrent.each([
+    ["streaming", {}],
+    ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+  ] as const)("entries with a .. part in their name are skipped, as npm skips them (%s)", async (label, env) => {
+    const skipped = [
+      "../climb-1.txt",
+      "../../../climb-3.txt",
+      "nested/../../climb-nested.txt",
+      "a/b/../../../climb-ab.txt",
+      "a/../climb-inside.txt",
+    ];
+    const built = buildTarball([...entries, ...skipped.map(path => ({ path, body: Buffer.from(`${path}\n`) }))]);
+    expect(built.tgz.length).toBeGreaterThan(2 * 1024 * 1024);
+
+    await using reg = await makeRegistry(built.tgz, built.shasum, built.integrity, chunkBytes);
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-dotdot", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+    });
+    // Entries are extracted under BUN_TMPDIR and the tree is then renamed into
+    // the cache. The temp dir is deeper than the longest `..` chain climbs, so
+    // an entry that escapes still lands where the walk below sees it.
+    const tmp = join(String(dir), "t1", "t2", "t3", "bun-tmp");
+    mkdirSync(tmp, { recursive: true });
+
+    const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_TMPDIR: tmp, TMPDIR: tmp });
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain(label === "streaming" ? "] Streamed " : "] Extracted to ");
+    expect(reg.tarballHits).toBe(1);
+
+    // Nowhere under `dir`: not in node_modules, the cache or the temp dir, and not above one of them.
+    const written = readdirSync(String(dir), { recursive: true, withFileTypes: true })
+      .filter(entry => entry.name.startsWith("climb-"))
+      .map(entry => relative(String(dir), join(entry.parentPath, entry.name)));
+    expect(written).toEqual([]);
+    // The entries in front of them are all there.
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      expect([path, readFileSync(join(pkgRoot, path)).equals(body)]).toEqual([path, true]);
+    }
+    expect(exitCode).toBe(0);
+  });
+
   test("tarballs below BUN_INSTALL_STREAMING_MIN_SIZE take the buffered path", async () => {
     // Reuse the same large tarball but raise the threshold above it.
     // The server sends Content-Length, so `notify()` sees a body_size
@@ -505,6 +561,8 @@ describe("streaming tarball extraction", () => {
 
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
+    expect(readdirSync(join(String(dir), ".cache")).filter(name => name.startsWith("stream-pkg"))).toEqual([]);
+    expect(existsSync(join(String(dir), "node_modules", "stream-pkg"))).toBe(false);
     expect(exitCode).not.toBe(0);
   });
 
@@ -595,7 +653,7 @@ describe("streaming tarball extraction", () => {
 
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toMatch(
-      /error: Fail extracting tarball for "stream-pkg": [^\n]*(gzip decompression failed|[Tt]runcated|[Dd]amaged)[^\n]* \(at byte \d+ of \d+\)/,
+      /error: Fail extracting tarball for "stream-pkg": [^\n]*(gzip decompression failed|gzip trailer mismatch|[Tt]runcated|[Dd]amaged)[^\n]* \(at byte \d+ of \d+\)/,
     );
     expect(reg.tarballHits).toBe(1);
     expect(exitCode).toBe(1);
@@ -900,7 +958,13 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   // in memory is negligible relative to PAYLOAD_SIZE.
   expect(statSync(tgzPath).size).toBeLessThan(8 * 1024 * 1024);
 
-  const { stderr, exitCode, resourceUsage } = await runInstall(String(dir));
+  // Doesn't use runInstall, because the maxRSS of a process that this test runner spawns directly also includes the
+  // runner's own peak (see runCommandMaxRSS).
+  const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: installCmd,
+    cwd: String(dir),
+    env: installEnv(String(dir)),
+  });
 
   expect(stderr).not.toContain("error:");
   const big = statSync(join(String(dir), "node_modules", "oversized-pkg", "data.bin"));
@@ -909,31 +973,20 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
 
   // The property under test: extraction never held the 256 MiB
   // decompressed tar in memory. With the old pre-decompress path the
-  // child's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
+  // install's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
   // reallocations): ~780 MB release, ~1 GB debug+ASAN. Streaming
   // through libarchive it stays at baseline (~40 MB release, ~240 MB
-  // debug+ASAN), so the midpoint gives wide margin both ways without
-  // needing to branch on build type.
-  // `Subprocess.resourceUsage().maxRSS` is normalised to bytes on every
-  // platform. The > 1 MiB lower bound guards that unit: any bun process
-  // peaks well above 1 MiB in bytes but under 1_048_576 in kB, so a
-  // regression to kB trips the lower bound instead of vacuously passing
-  // the upper one.
-  const maxRssBytes = resourceUsage?.maxRSS ?? 0;
-  expect(maxRssBytes).toBeGreaterThan(1024 * 1024);
-  expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
+  // debug+ASAN, reported as the spawner's ~320 MB floor), so the
+  // midpoint gives wide margin both ways without needing to branch on
+  // build type.
+  expect(maxRSS).toBeLessThan(2 * PAYLOAD_SIZE);
 });
 
 test("streaming extract skips a damaged header block and extracts the entries after it byte-for-byte while more data is still arriving", async () => {
   const pkgJson = Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }) + "\n");
   const before = Buffer.alloc(4 * 1024 * 1024, 0);
   const after = Buffer.alloc(16 * 1024 * 1024, 0);
-  const tail = Buffer.alloc(8 * 1024 * 1024);
-  let seed = createHash("sha512").update("tail.bin").digest();
-  for (let off = 0; off < tail.length; off += seed.length) {
-    seed.copy(tail, off);
-    seed = createHash("sha512").update(seed).digest();
-  }
+  const tail = incompressible(8 * 1024 * 1024, 1);
 
   const damaged = Buffer.alloc(512, 0);
   damaged.write("junk", 0, "utf8");
@@ -996,13 +1049,9 @@ test.concurrent.each([
   const wideMode = Buffer.from([0x80, 0, 0, 0, 0x80, 0, 0x01, 0xed]);
   const root = "owner-repo-abc1234";
   const index = Buffer.from("module.exports = 'ok';\n");
-  // Incompressible bulk so the body spans many reads and streaming commits.
-  const bulk = Buffer.alloc(256 * 1024);
-  let seed = createHash("sha256").update("wide-mode").digest();
-  for (let off = 0; off < bulk.length; off += 32) {
-    seed.copy(bulk, off);
-    seed = createHash("sha256").update(seed).digest();
-  }
+  // More than one read of the client holds (LIBUS_RECV_BUFFER_LENGTH): a body that is all there at the first read is
+  // not streamed.
+  const bulk = incompressible(1024 * 1024, 1);
   const tgz = gzipSync(
     Buffer.concat([
       tarHeader(`${root}/`, 0, "5"),
@@ -1068,57 +1117,861 @@ test.concurrent.each([
   }
 });
 
-// A sparse entry that ends in a hole is only as long as its declared size
-// if the writer extends the file to that size: libarchive reports the
-// trailing hole through the offset of its ARCHIVE_EOF call, not as a data
-// block. One entry is above the 1 MB preallocation threshold, one below.
-test.concurrent.each([
-  ["streaming", {}],
-  ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
-] as const)("installs a tarball whose sparse entries end in a hole (%s)", async (label, env) => {
-  const sizes = [500_000, 1_500_000];
-  const head = Buffer.alloc(1024, "A");
-  // Incompressible bulk so the body spans many reads and streaming commits.
-  const bulk = Buffer.alloc(256 * 1024);
-  let seed = createHash("sha256").update("sparse-hole").digest();
-  for (let off = 0; off < bulk.length; off += 32) {
-    seed.copy(bulk, off);
-    seed = createHash("sha256").update(seed).digest();
+// -------------------------------------------------------------------
+// Buffered extract: the archive is extracted into a temporary directory
+// that is renamed into the cache at the end. A failed extraction must
+// remove that directory, or each attempt leaves one more behind.
+// -------------------------------------------------------------------
+describe.concurrent("buffered extract: failed extraction", () => {
+  function leftInTmp(tmp: string): string[] {
+    return readdirSync(tmp, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
   }
+
+  async function runInstallIsolated(root: string) {
+    const tmp = join(root, "bun-tmp");
+    const cache = join(root, "bun-cache");
+    mkdirSync(tmp, { recursive: true });
+    mkdirSync(cache, { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: root,
+      env: {
+        ...bunEnv,
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        TEMP: tmp,
+        TMP: tmp,
+        BUN_INSTALL_CACHE_DIR: cache,
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, tmp };
+  }
+
+  test("a header that declares more than the archive holds leaves no temp directory", async () => {
+    // The header declares 16 MiB. The archive ends 100 bytes into the body.
+    const pj = Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" }));
+    const body = Buffer.alloc(100, 0x78);
+    const tgz = gzipSync(
+      Buffer.concat([
+        tarHeader("package/package.json", pj.length, "0"),
+        pj,
+        pad512(pj.length),
+        tarHeader("package/big.bin", 16 * 1024 * 1024, "0"),
+        body,
+        pad512(body.length),
+        Buffer.alloc(1024, 0),
+      ]),
+    );
+
+    using dir = tempDir("tar-size-lie", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pkg: "file:./pkg.tgz" } }),
+    });
+    writeFileSync(join(String(dir), "pkg.tgz"), tgz);
+
+    // Twice: a leak would grow by one directory per attempt.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { stderr, exitCode, tmp } = await runInstallIsolated(String(dir));
+      expect(stderr).toContain("Fail extracting tarball from pkg");
+      expect(leftInTmp(tmp)).toEqual([]);
+      expect(exitCode).toBe(1);
+    }
+    expect(existsSync(join(String(dir), "node_modules", "pkg"))).toBe(false);
+  });
+
+  test("a tarball that is not gzip leaves no temp directory", async () => {
+    using dir = tempDir("tar-bad-gzip", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pkg: "file:./pkg.tgz" } }),
+    });
+    writeFileSync(join(String(dir), "pkg.tgz"), Buffer.from("this is not a gzip stream"));
+
+    const { stderr, exitCode, tmp } = await runInstallIsolated(String(dir));
+    expect(stderr).toContain("Fail extracting tarball from pkg");
+    expect(leftInTmp(tmp)).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
+// -------------------------------------------------------------------
+// Sparse members, as `tar --sparse` writes them. Such a member stores
+// only its data chunks and a map of where they go; `realSize` is the
+// length the map claims for the file. The members are built here by
+// hand because CI has no GNU tar on every platform.
+//
+// npm does not read sparse files, and both extractors do what it does.
+// It skips a member of the old format. Of one in the pax format it reads
+// the ustar header alone: a file of that name, with all that is stored.
+// -------------------------------------------------------------------
+type SparseChunk = { offset: number; data: Buffer };
+// What npm leaves at `name`, which is either nothing or a file.
+type SparseMember = { name: string; file?: Buffer };
+
+function sparseMap(realSize: number, chunks: SparseChunk[]): [number, number][] {
+  const map = chunks.map(c => [c.offset, c.data.length] as [number, number]);
+  const end = chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.data.length : 0;
+  // GNU tar closes the map with an empty entry at the real size.
+  if (end < realSize) map.push([realSize, 0]);
+  return map;
+}
+
+// Old GNU format, the `tar --sparse` default: typeflag 'S', magic "ustar  \0",
+// four map entries at offset 386, the real size at 483. The size field counts
+// the stored bytes only.
+function oldGnuSparseMember(name: string, realSize: number, chunks: SparseChunk[]): Buffer[] {
+  const map = sparseMap(realSize, chunks);
+  if (map.length > 4) throw new Error("the old GNU header holds four sparse entries");
+  const body = Buffer.concat(chunks.map(c => c.data));
+  const buf = Buffer.alloc(512, 0);
+  buf.write(name, 0, 100, "utf8");
+  buf.write(octal(0o644, 8), 100);
+  buf.write(octal(0, 8), 108);
+  buf.write(octal(0, 8), 116);
+  buf.write(octal(body.length, 12), 124);
+  buf.write(octal(0, 12), 136);
+  buf.fill(" ", 148, 156);
+  buf.write("S", 156);
+  buf.write("ustar  \0", 257, "latin1");
+  map.forEach(([offset, length], i) => {
+    buf.write(octal(offset, 12), 386 + i * 24);
+    buf.write(octal(length, 12), 398 + i * 24);
+  });
+  buf.write(octal(realSize, 12), 483);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += buf[i];
+  buf.write(octal(sum, 8), 148);
+  return [buf, body, pad512(body.length)];
+}
+
+// PAX format 1.0, what `tar --sparse --format=posix` writes: an 'x' header
+// carries the name and the real size, and the data area starts with the map as
+// decimal lines, NUL-padded to a block, followed by the chunks.
+function paxSparseMember(name: string, realSize: number, chunks: SparseChunk[]): Buffer[] {
+  const record = (key: string, value: string | number) => {
+    let len = 0;
+    let rec: string;
+    do {
+      rec = `${len} ${key}=${value}\n`;
+      len = Buffer.byteLength(rec);
+    } while (rec !== `${len} ${key}=${value}\n`);
+    return rec;
+  };
+  const pax = Buffer.from(
+    record("GNU.sparse.major", 1) +
+      record("GNU.sparse.minor", 0) +
+      record("GNU.sparse.name", name) +
+      record("GNU.sparse.realsize", realSize),
+  );
+  const map = sparseMap(realSize, chunks);
+  const mapText = Buffer.from(`${map.length}\n` + map.map(([offset, length]) => `${offset}\n${length}\n`).join(""));
+  const body = Buffer.concat([mapText, pad512(mapText.length), ...chunks.map(c => c.data)]);
+  const slash = name.lastIndexOf("/");
+  return [
+    tarHeader("PaxHeaders.0/sparse", pax.length, "x"),
+    pax,
+    pad512(pax.length),
+    tarHeader(`${name.slice(0, slash)}/GNUSparseFile.0/${name.slice(slash + 1)}`, body.length, "0"),
+    body,
+    pad512(body.length),
+  ];
+}
+
+// Builds a package of sparse members, with both formats, each given size and each layout.
+function sparsePackage(sizes: number[]) {
+  const layouts = (size: number): Record<string, SparseChunk[]> => {
+    const lastBlock = Math.floor((size - 1) / 512) * 512;
+    return {
+      "data-hole": [{ offset: 0, data: Buffer.alloc(512, 0x41) }],
+      "hole-data": [{ offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x42) }],
+      "data-hole-data-hole": [
+        { offset: 0, data: Buffer.alloc(512, 0x43) },
+        { offset: Math.floor(size / 2 / 512) * 512, data: Buffer.alloc(1024, 0x44) },
+      ],
+      "data-hole-data": [
+        { offset: 0, data: Buffer.alloc(512, 0x45) },
+        { offset: lastBlock, data: Buffer.alloc(size - lastBlock, 0x46) },
+      ],
+      "hole": [],
+    };
+  };
+  const pkgJson = Buffer.from(JSON.stringify({ name: "sparse-pkg", version: "1.0.0" }));
+  const blocks: Buffer[] = [tarHeader("package/package.json", pkgJson.length, "0"), pkgJson, pad512(pkgJson.length)];
+  const members: SparseMember[] = [];
+  for (const [format, build] of [
+    ["gnu", oldGnuSparseMember],
+    ["pax", paxSparseMember],
+  ] as const) {
+    for (const size of sizes) {
+      for (const [layout, chunks] of Object.entries(layouts(size))) {
+        const name = `${format}-${layout}-${size}.bin`;
+        const built = build(`package/${name}`, size, chunks);
+        blocks.push(...built);
+        members.push({ name });
+        if (format === "pax") members.push({ name: `GNUSparseFile.0/${name}`, file: built[4] });
+      }
+    }
+  }
+  blocks.push(Buffer.alloc(1024, 0));
+  const tar = Buffer.concat(blocks);
+
+  // The gzip stream starts with a stored block that ends inside the data of
+  // package.json. A body that is split after `firstPiece` bytes then gives
+  // the streaming extractor a piece that ends there, and every sparse member
+  // in the other piece: that extractor cannot resume a read that stops inside
+  // a sparse map.
+  const cut = 512 + 16;
+  const stored = Buffer.alloc(5);
+  stored.writeUInt16LE(cut, 1);
+  stored.writeUInt16LE(~cut & 0xffff, 3);
+  const trailer = Buffer.alloc(8);
+  trailer.writeUInt32LE(Bun.hash.crc32(tar), 0);
+  trailer.writeUInt32LE(tar.length, 4);
+  const head = Buffer.concat([Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]), stored, tar.subarray(0, cut)]);
+  const tgz = Buffer.concat([head, deflateRawSync(tar.subarray(cut)), trailer]);
+  return {
+    tgz,
+    firstPiece: head.length,
+    members,
+    integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
+  };
+}
+
+// Returns the members of which something else is left. The length is compared
+// first, so that a file as long as its map claims is never read.
+function wrongSparseMembers(root: string, members: SparseMember[]) {
+  const wrong: { name: string; length?: number }[] = [];
+  for (const { name, file } of members) {
+    const length = statSync(join(root, name), { throwIfNoEntry: false })?.size;
+    if (length !== file?.length || (file && !readFileSync(join(root, name)).equals(file))) wrong.push({ name, length });
+  }
+  return wrong;
+}
+
+describe.concurrent("sparse tar members", () => {
+  // The members of the second size claim 4 GiB each and store 1.5 KB at most.
+  const pkg = sparsePackage([300_000, 2 ** 32]);
+
+  test("buffered extract writes the same files as npm for each member", async () => {
+    using dir = tempDir("sparse-buffered", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "sparse-pkg": "file:./pkg.tgz" },
+      }),
+    });
+    writeFileSync(join(String(dir), "pkg.tgz"), pkg.tgz);
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("Streamed ");
+
+    expect(wrongSparseMembers(join(String(dir), "node_modules", "sparse-pkg"), pkg.members)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("streaming extract writes the same files as npm for each member", async () => {
+    const { tgz, firstPiece, members, integrity } = pkg;
+
+    using dir = tempDir("sparse-streamed", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "sparse-pkg": "1.0.0" } }),
+    });
+    const tmp = join(String(dir), "bun-tmp");
+    const cache = join(String(dir), "bun-cache");
+    mkdirSync(tmp);
+    mkdirSync(cache);
+    let exited = false;
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/sparse-pkg") {
+          return Response.json({
+            name: "sparse-pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "sparse-pkg",
+                version: "1.0.0",
+                dist: { integrity, tarball: `${server.url}sparse-pkg/-/sparse-pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/sparse-pkg-1.0.0.tgz")) {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                c.write(tgz.subarray(0, firstPiece));
+                await c.flush();
+                // The streaming extractor takes the tarball only when the body
+                // arrives in more than one piece. Its first drain creates the
+                // extraction directory, so the rest waits until that exists.
+                while (!exited && !readdirSync(tmp).some(name => name.endsWith(".sparse-pkg"))) await Bun.sleep(5);
+                c.write(tgz.subarray(firstPiece));
+                await c.flush();
+                c.close();
+              },
+            }),
+            { headers: { "content-type": "application/octet-stream" } },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    writeFileSync(join(String(dir), "bunfig.toml"), Bun.TOML.stringify({ install: { registry: String(server.url) } }));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        BUN_INSTALL_CACHE_DIR: cache,
+        // Drain on the first piece, so that the extraction directory appears.
+        BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    void proc.exited.then(() => (exited = true));
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Streamed ");
+
+    expect(wrongSparseMembers(join(String(dir), "node_modules", "sparse-pkg"), members)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// -------------------------------------------------------------------
+// A full disk, a quota or a file size limit refuses a write in the
+// middle of a file. The write loop then went on with `write()` at the
+// start of the file: the install exited 0 with a file that was cut and
+// whose first bytes were those of the refused block, and that package
+// stayed in the cache for every later install.
+// -------------------------------------------------------------------
+test.skipIf(isWindows)("streaming extract fails the install when the file system refuses a write", async () => {
+  // 6,000,000 bytes where no file can grow past 4 MiB. Random bytes keep the
+  // tarball above the size from which a registry tarball is streamed.
+  const big = randomBytes(6_000_000);
+  const pkgJson = Buffer.from(JSON.stringify({ name: "pk", version: "1.0.0" }));
   const tgz = gzipSync(
     Buffer.concat([
-      ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }))),
-      ...sizes.flatMap(size => gnuSparseFile(`package/hole-${size}.bin`, size, head)),
-      ...tarFile("package/bulk.bin", bulk),
+      tarHeader("package/package.json", pkgJson.length, "0"),
+      pkgJson,
+      pad512(pkgJson.length),
+      tarHeader("package/big.bin", big.length, "0"),
+      big,
+      pad512(big.length),
       Buffer.alloc(1024, 0),
     ]),
   );
-  const shasum = createHash("sha1").update(tgz).digest("hex");
   const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
-  await using reg = await makeRegistry(tgz, shasum, integrity, 4096);
 
-  using dir = tempDir("streaming-extract-sparse-hole", {
-    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
-    "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+  using dir = tempDir("refused-write-streamed", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pk: "1.0.0" } }),
   });
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/pk") {
+        return Response.json({
+          name: "pk",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": { name: "pk", version: "1.0.0", dist: { integrity, tarball: `${server.url}pk/-/pk-1.0.0.tgz` } },
+          },
+        });
+      }
+      if (url.pathname.endsWith("/pk-1.0.0.tgz")) return new Response(tgz);
+      return new Response("not found", { status: 404 });
+    },
+  });
+  writeFileSync(join(String(dir), "bunfig.toml"), Bun.TOML.stringify({ install: { registry: String(server.url) } }));
+  const tmp = join(String(dir), "bun-tmp");
+  mkdirSync(tmp);
+  const env = { ...bunEnv, BUN_TMPDIR: tmp, TMPDIR: tmp, BUN_INSTALL_CACHE_DIR: join(String(dir), "bun-cache") };
+  const installed = join(String(dir), "node_modules", "pk", "big.bin");
 
-  const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_INSTALL_STREAMING_MIN_SIZE: "1024" });
-  expect(stderr).not.toContain("error:");
-  if (label === "streaming") {
-    expect(stderr).toContain("Streamed ");
-  } else {
-    expect(stderr).not.toContain("Streamed ");
+  {
+    await using proc = Bun.spawn({
+      // 8192 blocks of 512 bytes; the sh of macOS (bash 3.2) counts blocks of 1024.
+      // A write past the limit raises SIGXFSZ, which must not end the child.
+      // Without the limit the child must not run.
+      cmd: [
+        "sh",
+        "-c",
+        `trap '' XFSZ; ulimit -f ${isMacOS ? 4096 : 8192} && exec "$@"`,
+        "sh",
+        bunExe(),
+        "install",
+        "--linker=hoisted",
+      ],
+      cwd: String(dir),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('EFBIG extracting tarball for "pk"');
+    expect(existsSync(installed)).toBe(false);
+    expect(exitCode).toBe(1);
   }
-  const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
-  const files = sizes.map(size => {
-    const got = readFileSync(join(pkgRoot, `hole-${size}.bin`));
-    return {
-      size: got.length,
-      head: got.subarray(0, 1024).equals(head),
-      tailIsZero: got.subarray(1024).every(b => b === 0),
-    };
+
+  // Without the limit, the same cache gives the whole file: the failed install
+  // left no package there.
+  rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+  rmSync(join(String(dir), "bun.lock"), { force: true });
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+      cwd: String(dir),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Streamed ");
+    expect(readFileSync(installed).equals(big)).toBe(true);
+    expect(exitCode).toBe(0);
+  }
+});
+
+// The path, with `/`, and the content of every file below `root`.
+function readFiles(root: string): Record<string, string> {
+  const entries = readdirSync(root, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile());
+  const paths = entries.map(entry => join(entry.parentPath, entry.name));
+  return Object.fromEntries(paths.map(path => [relative(root, path).replaceAll(sep, "/"), readFileSync(path, "utf8")]));
+}
+
+// Installs `tgz` as `stream-pkg`, `installs` times with one cache, and returns what each install left.
+// "libdeflate" and "libarchive": a `file:` tarball, which the buffered extractor decompresses that way.
+// "buffered" and "streaming": downloaded, from the registry or as a URL dependency, and extracted that way.
+// `files`: also what `readFiles` finds in the installed package.
+// `gzipEncoded`: the server compresses `tgz` and says so with `Content-Encoding: gzip`.
+type ExtractPath = "libdeflate" | "libarchive" | "buffered" | "streaming";
+async function installStreamPkg(
+  path: ExtractPath,
+  tgz: Buffer,
+  { installs = 1, url = false, trusted = false, files = false, gzipEncoded = false } = {},
+) {
+  const sha = (algorithm: string, encoding: "hex" | "base64") => createHash(algorithm).update(tgz).digest(encoding);
+  // A tarball is streamed only if its body arrives in more than one piece. The first
+  // drain creates the extraction directory, so the rest waits until that exists.
+  // An install that fails may remove it again, or hang up, before this looks.
+  let tmp = "";
+  const waits: Promise<void>[] = [];
+  const afterFirstWrite = (isClosed: () => boolean) => {
+    const wait = (async () => {
+      while (!isClosed() && !readdirSync(tmp).some(name => name.endsWith(".stream-pkg"))) await Bun.sleep(1);
+    })();
+    waits.push(wait);
+    return wait;
+  };
+  // The integrity is that of the bytes as they are: it holds.
+  await using reg = await makeRegistry(
+    // Stored blocks: a small body still takes more than one write.
+    gzipEncoded ? gzipSync(tgz, { level: 0 }) : tgz,
+    sha("sha1", "hex"),
+    `sha512-${sha("sha512", "base64")}`,
+    512,
+    { ...(path === "streaming" ? { afterFirstWrite } : {}), contentEncoding: gzipEncoded ? "gzip" : undefined },
+  );
+  const downloaded = path === "buffered" || path === "streaming";
+  using dir = tempDir("install-stream-pkg", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: {
+        "stream-pkg": !downloaded ? "file:./pkg.tgz" : url ? `${reg.url}stream-pkg/-/stream-pkg-1.0.0.tgz` : "1.0.0",
+      },
+      trustedDependencies: trusted ? ["stream-pkg"] : undefined,
+    }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+    "pkg.tgz": tgz,
+    "tmp/.keep": "",
   });
-  expect(files).toEqual(sizes.map(size => ({ size, head: true, tailIsZero: true })));
-  expect(readFileSync(join(pkgRoot, "bulk.bin")).equals(bulk)).toBe(true);
-  expect(exitCode).toBe(0);
+  tmp = join(String(dir), "tmp");
+  const results = [];
+  for (let i = 0; i < installs; i++) {
+    const { stderr, exitCode } = await runInstall(String(dir), {
+      BUN_TMPDIR: tmp,
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
+      BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+      ...(path === "libarchive" ? { BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" } : {}),
+      ...(path === "buffered" ? { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" } : {}),
+    });
+    results.push({
+      // What another thread writes to the verbose log can come anywhere in this line.
+      error: stderr.replace(/\[stream-pkg\] Extract .*\n(libarchive error: .*\n)?/g, "").match(/^error: .*$/m)?.[0],
+      streamed: stderr.includes("Streamed "),
+      installed: existsSync(join(String(dir), "node_modules", "stream-pkg")),
+      cached: readdirSync(join(String(dir), ".cache")).filter(name => /^(stream-pkg@|@T@)/.test(name)).length,
+      tmp: readdirSync(tmp),
+      exitCode,
+      ...(files ? { files: readFiles(join(String(dir), "node_modules", "stream-pkg")) } : {}),
+    });
+  }
+  // They read `tmp`, which is deleted together with `dir`.
+  await Promise.all(waits);
+  return results;
+}
+
+// -------------------------------------------------------------------
+// A gzip member ends with the CRC32 and the length (ISIZE) of its data.
+// Where no integrity is recorded (a `file:` or URL tarball on its first
+// install, a registry without `dist.integrity`, `--no-verify`) that
+// trailer is the only thing that catches a damaged tarball. All three
+// ways to decompress one must check it: libdeflate in memory and
+// libarchive's gzip filter in the buffered extractor, and that filter
+// again in the streaming extractor.
+// -------------------------------------------------------------------
+describe.concurrent("gzip trailer", () => {
+  const files = (body: Buffer) =>
+    Buffer.concat([
+      ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }))),
+      ...tarFile("package/index.js", body),
+      Buffer.alloc(1024, 0),
+    ]);
+  // Stored blocks: a changed byte leaves the deflate stream valid.
+  const good = gzipSync(files(Buffer.from(`module.exports = "GOOD";\n`)), { level: 0 });
+  const changed = (tgz: Buffer, at: number, change: (copy: Buffer, at: number) => void = (b, i) => (b[i] ^= 0x04)) => {
+    expect(at).toBeGreaterThan(0);
+    const copy = Buffer.from(tgz);
+    change(copy, at);
+    return copy;
+  };
+  // Ends on the boundary of the filter's 64 KiB output block. The tar reader has
+  // all it needs then, and must still read on to the end of the gzip member.
+  const alignedTar = files(Buffer.alloc(2 * 65536 - 3 * 512 - 1024, "x"));
+  expect(alignedTar.length).toBe(2 * 65536);
+  const aligned = gzipSync(alignedTar, { level: 0 });
+  // One tar in two gzip members.
+  const goodTar = files(Buffer.from(`module.exports = "GOOD";\n`));
+  const member1 = gzipSync(goodTar.subarray(0, 1024), { level: 0 });
+  const member2 = gzipSync(goodTar.subarray(1024), { level: 0 });
+
+  const damaged: [string, Buffer][] = [
+    ["a changed byte in a file", changed(good, good.indexOf("GOOD"))],
+    ["a changed byte in a tar header", changed(good, good.indexOf("package/index.js"))],
+    [
+      "a changed byte in a tar that ends on a block of the filter",
+      changed(aligned, aligned.indexOf("xxxxxxxx") + 1000),
+    ],
+    ["a wrong CRC32", changed(good, good.length - 8)],
+    ["a wrong CRC32 in the second member", Buffer.concat([member1, changed(member2, member2.length - 8)])],
+    // Too long for the attempt in memory.
+    ["a wrong ISIZE", changed(good, good.length - 4, (b, i) => b.writeUInt32LE(100 * 1024 * 1024, i))],
+  ];
+  const paths = ["libdeflate", "libarchive", "streaming"] as const;
+  const install = async (path: (typeof paths)[number], tgz: Buffer) => (await installStreamPkg(path, tgz))[0];
+
+  test.each(paths)("a valid tarball installs (%s)", async path => {
+    expect(await install(path, good)).toEqual({
+      error: undefined,
+      streamed: path === "streaming",
+      installed: true,
+      cached: 1,
+      tmp: [".keep"],
+      exitCode: 0,
+    });
+  });
+
+  test.each(damaged.flatMap(([what, tgz]) => paths.map(path => [what, path, tgz] as const)))(
+    "%s fails the install (%s)",
+    async (_, path, tgz) => {
+      expect(await install(path, tgz)).toEqual({
+        error:
+          path === "streaming"
+            ? // libarchive's tar reader overwrites the message of the filter that failed.
+              expect.stringMatching(
+                /^error: Fail extracting tarball for "stream-pkg": (gzip trailer mismatch|Truncated tar archive)/,
+              )
+            : "error: Fail extracting tarball from stream-pkg",
+        streamed: false,
+        installed: false,
+        cached: 0,
+        tmp: [".keep"],
+        exitCode: 1,
+      });
+    },
+  );
+
+  // A gzip file is one or more members. Every path reads them all, and ignores other bytes after the last.
+  const continued: [string, Buffer][] = [
+    ["a second member", Buffer.concat([member1, member2])],
+    ["an empty member", Buffer.concat([good, gzipSync(Buffer.alloc(0))])],
+    ["zero bytes", Buffer.concat([good, Buffer.alloc(512, 0)])],
+    ["bytes that are not gzip", Buffer.concat([good, Buffer.from("not gzip\n")])],
+  ];
+  test.each(continued.flatMap(([what, tgz]) => paths.map(path => [what, path, tgz] as const)))(
+    "a tarball with %s after the first installs whole (%s)",
+    async (_, path, tgz) => {
+      expect((await installStreamPkg(path, tgz, { files: true }))[0]).toEqual({
+        error: undefined,
+        streamed: path === "streaming",
+        installed: true,
+        cached: 1,
+        tmp: [".keep"],
+        exitCode: 0,
+        files: expect.objectContaining({
+          "package.json": JSON.stringify({ name: "stream-pkg", version: "1.0.0" }),
+          "index.js": `module.exports = "GOOD";\n`,
+        }),
+      });
+    },
+  );
+
+  // A server may send a plain tar: the package is one, or it is a .tgz labelled
+  // `Content-Encoding: gzip`, which the HTTP client undoes. The hash is then that of the tar.
+  const allPaths = [...paths, "buffered"] as const;
+  const plain = goodTar;
+  test.each([...allPaths.map(path => [path, false] as const), ["buffered", true], ["streaming", true]] as const)(
+    "a tarball that is not compressed installs (%s, Content-Encoding: gzip = %p)",
+    async (path, gzipEncoded) => {
+      expect((await installStreamPkg(path, plain, { gzipEncoded, files: true }))[0]).toEqual({
+        error: undefined,
+        streamed: path === "streaming",
+        installed: true,
+        cached: 1,
+        tmp: [".keep"],
+        exitCode: 0,
+        files: expect.objectContaining({
+          "package.json": JSON.stringify({ name: "stream-pkg", version: "1.0.0" }),
+          "index.js": `module.exports = "GOOD";\n`,
+        }),
+      });
+    },
+  );
+
+  // One byte does not tell gzip from tar.
+  test.each([
+    ["gzip", good],
+    ["plain tar", plain],
+  ] as const)("a body whose first byte arrives alone installs (streaming, %s)", async (_, body) => {
+    await using reg = await makeRegistry(
+      body,
+      createHash("sha1").update(body).digest("hex"),
+      `sha512-${createHash("sha512").update(body).digest("base64")}`,
+      512,
+      {
+        chunker: offset => (offset === 0 ? 1 : 512),
+        // Shapes the input: the first drain has run by the time the second byte is sent.
+        delayMs: offset => (offset === 1 ? 100 : 0),
+      },
+    );
+    using dir = tempDir("first-byte-alone", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+    });
+    const { stderr, exitCode } = await runInstall(String(dir), {
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
+      BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+    });
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Streamed ");
+    expect(readFiles(join(String(dir), "node_modules", "stream-pkg"))["index.js"]).toBe(`module.exports = "GOOD";\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The tar reader skips each block as damaged: an archive without entries, which was
+  // published as an empty package.
+  test("a body that is not an archive fails the install (streaming)", async () => {
+    expect(await install("streaming", Buffer.alloc(4096, "this is not a gzip stream\n"))).toEqual({
+      error: expect.stringContaining('error: Fail extracting tarball for "stream-pkg": archive is empty'),
+      streamed: false,
+      installed: false,
+      cached: 0,
+      tmp: [".keep"],
+      exitCode: 1,
+    });
+  });
+});
+
+// -------------------------------------------------------------------
+// bun reads the package.json of a tarball dependency, and of a registry
+// package that may run scripts, as soon as it is extracted. One that
+// fails the install there was already in the cache by then, where the
+// next install found it and linked it.
+// -------------------------------------------------------------------
+describe.concurrent("a package whose package.json fails the install is not published to the cache", () => {
+  const tarball = (packageJson?: string) =>
+    gzipSync(
+      Buffer.concat([
+        ...(packageJson === undefined ? [] : tarFile("package/package.json", Buffer.from(packageJson))),
+        ...tarFile("package/index.js", Buffer.from("module.exports = 1;\n")),
+        Buffer.alloc(1024, 0),
+      ]),
+    );
+  const broken = [
+    [
+      "not JSON",
+      tarball("{ not json"),
+      'error: expected "package.json" of "stream-pkg" to be a JSON file: ParserError: Expected string but found "not"',
+    ],
+    ["missing", tarball(), 'error: "package.json" for "stream-pkg" failed to open: ENOENT'],
+  ] as const;
+  const ways = [
+    ["file: tarball", "libdeflate", {}],
+    ["URL tarball, buffered", "buffered", { url: true }],
+    ["URL tarball, streaming", "streaming", { url: true }],
+    ["trusted registry package, buffered", "buffered", { trusted: true }],
+    ["trusted registry package, streaming", "streaming", { trusted: true }],
+  ] as const;
+
+  const cases = broken.flatMap(([what, tgz, error]) =>
+    ways.map(([way, path, opts]) => [what, way, tgz, error, path, opts] as const),
+  );
+
+  test.each(cases)("%s (%s)", async (_what, _way, tgz, error, path, opts) => {
+    const failed = { error, streamed: false, installed: false, cached: 0, tmp: [".keep"], exitCode: 1 };
+    expect(await installStreamPkg(path, tgz, { ...opts, installs: 2 })).toEqual([failed, failed]);
+  });
+});
+
+// -------------------------------------------------------------------
+// A tarball gives the files that npm gives for it. Tar readers differ in
+// what they take for a file, for its name and for the end of the
+// archive. What each case expects is what npm's reader does.
+// -------------------------------------------------------------------
+describe.concurrent("entries that npm skips or names differently", () => {
+  const packageJson = JSON.stringify({ name: "stream-pkg", version: "1.0.0" });
+  const second = Buffer.from("second");
+  // Stored, so that the body is long enough to arrive in more than one piece.
+  const tarball = (...last: Buffer[]) =>
+    gzipSync(
+      Buffer.concat([
+        ...tarFile("package/package.json", Buffer.from(packageJson)),
+        ...tarFile("package/lib/index.js", Buffer.from("first")),
+        ...last,
+        Buffer.alloc(1024, 0),
+      ]),
+      { level: 0 },
+    );
+  const index = "package/lib/index.js";
+  const entry = (name: string, body: Buffer, type: string, change?: (header: Buffer) => void) => [
+    tarHeader(name, body.length, type, undefined, change),
+    body,
+    pad512(body.length),
+  ];
+  const target = (header: Buffer) => void header.write("package/package.json", 157);
+  const pax = (key: string, value: string) => {
+    let length = 0;
+    let record: string;
+    do {
+      record = `${length} ${key}=${value}\n`;
+      length = Buffer.byteLength(record);
+    } while (record !== `${length} ${key}=${value}\n`);
+    return entry("PaxHeader", Buffer.from(record), "x");
+  };
+  const other = tarFile("package/other.js", second);
+  const again = Buffer.concat(tarFile(index, second));
+  const cases: [string, Buffer, Record<string, string>][] = [
+    ["a `..` part in the name", tarball(...tarFile("package/lib/x/../index.js", second)), {}],
+    ["a `..` part between backslashes", tarball(...tarFile("package/lib\\..\\lib\\index.js", second)), {}],
+    ["a hard link with a body", tarball(...entry(index, second, "1", target)), {}],
+    [
+      "a hard link with a body, behind a pax header",
+      tarball(...pax("mtime", "1"), ...entry(index, second, "1", target)),
+      {},
+    ],
+    ["a type that npm does not know", tarball(...entry(index, second, "Z")), {}],
+    ["a sparse file of the old format", tarball(...entry(index, second, "S")), {}],
+    ["a contiguous file", tarball(...entry(index, second, "7")), { "lib/index.js": "second" }],
+    [
+      "a contiguous file with a trailing slash",
+      tarball(...entry(`${index}/`, second, "7")),
+      { "lib/index.js": "second" },
+    ],
+    ["a type that npm does not know, with a trailing slash", tarball(...entry("package/x/", again, "9")), {}],
+    [
+      "a file with a trailing slash behind a pax header that gets a warning",
+      tarball(...pax("hdrcharset", "unknown"), ...entry("package/x/", again, "0")),
+      { "lib/index.js": "second" },
+    ],
+    // Go's archive/tar leaves the field for the target empty when the target has no ASCII character.
+    ...["1", "2"].map((type): [string, Buffer, Record<string, string>] => [
+      `a link of type ${type} whose target is only in the pax header`,
+      tarball(...pax("linkpath", "日本"), ...entry("package/link", Buffer.alloc(0), type), ...other),
+      { "other.js": "second" },
+    ]),
+    ["a NUL in the path of a pax header", tarball(...pax("path", `${index}\0.js`), ...other), {}],
+    [
+      "the name of a sparse file in a pax header",
+      tarball(...pax("GNU.sparse.name", index), ...other),
+      { "other.js": "second" },
+    ],
+    ["a header for a long name at the end", tarball(...entry("name", Buffer.from(`${index}\0`), "L")), {}],
+    [
+      "a prefix in a header of another ustar version",
+      tarball(
+        ...entry("index.js", second, "0", header => void (header.write("01", 263), header.write("package/lib", 345))),
+      ),
+      {},
+    ],
+    ["one zero block in front of an entry", tarball(Buffer.alloc(512, 0), again), { "lib/index.js": "second" }],
+    ["two zero blocks in front of an entry", tarball(Buffer.alloc(1024, 0), again), {}],
+    ["two zero blocks in front of less than a block", tarball(Buffer.alloc(1024, 0), second), {}],
+    ["a leading slash", tarball(...tarFile("/package/lib/index.js", second)), { "package/lib/index.js": "second" }],
+    [
+      "dots that are not a `..` part",
+      tarball(...tarFile("package/..a/[...b]..js", second)),
+      { "..a/[...b]..js": "second" },
+    ],
+  ];
+  if (!isWindows) {
+    cases.push([
+      "a backslash in the name",
+      tarball(...tarFile("package/lib\\index.js", second)),
+      { "lib\\index.js": "second" },
+    ]);
+  }
+  const paths = ["buffered", "streaming"] as const;
+
+  test.each(cases.flatMap(([what, tgz, more]) => paths.map(path => [what, path, tgz, more] as const)))(
+    "%s (%s)",
+    async (_, path, tgz, more) => {
+      expect(await installStreamPkg(path, tgz, { files: true })).toEqual([
+        {
+          error: undefined,
+          streamed: path === "streaming",
+          installed: true,
+          cached: 1,
+          tmp: [".keep"],
+          exitCode: 0,
+          files: { "package.json": packageJson, "lib/index.js": "first", ...more },
+        },
+      ]);
+    },
+  );
+
+  // Two cases that do not follow npm, which loses files of archives that real tar writers make.
+  // Old writers repeat the size of the file in the header of a hard link. npm takes what follows for its body.
+  test.each(paths)("the entries after a hard link whose header has a size are extracted (%s)", async path => {
+    const tgz = tarball(tarHeader("package/link", 5000, "1", undefined, target), ...other);
+    expect((await installStreamPkg(path, tgz, { files: true }))[0]).toMatchObject({
+      files: { "package.json": packageJson, "lib/index.js": "first", "other.js": "second" },
+      exitCode: 0,
+    });
+  });
+
+  // npm writes the file that such a link points to under the link's name.
+  test.each(paths)(
+    "the file that a link points to keeps its name if the link's name and target are only in the pax header (%s)",
+    async path => {
+      const records = Buffer.concat([pax("path", "package/日")[1], pax("linkpath", "本")[1]]);
+      const tgz = tarball(...entry("PaxHeader", records, "x"), ...entry("package/", Buffer.alloc(0), "2"), ...other);
+      expect((await installStreamPkg(path, tgz, { files: true }))[0]).toMatchObject({
+        files: { "package.json": packageJson, "lib/index.js": "first", "other.js": "second" },
+        exitCode: 0,
+      });
+    },
+  );
 });

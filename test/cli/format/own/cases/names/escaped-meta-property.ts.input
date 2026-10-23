@@ -1,0 +1,7 @@
+function f() {
+  new.t\u0061rget;
+  new.t\u{61}rget;
+  new.target;
+}
+import.m\u0065ta;
+import.d\u0065fer("a");

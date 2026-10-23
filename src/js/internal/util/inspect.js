@@ -134,14 +134,11 @@ const ONLY_ENUMERABLE = 2;
  * @returns `value` split on newlines (newline included at end), or `undefined`
  * if non-ascii UTF8/UTF16.
  *
- * Passing this a non-string will cause a panic.
- *
  * @type {(value: string) => string[] | undefined}
  */
-const extractedSplitNewLinesFastPathStringsOnly = $newRustFunction(
-  "node_util_binding.rs",
+const extractedSplitNewLinesFastPathStringsOnly = $bindgen(
+  "node_util_binding.bind.ts",
   "extractedSplitNewLinesFastPathStringsOnly",
-  1,
 );
 
 const isAsyncFunction = v =>
@@ -162,13 +159,11 @@ const {
   isDataView,
   isExternal,
   isMap,
-  isMapIterator,
   isModuleNamespaceObject,
   isNativeError,
   isNumberObject,
   isPromise,
   isSet,
-  isSetIterator,
   isStringObject,
   isWeakMap,
   isWeakSet,
@@ -176,6 +171,10 @@ const {
   isDate,
   isTypedArray,
 } = require("node:util/types");
+
+// previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
+const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
+const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {

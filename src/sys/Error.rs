@@ -120,6 +120,29 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
+    #[inline]
+    pub fn is_directory(&self) -> bool {
+        self.get_errno() == E::EISDIR
+    }
+
+    /// Whether this error from reading `path` means the file exists but could not be read, as
+    /// opposed to not existing. A directory at `path` counts as not existing.
+    pub fn is_unreadable_file(&self, path: &[u8]) -> bool {
+        let is_there = || {
+            crate::lstat(&bun_core::ZBox::from_bytes(path)).is_ok_and(|stat| {
+                crate::kind_from_mode(stat.st_mode as crate::Mode) != crate::FileKind::Directory
+            })
+        };
+        match self.get_errno() {
+            E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG | E::EISDIR => false,
+            // Also what a directory on the way gives when it cannot be searched, which says nothing about the file.
+            E::EACCES | E::EPERM => is_there(),
+            // Windows has many more error codes for a path that cannot exist, so there the file
+            // counts only if `lstat` finds it.
+            _ => cfg!(unix) || is_there(),
+        }
+    }
+
     /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context. (The `Box<[u8]>`
     /// fields prevent a true `const` item.)
     #[inline]

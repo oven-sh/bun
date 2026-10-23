@@ -1,54 +1,54 @@
 // What a stack trace of plain Bun shows for each kind of site: JavaScriptCore reports a divot, and Bun's source map takes it back to the last token that js_printer maps.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="asksIn"
-// CHECK: = PropHas {{*}} @2290
+// CHECK: = PropHas {{*}} @2292
 // CHECK-LABEL: function {{*}}name="asksInstanceOf"
-// CHECK: = InstanceOf {{*}} @2369
+// CHECK: = InstanceOf {{*}} @2371
 // CHECK-LABEL: function {{*}}name="awaitsCall"
-// CHECK: = Call {{*}} @2435
-// CHECK: = Await {{*}} @2435
+// CHECK: = Call {{*}} @2437
+// CHECK: = Await {{*}} @2437
 // CHECK-LABEL: function {{*}}name="awaitsLastBranch"
-// CHECK: = Await {{*}} @2544
+// CHECK: = Await {{*}} @2546
 // CHECK-LABEL: function {{*}}name="awaitsMember"
-// CHECK: = Await {{*}} @2615
+// CHECK: = Await {{*}} @2617
 // CHECK-LABEL: function {{*}}name="awaitsMethod"
-// CHECK: = Await {{*}} @2687
+// CHECK: = Await {{*}} @2689
 // CHECK-LABEL: function {{*}}name="callsFunctionExpression"
 // CHECK: = NewClosure
-// CHECK: = Call {{*}} @2773
+// CHECK: = Call {{*}} @2775
 // CHECK-LABEL: function {{*}}name="constructsAndReads"
-// CHECK: = Construct {{*}} @2845
+// CHECK: = Construct {{*}} @2847
 // CHECK-LABEL: function {{*}}name="constructsNativeError"
-// CHECK: = Construct {{*}} @2910
+// CHECK: = Construct {{*}} @2912
 // CHECK-LABEL: function {{*}}name="constructsWithArguments"
-// CHECK: = Construct {{*}} @3000
+// CHECK: = Construct {{*}} @3002
 // CHECK-LABEL: function {{*}}name="constructsWithoutArguments"
-// CHECK: = Construct {{*}} @3071
+// CHECK: = Construct {{*}} @3073
 // CHECK-LABEL: function {{*}}name="delegates"
-// CHECK: = IteratorOpen {{*}} @3132
+// CHECK: = IteratorOpen {{*}} @3134
 // CHECK-LABEL: function {{*}}name="deletes"
-// CHECK: = PropDelete {{*}} @3195
+// CHECK: = PropDelete {{*}} @3197
 // CHECK-LABEL: function {{*}}name="destructures"
-// CHECK: = PropGet {{*}}key="x"{{*}} @3258
+// CHECK: = PropGet {{*}}key="x"{{*}} @3260
 // CHECK-LABEL: function {{*}}name="enumerates"
-// CHECK: = ForInOpen {{*}} @3347
+// CHECK: = ForInOpen {{*}} @3349
 // CHECK-LABEL: function {{*}}name="iterates"
-// CHECK: = IteratorOpen {{*}} @3434
-// CHECK: = IteratorResume {{*}} @3434
+// CHECK: = IteratorOpen {{*}} @3436
+// CHECK: = IteratorResume {{*}} @3436
 // CHECK-LABEL: function {{*}}name="spreads"
-// CHECK: AppendSpread {{*}} @3527
+// CHECK: AppendSpread {{*}} @3529
 // CHECK-LABEL: function {{*}}name="stores"
-// CHECK: PropSet {{*}} @3574
+// CHECK: PropSet {{*}} @3576
 // CHECK-LABEL: function {{*}}name="storesAfterPostfix"
-// CHECK: PropSet {{*}} @3637
+// CHECK: PropSet {{*}} @3639
 // CHECK-LABEL: function {{*}}name="storesAfterPrefix"
-// CHECK: PropSet {{*}} @3693
+// CHECK: PropSet {{*}} @3695
 // CHECK-LABEL: function {{*}}name="storesCompound"
-// CHECK: PropSet {{*}} @3750
+// CHECK: PropSet {{*}} @3752
 // CHECK-LABEL: function {{*}}name="tagsTemplate"
-// CHECK: = Call {{*}}calleeName="tag" @3811
+// CHECK: = Call {{*}}calleeName="a.tag" @3813
 // CHECK-LABEL: function {{*}}name="WithInitializer"
-// CHECK: = CallDirect {{*}} @3884
+// CHECK: = CallDirect {{*}} @3886
 
 export function asksIn(a: any) {
   return "x" in a.b;

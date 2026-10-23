@@ -332,5 +332,21 @@
     "nativeToString-setPrototype": "it changes a built-in object, which an executable refuses",
     "returnsFunction-replaceWith": "the text of a function is what was written; plain Bun prints what its transpiler printed",
     "returnsThis-asElement": "plain Bun's transpiler folds `[F][0]` to `F`, so the call loses the array as its `this`"
+  },
+  "two kinds of list or collection at one use": {
+    "defaulted-bytes-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-doubles-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-entriesOfMap-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-fractions-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-generator-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-given-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-holes-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-integers-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-map-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-params-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-records-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-set-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-tracking-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each",
+    "defaulted-valuesOfList-entriesOfParams-walkInWalk": "one iterator of a URLSearchParams that two loops walk starts anew at each"
   }
 }

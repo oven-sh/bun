@@ -32,11 +32,33 @@ const throwing = { method() { throw new Error("thrown in a method behind a tail 
 attempt("call variable", () => { nothing(); });
 attempt("call null variable", () => { none(); });
 attempt("call number variable", () => { five(); });
+attempt("call member", () => { holder.absent(); });
+attempt("call member number", () => { holder.run(); });
+attempt("call member null", () => { holder.inner(); });
+attempt("call deep member", () => { holder.deep.absent(); });
+attempt("call computed member", () => { holder[key](); });
+attempt("call indexed member", () => { list[index](); });
+attempt("call optional then member", () => { holder?.deep.absent(); });
+attempt("call member of this", function () { return this.absent(); }.bind(holder));
+attempt("call of string method absent", () => { text.absent(); });
+attempt("call of number method absent", () => { five.absent(); });
+attempt("call of array method absent", () => { list.absent(); });
+attempt("call global absent", () => { globalThis.absentGlobal(); });
+attempt("call Math absent", () => { Math.absent(); });
+attempt("call console absent", () => { console.absent(); });
+attempt("call in argument", () => { String(holder.absent()); });
+attempt("call in template", () => { `${holder.absent()}`; });
+attempt("new variable", () => { new nothing(); });
+attempt("new number", () => { new five(); });
+attempt("new member", () => { new holder.absent(); });
+attempt("new member number", () => { new holder.run(); });
+attempt("new Math", () => { new Math(); });
 
 // Destructuring.
 attempt("destructure undefined", () => { const { a } = nothing; return a; });
 attempt("destructure null", () => { const { a } = none; return a; });
 attempt("destructure empty pattern", () => { const {} = none; });
+attempt("destructure default call", () => { const { a = holder.absent() } = plain; return a; });
 attempt("destructure rest of null", () => { const { ...rest } = none; return rest; });
 attempt("destructure assignment", () => { let a; ({ a } = none); return a; });
 
@@ -97,6 +119,7 @@ attempt("null prototype as key", () => { plain[opaque(Object.create(null))]; });
 // Classes.
 attempt("this before super", () => { class A {} class B extends A { constructor() { this.x = 1; super(); } } return new B(); });
 attempt("super twice", () => { class A {} class B extends A { constructor() { super(); super(); } } return new B(); });
+attempt("super method absent", () => { class A {} class B extends A { run() { return super.absent(); } } return new B().run(); });
 attempt("private method store", () => { class A { #m() {} run() { this.#m = 1; } } return new A().run(); });
 attempt("private getter only store", () => { class A { get #g() { return 1; } run() { this.#g = 1; } } return new A().run(); });
 attempt("private setter only read", () => { class A { set #s(v) {} run() { return this.#s; } } return new A().run(); });
@@ -258,5 +281,10 @@ attempt("DOMException", () => { throw new DOMException("text", "AbortError"); })
 
 // The same in the position of a tail call: strict code leaves its frame before such a call.
 attempt("tail call variable", () => nothing());
+attempt("tail call member", () => holder.absent());
+attempt("tail call deep member", () => holder.deep.absent());
+attempt("tail call computed member", () => holder[key]());
+attempt("tail call of this", function () { return this.absent(); }.bind(holder));
 attempt("tail call function that throws", () => thrower());
 attempt("tail call method that throws", () => throwing.method());
+attempt("tail return in a function", function named() { return holder.absent(); });

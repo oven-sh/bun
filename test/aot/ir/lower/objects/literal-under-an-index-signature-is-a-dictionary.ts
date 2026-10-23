@@ -36,10 +36,10 @@
 // VALUES: [[map]] = NewDictionary
 // VALUES: PropDefine [[map]], {{*}}key="left"
 // VALUES: PropDefine [[map]], {{*}}key="right"
-// VALUES: Call {{*}}calleeName="defineProperties"
+// VALUES: Call {{*}}calleeName="Object.defineProperties"
 // VALUES: [[other]] = NewDictionary
 // VALUES: PropDefine [[other]], {{*}}key="below"
-// VALUES: Call {{*}}calleeName="create"
+// VALUES: Call {{*}}calleeName="Object.create"
 // VALUES-LABEL: function {{*}}name="extended"
 // VALUES-NOT: = NewObject
 // VALUES: [[copy]] = NewDictionary

@@ -1,4 +1,4 @@
-import { classesBeyondLatin1, groupsOfAlternatives, loopsAndGroups } from "./generated/regular-expressions";
+import { classesBeyondLatin1, groupsOfAlternatives, loopsAndGroups, outOfText } from "./generated/regular-expressions";
 import { generated } from "./generated/run-generated";
 
 const seeds = Array.from({ length: 40 }, (_, i) => i + 1);
@@ -18,12 +18,24 @@ generated(
             plainEnv,
             make: () => loopsAndGroups(seed, 300),
           },
+          {
+            name: `loops and groups out of text, seed ${seed}`,
+            isAlwaysRun: seed === 2,
+            plainEnv,
+            make: () => outOfText(loopsAndGroups(seed, 300)),
+          },
         ]),
     {
       name: `groups of alternatives, seed ${seed}`,
       isAlwaysRun: seed <= 1,
       plainEnv,
       make: () => groupsOfAlternatives(seed, 300),
+    },
+    {
+      name: `groups of alternatives out of text, seed ${seed}`,
+      isAlwaysRun: seed <= 1,
+      plainEnv,
+      make: () => outOfText(groupsOfAlternatives(seed, 300)),
     },
     {
       name: `classes beyond Latin-1 under u and v, seed ${seed}`,
@@ -36,6 +48,12 @@ generated(
       isAlwaysRun: seed <= 1,
       plainEnv,
       make: () => classesBeyondLatin1(seed, 150, false),
+    },
+    {
+      name: `classes beyond Latin-1 out of text, seed ${seed}`,
+      isAlwaysRun: false,
+      plainEnv,
+      make: () => outOfText(classesBeyondLatin1(seed, 150, false)),
     },
   ]),
 );

@@ -764,7 +764,8 @@ const rounds = { few: 500, many: 2500 };
 
 group("compile/aot/global names/run-time calls", () => {
   for (const [name, { setup = "", body, callsTheRunTime, evaluatesStrings }] of Object.entries(measured)) {
-    test(
+    // ./supported-with-counted-calls.ts says why nothing is counted on Windows.
+    test.skipIf(isWindows)(
       `${name}: ${callsTheRunTime}`,
       () =>
         slot(async () => {

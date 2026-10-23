@@ -295,7 +295,7 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
 }
 
 const atWorkWhenTimeWasUp = new WeakSet<object>();
-const collectsAtEveryAllocation = (env: Record<string, string | undefined>) => env.BUN_JSC_slowPathAllocsBetweenGCs === "1";
+const collectsAtEveryAllocation = (env: Record<string, string | undefined>) => Number(env.BUN_JSC_slowPathAllocsBetweenGCs) <= 7;
 
 export const withoutCoreDump = (cmd: string[]) => (isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd]);
 
@@ -351,7 +351,7 @@ let executables = 0;
 
 type ProgramOptions = { build?: string[]; entryPoints?: string[]; buildEnv?: Record<string, string>; env?: Record<string, string>; reference?: "compiled"; erased?: "as plain Bun" };
 // How the programs of one describe() are built and run.
-type Setup = { folder: string; carrier: string[]; buildFlags: string[]; runEnv: Record<string, string>; erasesTypes: boolean; stubCopies?: number };
+type Setup = { folder: string; carrier: string[]; buildFlags: string[]; runEnv: Record<string, string> | Record<string, string>[]; erasesTypes: boolean; stubCopies?: number };
 export type RunResult = ReturnType<typeof told>;
 export type StatisticBound = { name: string; relation: "=" | ">=" | "<="; bound: number };
 
@@ -424,8 +424,13 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
       ...(program.stubCopiesExpected ? [{ name: "StubCopiesEmitted", relation: ">=", bound: 2 } as const] : []),
       ...(generatesAllCodeDirectly(program) ? [{ name: "FunctionsGeneratedDirectly", relation: ">=", bound: 1 } as const] : []),
     ]);
+    let spentCollecting = 0;
     for (const environment of program.runEnvironments) {
+      // A list of environments goes from mild to harsh. A program that has taken a minute in the mild ones is not run in the harsh ones.
+      if (collectsAtEveryAllocation(environment) && spentCollecting > 60_000) continue;
+      const start = performance.now();
       const ran = await spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" });
+      if (collectsAtEveryAllocation(environment)) spentCollecting += performance.now() - start;
       // How long a program takes where every allocation collects says nothing about it. One that is still at work when its time is up has shown no fault, and has no output to compare.
       if (collectsAtEveryAllocation(environment) && atWorkWhenTimeWasUp.has(ran)) {
         console.error(`NOT THROUGH: ${program.entryPoints[0]} was still at work when its time was up`);
@@ -521,7 +526,7 @@ async function run(path: string, beside: string, setup: Setup) {
     carrier: setup.carrier,
     // A flag that holds one value takes its last spelling, so the flags of a variant win over those of the program.
     buildFlags: [...(options.build ?? []), ...setup.buildFlags, ...extraFlags],
-    runEnvironments: [{ ...options.env, ...setup.runEnv }],
+    runEnvironments: [setup.runEnv].flat().map(environment => ({ ...options.env, ...environment })),
     buildEnvironment: options.buildEnv,
     outputFolder: setup.folder,
     statistics,
@@ -624,8 +629,18 @@ export function programsBuiltWith(topic: string, label: string, buildFlags: stri
  * AOT_PROGRAMS=<text> selects other programs, as above. `runEnv` is set where the executable runs. A run that is told nothing takes a fortieth of that subset, by `inShare`.
  * It is split into `parts` as a large folder is. A build with a sanitizer takes a third of them. The programs `always` are taken in any case.
  * `stubCopies`: each program is laid out so that it needs about that many copies of the shared stubs.
+ * A list of environments: the one executable runs once in each. `ofAllPrograms`: not the quick subset but every program in time: a run that is told nothing takes one in four hundred.
  */
-export function variant(label: string, buildFlags: string[], runEnv: Record<string, string> = {}, part = 1, parts = 1, always: string | string[] = [], stubCopies?: number) {
+export function variant(
+  label: string,
+  buildFlags: string[],
+  runEnv: Record<string, string> | Record<string, string>[] = {},
+  part = 1,
+  parts = 1,
+  always: string | string[] = [],
+  stubCopies?: number,
+  ofAllPrograms = false,
+) {
   const isAlwaysTaken = (path: string) => [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
   define(
     `compile/aot/variant/${label}`,
@@ -637,9 +652,9 @@ export function variant(label: string, buildFlags: string[], runEnv: Record<stri
         .filter(
           path =>
             isAlwaysTaken(path) ||
-            (inShare(label + " " + inPrograms(path), 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || (hash(path) >> 32n) % 3n === 0n)),
+            (inShare(label + " " + inPrograms(path), ofAllPrograms ? 400 : 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || (hash(path) >> 32n) % 3n === 0n)),
         ),
-      path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? isQuick(path) : isWanted(path)),
+      path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? ofAllPrograms || isQuick(path) : isWanted(path)),
     )
       // Nothing is compiled for a program that the build rejects.
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt"))

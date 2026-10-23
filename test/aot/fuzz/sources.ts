@@ -98,8 +98,8 @@ const generated =
   (source: string, generate: Generator): Source =>
   (seed, bed) => {
     const random = new Random(seed);
-    if ((source === "typed-object-mutations" || source === "held-across-suspensions" || source === "changing-buffers") && bed.name !== "product") return;
-    const typed = source === "typed-object-mutations" || source === "held-across-suspensions" || source === "changing-buffers" || (source === "grammar" && bed.name === "product" && random.chance(0.5));
+    if ((source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers") && bed.name !== "product") return;
+    const typed = source === "typed-object-mutations" || source === "held-across-suspensions" || source === "where-the-stack-ends" || source === "changing-buffers" || (source === "grammar" && bed.name === "product" && random.chance(0.5));
     const program: Program = { text: generate(random, typed, { library: bed.name === "product" }), extension: typed ? "ts" : "js" };
     return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
   };
@@ -117,6 +117,6 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       return { source: "unsound-types", seed, text, extension: "ts", notes: parts.map(each => each.join(", ")).join(" | "), group: hole, alone, isForTypeScript: true };
     };
   }
-  for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "changing-buffers"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
+  for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "changing-buffers"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

@@ -1007,6 +1007,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
     // TODO: until all code that is generated directly has been seen to run on arm64 (test/aot/joined-programs.ts).
     if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/joined-programs-all-code-direct");
+    if (profile === "asan") args.push("--always-draw=aot/exception-checks");
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));

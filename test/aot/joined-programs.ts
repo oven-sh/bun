@@ -163,6 +163,7 @@ async function compare(folder: string, carrier: string[], group: number | string
   expect({ build: "tested", stderr: second.exitCode ? second.stderr.slice(-2000) : "", exitCode: second.exitCode }).toEqual({ build: "tested", stderr: "", exitCode: 0 });
   // The flags did what they are here for.
   if (flags.includes("--aot-testing=GenerateAllCodeDirectly")) expect(Number(/FunctionsGeneratedDirectly (\d+)/.exec(second.stderr + second.stdout)?.[1] ?? 0)).toBeGreaterThan(names.length / 2);
+  if (flags.some(flag => flag.startsWith("--aot-testing=FailPredictions"))) expect(Number(/PlacesWherePredictionsFailUnasked (\d+)/.exec(second.stderr + second.stdout)?.[1] ?? 0)).toBeGreaterThan(names.length / 2);
 
   const [expected, actual] = [await run(first.executable, cwd), await run(second.executable, cwd)];
   rmSync(cwd, { recursive: true, force: true });
@@ -184,7 +185,7 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   describe.concurrent(`compile/aot/joined/${label}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
-    if (isWindows || isASAN) return void test.skip("no code is generated directly on Windows or by a Bun built with AddressSanitizer", () => {});
+    if ((isWindows || isASAN) && flags.includes("--aot-testing=GenerateAllCodeDirectly")) return void test.skip("no code is generated directly on Windows or by a Bun built with AddressSanitizer", () => {});
     const groups = groupsOf(programsOfOneFile());
     const carrier = withoutDebugInformation();
     const [first, step] = partInShare(part, parts, Math.max(1, Math.ceil(groups.length / parts / groupsInShare))).split("/").map(Number);

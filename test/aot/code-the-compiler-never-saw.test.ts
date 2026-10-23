@@ -213,7 +213,7 @@ const routes: Record<string, Record<string, Route>> = {
     },
     "bun ffi named": { body: `require('bun:ffi').dlopen(temporaryFile('.so', 'x'), {})`, isMachineCode: true },
     "bun ffi cc": {
-      body: `require('bun:ffi').cc({ source: temporaryFile('.c', 'int f(void) { return 1; }'), symbols: { f: { returns: 'int', args: [] } } }).symbols.f() === 1 && (globalThis.RAN = 1)`,
+      body: `const library = require('bun:ffi').cc({ source: temporaryFile('.c', 'int f(void) { return 1; }'), symbols: { f: { returns: 'int', args: [] } } }); try { library.symbols.f() === 1 && (globalThis.RAN = 1); } finally { library.close(); }`,
       isMachineCode: true,
     },
     "bun jsc under a computed name": { body: `Object.keys(require(glue('bun:', 'jsc'))).length` },

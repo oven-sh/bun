@@ -1,0 +1,3 @@
+{
+  "skipInVariants": "it counts what is still alive at the end, and in another build, or with a collection at another moment, a stale copy of a pointer lies on the stack"
+}

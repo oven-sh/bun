@@ -65,9 +65,16 @@ const besideTheProgram = {
   BUN_JSC_scribbleFreeCells: "1",
 };
 const withoutInlining = "--aot-disable=InlineCalls";
+// One distance between collections is blind to what another shows, and only young collections show a store without its barrier.
+const collecting = (every: number, young: boolean) => ({
+  BUN_JSC_slowPathAllocsBetweenGCs: String(every),
+  BUN_JSC_useZombieMode: "1",
+  BUN_JSC_scribbleFreeCells: "1",
+  ...(young ? { BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" } : {}),
+});
 const underCollections = { BUN_JSC_slowPathAllocsBetweenGCs: "3", BUN_JSC_scribbleFreeCells: "1" };
 
-const variant = (label: string, flags: string[], env = {}, parts = 3, behind?: unknown[][]): Row => [
+const variant = (label: string, flags: string[], env: object = {}, parts = 3, behind?: unknown[][]): Row => [
   `aot/variant-${label}`,
   parts,
   "./run-programs",
@@ -106,6 +113,13 @@ export const rows: Row[] = [
 
   variant("all-code-direct", ["--aot-testing=GenerateAllCodeDirectly"]),
   variant("collecting-beside-the-program", [], besideTheProgram),
+  variant(
+    "collections-at-allocations",
+    [],
+    [{ BUN_JSC_forceFencedBarrier: "1" }, ...[5, 3, 2, 1].map(every => collecting(every, true)), ...[7, 3, 2, 1].map(every => collecting(every, false))],
+    3,
+    [[["async-and-generators/awaited-steps-that-wait-or-do-not"], undefined, true], [[], undefined, true], [[], undefined, true]],
+  ),
   variant("every-function-cold", ["--aot-heat=everything-is-cold"]),
   variant("every-function-hot", ["--aot-heat=everything-is-hot"]),
   variant("every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]),
@@ -114,6 +128,15 @@ export const rows: Row[] = [
   variant("inner-objects-flattened-wherever-legal", ["--aot-testing=FlattenUntilHeldWhereverLegal"]),
   variant("no-flow-results", ["--aot-disable=flow-results"]),
   variant("no-inlining", [withoutInlining]),
+  variant("predictions-fail-every-time", ["--aot-testing=FailPredictions"]),
+  variant("predictions-fail-half-the-time", ["--aot-testing=FailPredictions:2:1"]),
+  variant(
+    "predictions-fail-half-the-time-under-collections",
+    ["--aot-testing=FailPredictions:2:2"],
+    [...[5, 2, 1].map(every => collecting(every, true)), ...[7, 3].map(every => collecting(every, false))],
+  ),
+  variant("predictions-fail-one-time-in-seven", ["--aot-testing=FailPredictions:7:1"]),
+  variant("predictions-fail-one-time-in-seven-validated", ["--aot-testing=FailPredictions:7:2", "--aot-validate"]),
   variant("program-is-very-large", ["--aot-limit=MaxWarmCodeValues:1"]),
   variant("proofs-checked-at-run-time", ["--aot-testing=CheckProofsAtRunTime"]),
   variant("stub-copies", [], {}, 3, [
@@ -184,6 +207,7 @@ export const rows: Row[] = [
   births("stores of two takers of one source", undefined, undefined, 5),
   births("stretches that differ in one thing"),
   births("strings", "strings", false),
+  births("two kinds of list or collection at one use", undefined, undefined, 4),
   births("two kinds of object at one place", undefined, false),
   births("two kinds of object held as the first"),
   births("typed arrays", "arrays", true),
@@ -214,6 +238,13 @@ export const rows: Row[] = [
     "./joined-programs",
     "joined",
     ["all-code-direct", ["--aot-testing=GenerateAllCodeDirectly"]],
+  ],
+  [
+    "aot/joined-programs-predictions-fail",
+    12,
+    "./joined-programs",
+    "joined",
+    ["predictions-fail", ["--aot-testing=FailPredictions:2:1"]],
   ],
   ["aot/modules-three-ways", 4, "./three-ways/run-three-ways", "threeWays"],
   ["aot/one-line-changes-little", 8, "./one-line-changes-little-cases", "oneLineChangesLittle"],

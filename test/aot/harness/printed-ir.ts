@@ -67,5 +67,6 @@ export async function printIR(folder: string, { until, functionName, flags = [] 
     exitCode: 0,
     signal: null,
   });
-  return printed.stdout;
+  // testaot prints through C's stdout, which translates line ends on Windows.
+  return printed.stdout.replaceAll("\r\n", "\n");
 }

@@ -18,7 +18,7 @@
 // ACCESSES-NOT: NewClosure
 // ACCESSES-LABEL: function {{*}}name="b"
 // ACCESSES: = PrivateGet [[callReceiver]], [[callToken]] layout=[[layout]] @
-// ACCESSES: = Call [[callee]], [[callReceiver]], {{*}}calleeName="#m"
+// ACCESSES: = Call [[callee]], [[callReceiver]], {{*}}calleeName="this.#m"
 // ACCESSES-LABEL: function {{*}}name="c"
 // ACCESSES: = PrivateGet [[writeReceiver]], [[writeToken]] layout=[[layout]] @
 // ACCESSES: = NewRuntimeError runtimeError=PrivateMethodWrite

@@ -1013,10 +1013,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
     JSValue object = callframe->uncheckedArgument(1);
     JSValue hasEvaluated = callframe->uncheckedArgument(2);
     ASSERT(hasEvaluated.isBoolean());
-    JSValue parent = Bun::parentSeenBy(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, callframe->uncheckedArgument(3));
+    JSValue requirer = callframe->uncheckedArgument(3);
+    JSValue parent = Bun::parentSeenBy(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, requirer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent)));
+    auto* module = JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent);
+    RETURN_IF_EXCEPTION(scope, {});
+    // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
+    if (parent != requirer)
+        module->m_overriddenParent.set(JSC::getVM(globalObject), module, parent);
+    return JSValue::encode(module);
 }
 
 JSCommonJSModule* JSCommonJSModule::create(

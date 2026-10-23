@@ -1,9 +1,9 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="throughField"
-// CHECK: [[picked]] = Call {{*}}calleeName="pick"
+// CHECK: [[picked]] = Call {{*}}calleeName="source.pick"
 // CHECK-NEXT: = Convert [[picked]] declared={type=number site=w{{*}}} @
 // CHECK-LABEL: function {{*}}name="throughMethod"
-// CHECK: [[row]] = Call {{*}}calleeName="read"
+// CHECK: [[row]] = Call {{*}}calleeName="source.read"
 // CHECK-NEXT: = Convert [[row]] declared={type=undefined|null|L{{*}} site=w{{*}}} @
 // CHECK-LABEL: function {{*}}name="throughParameter"
 // CHECK: [[made]] = Call {{*}}calleeName="make"

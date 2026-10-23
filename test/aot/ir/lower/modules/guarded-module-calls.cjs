@@ -28,7 +28,7 @@
 // NATIVECALL: [[name]] = String string="node:buffer"
 // NATIVECALL: Branch {{*}}notTaken [[other]](| 0)
 // NATIVECALL: [[other]]([[callee]]):
-// NATIVECALL-NEXT: = Call [[callee]], [[process]], [[name]] calleeName="getBuiltinModule"
+// NATIVECALL-NEXT: = Call [[callee]], [[process]], [[name]] calleeName="process.getBuiltinModule"
 
 require = wrap(require);
 

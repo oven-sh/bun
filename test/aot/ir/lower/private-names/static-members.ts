@@ -10,7 +10,7 @@
 // RUN(METHOD): lower
 // METHOD-LABEL: function {{*}}name="f"
 // METHOD-COUNT-2: = StrictEq
-// METHOD: = Call {{*}}calleeName="#m"
+// METHOD: = Call {{*}}calleeName="o.#m"
 // METHOD: frequency=Unlikely:
 // METHOD-NEXT: = NewRuntimeError runtimeError=InvalidPrivateBrand
 

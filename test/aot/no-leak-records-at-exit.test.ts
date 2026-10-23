@@ -74,6 +74,7 @@ const expected: Record<string, string> = {
 
 const env = {
   ...bunEnv,
+  Malloc: undefined,
   BUN_DESTRUCT_VM_ON_EXIT: "1",
   ASAN_OPTIONS: "allow_user_segv_handler=1:detect_leaks=1:abort_on_error=0",
   LSAN_OPTIONS: "malloc_context_size=30",
@@ -92,10 +93,18 @@ test.skipIf(!isASAN).each(Object.keys(programs))(
     expect(buildErrors).not.toContain("LeakSanitizer");
     expect(buildExitCode).toBe(0);
 
+    const withSystemMalloc = await runCommand(
+      [bunExe(), "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable + "-2"],
+      String(dir),
+      { ...env, Malloc: "1", LSAN_OPTIONS: "malloc_context_size=30:use_unaligned=1" },
+    );
+    expect(withSystemMalloc.stderr).not.toContain("LeakSanitizer");
+    expect(withSystemMalloc.exitCode).toBe(0);
+
     const { stdout, stderr, exitCode } = await runCommand([executable], String(dir), env);
     expect(stderr).toBe("");
     expect(stdout).toBe(expected[name]);
     expect(exitCode).toBe(0);
   },
-  120_000,
+  240_000,
 );

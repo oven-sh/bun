@@ -10,7 +10,7 @@
 // CHECK-NEXT: [[bothMethodTest]] = TypeTest [[convertedBothMethodRead]] testedType=undefined|null
 // CHECK-NEXT: Branch [[bothMethodTest]] -> taken {{*}}, notTaken [[bothCall]](| 0)
 // CHECK: [[bothCall]]([[bothMethod]]):
-// CHECK-NEXT: = Call [[bothMethod]], [[bothObject]], [[x]] calleeKey="m" calleeName="m"
+// CHECK-NEXT: = Call [[bothMethod]], [[bothObject]], [[x]] calleeKey="m" calleeName="o?.m"
 // CHECK-LABEL: function {{*}}name="computed"
 // CHECK: b0([[o]]: anything, [[k]]: anything, [[argument]]: anything):
 // CHECK: [[computedReceiver]] = Convert [[o]] declared={type=undefined|null|object flags=[IsExpected]}
@@ -38,7 +38,7 @@
 // CHECK-NEXT: [[methodTest]] = TypeTest [[convertedMethodRead]] testedType=undefined|null
 // CHECK-NEXT: Branch [[methodTest]] -> taken {{*}}, notTaken [[methodCall]](| 0)
 // CHECK: [[methodCall]]([[method]]):
-// CHECK-NEXT: = Call [[method]], [[methodObject]], [[x]] calleeKey="m" calleeName="m"
+// CHECK-NEXT: = Call [[method]], [[methodObject]], [[x]] calleeKey="m" calleeName="o.m"
 // CHECK-LABEL: function {{*}}name="optionalReceiver"
 // CHECK: [[convertedReceiver]] = Convert [[o]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[receiverTest]] = TypeTest [[convertedReceiver]] testedType=undefined|null
@@ -46,12 +46,12 @@
 // CHECK: [[receiverRead]]([[receiver]]):
 // CHECK-NEXT: [[receiverMethodRead]] = PropGet [[receiver]] key="m"
 // CHECK-NEXT: [[receiverMethod]] = Convert [[receiverMethodRead]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[receiverMethod]], [[receiver]], [[x]] calleeKey="m" calleeName="m"
+// CHECK-NEXT: = Call [[receiverMethod]], [[receiver]], [[x]] calleeKey="m" calleeName="o?.m"
 // CHECK-LABEL: function {{*}}name="parenthesized"
 // CHECK: [[skipped]] = Undefined
 // CHECK-NEXT: Jump -> next [[join]]([[skipped]], [[skipped]])
 // CHECK: [[join]]([[function]], [[this]]):
-// CHECK-NEXT: = Call [[function]], [[this]], [[x]] calleeName="m"
+// CHECK-NEXT: = Call [[function]], [[this]], [[x]] calleeName="o?.m"
 // CHECK-NOT: calleeKey
 
 // RUN(EXITS): lower

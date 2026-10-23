@@ -8,7 +8,7 @@
 // CHECK-NOT: = Convert {{*}}site=
 // CHECK: [[castRead]] = PropGet [[castObject]] key="m"
 // CHECK-NEXT: [[castMethod]] = Convert [[castRead]] declared={type=undefined|null|f{{*}} flags=[IsExpected]}
-// CHECK-NEXT: = Call [[castMethod]], [[castObject]], {{*}}calleeKey="m" calleeName="m"
+// CHECK-NEXT: = Call [[castMethod]], [[castObject]], {{*}}calleeKey="m" calleeName="o.m"
 // CHECK-NOT: = Convert {{*}}site=
 // CHECK-LABEL: function {{*}}name="comma"
 // CHECK: [[detachedRead]] = PropGet {{*}}key="m"
@@ -18,8 +18,8 @@
 // CHECK-LABEL: function {{*}}name="computed"
 // CHECK: [[computedRead]] = ElemGet [[computedObject]],
 // CHECK-NEXT: [[computedMethod]] = Convert [[computedRead]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[computedMethod]], [[computedObject]],
-// CHECK-NOT: callee
+// CHECK-NEXT: = Call [[computedMethod]], [[computedObject]], {{*}}calleeName="o[k]"
+// CHECK-NOT: calleeKey
 // CHECK-LABEL: function {{*}}name="conditional"
 // CHECK-NOT: callee
 // CHECK: Jump -> next [[join]](v
@@ -40,7 +40,7 @@
 // CHECK-LABEL: function {{*}}name="parenthesized"
 // CHECK: [[methodRead]] = PropGet [[object]] key="m"
 // CHECK-NEXT: [[method]] = Convert [[methodRead]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[method]], [[object]], {{*}}calleeKey="m" calleeName="m"
+// CHECK-NEXT: = Call [[method]], [[object]], {{*}}calleeKey="m" calleeName="o.m"
 
 // RUN(KEYS): lower
 // KEYS-LABEL: function {{*}}name="identifier"

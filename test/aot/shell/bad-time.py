@@ -12,8 +12,8 @@ an object. The output stays correct, so no other test notices. This test finds a
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
 Prints one line per program that ends in that state and is not in bad-time-known.txt, which lists the programs that cause it on purpose,
-and one per listed program that does not end in it. Exits with 1 if there is a line of the first kind. A program that does not reach its
-end is not asked.
+one per listed program that does not end in it, and one per program that dies of a signal. Exits with 1 if there is a line of the first or the
+last kind. A program that does not reach its end is not asked.
 """
 import os, stat, subprocess, sys, tempfile
 
@@ -61,13 +61,16 @@ if __name__ == "__main__":
         open(answers, "w").close()
         open(wrapper, "w").write(WRAPPER % (jsc, answers))
         os.chmod(wrapper, os.stat(wrapper).st_mode | stat.S_IXUSR)
-        subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env={**os.environ, "JSC": wrapper, "WORK": folder + "/work"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        verdicts = subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env={**os.environ, "JSC": wrapper, "WORK": folder + "/work"}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode(errors="replace")
         asked = dict(line.rsplit(" ", 1) for line in open(answers).read().split("\n") if line)
     asked = {image.removesuffix(".image").replace(".", "/", 1): answer == "true" for image, answer in asked.items()}
     failures = sorted(name for name, answer in asked.items() if answer and name not in known)
     for name in failures:
         print(f"{name}: has a bad time")
+    died = [line for line in verdicts.split("\n") if ": DIFFERS: died of signal " in line]
+    for line in died:
+        print(line)
     for name in sorted(name for name, answer in asked.items() if not answer and name in known):
         print(f"{name}: is in bad-time-known.txt and has none")
     print(f"{len(asked)} programs reach their end, {sum(asked.values())} have a bad time, {len(failures)} of them without meaning it")
-    sys.exit(1 if failures else 0)
+    sys.exit(1 if failures or died else 0)

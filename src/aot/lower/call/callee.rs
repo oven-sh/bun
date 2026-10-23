@@ -1,6 +1,6 @@
 use bun_sema::atom::{Atom, written_name};
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind};
+use bun_sema::hir::{BinOp, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind};
 
 use super::Callee;
 use crate::builtins::Resolved;
@@ -154,6 +154,10 @@ pub(super) fn find_callee_name(
     if let ExprKind::Ident(name) = hir[inner].kind {
         return Some(file.intern_atom(name));
     }
+    let mut path = Vec::new();
+    if append_written_path(file, inner, &mut path) {
+        return Some(file.intern_bytes(&path));
+    }
     match hir.member_key(inner) {
         Some((_, MemberKey::Name(name))) => Some(file.intern_atom(name)),
         Some((_, MemberKey::PrivateName(name))) => {
@@ -162,6 +166,52 @@ pub(super) fn find_callee_name(
         }
         Some((_, MemberKey::Computed(_))) | None => None,
     }
+}
+
+/// `a.b.c`, `this.#x`, `a?.b[key]`: a callee that consists of names, as plain Bun quotes it in "a.b.c is not a function".
+/// Answers false, with `path` in any state, for anything else and for what is too long to be worth its bytes in the executable.
+fn append_written_path(
+    file: &FileLowering<'_, '_, '_, '_>,
+    expression: ExprId,
+    path: &mut Vec<u8>,
+) -> bool {
+    const LONGEST_PATH: usize = 80;
+    let hir = file.hir;
+    let optional = |chain| {
+        if chain == Chain::Start {
+            &b"?."[..]
+        } else {
+            &b""[..]
+        }
+    };
+    match hir[expression::skip_type_syntax(file, expression)].kind {
+        ExprKind::Ident(name) => path.extend_from_slice(file.queries.atom_bytes(name)),
+        ExprKind::This => path.extend_from_slice(b"this"),
+        ExprKind::Super => path.extend_from_slice(b"super"),
+        ExprKind::Dot {
+            obj, name, chain, ..
+        } => {
+            if !append_written_path(file, obj, path) {
+                return false;
+            }
+            path.extend_from_slice(if chain == Chain::Start { b"?." } else { b"." });
+            path.extend_from_slice(written_name(file.queries.atom_bytes(name)));
+        }
+        ExprKind::Index { obj, index, chain } => {
+            let ExprKind::Ident(key) = hir[index].kind else {
+                return false;
+            };
+            if !append_written_path(file, obj, path) {
+                return false;
+            }
+            path.extend_from_slice(optional(chain));
+            path.push(b'[');
+            path.extend_from_slice(file.queries.atom_bytes(key));
+            path.push(b']');
+        }
+        _ => return false,
+    }
+    path.len() <= LONGEST_PATH
 }
 
 fn lower_global_path_callee(

@@ -133,7 +133,8 @@ const replaceableFunction = (callback: b.UseSpec, call: b.FunctionField) =>
     call,
   });
 
-const outputStream = b.property(b.object, {
+// constructStdioWriteStream() in BunProcess.cpp: where the code that makes the stream throws, as it does when the stack is full, it reports the error and the property is undefined from then on.
+const outputStream = b.property(b.union(b.object, b.undefined), {
   createdOnFirstRead: { capability: "js", throws: true },
   setter: {
     this: b.object,

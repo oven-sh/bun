@@ -281,3 +281,15 @@ export function classesBeyondLatin1(seed: number, count: number, isUnicode: bool
   }
   return written(largeProgram, rows);
 }
+
+/**
+ * The same expressions, each as a text that is whole only when the program runs. No code is generated for such a text when the program is
+ * built: the executable compiles it when the expression is made, and matches it without the JIT.
+ */
+export function outOfText({ file, text }: Written): Written {
+  const rows = text.replace(
+    /^    \/(.*)\/([a-z]*),$/gm,
+    (_, pattern: string, flags: string) => `    new RegExp(${JSON.stringify(pattern)} + nothing, ${JSON.stringify(flags)}),`,
+  );
+  return { file, text: rows.replace("const all: RegExp[] = [", () => "const nothing: string = String(Date.now()).slice(99);\nconst all: RegExp[] = [") };
+}

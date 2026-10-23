@@ -14,7 +14,8 @@ such a value alive by accident.
     --part <i>/<n>  with `all`: every n-th program, starting at the i-th, and all of $WRITTEN (quick.py). ../collector-stress/*.test.ts split the programs this way
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
-Prints one line per program that is `same` normally and not under stress, and exits with 1 if there is one. Not counted:
+Prints one line per program that is `same` normally and not under stress, and one per program that dies of a signal normally, and exits
+with 1 if there is one. Not counted:
     a program that times out under stress; their number is printed
     the programs in collector-stress-known.txt: they count runtime calls or heap cells, and a collection empties the caches that
     keep those numbers low
@@ -58,11 +59,15 @@ if __name__ == "__main__":
     known = {line.split()[0] for line in open(HERE + "/collector-stress-known.txt") if line.strip() and not line.startswith("#")}
     with tempfile.TemporaryDirectory(prefix="aot-collector-stress") as folder:
         baseline = verdicts(arguments, folder + "/baseline", "")
-        stressed = verdicts(arguments, folder + "/stressed", f"--slowPathAllocsBetweenGCs={every} --useZombieMode=1 --scribbleFreeCells=1" + (" --useEdenCollectionsAtSlowPathAllocs=1" if young else ""))
-    judged = [name for name, verdict in baseline.items() if verdict.startswith("same") and name not in known]
+        judged = [name for name, verdict in baseline.items() if verdict.startswith("same") and name not in known]
+        jobs = arguments[:2] if arguments[0] == "-j" else []
+        stressed = verdicts([*jobs, *judged], folder + "/stressed", f"--slowPathAllocsBetweenGCs={every} --useZombieMode=1 --scribbleFreeCells=1" + (" --useEdenCollectionsAtSlowPathAllocs=1" if young else "")) if judged else {}
     timed_out = [name for name in judged if stressed.get(name, "").startswith("DIFFERS: timed out")]
     failures = [name for name in judged if name not in timed_out and not stressed.get(name, "").startswith("same")]
     for name in failures:
         print(f"{name}: {stressed.get(name, 'no verdict')}")
+    died = [name for name, verdict in baseline.items() if "died of signal" in verdict]
+    for name in died:
+        print(f"{name}: {baseline[name]}")
     print(f"{len(judged)} programs, {len(failures)} fail under stress alone, {len(timed_out)} run out of time")
-    sys.exit(1 if failures else 0)
+    sys.exit(1 if failures or died else 0)

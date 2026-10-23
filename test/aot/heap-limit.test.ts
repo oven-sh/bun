@@ -160,10 +160,10 @@ async function build(cwd: string, ...moreEntryPoints: string[]) {
 
 if (isASAN)
   console.error(
-    "SKIPPED: the tests of heap-limit.test.ts under `ulimit -v`: a program built with AddressSanitizer does not start there",
+    "SKIPPED: heap-limit.test.ts: a Bun built with AddressSanitizer takes the range from another allocator, which does not hand out again at once what is freed, so the reserve that pays for the RangeError does not come back; under `ulimit -v` such a program does not start",
   );
 
-describe.concurrent("the address space for objects of a compiled program", () => {
+(isASAN ? describe.skip : describe.concurrent)("the address space for objects of a compiled program", () => {
   test("a program that keeps more objects alive than fit ends with a RangeError", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
     const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
@@ -648,7 +648,6 @@ parentPort!.postMessage(sum);
     120_000,
   );
 
-  // The range is as large as fits in a little under half of the address space that is free at the start, not the next power of two below a quarter of it.
   test.skipIf(!isLinux || isASAN)(
     "under a limit of 4 GB on address space objects get over a gigabyte",
     async () => {
@@ -692,12 +691,118 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
         String(folder),
       );
       expect(stderr).toMatch(
-        /FATAL: out of memory\. The limit on address space \(ulimit -v\) leaves the threads of this executable \d+ MB for JavaScript objects\. Raise the limit, or build with --aot-huge-heap\./,
+        /FATAL: out of memory\. The limit on address space \(ulimit -v\) leaves no room for more JavaScript objects\. Raise the limit\./,
       );
       expect(stdout).toBe("");
       expect(exitCode).not.toBe(0);
     },
     120_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "under a limit of 4 GB on address space one buffer gets two gigabytes",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `const buffer = new ArrayBuffer(2048 * 1024 * 1024);
+console.log("made", buffer.byteLength / (1024 * 1024), "MB");
+`,
+      });
+      await build(String(folder));
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "made 2048 MB\n", stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "under a limit of 4 GB on address space an idle program reserves less than half of it",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `import { readFileSync } from "node:fs";
+const sizeInKB = Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
+console.log(sizeInKB < 2 * 1024 * 1024 ? "less than half" : sizeInKB + " kB");
+`,
+      });
+      await build(String(folder));
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "less than half\n", stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "objects that outgrow what is reserved at the start are all still there",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.ts": `type Entry = { id: number; next: Entry | null };
+const heads: (Entry | null)[] = [];
+for (let chain = 0; chain < 60; chain++) {
+  let head: Entry | null = null;
+  for (let i = 0; i < 1_000_000; i++) head = { id: i, next: head };
+  heads.push(head);
+  if (chain % 3 === 2) heads[chain - 1] = null;
+}
+let entries = 0;
+let sum = 0;
+for (const head of heads) for (let entry = head; entry; entry = entry.next) (entries++, (sum += entry.id));
+console.log(entries, sum);
+`,
+      });
+      await build(String(folder));
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -v 4194304 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "40000000 19999980000000\n", stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+
+  test.skipIf(isASAN)(
+    "a program that fills the room for the shapes of objects gets an error that names it",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.js": `let keep = [];
+function fill() {
+  for (let i = 0; ; i++) {
+    const object = {};
+    object["p" + i] = i;
+    keep.push(object);
+  }
+}
+for (let attempt = 0; attempt < 2; attempt++) {
+  try {
+    fill();
+  } catch (error) {
+    const kept = keep.length;
+    keep = [];
+    console.log(attempt, error instanceof RangeError, error.message, kept > 100_000);
+  }
+}
+console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
+`,
+      });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      const { stdout, exitCode } = await run([join(String(folder), "program")], String(folder), {
+        BUN_JSC_structureHeapSizeInKB: "65536",
+      });
+      const message = "Out of memory: This executable can use 64 MB for the shapes of JavaScript objects (Structures).";
+      expect({ stdout, exitCode }).toEqual({
+        stdout: `0 true ${message} true\n1 true ${message} true\nafterward a,b\n`,
+        exitCode: 0,
+      });
+    },
+    240_000,
   );
 
   test.skipIf(!isLinux)(

@@ -14,7 +14,7 @@
 // CHECK-NEXT: [[memberList]] = NewArray contents=anything
 // CHECK-NEXT: [[convertedPassed]] = Convert [[passed]] declared={type=undefined|null|string|Array flags=[IsExpected]}
 // CHECK-NEXT: AppendSpread [[memberList]], [[convertedPassed]]
-// CHECK-NEXT: = CallList [[method]], [[convertedO]], [[memberList]] calleeKey="m" calleeName="m"
+// CHECK-NEXT: = CallList [[method]], [[convertedO]], [[memberList]] calleeKey="m" calleeName="o.m"
 // CHECK-LABEL: function {{*}}name="mixed"
 // CHECK: b0([[f]]: anything, [[x]]: anything, [[a]]: anything, [[y]]: anything):
 // CHECK: [[mixedF]] = Convert [[f]] declared={type=undefined|null|function flags=[IsExpected]}

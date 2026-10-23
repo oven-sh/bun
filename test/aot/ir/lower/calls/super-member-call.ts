@@ -11,12 +11,12 @@
 // CHECK: b0([[this]]: {{*}}, [[argument]]: anything):
 // CHECK: [[namedBase]] = GetSuperBase {{*}}homeKind=ClassPrototype
 // CHECK: [[namedMethod]] = SuperGet [[namedBase]], [[this]] key="m"
-// CHECK: = Call [[namedMethod]], [[this]], [[argument]] calleeName="m"
+// CHECK: = Call [[namedMethod]], [[this]], [[argument]] calleeName="super.m"
 // CHECK-LABEL: function {{*}}name="method"
 // CHECK: [[literalBase]] = GetSuperBase
 // CHECK-NOT: homeKind=
 // CHECK: [[literalMethod]] = SuperGet [[literalBase]], [[receiver]] key="m"
-// CHECK: = Call [[literalMethod]], [[receiver]] calleeName="m"
+// CHECK: = Call [[literalMethod]], [[receiver]] calleeName="super.m"
 
 // RUN(NOWHERE): lower
 // NOWHERE-NOT: calleeKey

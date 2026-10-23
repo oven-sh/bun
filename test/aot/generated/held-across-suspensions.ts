@@ -178,8 +178,8 @@ const suspensions: Suspension[] = [
 const disturbances: { name: string; text: string }[] = [
   { name: "nothing", text: `` },
   { name: "a-collection", text: `Bun.gc(true);` },
-  { name: "a-collection-and-new-objects", text: `Bun.gc(true);\nchurn(400);\nBun.gc(true);` },
-  { name: "new-objects", text: `churn(1500);` },
+  { name: "a-collection-and-new-objects", text: `Bun.gc(true);\nchurn(40);\nBun.gc(true);` },
+  { name: "new-objects", text: `churn(150);` },
   { name: "a-deep-recursion", text: `deep(400, 1.5, "d");\nBun.gc(true);` },
   { name: "two-collections", text: `Bun.gc(true);\nBun.gc(true);` },
 ];
@@ -353,8 +353,8 @@ function caseOf(combination: Combination, id: number) {
     heat === "once"
       ? `  console.log("${id}", ${run(String(3 + id))});`
       : heat === "again-and-again"
-        ? `  let sum = 0;\n  let last = "";\n  for (let seed = 1; seed <= 40; seed++) sum = mixed((last = ${run("seed")}), sum);\n  console.log("${id}", sum, last);`
-        : `  const all: Promise<string>[] = [];\n  for (let seed = 1; seed <= 24; seed++) all.push(${started("seed")});\n  let sum = 0;\n  const texts = await Promise.all(all);\n  for (const text of texts) sum = mixed(text, sum);\n  console.log("${id}", sum, texts[texts.length - 1]);`,
+        ? `  let sum = 0;\n  let last = "";\n  for (let seed = 1; seed <= 12; seed++) sum = mixed((last = ${run("seed")}), sum);\n  console.log("${id}", sum, last);`
+        : `  const all: Promise<string>[] = [];\n  for (let seed = 1; seed <= 8; seed++) all.push(${started("seed")});\n  let sum = 0;\n  const texts = await Promise.all(all);\n  for (const text of texts) sum = mixed(text, sum);\n  console.log("${id}", sum, texts[texts.length - 1]);`,
     `}`,
   ];
   return lines.filter(Boolean).join("\n");

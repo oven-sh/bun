@@ -16,7 +16,7 @@
 // CHECK: [[convertedO]] = Convert [[o]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[constructorRead]] = PropGet [[convertedO]] key="C"
 // CHECK-NEXT: [[constructor]] = Convert [[constructorRead]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Construct [[constructor]], -, [[x]] calleeName="C"
+// CHECK-NEXT: = Construct [[constructor]], -, [[x]] calleeName="o.C"
 // CHECK-LABEL: function {{*}}name="plain"
 // CHECK: b0([[plainC]]: anything, [[plainX]]: anything):
 // CHECK: [[convertedPlainC]] = Convert [[plainC]] declared={type=undefined|null|function flags=[IsExpected]}

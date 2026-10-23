@@ -2538,6 +2538,42 @@
   "aot/joined-programs-all-code-direct-9.test.ts": {
     "default": 90000
   },
+  "aot/joined-programs-predictions-fail-1.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-10.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-11.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-12.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-2.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-3.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-4.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-5.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-6.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-7.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-8.test.ts": {
+    "default": 90000
+  },
+  "aot/joined-programs-predictions-fail-9.test.ts": {
+    "default": 90000
+  },
   "aot/jsdoc-import-tags.test.ts": {
     "default": 17244,
     "asan": 33301,

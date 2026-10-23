@@ -6,7 +6,7 @@
 // CHECK-NEXT: [[returned]] = Convert [[read]] declared={type=i32 site=[[result]]} @
 // CHECK-NEXT: Return [[returned]]
 // CHECK-LABEL: function {{*}}name="methodResult"
-// CHECK: [[call]] = Call [[method]], {{*}}calleeName="width"
+// CHECK: [[call]] = Call [[method]], {{*}}calleeName="p.width"
 // CHECK-NEXT: = Convert [[call]] declared={type=i32 site=w{{*}} flags=[IsInt32Promise]}
 
 /// <reference path="../types/imports/bun-declarations.d.ts" />

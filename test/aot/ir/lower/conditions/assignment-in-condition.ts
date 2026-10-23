@@ -12,7 +12,7 @@
 // CHECK: [[body]]([[defined]]):
 // CHECK: = Call {{*}}, [[defined]] calleeName="use"
 // CHECK-LABEL: function {{*}}name="match"
-// CHECK: [[result]] = Call {{*}}calleeName="exec"
+// CHECK: [[result]] = Call {{*}}calleeName="re.exec"
 // CHECK: [[test]] = TypeTest [[result]] testedType=undefined|null @
 // CHECK-NEXT: Branch [[test]] -> taken {{*}}(| 0), notTaken [[present]](| 0)
 // CHECK: [[present]]([[m]]):

@@ -1,6 +1,6 @@
 # The fuzzer
 
-`run.ts` draws small programs from nine sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
+`run.ts` draws small programs from ten sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
 result of the flow analysis without which it goes away. `../fuzzer-fixed-seeds.test.ts` runs a small, fixed part of it in CI.
 
 ```sh
@@ -30,7 +30,7 @@ stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 6
 | --- | --- |
 | `run.ts` | the command line; its header lists every option and the files written to `--out` |
 | `fuzzer.ts` | the driver: draw, judge, confirm, reduce, attribute, tell findings apart |
-| `grammar.ts`, `protocols.ts`, `new-targets.ts`, `object-mutations.ts`, `typed-object-mutations.ts`, `held-across-suspensions.ts`, `changing-buffers.ts`, `unsound-types.ts`, `mutate.ts`, `sources.ts` | the nine sources: programs made from a grammar, objects that answer the language's protocols, constructors that run for another `new.target`, objects that are changed behind the code that uses them, the same behind a reference of a declared type, values that nothing holds but a function that waits at an `await` or a `yield`, typed arrays whose memory is detached, shrinks, grows or moves while they are in use, values that reach a place their type excludes without a cast, and mutants of `../programs` |
+| `grammar.ts`, `protocols.ts`, `new-targets.ts`, `object-mutations.ts`, `typed-object-mutations.ts`, `held-across-suspensions.ts`, `where-the-stack-ends.ts`, `changing-buffers.ts`, `unsound-types.ts`, `mutate.ts`, `sources.ts` | the ten sources: programs made from a grammar, objects that answer the language's protocols, constructors that run for another `new.target`, objects that are changed behind the code that uses them, the same behind a reference of a declared type, values that nothing holds but a function that waits at an `await` or a `yield`, recursions that reach the end of the stack, typed arrays whose memory is detached, shrinks, grows or moves while they are in use, values that reach a place their type excludes without a cast, and mutants of `../programs` |
 | `type-check.ts` | TypeScript's own checker, for the source whose programs it has to accept |
 | `beds.ts`, `engine-probes.ts` | where a program runs: `bun build --compile --aot`, or the engine's test binaries, which are asked first which built-ins they lack |
 | `reduce.ts` | makes a failing program small |

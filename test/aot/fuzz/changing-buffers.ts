@@ -4,7 +4,8 @@
 //   memory    of a fixed size, resizable, shared and growable
 //   window    the whole memory, from an offset, an offset and a length, a part of another view; over resizable memory with and without a length of its own
 //   damage    resize to nothing, to less, to the window's edge, to more; transfer to the same size, to less, to more, to a fixed length; a structured clone that takes the memory along; grow
-//   trigger   a call in the body of a loop; the valueOf of a stored value, of an index, of an argument; the callback, the comparator or the species of a built-in; the body of a for-of
+//   trigger   the valueOf of a stored value, of an index, of an argument; the callback, the comparator or the species of a built-in; and in the body of a loop a call, or a step that does not look like one:
+//             a getter or a setter behind a declared field, a Proxy, a toString in a template, a number that is an object, Symbol.hasInstance, a closure out of a field or a list, the next() of a generator, an await
 //   use       about ninety: loops that read, write and count with the length read once or each time, the methods of typed arrays, of Array.prototype, of DataView, Buffer, Atomics, Reflect, Object
 //
 // Each use is a function of its own. It runs on healthy memory first, often enough to count as hot where that is drawn, then once with the damage, then on healthy memory again.
@@ -55,6 +56,8 @@ function churn(): void {
   if (kept.length > 400) kept.length = 0;
 }
 let countdown = -1;
+let hidden = 0;
+let text = "";
 `;
 
 export function generate(random: Random): string {
@@ -103,9 +106,16 @@ export function generate(random: Random): string {
     const damage = pick(damages);
     const at = pick([1, 1, 2, 3, Math.max(1, count >> 1), Math.max(1, windowLength - 1)]);
 
-    const strike = `strike${number}(memory)`;
-    const evil = (result: string) => `({ valueOf() { ${strike}; return ${result}; } } as any)`;
-    const evilText = (result: string) => `({ toString() { ${strike}; return ${result}; } } as any)`;
+    const direct = `strike${number}(memory)`;
+    // prettier-ignore
+    const strike = random.chance(0.35) ? direct : pick([
+      `hidden += getter${number}.step`, `void getter${number}.step`, `setter${number}.last = 1`, `hidden += proxy${number}.step`, `proxy${number}.step = 1`, `hidden += +("step" in proxy${number})`,
+      `text = \`\${thing${number}}\``, `text = "" + thing${number}`, `hidden += lie${number} * 1`, `hidden += +(lie${number} < 1)`, `hidden += +((hidden as any) instanceof Checker${number})`,
+      `step${number}()`, `steps${number}[0]()`, `holder${number}.step()`, `ticking${number}.next()`, `[hidden] = striking${number}`, `hidden += Object.keys(proxy${number}).length`, `text = JSON.stringify(json${number})`,
+      `try {\n      throw 1;\n    } catch {\n      ${direct};\n    }`, `await tick${number}()`, `await later${number}`,
+    ]);
+    const evil = (result: string) => `({ valueOf() { ${direct}; return ${result}; } } as any)`;
+    const evilText = (result: string) => `({ toString() { ${direct}; return ${result}; } } as any)`;
     const evilIndex = evil(pick(["0", "1", "2", String(Math.max(0, windowLength - 1)), String(windowLength), "-1"]));
     const evilValue = evil(number_(7));
     const value = (index: string) => (element.isBig ? `BigInt(${index}) + 3n` : pick([`${index} + 3`, `${index} * 1.5`, `-${index}`, "255", "0.5"]));
@@ -184,19 +194,37 @@ export function generate(random: Random): string {
       `${strike};\n  return Buffer.concat([view, view]).length;`, `${strike};\n  return [view.toString("base64").length, view.toJSON().data.length, view.swap16 === undefined];`, `${strike};\n  return Buffer.from(view).length;`,
       `return Buffer.concat([view, Buffer.alloc(4)], ${evilIndex}).length;`, `return view.readBigUInt64LE(${evilIndex});`, `return view.readIntBE(${evilIndex}, 3);`, `return view.writeIntLE(5, 0, ${evil("3")});`,
     ];
-    const use = pick(holder === "view" ? viewUses : holder === "data" ? dataUses : bufferUses);
+    const drawn = pick(holder === "view" ? viewUses : holder === "data" ? dataUses : bufferUses);
+    // An await stands only in the function's own body.
+    const use = strike.startsWith("await") && /=> \{|get \w+\(\)|static get/.test(drawn) ? drawn.replaceAll(strike, direct) : drawn;
     const rounds = pick([3, 3, 5, 40, 300]);
     const struck = random.between(1, rounds - 2);
     const after =
       holder === "data" ? "[lengthOf(view), memory.byteLength]" : `[view.length, view.byteLength, view.byteOffset, view[0], view[${Math.max(0, windowLength - 1)}], memory.byteLength${memoryKind === "fixed" ? ", (memory as any).detached" : ""}]`;
 
-    notes.push(`${type === "any" ? kind.name + " as any" : holder === "view" ? kind.name : type} ${memoryKind}${tracksLength ? " tracking" : ""} ${damage.replace(/moved = |memory\./g, "")} at ${at}`);
+    notes.push(`${strike === direct ? "" : strike.replace(/\s+/g, " ").slice(0, 40) + ": "}${type === "any" ? kind.name + " as any" : holder === "view" ? kind.name : type} ${memoryKind}${tracksLength ? " tracking" : ""} ${damage.replace(/moved = |memory\./g, "")} at ${at}`);
     text.push(`function strike${number}(memory: any): void {
   if (--countdown !== 0) return;
   ${damage};
   churn();
 }
-function use${number}(view: ${type}, memory: any): any {
+let target${number}: any = null;
+const getter${number}: { step: number } = { get step() { strike${number}(target${number}); return 0; } };
+const setter${number}: { last: number } = { get last() { return 0; }, set last(value: number) { strike${number}(target${number}); } };
+const proxy${number}: { step: number } = new Proxy({ step: 0 }, { get() { strike${number}(target${number}); return 0; }, set() { strike${number}(target${number}); return true; }, has() { strike${number}(target${number}); return true; }, ownKeys() { strike${number}(target${number}); return []; } });
+const thing${number}: { toString(): string } = { toString() { strike${number}(target${number}); return ""; } };
+const lie${number}: number = { valueOf() { strike${number}(target${number}); return 0; } } as any;
+class Checker${number} { static [Symbol.hasInstance](value: any) { strike${number}(target${number}); return false; } }
+const step${number}: () => void = () => strike${number}(target${number});
+const steps${number}: (() => void)[] = [step${number}];
+const holder${number} = { step: step${number} };
+function* ticks${number}(): Generator<number> { for (;;) { strike${number}(target${number}); yield 0; } }
+const ticking${number} = ticks${number}();
+const striking${number}: Iterable<number> = { [Symbol.iterator]() { strike${number}(target${number}); return [0][Symbol.iterator](); } };
+const json${number} = { toJSON() { strike${number}(target${number}); return 0; } };
+const tick${number} = () => Promise.resolve().then(() => strike${number}(target${number}));
+const later${number} = { then(resolve: (value: number) => void) { strike${number}(target${number}); resolve(0); } };
+${use.includes("await ") ? "async " : ""}function use${number}(view: ${type}, memory: any): ${use.includes("await ") ? "Promise<any>" : "any"} {
   ${use}
 }
 {
@@ -205,10 +233,11 @@ function use${number}(view: ${type}, memory: any): any {
     const memory: any = ${make};
     new Uint8Array(memory).forEach((_, index, all) => (all[index] = (index * 37 + 11) & 255));
     const view: any = ${window};
+    target${number} = memory;
     countdown = round === ${struck} ? ${at} : -1;
     let line: string;
     try {
-      line = show(use${number}(view, memory));
+      line = show(await use${number}(view, memory));
     } catch (error) {
       line = "threw " + show(error);
     }

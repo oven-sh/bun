@@ -94,7 +94,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **Many programs in one executable.** A build costs about as much for 250 small programs as for one. `joined(label, flags, part, parts)`
   of `joined-programs.ts` puts the programs that can share a process into groups of about 250, builds each group twice, once with
   every function through B3 and once with `flags`, runs both and compares what each program printed. It is for a way of generating
-  code that every function can take: `joined-programs-all-code-direct-*`. A red
+  code that every function can take: `joined-programs-all-code-direct-*`, `joined-programs-predictions-fail-*`. A red
   names the programs that differ or stopped the executable; each is then run alone with the same flags.
 - **The direct code generators and the check of references.** `run-programs.ts` builds every program with
   `--aot-check=validate-references`, and a build with that check sends every function through B3. A build whose flags hold

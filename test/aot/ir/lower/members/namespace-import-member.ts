@@ -5,7 +5,7 @@
 // CHECK-NOT: PropGet
 // CHECK: = ModuleNamespace module=m
 // CHECK-NOT: PropGet
-// CHECK: = Call [[function]], [[namespace]] calleeName="f"
+// CHECK: = Call [[function]], [[namespace]] calleeName="ns.f"
 // CHECK-LABEL: function {{*}}name="computed"
 // CHECK-NOT: GetModuleVariable
 // CHECK: = ModuleNamespace module=m

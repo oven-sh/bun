@@ -12,7 +12,7 @@ a large program is neither, and `neither` compiles every function that way. A fo
     --part <i>/<n>  with `all`: every n-th program, starting at the i-th, and all of $WRITTEN (quick.py). ../heat/*.test.ts split the programs this way
     the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
-Prints one line per program that is `same` normally and not at that heat, and exits with 1 if there is one. Not counted: the programs in
+Prints one line per program that is `same` normally and not at that heat, or dies of a signal at that heat, and exits with 1 if there is one. Not counted: the programs in
 heat-known.txt, which count runtime calls or check which code the compiler generated.
 """
 import os, subprocess, sys, tempfile
@@ -52,7 +52,7 @@ if __name__ == "__main__":
         forced = verdicts([*jobs, *programs], folder + "/forced", HEATS[heat])
         suspects = [name for name, verdict in forced.items() if not verdict.startswith(("same", "skipped")) and name not in known]
         baseline = verdicts([*jobs, *suspects], folder + "/baseline", "none") if suspects else {}
-    failures = [name for name in suspects if baseline.get(name, "").startswith("same")]
+    failures = [name for name in suspects if baseline.get(name, "").startswith("same") or "died of signal" in forced[name]]
     for name in failures:
         print(f"{name}: {forced[name]}")
     print(f"{sum(verdict.startswith('same') for verdict in forced.values())} programs answer the same with every function {heat}, {len(failures)} do not")

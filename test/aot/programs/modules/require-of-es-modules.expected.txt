@@ -9,7 +9,7 @@ the same graph again: 5
 a member of its cycle: b before a
 first starts
 second starts
-a cycle through require: TypeError: hoisted is not a function. (In 'hoisted()', 'hoisted' is undefined)
+a cycle through require: TypeError: first.hoisted is not a function. (In 'first.hoisted()', 'first.hoisted' is undefined)
 throws runs
 a module that throws: RangeError: thrown by throws.mjs
 the same module again: RangeError: thrown by throws.mjs

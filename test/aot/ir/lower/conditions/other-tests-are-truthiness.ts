@@ -1,6 +1,6 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="arrayTest"
-// CHECK: = Call {{*}}, [[list]] calleeName="isArray"
+// CHECK: = Call {{*}}, [[list]] calleeName="Array.isArray"
 // CHECK: [[isArray]] = ToBoolean
 // CHECK-NEXT: Branch [[isArray]] ->
 // CHECK: = Convert [[list]] declared={type=undefined|null|Array<number>} illTypedCause=Assertion

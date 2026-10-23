@@ -1,7 +1,7 @@
 // Runs the programs of family-regressions.test.ts and table-regressions.test.ts: once under plain Bun, then compiled in
 // each build mode.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -76,10 +76,12 @@ function readCountedOperations(path: string) {
 
 async function checkCompiled(regression: Regression, cwd: string, [mode, flags]: BuildMode, expected: RunResult) {
   const counts = join(cwd, "counts-" + mode);
+  // ../supported-with-counted-calls.ts says why nothing is counted on Windows.
+  const neverCalls = isWindows ? undefined : regression.neverCalls;
   const tripwire = regression.evaluatesText ? {} : { BUN_JSC_crashIfInterpreterIsUsed: "1" };
   const environments: Record<string, string>[] = [{}];
   if (regression.stressesCollector) environments.push(stress, { BUN_JSC_verifyGC: "1" });
-  if (regression.neverCalls) environments.push({ BUN_JSC_aotCountsPath: counts });
+  if (neverCalls) environments.push({ BUN_JSC_aotCountsPath: counts });
   const program = {
     cwd,
     entryPoints: fileNamesOf(regression).map(file => "./" + file),
@@ -88,10 +90,10 @@ async function checkCompiled(regression: Regression, cwd: string, [mode, flags]:
     runEnvironments: environments.map(environment => ({ ...tripwire, ...environment })),
   };
   await expectCompiledOutput(mode, program, expected);
-  if (!regression.neverCalls) return;
+  if (!neverCalls) return;
   const counted = readCountedOperations(counts);
   expect(counted).not.toEqual([]);
-  expect(counted.filter(operation => regression.neverCalls!.includes(operation))).toEqual([]);
+  expect(counted.filter(operation => neverCalls.includes(operation))).toEqual([]);
 }
 
 async function check(regression: Regression) {

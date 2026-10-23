@@ -5,7 +5,7 @@
 // CHECK: [[read]] = PropGet [[o]] key="tag"
 // CHECK-NEXT: [[function]] = Convert [[read]] declared={type=undefined|null|function flags=[IsExpected]}
 // CHECK-NEXT: [[memberStrings]] = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
-// CHECK-NEXT: = Call [[function]], [[o]], [[memberStrings]] calleeKey="tag" calleeName="tag"
+// CHECK-NEXT: = Call [[function]], [[o]], [[memberStrings]] calleeKey="tag" calleeName="o.tag"
 // CHECK-LABEL: function {{*}}name="plain"
 // CHECK-NEXT: ([[tag]]: {{*}}, [[x]]:
 // CHECK: [[convertedTag]] = Convert [[tag]] declared={type=undefined|null|function flags=[IsExpected]}

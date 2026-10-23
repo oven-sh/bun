@@ -55,7 +55,7 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | [Loader hooks](#loader-hooks)                                                      | `Module.prototype.require = f` sees every `require()`            | It sees a `require()` of a dynamic path. A constant path was resolved at build time            |
 | [`require.main`, `module.children`, `module.parent`](#module-objects)              | Lead from any module object to every other                       | The same if some file of your program names one of them. Otherwise `undefined` for everybody   |
 | [`export *` of a CommonJS module](#re-exports-of-commonjs-modules)                 | The namespace object follows the specification                   | It differs in two rare cases                                                                   |
-| [Some error messages](#error-messages)                                             | Quote your source: `(evaluating 'o.a.c')`                        | Quote the name of the property, `(evaluating 'null.c')`, or nothing                            |
+| [Some error messages](#error-messages)                                             | Quote your source: `(evaluating 'o.a.c')`                        | Quote what you called, the name of the property, `(evaluating 'null.c')`, or nothing           |
 | [The lines of code under an error](#error-messages)                                | Printed above the message, with a caret                          | Not printed. The message and the stack trace are the same                                      |
 | [The name of a class under a computed key](#class-names-from-computed-keys)        | Set after the static fields ran, and skipped if they read `name` | Set before the static fields run                                                               |
 | [The name of a function in a local variable](#function-names-from-local-variables) | Empty, if the variable is a `let` or `const` that is used once   | The name of the variable                                                                       |
@@ -768,10 +768,25 @@ Code that reads parameter names out of that string, as some dependency injection
 
 ## Error messages
 
-Where `bun run` quotes your source in a message, an executable quotes less of it.
+The class of an error, its line and its stack are the same as under `bun run`. Where `bun run` quotes your source in a message, an executable quotes less of it.
 
 ```ts messages.ts icon="/icons/typescript.svg"
 const o: any = { a: null };
+try {
+  o.b();
+} catch (error) {
+  console.log(String(error));
+}
+try {
+  o.b(1, 2);
+} catch (error) {
+  console.log(String(error));
+}
+try {
+  new o.b();
+} catch (error) {
+  console.log(String(error));
+}
 try {
   o.a.c;
 } catch (error) {
@@ -782,28 +797,40 @@ try {
 } catch (error) {
   console.log(String(error));
 }
-try {
-  o.b();
-} catch (error) {
-  console.log(String(error));
-}
 ```
 
-`bun messages.ts` prints `null is not an object (evaluating 'o.a.c')`, `null is not an object (evaluating 'o.a.c = 1')` and `o.b is not a function. (In 'o.b()', 'o.b' is undefined)`.
+```bash terminal icon="terminal"
+bun messages.ts
+```
+
+```txt
+TypeError: o.b is not a function. (In 'o.b()', 'o.b' is undefined)
+TypeError: o.b is not a function. (In 'o.b(1, 2)', 'o.b' is undefined)
+TypeError: undefined is not a constructor (evaluating 'new o.b')
+TypeError: null is not an object (evaluating 'o.a.c')
+TypeError: null is not an object (evaluating 'o.a.c = 1')
+```
 
 ```bash terminal icon="terminal"
 bun compile ./messages.ts && ./messages
 ```
 
 ```txt
+TypeError: o.b is not a function. (In 'o.b()', 'o.b' is undefined)
+TypeError: o.b is not a function. (In 'o.b()', 'o.b' is undefined)
+TypeError: undefined is not a constructor (evaluating 'new o.b')
 TypeError: null is not an object (evaluating 'null.c')
 TypeError: null is not an object (evaluating 'null.c')
-TypeError: b is not a function. (In 'b()', 'b' is undefined)
 ```
 
-The words are the same. An executable doesn't hold the text of each expression, so it can't quote `o.a.c`. It does know the name of the property. In place of your source you get the value that was `null` or `undefined`, then the name.
+| The message                    | What an executable quotes                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `… is not a function`          | What you called, as you wrote it: `o.b`, `this.client.send`, `handlers[name]`. Not the arguments                                                              |
+| `… is not a constructor`       | The same, behind `new`                                                                                                                                        |
+| `… is not an object`           | The value that was `null` or `undefined`, then the name of the property: `null.c`, `undefined["key"]`, `null[0]`. Not the expression that gave you the `null` |
+| `… is not an Object.`, of `in` | Nothing: `5 is not an Object.`, where `bun run` adds `(evaluating '"x" in five')`                                                                             |
 
-Some messages come without the quoted part. A call often says `undefined is not a function` and no more, because a call of a value doesn't know what your program calls that value. `new f()` says `5 is not a constructor`. `"x" in 5` throws `5 is not an Object.`, where `bun run` adds `(evaluating '"x" in 5')`.
+An executable doesn't hold the text of each expression. It keeps what you called where that consists of names, `this`, `super` and keys in brackets, up to 80 characters. A callee that's more than that has no name in the message: `f()()` says `5 is not a function`, and so does a call with spread arguments.
 
 One more message differs, although `bun run` quotes nothing in it. An update through a computed key, `o[k] += 1`, `o[k]++`, `--o[k]` or `o[k] &&= 1`, throws `undefined is not an object` when `o` is `undefined` and `null is not an object` when it's `null`. `bun run` says `Cannot access property of undefined or null` for both.
 
@@ -900,7 +927,7 @@ Bun itself looks at five properties of `process`: `noDeprecation`, `throwDepreca
 
 ## Memory
 
-- **Each thread can have 32 GB of objects.** References between objects take 32 bits. Objects and small arrays count toward the limit. The characters of strings, large arrays, `ArrayBuffer`s and typed arrays don't. Each `Worker` has a limit of its own. Where the address space of the process is limited (`ulimit -v`), objects get a little under half of what is free when the program starts, and all threads share it. A thread that goes over it gets a `RangeError` whose message starts with "Out of memory" and names the limit and the option that removes it. Your code can catch it. It is thrown where it allocates, in `JSON.parse` and `structuredClone`, or at the next function call that checks the stack. One case is left: a loop that allocates inside a `try` of its own function, or that the compiler has inlined into one, and that calls no function gets no error there, and ends the process with an out-of-memory error once memory is used up. In a `Worker` it ends that Worker alone: its parent gets an `error` event with the `RangeError`, and the exit code is 1. Move the loop into a function of its own. `bun compile --aot-huge-heap` compiles with 64-bit references, which removes the limit. The executable then uses more memory and runs slower.
+- **Each thread can have 32 GB of objects.** References between objects take 32 bits. Objects and small arrays count toward the limit. The characters of strings, large arrays, `ArrayBuffer`s and typed arrays don't. Each `Worker` has a limit of its own. Where the address space of the process is limited (`ulimit -v`), objects take address space as they need it and share the limit with everything else in the process. Address space that objects have taken stays reserved for objects until the process exits. A thread that goes over it gets a `RangeError` whose message starts with "Out of memory" and names the limit and the option that removes it. Your code can catch it. It is thrown where it allocates, in `JSON.parse` and `structuredClone`, or at the next function call that checks the stack. One case is left: a loop that allocates inside a `try` of its own function, or that the compiler has inlined into one, and that calls no function gets no error there, and ends the process with an out-of-memory error once memory is used up. In a `Worker` it ends that Worker alone: its parent gets an `error` event with the `RangeError`, and the exit code is 1. Move the loop into a function of its own. `bun compile --aot-huge-heap` compiles with 64-bit references, which removes the limit. The executable then uses more memory and runs slower.
 - **A local variable stops keeping its value alive after its last use,** even if the function is still waiting at an `await`. Under `bun run`, a local variable that a closure captures lives as long as the function's other variables. So if a `FinalizationRegistry` is in a local variable that you never touch again, it can be collected while the function waits, and its callback never runs. Keep the registry at module level.
 - **A variable or property that nothing reads doesn't keep its value alive.** The compiler removes it along with the stores into it. If you park an object in a module-level variable only so that a `WeakRef` to it keeps answering, or so that its `FinalizationRegistry` callback doesn't run yet, read that variable somewhere.
 

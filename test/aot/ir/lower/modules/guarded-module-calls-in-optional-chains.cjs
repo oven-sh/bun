@@ -8,7 +8,7 @@
 // CALL: [[matched]]():
 // CALL-NEXT: = RequireModule module=m
 // CALL: [[other]]([[function]]):
-// CALL-NEXT: = Call [[function]], {{*}}calleeName="getBuiltinModule"
+// CALL-NEXT: = Call [[function]], {{*}}calleeName="process.getBuiltinModule"
 // CALL: Return
 
 // RUN(OBJECT): lower

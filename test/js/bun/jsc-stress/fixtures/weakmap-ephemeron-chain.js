@@ -287,7 +287,7 @@ for (const [name, build] of Object.entries(ephemeronChainShapes(count))) {
     for (let i = 0; i < 200; i++) {
       const key = { i };
       keys.push(key);
-      late.set(key, { i });
+      late.set(key, { value: i });
     }
     chain.set(tail, { late, keys });
     return head;
@@ -302,14 +302,19 @@ for (const [name, build] of Object.entries(ephemeronChainShapes(count))) {
     }
     const { late: map, keys: held } = chain.get(node);
     for (let i = 0; i < held.length; i++) {
-      shouldBe(map.has(held[i]), !deleted.has(held[i]), `mutated late map: entry ${i} after round ${round}`);
+      // The value, not just the key: has() does not read it, and the keys are held by the array.
+      shouldBe(
+        map.get(held[i])?.value,
+        deleted.has(held[i]) ? undefined : i,
+        `mutated late map: entry ${i} after round ${round}`,
+      );
       if (i % 7 === round) (deleted.add(held[i]), map.delete(held[i]));
-      else if (i % 7 === round + 1) map.set(held[i], { replaced: i });
+      else if (i % 7 === round + 1) map.set(held[i], { value: i, replaced: round });
     }
     for (let i = 0; i < 20; i++) {
       const key = { added: round, i };
       held.push(key);
-      map.set(key, { added: i });
+      map.set(key, { value: held.length - 1 });
     }
   }
   noInline(checkAndMutateLateMap);
@@ -343,9 +348,11 @@ for (const [name, build] of Object.entries(ephemeronChainShapes(count))) {
   }
   tail = null;
   edenGC();
+  checkRounds("mixed generations (eden)");
   edenGC();
   checkReachable("mixed generations (eden)", { head, walk: node => map.get(node) });
   fullGC();
+  checkRounds("mixed generations (full)");
   checkReachable("mixed generations (full)", { head, walk: node => map.get(node) });
   globalThis.fixture = null;
 }

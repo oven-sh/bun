@@ -604,7 +604,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   // Linux preallocates a path destination to the source's st_size before
   // copy_file_range. A source fd positioned past 0 supplies fewer bytes, so
-  // the destination must end at the bytes copied, with no NUL tail.
+  // the destination must end at the bytes copied, with no NUL tail, and the
+  // blocks reserved past that end must be released.
   it.skipIf(!isLinux)(
     "Bun.write(path, Bun.file(fd)) with a positioned fd does not leave preallocated zeros",
     async () => {
@@ -620,11 +621,13 @@ const IS_UV_FS_COPYFILE_DISABLED =
       try {
         fs.readSync(fd, Buffer.alloc(skip), 0, skip, null);
         const written = await Bun.write(dst, Bun.file(fd));
+        const stat = fs.statSync(dst);
         expect({
           written,
-          size: fs.statSync(dst).size,
+          size: stat.size,
           content: fs.readFileSync(dst).equals(Buffer.alloc(tail, "T")),
-        }).toEqual({ written: tail, size: tail, content: true });
+          allocatedBelow1MiB: stat.blocks * 512 < 1024 * 1024,
+        }).toEqual({ written: tail, size: tail, content: true, allocatedBelow1MiB: true });
       } finally {
         fs.closeSync(fd);
       }

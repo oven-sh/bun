@@ -7517,6 +7517,18 @@ pub fn preallocate_file(
     Ok(())
 }
 
+/// Free the blocks `preallocate_file` reserved past the end of a file that
+/// came out shorter than `reserved`. Best-effort, Linux only.
+pub fn release_preallocation(fd: Fd, reserved: i64) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Ok(st) = fstat(fd) {
+        if st.st_size < reserved {
+            let _ = ftruncate(fd, st.st_size);
+        }
+    }
+    let _ = (fd, reserved);
+}
+
 /// `kqueue()` — BSD kernel event queue (Darwin/FreeBSD only).
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub fn kqueue() -> Maybe<Fd> {
@@ -7827,6 +7839,8 @@ pub fn move_file_z_with_handle(
             // Seek input to 0 — caller may have left offset at EOF after writing.
             let _ = lseek(from_handle, 0, libc::SEEK_SET);
             let r = copy_file(from_handle, dst);
+            #[cfg(unix)]
+            release_preallocation(dst, st.st_size);
             // Only stamp mode/owner on success; on copy error
             // the partially-written dest keeps its openat() defaults.
             #[cfg(unix)]
@@ -9052,6 +9066,8 @@ pub(crate) fn copy_file_z_slow_with_handle(
     let _ = preallocate_file(dst.native(), 0, st.st_size);
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
     let r = copy_file(in_handle, dst);
+    #[cfg(unix)]
+    release_preallocation(dst, st.st_size);
     // Only stamp mode/owner on success; on copy error the
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]

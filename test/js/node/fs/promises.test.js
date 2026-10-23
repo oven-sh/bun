@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { isLinux, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -482,6 +482,52 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       await promise;
     } catch (err) {
       expectNodeAbortError(err, ac.signal.reason);
+    }
+  });
+
+  // Aborting while a large regular file is being read must stop the read loop
+  // mid-stream. Node checks the signal between 512 KiB chunks (kReadFileBufferLength);
+  // a single read() that returns the whole file before the signal is consulted means
+  // the abort bounds neither latency nor IO. /proc/self/fdinfo/<fd> gives the file
+  // position the worker has advanced to, so this test is Linux-only.
+  test.skipIf(!isLinux)("readFile aborted mid-read stops before the full file is read", async () => {
+    await using dir = tempDir("fs-abort-readfile-midread", {});
+    const big = join(String(dir), "big.bin");
+    // Sparse 512 MiB: no disk writes, and enough wall-clock copy time for the JS
+    // thread to observe an intermediate f_pos and abort before the worker finishes.
+    const SIZE = 512 * 1024 * 1024;
+    fs.closeSync(fs.openSync(big, "w"));
+    fs.truncateSync(big, SIZE);
+    const fd = fs.openSync(big, "r");
+    try {
+      const pos = () => Number(/pos:\t(\d+)/.exec(fs.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8"))[1]);
+      // The read runs on a thread-pool worker; busy-poll the fd's kernel file
+      // position until it has advanced past the 256 KiB pre-stat read, then abort.
+      // f_pos is updated when each read() returns, so a loop that reads in bounded
+      // chunks crosses this threshold at ~768 KiB while a single whole-file read()
+      // jumps straight from 256 KiB to SIZE.
+      const ac = new AbortController();
+      const promise = fsPromises.readFile(fd, { signal: ac.signal });
+      const deadline = performance.now() + 4_000;
+      while (pos() <= 256 * 1024) {
+        if (performance.now() > deadline) {
+          ac.abort();
+          await promise.catch(() => {});
+          throw new Error("worker never advanced the fd past 256 KiB");
+        }
+      }
+      ac.abort();
+      let rejected;
+      try {
+        await promise;
+      } catch (err) {
+        rejected = err;
+      }
+      const read = pos();
+      expect({ name: rejected?.name, code: rejected?.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
+      expect(read).toBeLessThan(SIZE);
+    } finally {
+      fs.closeSync(fd);
     }
   });
 

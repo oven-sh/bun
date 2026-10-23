@@ -126,6 +126,8 @@ pub(crate) struct TestRunner<'a> {
     /// `test_command.rs` where this is populated.
     pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
     pub(crate) bail: u32,
+    /// `--bail`, or an exit from a run that has failed, ends the run before the tail of `exec`. From here on, the exit code is not 0.
+    pub(crate) ended_early: bool,
     pub(crate) max_concurrency: u32,
 
     pub(crate) snapshots: Snapshots,
@@ -143,37 +145,39 @@ pub(crate) struct TestRunner<'a> {
     /// `*mut` at the use site would launder shared provenance into a write (UB).
     pub(crate) filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
+    /// Set while `TestCommand::run_all_tests` runs the test files in this process, unless the run drains the event loop as node does. An exit of the process then ends the run before the tail of `exec`.
+    pub(crate) reports_process_exit: bool,
+
     pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
 
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
-    /// Set while `TestCommand::run_all_tests` runs the test files in this process, unless the run drains the event loop as node does. A `process.exit()` then ends the run before the tail of `exec`.
-    pub(crate) reports_process_exit: bool,
-    /// The run ends before the tail of `exec`: `--bail` reached its count, or a `process.exit()` ended a run that has failed.
-    pub(crate) ended_early: bool,
-
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
-/// See [`TestRunner::exit_caller`]. Displays as a phrase that follows "was called".
-pub(crate) enum ExitCaller<'a> {
+/// See [`TestRunner::on_stack`]. Displays as the clause that says when the process exits.
+pub(crate) enum OnStack<'a> {
     Test(&'a [u8]),
     HookOfTest(&'a [u8]),
     Hook,
-    Unknown,
+    Nothing,
 }
 
-impl core::fmt::Display for ExitCaller<'_> {
+impl core::fmt::Display for OnStack<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ExitCaller::Test(name) => write!(f, " by the test \"{}\"", bstr::BStr::new(name)),
-            ExitCaller::HookOfTest(name) => {
-                write!(f, " by a hook of the test \"{}\"", bstr::BStr::new(name))
+            OnStack::Test(name) => {
+                write!(f, " while the test {} was running", bun_core::fmt::quote(name))
             }
-            ExitCaller::Hook => f.write_str(" by a hook"),
-            ExitCaller::Unknown => Ok(()),
+            OnStack::HookOfTest(name) => write!(
+                f,
+                " while a hook of the test {} was running",
+                bun_core::fmt::quote(name)
+            ),
+            OnStack::Hook => f.write_str(" while a hook was running"),
+            OnStack::Nothing => f.write_str(" before the end of the test run"),
         }
     }
 }
@@ -187,36 +191,35 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return false;
         };
-        active_file.phase == bun_test::Phase::Execution
-            && active_file.execution.active_group_ref().is_some_and(|group| {
-                group
-                    .sequences_const(&active_file.execution)
-                    .iter()
-                    .any(bun_test::Execution::ExecutionSequence::has_failed)
-            })
+        active_file.execution.active_group_ref().is_some_and(|group| {
+            group
+                .sequences_const(&active_file.execution)
+                .iter()
+                .any(bun_test::Execution::ExecutionSequence::has_failed)
+        })
     }
 
-    /// The test or hook on the stack, for a message about a call in tail position: it has no stack frame of its caller.
-    pub(crate) fn exit_caller(&self) -> ExitCaller<'_> {
+    /// The test or hook whose callback is on the stack. It is not always the caller: a timer of another test can fire while it waits.
+    pub(crate) fn on_stack(&self) -> OnStack<'_> {
         let Some(file) = self.bun_test_root.active_file.as_deref() else {
-            return ExitCaller::Unknown;
+            return OnStack::Nothing;
         };
         let execution = &file.execution;
         let (Some(data), Some(group)) = (execution.on_stack_entry_data.get(), execution.active_group_ref()) else {
-            return ExitCaller::Unknown;
+            return OnStack::Nothing;
         };
         let Some(sequence) = group.sequences_const(execution).get(data.sequence_index) else {
-            return ExitCaller::Unknown;
+            return OnStack::Nothing;
         };
         let Some(test) = sequence.test_entry else {
-            return ExitCaller::Hook;
+            return OnStack::Hook;
         };
         // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
         let name = unsafe { test.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)");
         if core::ptr::eq(test.as_ptr().cast_const().cast::<()>(), data.entry) {
-            ExitCaller::Test(name)
+            OnStack::Test(name)
         } else {
-            ExitCaller::HookOfTest(name)
+            OnStack::HookOfTest(name)
         }
     }
 

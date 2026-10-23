@@ -25,8 +25,6 @@ pub(crate) struct Snapshots {
     pub(crate) update_snapshots: bool,
     pub(crate) total: usize,
     pub(crate) added: usize,
-    /// Of `added`, the count that `write_snapshot_file` has not written yet.
-    pub(crate) added_unwritten: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
 
@@ -59,7 +57,6 @@ impl Snapshots {
             update_snapshots,
             total: 0,
             added: 0,
-            added_unwritten: 0,
             passed: 0,
             failed: 0,
             file_buf: Vec::new(),
@@ -220,7 +217,6 @@ impl Snapshots {
         .map_err(|_| crate::Error::WriteError)?;
 
         self.added += 1;
-        self.added_unwritten += 1;
         self.values
             .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
@@ -353,7 +349,6 @@ impl Snapshots {
                 .and_then(|()| bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64))
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
-            self.added_unwritten = 0;
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
 

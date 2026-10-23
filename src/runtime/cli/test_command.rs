@@ -970,24 +970,24 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
-/// `Bun__Process__exit` on the main thread of `bun test`. It returns unless the exit ends a run that has failed: that run ends through `end_early`, as `--bail` does.
+/// `Bun__Process__exit` on the main thread of `bun test`.
 #[cold]
 pub(crate) fn on_process_exit(
     runner: core::ptr::NonNull<jest::TestRunner<'static>>,
     vm: &mut VirtualMachine,
 ) {
-    // SAFETY: `exec` publishes `RUNNER` as `&raw mut reporter.jest`, so the pointer is valid for the whole reporter.
-    // `RUNNER` is only accessed on this thread, and no borrow of the reporter is live here.
+    // SAFETY: `RUNNER` is only accessed on the main thread, which the caller checked. `exec` publishes it as
+    // `&raw mut reporter.jest`, so the pointer is valid for the whole reporter. `run_all_tests`, `run` and
+    // `end_early` hold `&mut CommandLineReporter` below this call. None of them runs again: this function
+    // ends the process, or its caller does.
     unsafe {
         let reporter = bun_core::from_field_ptr!(CommandLineReporter, jest, runner.as_ptr());
         if (*reporter).jest.ended_early {
-            // `--bail` ended the run, and one of its 'exit' listeners calls `process.exit()`.
+            // One of the 'exit' listeners that `end_early` runs calls `process.exit(0)`.
             if vm.exit_handler.exit_code == 0 {
                 vm.exit_handler.exit_code = 1;
             }
-            return;
-        }
-        if (*reporter).jest.reports_process_exit && (*reporter).jest.has_observed_failure() {
+        } else if (*reporter).jest.reports_process_exit && (*reporter).jest.has_observed_failure() {
             CommandLineReporter::end_by_process_exit(reporter, vm);
         }
     }
@@ -1499,13 +1499,10 @@ impl CommandLineReporter {
         }
 
         let mut print_expect_calls = summary.expectations > 0;
-        // Not 0 for a run that ends early: it does not write the open `.snap` file.
-        let unwritten = self.jest.snapshots.added_unwritten;
-        let added = self.jest.snapshots.added - unwritten;
-        let total = self.jest.snapshots.total.saturating_sub(unwritten);
-        if total > 0 {
+        if self.jest.snapshots.total > 0 {
             let passed = self.jest.snapshots.passed;
             let failed = self.jest.snapshots.failed;
+            let added = self.jest.snapshots.added;
 
             let mut first = true;
             if print_expect_calls && added == 0 && failed == 0 {
@@ -1513,7 +1510,7 @@ impl CommandLineReporter {
                 pretty_error!(
                     "{}{:5>} snapshots, {:5>} expect() calls",
                     &indenter,
-                    total,
+                    self.jest.snapshots.total,
                     summary.expectations
                 );
             } else {
@@ -1550,42 +1547,84 @@ impl CommandLineReporter {
         }
     }
 
-    /// A `process.exit()` ends a run that has failed. Prints the call site and the counts, then ends the run with a non-zero exit code.
-    ///
-    /// # Safety
-    /// `this` is the live reporter. The runner frames below this call hold borrows of it, and none of them runs again.
+    /// The "N tests skipped", "N tests todo" and "N tests failed" lists that a long run repeats before its counts.
+    fn print_repeats(&self) {
+        if self.jest.summary.pass > 20
+            && !Output::is_ai_agent()
+            && !self.reporters.dots
+            && !self.reporters.only_failures
+        {
+            if self.jest.summary.skip > 0 {
+                pretty_error!("\n<r><d>{} tests skipped:<r>\n", self.jest.summary.skip);
+                Output::flush();
+
+                let error_writer = Output::error_writer();
+                let _ = error_writer.write_all(&self.skips_to_repeat_buf);
+            }
+
+            if self.jest.summary.todo > 0 {
+                if self.jest.summary.skip > 0 {
+                    pretty_error!("\n");
+                }
+
+                pretty_error!("\n<r><d>{} tests todo:<r>\n", self.jest.summary.todo);
+                Output::flush();
+
+                let error_writer = Output::error_writer();
+                let _ = error_writer.write_all(&self.todos_to_repeat_buf);
+            }
+
+            if self.jest.summary.fail > 0 {
+                if self.jest.summary.skip > 0 || self.jest.summary.todo > 0 {
+                    pretty_error!("\n");
+                }
+
+                pretty_error!("\n<r><d>{} tests failed:<r>\n", self.jest.summary.fail);
+                Output::flush();
+
+                let error_writer = Output::error_writer();
+                let _ = error_writer.write_all(&self.failures_to_repeat_buf);
+            }
+        }
+    }
+
+    /// The process exits during a run that has failed. Prints where, then the counts, and ends the run with an exit code that is not 0. `this` is the live reporter.
     unsafe fn end_by_process_exit(this: *mut CommandLineReporter, vm: &mut VirtualMachine) -> ! {
         let code = vm.exit_handler.exit_code;
-        // SAFETY: no borrow of `*this` is held across `end_failed_sequences_in_flight`, which reaches the reporter too.
+        // SAFETY: the runner frames below this call hold borrows of `*this`, and none of them runs again.
+        // No borrow of `*this` is held across `end_failed_sequences_in_flight`, which reaches the reporter too.
         unsafe {
-            (*this).jest.ended_early = true;
-            // Before the sequences below end: they are what `exit_caller` reads.
+            // Before the sequences below end: they are what `on_stack` reads.
             let error = vm.global().create_error_instance(format_args!(
-                "process.exit() was called{} with exit code {code} before the end of the test run.{}",
-                (*this).jest.exit_caller(),
+                "The process was told to exit with code {code}{}.{}",
+                (*this).jest.on_stack(),
                 if code == 0 {
                     " The test run has failed, so the exit code is 1."
                 } else {
                     ""
                 },
             ));
-            let active_file = (*this).jest.bun_test_root.clone_active_file();
-            if let Some(file) = &active_file {
+            if let Some(file) = (*this).jest.bun_test_root.clone_active_file() {
                 // The exit ends the run, so `handle_test_completed` does not apply `--bail`.
                 (*this).jest.bail = 0;
                 bun_test::Execution::Execution::end_failed_sequences_in_flight(
                     core::ptr::NonNull::new_unchecked(file.as_ptr()),
                 );
+                (*this).jest.bun_test_root.on_before_print();
+                if Output::is_github_action() {
+                    pretty_errorln!("<r>\n::endgroup::\n");
+                }
+            } else if (*this).reporters.dots && (*this).last_printed_dot.replace(false) {
+                pretty_error!("<r>\n");
             }
-            (*this).jest.bun_test_root.on_before_print();
-            if active_file.is_some() && Output::is_github_action() {
-                pretty_errorln!("<r>\n::endgroup::\n");
-            }
-            drop(active_file);
+            (*this).print_repeats();
             vm.run_error_handler(error, None);
             pretty_error!(
-                "<r><blue>note<r><d>:<r> To test code that calls process.exit(), mock it: spyOn(process, \"exit\").mockImplementation(fn)\n\n"
+                "<r><blue>note<r><d>:<r> bun test exits when the run ends, so a test file does not need to end the process\n<blue>note<r><d>:<r> To test code that calls process.exit(), mock process.exit\n"
             );
+            if !(*this).reporters.dots {
+                pretty_error!("\n");
+            }
             (*this).print_counts();
             (*this).print_summary();
             pretty_error!("\n");
@@ -1611,7 +1650,6 @@ impl CommandLineReporter {
 
     /// Prints that `--bail` hit its failure count, then exits with code 1.
     pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
-        self.jest.ended_early = true;
         self.print_summary();
         pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -1629,6 +1667,7 @@ impl CommandLineReporter {
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
+        self.jest.ended_early = true;
         vm.exit_handler.exit_code = exit_code;
         vm.exit_handler.requested = true;
         let vm_ptr: *mut VirtualMachine = vm;
@@ -2074,6 +2113,7 @@ impl TestCommand {
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
+                ended_early: false,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context); cast back to a typed `NonNull` —
@@ -2096,10 +2136,9 @@ impl TestCommand {
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
+                reports_process_exit: false,
                 summary: Summary::default(),
                 node_test_used: false,
-                reports_process_exit: false,
-                ended_early: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2648,43 +2687,7 @@ impl TestCommand {
             .snapshots
             .write_snapshot_file()?;
         let mut write_coverage_success = true;
-        if reporter.summary().pass > 20
-            && !Output::is_ai_agent()
-            && !reporter.reporters.dots
-            && !reporter.reporters.only_failures
-        {
-            if reporter.summary().skip > 0 {
-                pretty_error!("\n<r><d>{} tests skipped:<r>\n", reporter.summary().skip);
-                Output::flush();
-
-                let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.skips_to_repeat_buf);
-            }
-
-            if reporter.summary().todo > 0 {
-                if reporter.summary().skip > 0 {
-                    pretty_error!("\n");
-                }
-
-                pretty_error!("\n<r><d>{} tests todo:<r>\n", reporter.summary().todo);
-                Output::flush();
-
-                let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.todos_to_repeat_buf);
-            }
-
-            if reporter.summary().fail > 0 {
-                if reporter.summary().skip > 0 || reporter.summary().todo > 0 {
-                    pretty_error!("\n");
-                }
-
-                pretty_error!("\n<r><d>{} tests failed:<r>\n", reporter.summary().fail);
-                Output::flush();
-
-                let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.failures_to_repeat_buf);
-            }
-        }
+        reporter.print_repeats();
 
         Output::flush();
 
@@ -3074,11 +3077,11 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // Only count the file once, not once per repeat. Before the load, so a summary printed during it has the file.
+            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {

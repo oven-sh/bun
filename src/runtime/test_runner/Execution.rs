@@ -170,6 +170,11 @@ pub(crate) struct ExecutionSequence {
 }
 
 impl ExecutionSequence {
+    /// False for a failed attempt that a retry can still replace.
+    pub(crate) fn has_failed(&self) -> bool {
+        self.result.is_fail() && self.remaining_retry_count == 0
+    }
+
     pub(crate) fn init(
         first_entry: Option<NonNull<ExecutionEntry>>,
         test_entry: Option<NonNull<ExecutionEntry>>,
@@ -190,11 +195,6 @@ impl ExecutionSequence {
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
         }
-    }
-
-    /// False for a failed attempt that a retry can still replace.
-    pub(crate) fn has_failed(&self) -> bool {
-        self.result.is_fail() && self.remaining_retry_count == 0
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -633,16 +633,12 @@ impl Execution {
         }
     }
 
-    /// Ends the failed sequences that still run their hooks, so `advance_sequence` reports them before the process exits.
+    /// Steps the failed sequences that still run their hooks past the entries they have left, so `advance_sequence` reports them before the process exits.
     #[cold]
     pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
         let (group, range) = {
             // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
-            let bun_test = unsafe { &mut *buntest.as_ptr() };
-            if bun_test.phase != super::bun_test::Phase::Execution {
-                return;
-            }
-            let Some(group) = bun_test.execution.active_group() else {
+            let Some(group) = unsafe { &mut *buntest.as_ptr() }.execution.active_group() else {
                 return;
             };
             let range = group.sequence_start..group.sequence_end;
@@ -651,21 +647,14 @@ impl Execution {
         for index in range {
             // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`, disjoint from `groups`.
             let sequence = unsafe { &mut (*buntest.as_ptr()).execution.sequences[index] };
-            let Some(mut last) = sequence.active_entry else {
-                continue;
-            };
             if !sequence.has_failed() {
                 continue;
             }
-            // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
-            while let Some(next) = nn(unsafe { last.as_ref() }.next) {
-                last = next;
+            while sequence.active_entry.is_some() {
+                // `advance_sequence` asserts that the entry it steps past was running.
+                sequence.executing = true;
+                Execution::advance_sequence(buntest, NonNull::from(&mut *sequence), group);
             }
-            // `advance_sequence` steps past the last entry and finds the sequence complete.
-            sequence.active_entry = Some(last);
-            sequence.maybe_skip = false;
-            sequence.executing = true;
-            Execution::advance_sequence(buntest, NonNull::from(sequence), group);
         }
     }
 

@@ -1993,10 +1993,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // moved into `replacement`; unless it was an accounted-for read
                         // (`f(ns.a)`), the namespace escapes there.
                         if p.dynamic_import_namespace_locals.contains_key(&id)
-                            && p.namespace_tracked_uses.get(&id).copied().unwrap_or(0) == 0
+                            && p.namespace_tracked_uses
+                                .get(&id)
+                                .map_or(0, |uses| uses.total)
+                                == 0
                         {
                             // Read as "more uses than accounted for" when finalizing.
-                            p.namespace_tracked_uses.insert(id, u32::MAX);
+                            p.namespace_tracked_uses
+                                .entry(id)
+                                .or_default()
+                                .mark_escaped(p.part_generation);
                         }
                         match local.decls.len_u32() {
                             1 => {

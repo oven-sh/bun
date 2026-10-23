@@ -235,6 +235,47 @@ pub enum ReactRefreshExportKind {
     Default,
 }
 
+/// Notes beside a symbol's `use_count_estimate`. A part left empty takes its own back (`revert_dead_part`).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct AccountedUses {
+    /// `u32::MAX` is not a count: it says "more uses than accounted for".
+    pub(crate) total: u32,
+    /// The share of `total` from the part `part_generation` names.
+    in_part: u32,
+    part_generation: u32,
+}
+
+impl AccountedUses {
+    pub(crate) fn note(&mut self, part_generation: u32) {
+        if self.total == u32::MAX {
+            return;
+        }
+        if self.part_generation != part_generation {
+            self.part_generation = part_generation;
+            self.in_part = 0;
+        }
+        self.in_part += 1;
+        self.total += 1;
+    }
+
+    /// The open part holds a use that nothing accounts for. `total` is 0 before.
+    pub(crate) fn mark_escaped(&mut self, part_generation: u32) {
+        debug_assert_eq!(self.total, 0);
+        *self = Self {
+            total: u32::MAX,
+            in_part: u32::MAX,
+            part_generation,
+        };
+    }
+
+    fn revert(&mut self, part_generation: u32) {
+        if self.part_generation == part_generation {
+            self.total = self.total.saturating_sub(self.in_part);
+            self.in_part = 0;
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
@@ -347,14 +388,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// accounted-for read (`ns.a`, a destructure, a truthiness test). Kept
     /// beside the real count rather than decremented from it so the minifier's
     /// single-use substitution still sees every use.
-    pub(crate) namespace_tracked_uses: HashMap<Ref, u32>,
+    pub(crate) namespace_tracked_uses: HashMap<Ref, AccountedUses>,
     pub(crate) unwrap_all_requires: bool,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
     pub(crate) commonjs_module_exports_assigned_deoptimized: bool,
     /// Uses of `module` that became `module.exports` and stay in its use count.
-    pub(crate) module_exports_rewrite_count: u32,
+    pub(crate) module_exports_rewrites: AccountedUses,
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
@@ -1260,8 +1301,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.is_revisit_for_substitution || self.is_control_flow_dead {
             return;
         }
-        let n = self.namespace_tracked_uses.entry(ns).or_default();
-        *n = n.saturating_add(1);
+        // `revert_dead_part` finds a local's notes through its use in the part.
+        debug_assert!(
+            !self.dynamic_import_namespace_locals.contains_key(&ns)
+                || self.existing_part_use(ns).is_some()
+        );
+        self.namespace_tracked_uses
+            .entry(ns)
+            .or_default()
+            .note(self.part_generation);
     }
 
     /// `ns` in a position that only tests it for null/truthiness (`if (ns)`,
@@ -1785,22 +1833,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.deoptimize_common_js_named_exports();
     }
 
-    fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
-        let symbol_use_refs = part.symbol_uses.keys();
-        let symbol_use_values = part.symbol_uses.values();
-        let symbols = self.symbols.as_mut_slice();
-
-        debug_assert_eq!(symbol_use_refs.len(), symbol_use_values.len());
-        for (r#ref, prev) in symbol_use_refs.iter().zip(symbol_use_values) {
-            symbols[r#ref.inner_index() as usize].use_count_estimate = symbols
-                [r#ref.inner_index() as usize]
-                .use_count_estimate
-                .saturating_sub(prev.count_estimate());
+    /// The visit left the current part empty: takes back the uses and the notes it recorded.
+    fn revert_dead_part(&mut self) {
+        let part_generation = self.part_generation;
+        let live = u64::from(part_generation) << 32;
+        for (at, &(ref_, use_)) in self.part_uses.iter().enumerate() {
+            let i = ref_.inner_index() as usize;
+            if self.part_use_slot[i] == live | at as u64 {
+                let symbol = &mut self.symbols[i];
+                symbol.use_count_estimate = symbol
+                    .use_count_estimate
+                    .saturating_sub(use_.count_estimate());
+            }
+            // For a forgotten entry too: `ignore_usage` drops the entry, not the note.
+            if !self.namespace_tracked_uses.is_empty()
+                && let Some(tracked) = self.namespace_tracked_uses.get_mut(&ref_)
+            {
+                tracked.revert(part_generation);
+            }
         }
-        let declared_refs = part.declared_symbols.refs();
-        for declared in declared_refs {
-            symbols[declared.inner_index() as usize].use_count_estimate = 0;
+        // `record_import_property_use` moved these reads out of `part_uses`. `exports` lists calls, not reads.
+        for (ref_, reads) in self.import_symbol_property_uses.iter() {
+            if *ref_ != self.exports_ref {
+                let count: u32 = reads.values().map(|read| read.count_estimate).sum();
+                let symbol = &mut self.symbols[ref_.inner_index() as usize];
+                symbol.use_count_estimate = symbol.use_count_estimate.saturating_sub(count);
+            }
         }
+        self.module_exports_rewrites.revert(part_generation);
+        // `var module = require()` made the wrapper's variable an import namespace: a use above it is not of the wrapper's.
+        for declared in self.declared_symbols.refs() {
+            if *declared == self.module_ref || *declared == self.exports_ref {
+                self.symbols[declared.inner_index() as usize].use_count_estimate = 0;
+            }
+        }
+        self.part_uses.clear();
+        self.part_generation += 1;
+        self.declared_symbols.clear_retaining_capacity();
+        self.import_records_for_current_part.clear();
     }
 
     // s() lives in the impl block above (deduped).
@@ -5568,15 +5638,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // to empty by `core::mem::take` above; no second assignment needed.
             self.had_commonjs_named_exports_this_visit = false;
         } else if self.declared_symbols.len() > 0 || !self.part_uses.is_empty() {
-            // if the part is dead, invalidate all the usage counts
-            let symbol_uses = self.take_symbol_uses()?;
-            self.clear_symbol_usages_from_dead_part(&js_ast::Part {
-                declared_symbols: self.declared_symbols.clone()?,
-                symbol_uses,
-                ..Default::default()
-            });
-            self.declared_symbols.clear_retaining_capacity();
-            self.import_records_for_current_part.clear();
+            self.revert_dead_part();
         }
         Ok(appended)
     }
@@ -5992,10 +6054,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             debug_assert!(!self.runtime_imports.__require.is_empty());
             let r = self.runtime_identifier_ref(b"__require");
             self.ignore_usage(r);
-            self.symbols[self.require_ref.inner_index() as usize].use_count_estimate = self.symbols
-                [self.require_ref.inner_index() as usize]
-                .use_count_estimate
-                .saturating_sub(1);
+            if !self.is_control_flow_dead {
+                self.ignore_recorded_usage(self.require_ref);
+            }
         }
     }
 
@@ -6597,21 +6658,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
         if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
-            debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
-            self.symbols[r#ref.inner_index() as usize].use_count_estimate = self.symbols
-                [r#ref.inner_index() as usize]
-                .use_count_estimate
-                .saturating_sub(1);
-            if let Some(use_) = self.existing_part_use(r#ref) {
-                use_.subtract(1);
-                if use_.count_estimate() == 0 {
-                    self.forget_part_use(r#ref);
-                }
-            }
+            self.ignore_recorded_usage(r#ref);
         }
 
         // Don't roll back the "tsUseCounts" increment. This must be counted even if
         // the value is ignored because that's what the TypeScript compiler does.
+    }
+
+    /// `ignore_usage` for a use the first visit recorded: a fold on the revisit takes it back too.
+    #[inline]
+    fn ignore_recorded_usage(&mut self, r#ref: Ref) {
+        debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
+        self.symbols[r#ref.inner_index() as usize].use_count_estimate = self.symbols
+            [r#ref.inner_index() as usize]
+            .use_count_estimate
+            .saturating_sub(1);
+        if let Some(use_) = self.existing_part_use(r#ref) {
+            use_.subtract(1);
+            if use_.count_estimate() == 0 {
+                self.forget_part_use(r#ref);
+            }
+        }
     }
 
     pub(crate) fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {
@@ -9752,7 +9819,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
-            module_exports_rewrite_count: 0,
+            module_exports_rewrites: AccountedUses::default(),
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,

@@ -1355,7 +1355,7 @@ impl<'a> Parser<'a> {
         // record (the synthetic ref from `transpose_import` plus a
         // `const ns = …` / `.then(ns => …)` / `{...rest}` local). A record is
         // fully tracked only when *every* such ref had all its uses accounted
-        // for (`use_count_estimate == 0`); the alias set is the union across
+        // for (`namespace_tracked_uses`); the alias set is the union across
         // them. Untracked records get no entry and keep every export.
         if !p
             .imports_to_convert_from_dynamic_import
@@ -1390,7 +1390,10 @@ impl<'a> Parser<'a> {
                     // linked symbol was merged with another declaration (a
                     // hoisted `var`, a parameter), so its own use count says
                     // nothing.
-                    let tracked = p.namespace_tracked_uses.get(&ns_ref).copied().unwrap_or(0);
+                    let tracked = p
+                        .namespace_tracked_uses
+                        .get(&ns_ref)
+                        .map_or(0, |uses| uses.total);
                     // A source-visible local escapes when it has uses nobody
                     // accounted for; the synthetic per-`import()` ref (never
                     // referenced in source) escapes when its one consumer did not.
@@ -1595,7 +1598,7 @@ impl<'a> Parser<'a> {
                             p.deoptimize_commonjs_named_exports();
                         } else if p.symbols.as_slice()[p.module_ref.inner_index() as usize]
                             .use_count_estimate
-                            > p.module_exports_rewrite_count
+                            > p.module_exports_rewrites.total
                         {
                             // `module.constructor` and other uses of `module` need the wrapper.
                             p.deoptimize_commonjs_named_exports();

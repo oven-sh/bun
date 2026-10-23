@@ -4752,6 +4752,230 @@ describe("bundler", () => {
     });
   }
 
+  // ── Statements the build removes ──────────────────────────────────────
+  // A test of a namespace local (`!ns`, `if (ns && DEV)`) observes no export.
+  // When the build removes the statement, the test goes with it: the uses
+  // that remain decide what the importee keeps.
+
+  const named = (name: string) => `export const from = "${name}"; export const other = 1;`;
+  const marked = (name: string) => `export const a = "${name}_A"; export const b = "${name}_B";`;
+
+  for (const backend of ["cli", "api"] as const) {
+    // Every way to bind the namespace, each with a removed test and one use
+    // of the whole namespace.
+    itBundled(`dynamic_import_dce/RemovedTestKeepsWholeUse_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          const viaImport = await import("./import.js");
+          !viaImport;
+          const viaRequire = require("./require.js");
+          !viaRequire;
+          const gated = process.argv.length > 0 ? require("./gated.js") : null;
+          !gated;
+          const [viaAll] = await Promise.all([import("./all.js")]);
+          !viaAll;
+          const { ...rest } = await import("./rest.js");
+          !rest;
+          let viaLet = await import("./let.js");
+          !viaLet;
+          const first = 1, second = await import("./second.js");
+          !second;
+          for (const ns of [viaImport, viaRequire, gated, viaAll, rest, viaLet, second]) {
+            console.log(JSON.stringify({ from: first, ...ns }));
+          }
+        `,
+        "/import.js": named("import"),
+        "/require.js": named("require"),
+        "/gated.js": named("gated"),
+        "/all.js": named("all"),
+        "/rest.js": named("rest"),
+        "/let.js": named("let"),
+        "/second.js": named("second"),
+      },
+      run: {
+        stdout: ["import", "require", "gated", "all", "rest", "let", "second"]
+          .map(from => JSON.stringify({ from, other: 1 }))
+          .join("\n"),
+      },
+    });
+
+    // The removed statement before or after the use, a use above the
+    // declaration, one removed test for each use, and two in one statement.
+    itBundled(`dynamic_import_dce/RemovedTestOrderAndCount_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          function above() { return Object.keys(hoisted).join(); }
+
+          const before = await import("./before.js");
+          !before;
+          const beforeKeys = Object.keys(before).join();
+
+          const after = await import("./after.js");
+          const afterKeys = Object.keys(after).join();
+          !after;
+
+          const hoisted = await import("./hoisted.js");
+          !hoisted;
+
+          const once = await import("./once.js");
+          !once;
+          const onceKeys = Object.keys(once).join() + Object.keys({ ...once }).join();
+
+          const twice = await import("./twice.js");
+          !twice;
+          typeof twice;
+          const twiceKeys = Object.keys(twice).join() + Object.keys({ ...twice }).join();
+
+          const inArrow = await import("./arrow.js");
+          (() => inArrow.a);
+          const arrowKeys = Object.keys(inArrow).join();
+
+          export function spread() { return Object.keys({ ...exported }).join(); }
+          const exported = await import("./exported.js");
+          !exported;
+
+          const pair = await import("./pair.js");
+          !pair, typeof pair;
+          (() => [pair.a, pair.b]);
+          const pairKeys = Object.keys(pair).join() + Object.keys({ ...pair }).join();
+
+          console.log(beforeKeys, afterKeys, above(), onceKeys, twiceKeys, arrowKeys, spread(), pairKeys);
+        `,
+        "/before.js": `export const a = 1, b = 2;`,
+        "/after.js": `export const a = 1, b = 2;`,
+        "/hoisted.js": `export const a = 1, b = 2;`,
+        "/once.js": `export const a = 1, b = 2;`,
+        "/twice.js": `export const a = 1, b = 2;`,
+        "/arrow.js": `export const a = 1, b = 2;`,
+        "/exported.js": `export const a = 1, b = 2;`,
+        "/pair.js": `export const a = 1, b = 2;`,
+      },
+      run: { stdout: "a,b a,b a,b a,ba,b a,ba,b a,b a,b a,ba,b" },
+    });
+
+    // Nothing that a removed statement read stays alive because of it: a
+    // tested namespace, a name of a pattern and a property of that name, a
+    // namespace that `--minify-syntax` moved into its only use. A read in a
+    // kept statement keeps its export (`liveA`, the namespace of `viaSwitch`).
+    for (const minifySyntax of [false, true]) {
+      const mode = minifySyntax ? "MinifySyntax" : "";
+      itBundled(`dynamic_import_dce/RemovedStatementStillNarrows${mode}_${backend}`, {
+        backend,
+        files: {
+          "/entry.js": /* js */ `
+            const whole = await import("./whole.js");
+            !whole;
+            console.log(Object.keys(whole).join());
+
+            const unused = await import("./unused.js");
+            !unused;
+
+            const bare = await import("./bare.js");
+            console.log(bare.a);
+            bare;
+
+            (async () => { const { a } = await import("./callback.js"); return a; });
+            const { b } = await import("./callback.js");
+            console.log(b);
+
+            const mixed = await import("./mixed.js");
+            console.log(mixed.a);
+            !mixed;
+
+            (function () { const { a } = require("./property.js"); return a.length; });
+            const { b: propertyB } = require("./property.js");
+            console.log(propertyB);
+
+            const { a: outsideA, b: outsideB } = require("./outside.js");
+            (function () { return outsideA.length + outsideA.name + outsideA.length; });
+            console.log(outsideB);
+
+            const { a: liveA, b: liveB } = require("./live.js");
+            console.log(liveA.length);
+            (function () { return liveA.length + liveB.length; });
+
+            (function () { const items = require("./items.js"); return items.a.length; });
+            const { b: itemsB } = require("./items.js");
+            console.log(itemsB);
+
+            (function () { const escaped = require("./escaped.js"); return escaped; });
+            const { b: escapedB } = require("./escaped.js");
+            console.log(escapedB);
+
+            function viaSwitch(k) {
+              switch (k) {
+                case 1: const ns = require("./switch.js"); return ns;
+                case 2: return typeof ns;
+              }
+            }
+            console.log(Object.keys(viaSwitch(1)).join());
+          `,
+          "/whole.js": marked("WHOLE"),
+          "/unused.js": marked("UNUSED"),
+          "/bare.js": marked("BARE"),
+          "/callback.js": marked("CALLBACK"),
+          "/mixed.js": marked("MIXED"),
+          "/property.js": marked("PROPERTY"),
+          "/outside.js": marked("OUTSIDE"),
+          "/live.js": marked("LIVE"),
+          "/items.js": marked("ITEMS"),
+          "/escaped.js": marked("ESCAPED"),
+          "/switch.js": marked("SWITCH"),
+        },
+        minifySyntax,
+        run: { stdout: "a,b\nBARE_A\nCALLBACK_B\nMIXED_A\nPROPERTY_B\nOUTSIDE_B\n6\nITEMS_B\nESCAPED_B\na,b" },
+        onAfterBundle(api) {
+          const kept = api.readFile("/out.js").match(/[A-Z]+_[AB]\b/g)!;
+          const live = ["WHOLE_A", "WHOLE_B", "BARE_A", "CALLBACK_B", "MIXED_A", "PROPERTY_B", "OUTSIDE_B", "LIVE_A"];
+          expect([...new Set(kept)].sort()).toEqual([...live, "ITEMS_B", "ESCAPED_B", "SWITCH_A", "SWITCH_B"].sort());
+        },
+      });
+    }
+
+    // The statements that `--minify-syntax`, `--drop` and `--define` remove.
+    itBundled(`dynamic_import_dce/RemovedTestFromBuildFlags_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          const gate = await import("./gate.js");
+          if (gate && process.env.NODE_ENV !== "production") console.log("development build");
+          const logged = await import("./logged.js");
+          logged && console.log("loaded");
+          const flagged = await import("./flagged.js");
+          if (flagged && DEBUG) console.log(flagged);
+          const member = await import("./member.js");
+          if (member.a) {}
+          const keys = [gate, logged, flagged, member].map(ns => Object.keys(ns).join());
+          process.stdout.write(keys.join(" ") + "\\n");
+        `,
+        "/gate.js": `export const a = 1, b = 2;`,
+        "/logged.js": `export const a = 1, b = 2;`,
+        "/flagged.js": `export const a = 1, b = 2;`,
+        "/member.js": `export const a = 1, b = 2;`,
+      },
+      minifySyntax: true,
+      drop: ["console"],
+      define: { "process.env.NODE_ENV": '"production"', DEBUG: "false" },
+      run: { stdout: "a,b a,b a,b a,b" },
+    });
+  }
+
+  itBundled("dynamic_import_dce/RemovedTestProduction", {
+    backend: "cli",
+    files: {
+      "/entry.js": /* js */ `
+        const ns = await import("./lib.js");
+        if (ns && process.env.NODE_ENV !== "production") console.log("development build");
+        console.log(JSON.stringify(Object.keys(ns)));
+      `,
+      "/lib.js": `export const a = 1; export const b = 2;`,
+    },
+    production: true,
+    run: { stdout: '["a","b"]' },
+  });
+
   // ── Cases that keep the namespace object ──────────────────────────────
 
   function itKeepsNamespace(

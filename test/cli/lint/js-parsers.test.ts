@@ -2837,6 +2837,23 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  // This is what oxlint 1.87.0 reports.
+  test("a variable that only the template of a .vue or .svelte file can assign isn't reported as never assigned", async () => {
+    const script = `let element: HTMLDivElement;\nconsole.log(element);\n`;
+    const result = await lint(
+      {
+        ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "no-unassigned-vars": "error" } }`,
+        "a.svelte": `<script lang="ts">\n${script}</script>\n<div bind:this={element}></div>\n`,
+        "b.vue": `<script setup lang="ts">\n${script}</script>\n<template><div :ref="it => (element = it)" /></template>\n`,
+        "c.astro": `---\n${script}---\n<div></div>\n`,
+        "d.ts": script,
+      },
+      ["-f", "json"],
+    );
+    expect(diagnostics(result.raw)).toBe("c.astro 2:5 eslint(no-unassigned-vars)\nd.ts 1:5 eslint(no-unassigned-vars)");
+    expect(result.exitCode).toBe(1);
+  });
+
   test("--fix fixes the scripts in place", async () => {
     const result = await lint(scripts, ["--fix", "-f", "json"], ["a.vue", "b.svelte", "c.astro", "d.vue"]);
     // These are the exact bytes oxlint 1.87 writes.

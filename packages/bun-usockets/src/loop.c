@@ -304,10 +304,10 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
     }
 
     /* Sockets parked in the low-priority queue are unlinked from head_sockets
-     * (the queue reuses prev/next), so the walk above never visits them. On an
-     * idle loop the queue drains only as fast as loop iterations occur, so a
-     * burst of pre-handshake TLS accepts can still be parked when the single
-     * tick their s->timeout stamp matches passes, after which the exact-match
+     * (the queue reuses prev/next), so the walk above never visits them. The
+     * queue gives back a few sockets per loop turn, so when turns are slow (a
+     * handler that blocks, a long queue) a socket can still be parked when the
+     * single tick its s->timeout stamp matches passes, after which the exact-match
      * test above can never fire again. Sweep the parked set here against each
      * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
      * close_raw/detach advance iteration past a socket they unlink, same as
@@ -332,7 +332,12 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.
  * Spread it out during many loop iterations, prioritizing already open connections, they are far
- * easier on CPU */
+ * easier on CPU.
+ *
+ * A parked socket does not poll for readable, so what it receives does not end the loop's wait,
+ * and only the next turn gives it back. Each backend therefore takes another turn while
+ * low_prio_head is set: us_internal_clamp_timeout (epoll_kqueue.c) polls without a wait, and
+ * prepare_cb (libuv.c) wakes the loop. */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {

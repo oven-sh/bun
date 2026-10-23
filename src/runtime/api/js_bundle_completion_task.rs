@@ -1117,7 +1117,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
         if let Some(compile) = &config.compile {
             let executable = executable_path(config, compile);
-            transpiler.options.compile_entry_point_name =
+            transpiler.options.entry_point_file_name =
                 Box::from(executable_entry_point_name(&executable));
         }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into

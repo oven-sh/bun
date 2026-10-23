@@ -351,6 +351,28 @@ test("you can use --outfile=... and --sourcemap", async () => {
   `);
 });
 
+/** Every file under `dir`, keyed by its `/`-separated relative path. */
+function tree(dir: string) {
+  const out: Record<string, string> = {};
+  for (const rel of fs.readdirSync(dir, { recursive: true, encoding: "utf8" }).sort()) {
+    const file = join(dir, rel);
+    if (fs.statSync(file).isFile()) out[rel.replaceAll("\\", "/")] = fs.readFileSync(file, "utf8");
+  }
+  return out;
+}
+
+async function build(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", ...args],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 describe.concurrent("--sourcemap never writes next to the entry point", () => {
   // The entry lives in src/, the build runs from work/ (or from the root for
   // the --outfile rows). Nothing may appear in src/ or work/ unless it was
@@ -365,27 +387,6 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     ...Object.fromEntries(Object.entries(src).map(([name, contents]) => [`src/${name}`, contents])),
     "work/.keep": "",
   };
-
-  function tree(dir: string) {
-    const out: Record<string, string> = {};
-    for (const rel of fs.readdirSync(dir, { recursive: true, encoding: "utf8" }).sort()) {
-      const file = join(dir, rel);
-      if (fs.statSync(file).isFile()) out[rel.replaceAll("\\", "/")] = fs.readFileSync(file, "utf8");
-    }
-    return out;
-  }
-
-  async function build(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", ...args],
-      env: bunEnv,
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
 
   test.each(["entry.js", "entry.ts"])("bare --sourcemap prints %s with an inline map to stdout", async entry => {
     using dir = tempDir("build-sourcemap-stdout", fixture);
@@ -481,6 +482,183 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     expect(written).toEqual([expect.stringMatching(/^work\/index(-\w+)?\.js\.map$/), "work/index.html"]);
     expect(after["work/index.html"]).toContain("console.log(");
     for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+  });
+});
+
+describe.concurrent("--outfile takes the file name as written", () => {
+  // `[name]`, `[hash]`, `[dir]`, `[ext]` and `[target]` are placeholders in
+  // --entry-naming. In --outfile they are characters of the file name.
+  const page = `<!doctype html><html><head><script type="module" src="./app.js"></script></head><body></body></html>\n`;
+  const fixture = {
+    "src/[ext].html": page,
+    "src/app.css": `body { color: red; }\n`,
+    "src/app.js": `console.log("app");\n`,
+    "src/index.html": page,
+    "src/server.js": `import page from "./index.html";\nconsole.log(page);\n`,
+    "src/styled.js": `import "./app.css";\nconsole.log("styled");\n`,
+  };
+
+  test.each([
+    "plain.js",
+    "[name].js",
+    "[hash].js",
+    "[hash8].js",
+    "[dir].js",
+    "[ext].js",
+    "[target].js",
+    "a-[name]-b.js",
+    "[id].js",
+    "[...all].js",
+    "a[b.js",
+  ])("--outfile dist/%s", async name => {
+    using dir = tempDir("build-outfile-name", fixture);
+    const { stdout, stderr, exitCode } = await build(String(dir), "src/app.js", "--outfile", `dist/${name}`);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(name);
+    expect(exitCode).toBe(0);
+
+    const after = tree(String(dir));
+    expect(Object.keys(after)).toEqual([`dist/${name}`, ...Object.keys(fixture)]);
+    expect(after[`dist/${name}`]).toContain(`console.log("app")`);
+  });
+
+  test.each([
+    {
+      name: "a linked source map",
+      args: ["src/app.js", "--outfile", "dist/[name]-[hash].js", "--sourcemap=linked"],
+      written: ["dist/[name]-[hash].js", "dist/[name]-[hash].js.map"],
+      contains: "//# sourceMappingURL=[name]-[hash].js.map",
+    },
+    {
+      name: "an external source map",
+      args: ["src/app.js", "--outfile", "dist/[name]-[hash].js", "--sourcemap=external"],
+      written: ["dist/[name]-[hash].js", "dist/[name]-[hash].js.map"],
+      contains: "//# debugId=",
+    },
+    {
+      name: "an inline source map",
+      args: ["src/app.js", "--outfile", "dist/[name]-[hash].js", "--sourcemap=inline"],
+      written: ["dist/[name]-[hash].js"],
+      contains: "//# sourceMappingURL=data:application/json;base64,",
+    },
+    {
+      name: "a css entry",
+      args: ["src/app.css", "--outfile", "dist/[name].css"],
+      written: ["dist/[name].css"],
+      contains: "color: red",
+    },
+    {
+      name: "a standalone html build",
+      args: ["src/index.html", "--compile", "--target=browser", "--outfile", "dist/[name].html"],
+      written: ["dist/[name].html"],
+      contains: `console.log("app")`,
+    },
+    {
+      // No --outfile: the page takes the name of its entry.
+      name: "a standalone html build of [ext].html",
+      args: ["src/[ext].html", "--compile", "--target=browser"],
+      written: ["[ext].html"],
+      contains: `console.log("app")`,
+    },
+    {
+      name: "--no-bundle",
+      args: ["src/app.js", "--no-bundle", "--outfile", "dist/[name].js"],
+      written: ["dist/[name].js"],
+      contains: `console.log("app")`,
+    },
+    {
+      name: "--entry-naming",
+      args: ["src/app.js", "--outfile", "dist/x.js", "--entry-naming", "[name]-[hash].[ext]"],
+      written: ["dist/x.js"],
+      contains: `console.log("app")`,
+    },
+    {
+      name: "--entry-naming and --no-bundle",
+      args: ["src/app.js", "--no-bundle", "--outfile", "dist/x.js", "--entry-naming", "[name]-[hash].[ext]"],
+      written: ["dist/x.js"],
+      contains: `console.log("app")`,
+    },
+  ])("with $name", async ({ args, written, contains }) => {
+    using dir = tempDir("build-outfile-name", fixture);
+    const { stdout, stderr, exitCode } = await build(String(dir), ...args);
+    expect(stderr).toBe("");
+    for (const file of written) expect(stdout).toContain(path.basename(file));
+    expect(exitCode).toBe(0);
+
+    const after = tree(String(dir));
+    expect(Object.keys(after)).toEqual([...written, ...Object.keys(fixture)]);
+    expect(after[written[0]]).toContain(contains);
+    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+  });
+
+  test("the metafile names the file that is written", async () => {
+    using dir = tempDir("build-outfile-name", fixture);
+    const { stdout, stderr, exitCode } = await build(
+      String(dir),
+      "src/app.js",
+      "--outfile",
+      "dist/[name].js",
+      "--metafile=meta.json",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain("[name].js");
+    expect(exitCode).toBe(0);
+
+    const after = tree(String(dir));
+    expect(Object.keys(after)).toEqual(["dist/[name].js", "meta.json", ...Object.keys(fixture)]);
+    expect(Object.keys(JSON.parse(after["meta.json"]).outputs)).toEqual(["./[name].js"]);
+  });
+
+  // The build runs in src/, so a name that expands to the entry's own name would replace the entry.
+  test.each([
+    { outfile: "[name].js", sourcemap: "none" },
+    { outfile: "[name].js", sourcemap: "linked" },
+    { outfile: "bundle.[hash].js", sourcemap: "linked" },
+  ])("$outfile next to the entry with --sourcemap=$sourcemap", async ({ outfile, sourcemap }) => {
+    using dir = tempDir("build-outfile-name", fixture);
+    const { stdout, stderr, exitCode } = await build(
+      join(String(dir), "src"),
+      "app.js",
+      "--outfile",
+      outfile,
+      `--sourcemap=${sourcemap}`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain(outfile);
+    expect(exitCode).toBe(0);
+
+    const written = sourcemap === "linked" ? [`src/${outfile}`, `src/${outfile}.map`] : [`src/${outfile}`];
+    const after = tree(String(dir));
+    expect(Object.keys(after)).toEqual([...Object.keys(fixture), ...written].sort());
+    if (sourcemap === "linked") expect(after[`src/${outfile}`]).toContain(`//# sourceMappingURL=${outfile}.map`);
+    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+  });
+
+  test.each([
+    { cwd: ".", cmd: "src/app.js" },
+    { cwd: "src", cmd: "app.js" },
+    { cwd: ".", cmd: "src/app.js --no-bundle" },
+  ])("bun build $cmd --outfile / in $cwd is an error", async ({ cwd, cmd }) => {
+    using dir = tempDir("build-outfile-name", fixture);
+    const { stdout, stderr, exitCode } = await build(join(String(dir), cwd), ...cmd.split(" "), "--outfile", "/");
+    expect(stdout).toBe("");
+    expect(stderr).toBe(`error: --outfile "/" does not name a file\n`);
+    expect(tree(String(dir))).toEqual(fixture);
+    expect(exitCode).toBe(1);
+  });
+
+  // One entry, two outputs that take the entry naming: the css of a js entry, the page of a server entry.
+  test.each([
+    "src/styled.js --outfile dist/out.js",
+    "src/styled.js --outfile dist/[name].js",
+    "src/server.js --target=bun --outfile dist/out.js",
+  ])("bun build %s writes nothing", async cmd => {
+    using dir = tempDir("build-outfile-name", fixture);
+    const { stdout, stderr, exitCode } = await build(String(dir), ...cmd.split(" "));
+    expect(stdout).toBe("");
+    expect(stderr).toBe("error: cannot write multiple output files without an output directory\n");
+    expect(tree(String(dir))).toEqual(fixture);
+    expect(exitCode).toBe(1);
   });
 });
 

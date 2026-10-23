@@ -392,7 +392,7 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
-                this_transpiler.options.compile_entry_point_name =
+                this_transpiler.options.entry_point_file_name =
                     bun_paths::basename(compile_outfile(outfile)).into();
             }
         }
@@ -427,15 +427,24 @@ impl BuildCommand {
             }
         }
 
-        // Bundle `--outfile dir/app.js` as `--outdir dir` with the entry named `app.js`.
+        // `--outfile dir/app.js` names the one output `app.js`. A bundle is written as with `--outdir dir`.
         if ctx.bundler_options.outdir.is_empty()
             && !outfile.is_empty()
             && !ctx.bundler_options.compile
-            && !ctx.bundler_options.transform_only
         {
-            this_transpiler.options.entry_naming =
-                strings::concat(&[b"./", bun_paths::basename(outfile)]);
-            this_transpiler.options.output_dir = bun_core::dirname(outfile).unwrap_or(b".").into();
+            let name = bun_paths::basename(outfile);
+            if name.is_empty() {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> --outfile {} does not name a file",
+                    bun_fmt::quote(outfile),
+                );
+                Global::exit(1);
+            }
+            this_transpiler.options.entry_point_file_name = name.into();
+            if !ctx.bundler_options.transform_only {
+                this_transpiler.options.output_dir =
+                    bun_core::dirname(outfile).unwrap_or(b".").into();
+            }
         }
 
         let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
@@ -812,16 +821,6 @@ impl BuildCommand {
             // `--compile` and `--no-bundle` output for `--outfile` is still in memory here (#8697).
             if output_dir.is_empty() && !outfile.is_empty() {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
-                // With --compile, the bundler already named the entry point's chunk after the outfile.
-                if !ctx.bundler_options.compile
-                    && output_files.len() == 1
-                    && matches!(
-                        output_files[0].value,
-                        options::OutputFileValue::Buffer { .. }
-                    )
-                {
-                    output_files[0].dest_path = bun_paths::basename(outfile).into();
-                }
             }
 
             if !ctx.bundler_options.compile {

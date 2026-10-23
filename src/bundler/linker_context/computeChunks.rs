@@ -572,8 +572,17 @@ pub(crate) fn compute_chunks(
     let output_paths = this.graph.entry_points.items_output_path();
     // re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.
     let ast_targets = this.graph.ast.items_target();
-    let mut compile_entry_point_pending =
-        !bv2.transpiler().options.compile_entry_point_name.is_empty();
+    let is_executable = this.options.compile_mode.is_executable();
+    let mut entry_point_file_name_pending =
+        !bv2.transpiler().options.entry_point_file_name.is_empty();
+    // The chunks that `--entry-naming` names.
+    let takes_entry_naming = |chunk: &Chunk| {
+        chunk.entry_point.is_entry_point()
+            && (matches!(chunk.content, chunk::Content::Html)
+                || (kinds[chunk.entry_point.source_index() as usize]
+                    == crate::EntryPoint::Kind::UserSpecified
+                    && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
+    };
     for (chunk_id, chunk) in chunks.iter_mut().enumerate() {
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The
@@ -608,28 +617,29 @@ pub(crate) fn compute_chunks(
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }
 
-        // The same file that `StandaloneModuleGraph::to_bytes` embeds as the entry point.
-        if compile_entry_point_pending
-            && this.chunk_output_kind(chunk) == OutputKind::EntryPoint
-            && this.chunk_side(chunk) == Side::Server
+        if entry_point_file_name_pending
+            && if is_executable {
+                // The same file that `StandaloneModuleGraph::to_bytes` embeds as the entry point.
+                this.chunk_output_kind(chunk) == OutputKind::EntryPoint
+                    && this.chunk_side(chunk) == Side::Server
+            } else {
+                // `--outfile`: a build that writes one file has one such chunk.
+                takes_entry_naming(chunk)
+            }
         {
-            compile_entry_point_pending = false;
+            entry_point_file_name_pending = false;
+            // The name is a placeholder value, so a `[name]` or `[hash]` in it is never expanded.
             chunk.template = PathTemplate {
                 data: Box::from(&b"./[name]"[..]),
                 placeholder: Placeholder {
-                    name: bv2.transpiler().options.compile_entry_point_name.clone(),
+                    name: bv2.transpiler().options.entry_point_file_name.clone(),
                     ..Default::default()
                 },
             };
             continue;
         }
 
-        if chunk.entry_point.is_entry_point()
-            && (matches!(chunk.content, chunk::Content::Html)
-                || (kinds[chunk.entry_point.source_index() as usize]
-                    == crate::EntryPoint::Kind::UserSpecified
-                    && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
-        {
+        if takes_entry_naming(chunk) {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
             if has_server_html_imports && bv2.transpiler().options.entry_naming.is_empty() {
                 chunk.template = PathTemplate::FILE_WITH_TARGET.into();

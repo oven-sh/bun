@@ -1083,6 +1083,7 @@ impl<'a> Installer<'a> {
 }
 
 /// Where `Installer::describe` reads the package.json of a package.
+#[derive(Clone, Copy)]
 pub(crate) enum PackageJson<'a> {
     /// What the extraction of the package read.
     Extracted(&'a install::ExtractData),

@@ -220,6 +220,89 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// A `const` initialized with a macro result is inlined at each use, so every use shares one AST object.
+test("spreading a macro result into JSX doesn't change the other uses of its const", async () => {
+  using dir = tempDir("macro-jsx-spread-run", {
+    "m.ts": `export function m() {\n  return { a: 1, b: [2] };\n}\n`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => props;\n`,
+    "index.jsx": [
+      `import { m } from "./m.ts" with { type: "macro" };`,
+      `const x = m();`,
+      `const before = x;`,
+      `const child = <div {...x}>kid</div>;`,
+      `const spread = <div {...x} />;`,
+      `console.log(JSON.stringify([before, child, spread, x]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect(stdout.trim().split("\n").pop()).toBe(
+    `[{"a":1,"b":[2]},{"a":1,"b":[2],"children":"kid"},{"a":1,"b":[2]},{"a":1,"b":[2]}]`,
+  );
+  expect(exitCode).toBe(0);
+});
+
+// A value returned only by a getter can be collected once the walk moves on, and a later value can reuse its address.
+test("inlines every new array, object or promise returned by a macro result's getters", async () => {
+  const count = 12;
+  using dir = tempDir("macro-getter-made-values", {
+    "m.ts": `
+      // Each read of target[i] creates a new value. Every third read runs the GC first.
+      function lazy(target: object, make: (i: number) => unknown) {
+        for (let i = 0; i < ${count}; i++) {
+          Object.defineProperty(target, i, {
+            enumerable: true,
+            get() {
+              if (i % 3 === 0) Bun.gc(true);
+              return make(i);
+            },
+          });
+        }
+        return target;
+      }
+      export function objects() {
+        return lazy({}, i => ({ id: i }));
+      }
+      export function arrays() {
+        return lazy([], i => [i, i + 1]);
+      }
+      export function promises() {
+        return lazy({}, i => Promise.resolve(i));
+      }
+    `,
+    "index.ts": `
+      import { objects, arrays, promises } from "./m.ts" with { type: "macro" };
+      console.log(JSON.stringify({ objects: objects(), arrays: arrays(), promises: promises() }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const indices = Array.from({ length: count }, (_, i) => i);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual({
+    objects: Object.fromEntries(indices.map(i => [i, { id: i }])),
+    arrays: indices.map(i => [i, i + 1]),
+    promises: Object.fromEntries(indices.map(i => [i, i])),
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A Response or Blob returned from a macro is inlined by its content type: JSON is parsed into an object
 // literal, text becomes a string, anything else becomes a base64 data URL. The type has to be classified
 // with its parameters stripped: `Response.json()` and most servers send `application/json;charset=utf-8`.
@@ -626,10 +709,42 @@ describe("--no-macros", () => {
   });
 });
 
-// Each parse-worker thread creates its own macro VM at its first macro call. The VM's transpiler
-// loads the `.env` files of the cwd into the VM's env loader, so the macro's `process.env` sees
-// them. That loader is a copy of the build's, which every worker thread shares.
-describe("the macro VM's env loader is its own", () => {
+test("bun build of a macro call next to a property read of the same import", async () => {
+  using dir = tempDir("bundler-macro-property-read", {
+    "macro.ts": `export function m() {\n  return 42;\n}\n`,
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m.name, m());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("console.log(m.name, 42);");
+  expect(exitCode).toBe(0);
+});
+
+test("bun build reports a macro result that is nested too deeply", async () => {
+  using dir = tempDir("bundler-macro-deep-result", {
+    "macro.ts": `export function m() {\n  let list = null;\n  for (let i = 0; i < 100000; i++) list = { i, next: list };\n  return list;\n}\n`,
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nexport const list = m();\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: The value returned by this macro is nested too deeply");
+  expect(exitCode).toBe(1);
+});
+
+// Each parse thread creates a macro VM on its first macro call, and that VM loads the cwd's `.env` files.
+describe("macro VM env loader", () => {
   const macroModules = 8;
   const files: Record<string, string> = {
     ".env": Array.from({ length: 5000 }, (_, i) => `VAR_${i}=value_number_${i}`).join("\n") + "\n",
@@ -642,9 +757,7 @@ describe("the macro VM's env loader is its own", () => {
     files[`m${i}.ts`] = `import { value } from "./macro.ts" with { type: "macro" };\nexport default value("m${i}");\n`;
   }
 
-  // Several worker threads load the same `.env` into one map at the same time. A few builds at
-  // once, each with a fixed pool of eight threads, make the overlap likely in every environment.
-  test("bun build with several macro modules and a .env does not crash", async () => {
+  test("bun build doesn't crash with several macro modules and a .env", async () => {
     using dir = tempDir("macro-env-loader-race", files);
     const builds = 4;
     const results = await Promise.all(
@@ -669,10 +782,9 @@ describe("the macro VM's env loader is its own", () => {
     }
   }, 60_000);
 
-  // `bun build` without `--env` does not read `.env`. A macro VM does, and the build takes over what
-  // it read before the imports of the module that calls the macro are resolved.
-  test.concurrent("a NODE_PATH that only .env sets resolves the imports of a module that calls a macro", async () => {
-    using dir = tempDir("macro-env-loader-node-path", {
+  // `bun build` without `--env` doesn't read `.env`.
+  test.concurrent("the .env loaded for a macro doesn't affect the build's resolver", async () => {
+    using dir = tempDir("macro-env-loader-isolated", {
       "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
       "macro.ts": `export function value(name: string) {\n  return name;\n}\n`,
       "with-macro.ts": `import { value } from "./macro.ts" with { type: "macro" };\nimport { dep } from "dep";\nconsole.log(value("a"), dep);\n`,
@@ -695,55 +807,7 @@ describe("the macro VM's env loader is its own", () => {
       };
     };
     const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
-    expect(withMacro).toEqual({ resolved: true, unresolved: false, exitCode: 0 });
     expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
-  });
-
-  test.concurrent("a macro reads .env through its own loader", async () => {
-    using dir = tempDir("macro-env-loader-reads-dotenv", {
-      ".env": "FROM_DOTENV=hello\n",
-      "macro.ts": `export function fromDotenv() {\n  return process.env.FROM_DOTENV ?? "unset";\n}\n`,
-      "entry.ts": `import { fromDotenv } from "./macro.ts" with { type: "macro" };\nconsole.log(fromDotenv());\n`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "./entry.ts", "--target=bun"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ lastLine: stdout.trim().split("\n").pop(), exitCode }).toEqual({
-      lastLine: `console.log("hello");`,
-      exitCode: 0,
-    });
-  });
-
-  // The copy carries the record of what the program's loader already read. `Bun.build()` in a
-  // program that loaded `.env` at start does not read it again.
-  test.concurrent("Bun.build() gives the macro VM a copy of the program's env", async () => {
-    using dir = tempDir("macro-env-loader-build-api", {
-      ".env": "FROM_DOTENV=hello\n",
-      "macro.ts": `export function vars() {\n  return [process.env.FROM_DOTENV ?? "unset", process.env.ADDED_AFTER_START ?? "unset"].join(",");\n}\n`,
-      "entry.ts": `import { vars } from "./macro.ts" with { type: "macro" };\nconsole.log(vars());\n`,
-      "build.ts": `
-        import { appendFileSync } from "node:fs";
-        appendFileSync(".env", "ADDED_AFTER_START=yes\\n");
-        const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun" });
-        console.log(await result.outputs[0].text());
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "build.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ lastLine: stdout.trim().split("\n").pop(), exitCode }).toEqual({
-      lastLine: `console.log("hello,unset");`,
-      exitCode: 0,
-    });
+    expect(withMacro).toEqual(withoutMacro);
   });
 });

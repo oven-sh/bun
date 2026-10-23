@@ -301,6 +301,25 @@ describe.concurrent(() => {
     expect(exitCode).toBe(0);
   });
 
+  it("takes the flags that choose the CA store", async () => {
+    // With `--stable`, an upgrade that goes ahead asks the local server.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    using stagingRoot = tempDir("bun-upgrade-ca-store", {});
+    await using proc = spawn({
+      cmd: [standInExe, "upgrade", "--stable", "--use-openssl-ca", "--use-bundled-ca"],
+      cwd: standInDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out).toBe("");
+    expect(err).toBe("error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n");
+    expect(exitCode).toBe(1);
+  });
+
   it("two valid arguments, should succeed", async () => {
     // `--stable --profile` are both recognised flags; argument validation must
     // let them through. Only profile assets are served, so reaching the version
@@ -325,6 +344,52 @@ describe.concurrent(() => {
   });
 
   it.each([
+    [["--version", "upgrade"]],
+    [["--revision", "upgrade"]],
+    [["--bun", "--version", "upgrade"]],
+    [["--bun", "--revision", "upgrade"]],
+    [["-p1+1", "upgrade"]],
+    [["-p=1+1", "upgrade"]],
+    [["-ip1+1", "upgrade"]],
+    [["-p", "upgrade"]],
+    [["-pe", "upgrade"]],
+    [["--cwd", "upgrade", "dev"]],
+    [["--cwd", "upgrade", "run", "dev"]],
+    [["--filter", "upgrade", "dev"]],
+    [["--env-file", "upgrade", "dev"]],
+    [["--title", "upgrade", "dev"]],
+    [["--conditions", "upgrade", "dev"]],
+    [["--elide-lines", "upgrade", "dev"]],
+    [["--", "--version", "upgrade", "--help"]],
+    [["--", "upgrade"]],
+    [["-", "upgrade"]],
+    [["--filter=*", "upgrade"]],
+    [["--workspaces", "upgrade"]],
+    [["--if-present", "upgrade"]],
+  ])("bun %j starts no upgrade", async args => {
+    // With `--stable`, an upgrade that goes ahead asks the local server.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    using dir = tempDir("bun-upgrade-refused", { "upgrade/package.json": "{}" });
+    await using proc = spawn({
+      cmd: [standInExe, ...args, "--stable"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(dir) },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out).toBe("");
+    expect(err).toBe(
+      "error: This command updates Bun itself, and does not take package names.\n" +
+        `note: Use \`bun update ${args.slice(1).join(" ")} --stable\` instead.\n`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    [["--bun"], {}],
     [["--smol"], {}],
     [[], { BUN_OPTIONS: "--smol" }],
   ])("a flag before the command (%j, %j) is not a package name", async (flags, extraEnv) => {

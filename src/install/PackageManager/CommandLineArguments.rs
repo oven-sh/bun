@@ -184,7 +184,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--use-system-ca                       Use the system's trusted certificate authorities"
     ),
-    clap::param!("--use-openssl-ca                      Use OpenSSL's default CA store"),
+    clap::param!(
+        "--use-openssl-ca                      Use OpenSSL's default CA store instead of the bundled one"
+    ),
     clap::param!("--use-bundled-ca                      Use bundled CA store"),
     clap::param!("-h, --help                            Print this help menu"),
     RUNTIME_FLAGS_PARAM,
@@ -438,8 +440,9 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--node-linker=pnpm", AliasOf(b"--linker=isolated")),
 ];
 
-/// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove` and
-/// `update` skip them, like Bun 1.4 and earlier did, so scripts written for those tools keep working.
+/// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove`,
+/// `update` and `bunx` skip them, like Bun 1.4 and earlier did, so scripts written for those tools
+/// keep working.
 const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     #[rustfmt::skip]
     flags: &[
@@ -493,6 +496,26 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     // pnpm's `--config.<setting>=<value>`.
     prefixes: &[b"config."],
 };
+
+/// Only `bunx` skips these. They are the flags of `npx` and `pnpm dlx`, and the flags of npm that
+/// `bun add` has too.
+const IGNORED_NPX_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
+    #[rustfmt::skip]
+    flags: &[
+    // The value of `--call` is what to run.
+    b"always-spawn", b"call", b"ignore-existing", b"local", b"shell-auto-fallback", b"shell-mode",
+    b"dry-run", b"force", b"global", b"if-present", b"ignore-scripts", b"prefer-offline",
+    b"production", b"save", b"workspaces",
+    ],
+    #[rustfmt::skip]
+    options: &[b"node-arg", b"npm", b"shell", b"cpu", b"libc", b"omit", b"os"],
+    prefixes: &[],
+};
+
+/// npm's one-letter flags that `bunx` doesn't have.
+const FOREIGN_SHORT_FLAGS: &[u8] = b"acdfglqsyBDEHOPS?";
+/// The ones that take a value. pnpm's `-w` takes none, so `bunx` only skips them as `-w=value`.
+const FOREIGN_SHORT_OPTIONS: &[u8] = b"mwCL";
 
 /// `bun update` accepts these flags too, but there they select which dependencies to update, so no
 /// entry in `FOREIGN_FLAGS` is rewritten to them for `bun update`.
@@ -1377,6 +1400,54 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         clap::simple_help(&params.concat());
         pretty_help(outro_text);
         Output::flush();
+    }
+
+    /// `bun run` runs `bun x` where a script says `npx`, so `bunx` skips the flags of the other
+    /// package managers, and Bun's own flags without a value. Returns `None` if `arg` is neither.
+    /// Otherwise returns whether `next`, the argument after `arg`, is its value.
+    pub fn bunx_skips_flag(arg: &[u8], next: &[u8]) -> Option<bool> {
+        let name_end = strings::index_of_char_usize(arg, b'=').unwrap_or(arg.len());
+        let has_value = name_end < arg.len();
+        let value_is_next_arg = if let Some(name) = arg[..name_end].strip_prefix(b"--") {
+            // These choose a registry, its certificates or its credentials.
+            let setting = name.strip_prefix(b"config.").unwrap_or(name);
+            if matches!(
+                setting,
+                b"userconfig"
+                    | b"globalconfig"
+                    | b"npmrc-auth-file"
+                    | b"use-yarnrc"
+                    | b"replace-registry-host"
+                    | b"pnpr-server"
+                    | b"ca"
+                    | b"cafile"
+            ) || setting.starts_with(b"//")
+                || setting.ends_with(b":registry")
+            {
+                return None;
+            }
+            let is_own_flag = |name: &[u8]| {
+                (ADD_PARAMS.iter().copied().flatten()).any(|param| {
+                    param.takes_value == clap::Values::None && param.names.matches_long(name)
+                })
+            };
+            IGNORED_NPX_FLAGS
+                .value_is_next_arg(name, next, is_own_flag)
+                .or_else(|| IGNORED_FOREIGN_FLAGS.value_is_next_arg(name, next, is_own_flag))
+                .or_else(|| (is_own_flag(name) && !has_value).then_some(false))?
+        } else {
+            let is_flag = |letter: &u8| strings::contains_char(FOREIGN_SHORT_FLAGS, *letter);
+            match arg[..name_end].strip_prefix(b"-")? {
+                [letter] if has_value && strings::contains_char(FOREIGN_SHORT_OPTIONS, *letter) => {
+                    false
+                }
+                // `-dd`, `-yq`
+                letters if !letters.is_empty() && letters.iter().all(is_flag) => false,
+                _ => return None,
+            }
+        };
+        // Its value is a flag for node.
+        Some((value_is_next_arg || arg == b"--node-arg") && !has_value)
     }
 
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {

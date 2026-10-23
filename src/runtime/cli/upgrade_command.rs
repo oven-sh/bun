@@ -23,6 +23,7 @@ use bun_wyhash::hash;
 use crate::api::bun::process::Status;
 use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
+use crate::cli::script_or_command::{arguments_before, is_about_scripts};
 
 // `sync::Options.argv` is `Vec<Box<[u8]>>` (owns its rows). Helper
 // to build it from borrowed slices.
@@ -507,7 +508,16 @@ impl UpgradeCommand {
 
     #[cold]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        let args = Command::after_command(bun_core::argv().as_slice(), b"upgrade");
+        let argv = bun_core::argv().as_slice();
+        // All of `argv` if `upgrade` is the value of a flag, as in `bun --filter upgrade dev`.
+        let before = arguments_before(b"upgrade");
+        let is_another_request = |arg: &&[u8]| {
+            matches!(*arg, b"--" | b"--version" | b"--revision") || is_about_scripts(arg)
+        };
+        let is_asked_for = before.len() < argv.len() && !before.iter().any(is_another_request);
+        // Otherwise `upgrade` itself is one of `args`, which is refused.
+        let start = if is_asked_for { before.len() + 1 } else { 2 };
+        let args = argv.get(start..).unwrap_or_default();
         for arg in args {
             if !strings::contains(arg.as_bytes(), b"--") {
                 bun_core::pretty_error!(
@@ -820,7 +830,7 @@ impl UpgradeCommand {
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
+                        filesystem.top_level_dir(),
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);

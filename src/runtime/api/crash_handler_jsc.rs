@@ -25,6 +25,7 @@ pub(crate) mod js_bindings {
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
             ("allocError", __jsc_host_js_alloc_error),
+            ("operatorNew", __jsc_host_js_operator_new),
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
             ("trap", __jsc_host_js_trap),
@@ -219,6 +220,24 @@ pub(crate) mod js_bindings {
         }
         let buf: Vec<u8> = Vec::with_capacity(SIZE);
         core::hint::black_box(buf);
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// Calls `mi_new` or `mi_new_nothrow`, which back C++ `operator new` where mimalloc overrides it.
+    /// Only `mi_new_nothrow` may return null.
+    #[bun_jsc::host_fn]
+    fn js_operator_new(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            // safe: both accept any size, and the result is never dereferenced.
+            safe fn mi_new(size: usize) -> *mut core::ffi::c_void;
+            safe fn mi_new_nothrow(size: usize) -> *mut core::ffi::c_void;
+        }
+        if frame.argument(0).to_boolean() {
+            let refused = mi_new_nothrow(usize::MAX / 2).is_null();
+            return Ok(JSValue::js_boolean(refused));
+        }
+        crash_handler::suppress_core_dumps_if_necessary();
+        let _ = mi_new(usize::MAX / 2);
         Ok(JSValue::UNDEFINED)
     }
 

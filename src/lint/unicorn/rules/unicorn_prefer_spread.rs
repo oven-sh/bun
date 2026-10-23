@@ -14,7 +14,7 @@ const PREFER_SPREAD: Message = Message::new("", "Prefer the spread operator (`..
 impl Rule for PreferSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-spread", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().method_calls(&["from", "concat", "slice", "toSpliced"]);
-    /// The names of the methods.
+    /// The methods' names.
     type State<'a> = [Name<'a>; 4];
 
     fn new(_: &Options) -> Self {
@@ -30,7 +30,7 @@ impl Rule for PreferSpread {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        // The whole of an optional chain, which here is in parentheses, is not a member expression for oxlint.
+        // oxlint doesn't treat a whole optional chain, which is parenthesized here, as a member expression.
         let member_expr = call_expr.callee();
         if member_expr.member_name().is_some_and(|it| !cx.state.contains(&it.name())) {
             return;
@@ -46,7 +46,7 @@ impl Rule for PreferSpread {
         if first_arg.is_some_and(|it| it.tag() == ExprTag::Spread) && !name.is("concat") {
             return;
         }
-        // What is spread instead.
+        // The expression to spread instead.
         let (bad_method, spread) = match (name.bytes(), first_arg) {
             (b"from", Some(expr)) if args.len() == 1 => {
                 if member_expr.tag() == ExprTag::Index || expr.tag() == ExprTag::Object || !object.is_ident("Array") {
@@ -82,7 +82,7 @@ impl Rule for PreferSpread {
             report.fix_where_safe(is_safe, |fixer| {
                 let mut codegen = Codegen::default();
                 codegen.code.extend_from_slice(if could_be_asi_hazard(e) { ";[..." } else { "[..." }.as_bytes());
-                // The parentheses around it are not printed.
+                // The parentheses around it aren't printed.
                 match expr_to_spread.is_parenthesized() && expr_to_spread.tag() == ExprTag::Fn {
                     true => codegen.code.extend_from_slice(expr_to_spread.text()),
                     false => print_expression(&mut codegen, expr_to_spread),
@@ -105,10 +105,10 @@ fn is_typed_array_or_buffer_construction(expr: Expr) -> bool {
             .is_some_and(|it| it.is_any(&["ArrayBuffer", "SharedArrayBuffer"]) || it.is_any(&TYPED_ARRAYS))
 }
 
-/// `expr`: whether it is in parentheses or not.
+/// `expr`'s own parentheses are ignored.
 fn is_not_array(expr: Expr) -> bool {
     let (mut at, mut is_parenthesized) = (expr, false);
-    // `var a = b, b = a` goes in a circle.
+    // `var a = b, b = a` is a cycle.
     let mut seen = rustc_hash::FxHashSet::default();
     loop {
         let name = match at.kind() {
@@ -117,7 +117,7 @@ fn is_not_array(expr: Expr) -> bool {
                 return !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma) && left.tag() != ExprTag::PrivateIdentifier;
             }
             _ if at.is_chain_root() => return false,
-            // In parentheses, these are nothing that oxlint knows here.
+            // oxlint doesn't recognize these here when they're parenthesized.
             ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) | ExprKind::BigInt(_) | ExprKind::Regex(_) | ExprKind::String(_) => {
                 return !is_parenthesized;
             }

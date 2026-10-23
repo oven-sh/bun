@@ -3,8 +3,7 @@
 //! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
 //! `JsResult`, `JSObject`, `JSType`, [`VirtualMachine`],
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
-//! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
-//! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
+//! `bun_io`**. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
 //! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
 //!
@@ -480,19 +479,6 @@ pub mod api {
             }
         }
     }
-}
-
-// The getters and setters of the cached slots that `.classes.ts` declares.
-pub mod codegen {
-    ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { onconnect, onclose, onretire, checkServerIdentity, onnotification, columnTransform });
-    ::bun_jsc::js_class_module!(JSPostgresSQLQuery = "PostgresSQLQuery"
-        as crate::postgres::PostgresSQLQuery { binding, copy, pendingValue, target });
-
-    ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
-        as crate::mysql::js_my_sql_connection::JSMySQLConnection { onconnect, onclose, onretire, checkServerIdentity, columnTransform });
-    ::bun_jsc::js_class_module!(js_mysql_query = "MySQLQuery"
-        as crate::mysql::js_my_sql_query::JSMySQLQuery { binding, pendingValue, target });
 }
 
 // `bun_jsc::JSFunction::create` has another signature. SQL only needs the `JSHostFn` thunk.

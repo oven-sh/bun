@@ -223,6 +223,15 @@ pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
     fold(&with_slashes)
 }
 
+/// Whether `flag` is about scripts: those of several packages, whatever this one has, or none.
+pub(crate) fn is_about_scripts(flag: &[u8]) -> bool {
+    matches!(
+        flag,
+        b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
+    ) || flag.starts_with(b"--filter")
+        || short_with_value(flag) == Some(b'F')
+}
+
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
 pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
@@ -231,13 +240,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let mut before = before.iter().copied();
     let mut given = None;
     while let Some(arg) = before.next() {
-        // These are about scripts: those of several packages, whatever this one has, or none.
-        if matches!(
-            arg,
-            b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
-        ) || arg.starts_with(b"--filter")
-            || short_with_value(arg) == Some(b'F')
-        {
+        if is_about_scripts(arg) {
             return Ok(Runs::Other);
         }
         let value = match arg.strip_prefix(b"--cwd") {

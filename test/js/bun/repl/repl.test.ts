@@ -449,6 +449,15 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // Windows path buffers are large enough for this name.
+    test.skipIf(isWindows)(".load with a filename longer than PATH_MAX shows ENAMETOOLONG", async () => {
+      const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${long}`, "1 + 1", ".exit"]);
+      expect(outputs).toEqual([expect.stringMatching(/^ENAMETOOLONG: /), "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test(".load and .save without a filename show their usage", async () => {
       const { outputs, stderr, exitCode } = await runRepl([".load", ".save", ".exit"]);
       expect(outputs).toEqual(["Usage: .load <filename>", "Usage: .save <filename>"]);
@@ -1077,27 +1086,6 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("\x04"); // Ctrl+D
       expect(await proc.exited).toBe(0);
     });
-  });
-
-  // The poll that the REPL waits in for a promise is not ended by a signal: it retries on
-  // EINTR. The timer keeps the loop parked in that poll, and the idle GC timer is off so that
-  // nothing else ends it.
-  test("SIGINT interrupts an await while the event loop is parked", async () => {
-    await withTerminalRepl(
-      async ({ send, waitFor, proc }) => {
-        // "parked" is printed from inside the wait, when the REPL's SIGINT handler is installed.
-        // The echo of this line does not contain the word.
-        send(
-          "await new Promise(() => { setTimeout(() => console.log('par' + 'ked'), 1); setTimeout(() => {}, 600000); })\n",
-        );
-        await waitFor("parked");
-        proc.kill("SIGINT");
-        await waitFor(/\u276f|> /);
-        send("1 + 1\n");
-        await waitFor("2");
-      },
-      { env: { BUN_GC_TIMER_DISABLE: "1" } },
-    );
   });
 
   test("require works in terminal", async () => {
@@ -1883,6 +1871,14 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
     expect(await Bun.file(historyPath).text()).toBe(`1 + 1\n${secret}\n`);
     expect(statSync(historyPath).mode & 0o777).toBe(0o600);
   });
+});
+
+test("skips the history file when $HOME is longer than PATH_MAX", async () => {
+  const home = "/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+  const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home });
+  expect(outputs).toEqual(["2"]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a

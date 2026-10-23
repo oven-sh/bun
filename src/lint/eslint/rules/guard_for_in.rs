@@ -8,7 +8,7 @@ const WRAP: Message = Message::new(
     "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype.",
 );
 
-/// `continue`, or a block that contains only a `continue`.
+/// True for `continue`, or a block that contains only a `continue`.
 fn is_continue(stmt: Stmt) -> bool {
     match stmt.kind() {
         StmtKind::Continue(_) => true,
@@ -45,7 +45,7 @@ impl Rule for GuardForIn {
             && !is_guarded(body)
         {
             let whole = stmt.span();
-            // oxlint points at the head, which it takes to end one byte after the object.
+            // oxlint reports the head, which it assumes ends one byte after the object.
             let end = if cx.language().is_oxlint { expr.outer_span().end + 1 } else { whole.end };
             cx.report(Span::new(whole.start, end), WRAP);
         }

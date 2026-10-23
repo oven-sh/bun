@@ -143,7 +143,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         Ok(fs) => fs,
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };
-    let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
@@ -457,10 +457,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `framework` iter does not lock `*dev`.
         // SAFETY: `dev_ptr` is the live `Box<DevServer>` heap address; `framework`
         // is read-only here and disjoint from the fields mutated in the loop body.
-        for (i, fsr) in unsafe { &(*dev_ptr).framework }
+        for fsr in unsafe { &(*dev_ptr).framework }
             .file_system_router_types
             .iter()
-            .enumerate()
         {
             let mut buf = paths::path_buffer_pool::get();
             let joined_root = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
@@ -484,6 +483,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 incremental_graph::RouteKind::Route,
             )?;
 
+            // Types with a missing root were skipped above, so this can differ from the index in the config.
+            let type_index = router::TypeIndex::init(u8::try_from(types.len()).expect("int cast"));
             types.push(router::Type {
                 abs_root: strings::without_trailing_slash(entry.abs_path).into(),
                 ignore_underscores: fsr.ignore_underscores,
@@ -516,10 +517,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             // SAFETY: `route_lookup` is disjoint from `framework`.
             unsafe { &mut (*dev_ptr).route_lookup }.put(
                 server_file,
-                RouteIndexAndRecurseFlag::new(
-                    router::RouteIndex::init(u32::try_from(i).expect("int cast")),
-                    true,
-                ),
+                RouteIndexAndRecurseFlag::new(router::Type::root_route_index(type_index), true),
             )?;
         }
 
@@ -639,22 +637,18 @@ impl Drop for DevServer {
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
-        if self.current_bundle.is_some() {
+        if let Some(current_bundle) = &mut self.current_bundle {
             debug_assert!(false); // impossible to de-initialize this state correctly.
+            super::finalize::drain_current_bundle_requests(current_bundle);
         }
 
         {
-            let mut r = self.next_bundle.requests.first;
-            while !r.is_null() {
-                // SAFETY: `r` is a live intrusive-list node linked by `defer_request`;
-                // read the link before `deref_` may reclaim the node.
-                let next = unsafe { (*r).next };
-                // SAFETY: `data` was initialized by `defer_request` before being
-                // linked; this exclusive borrow ends at `deref_` below.
+            while let Some(r) = self.next_bundle.requests.pop_first() {
+                // SAFETY: `pop_first` returns a live node linked by `defer_request`,
+                // which initialized `data`. This exclusive borrow ends at `deref_`.
                 let data = unsafe { (*r).data.assume_init_mut() };
                 debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
-                data.deref_();
-                r = next;
+                data.abort_and_deref();
             }
         }
 
@@ -825,13 +819,13 @@ impl DevServer {
     /// Returns true if a catch-all handler was attached.
     pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
-        server: &mut crate::server::NewServer<SSL, DEBUG>,
+        server: &crate::server::NewServer<SSL, DEBUG>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
         // The server has its routes now; the scan of the pages ran before it had them.
         self.report_pages_hidden_by_server_routes();
-        let app = server.app.unwrap();
+        let app = server.app.get().unwrap();
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // The ZST-fn-item trampoline pattern used by

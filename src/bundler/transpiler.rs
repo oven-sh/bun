@@ -332,7 +332,7 @@ impl<'a> Transpiler<'a> {
     }
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
-        let top_level_dir = self.fs().top_level_dir;
+        let top_level_dir = self.fs().top_level_dir();
         let first = match self.resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
@@ -388,7 +388,7 @@ impl<'a> Transpiler<'a> {
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
                     // Neither buster name below would fit `cache_bust_buf`.
-                    if self.fs().top_level_dir.len() + entry_point.len() + 4
+                    if self.fs().top_level_dir().len() + entry_point.len() + 4
                         > bun_paths::MAX_PATH_BYTES
                     {
                         break 'name false;
@@ -414,13 +414,15 @@ impl<'a> Transpiler<'a> {
 
                     // `".."` needs no platform separator rewrite.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = self.fs().top_level_dir;
+                    let top_level_dir = self.fs().top_level_dir();
 
-                    let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
-                    );
+                    let Some(buster_name) =
+                        bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                            bun_paths::platform::Auto,
+                        >(top_level_dir, &mut cache_bust_buf[..], &parts)
+                    else {
+                        break 'name false;
+                    };
                     self.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(
                             buster_name.as_bytes(),
@@ -611,7 +613,7 @@ impl<'a> Transpiler<'a> {
 
         if auto_jsx {
             // Most of the time, this will already be cached
-            let top_level_dir = self.fs().top_level_dir;
+            let top_level_dir = self.fs().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
@@ -678,7 +680,7 @@ impl<'a> Transpiler<'a> {
                 // (or a parent) is unreadable, readDirInfo may return null;
                 // bail out of .env file loading in that case, but process
                 // env vars were already loaded above.
-                let top_level_dir = self.fs().top_level_dir;
+                let top_level_dir = self.fs().top_level_dir();
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,
                     _ => return Ok(()),
@@ -1528,6 +1530,8 @@ impl<'a> Transpiler<'a> {
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
+                opts.features.code_coverage = self.options.code_coverage;
+
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
 
                 opts.features.inlining = self.options.inlining;
@@ -1641,9 +1645,9 @@ impl<'a> Transpiler<'a> {
                             | js_ast::AlreadyBundled::Bytecode => 'brk: {
                                 // When the parser
                                 // saw `// @bun @bytecode`, attempt to load the
-                                // sidecar `<path>.jsc` cached bytecode. Only
-                                // fall back to re-parsing source on read
-                                // failure / empty file.
+                                // sidecar `<path>.jsc` cached bytecode. Fall
+                                // back to re-parsing source on read failure or
+                                // when the sidecar fails verification.
                                 let is_cjs =
                                     matches!(already_bundled, js_ast::AlreadyBundled::BytecodeCjs);
                                 let default_value = if is_cjs {
@@ -1654,9 +1658,8 @@ impl<'a> Transpiler<'a> {
                                 if this_parse.virtual_source.is_none()
                                     && this_parse.allow_bytecode_cache
                                 {
-                                    // No shared const for the bytecode extension
-                                    // in `bun_core` yet, so inline the literal.
-                                    const BYTECODE_EXT: &[u8] = b".jsc";
+                                    const BYTECODE_EXT: &[u8] =
+                                        crate::bytecode_sidecar::EXTENSION.as_bytes();
                                     let mut path_buf2 = bun_paths::path_buffer_pool::get();
                                     let n = path.text.len();
                                     let total = n + BYTECODE_EXT.len();
@@ -1678,7 +1681,13 @@ impl<'a> Transpiler<'a> {
                                     // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
                                     match bun_sys::File::read_from(dir, zpath) {
-                                        Ok(contents) if !contents.is_empty() => {
+                                        Ok(mut contents) => {
+                                            let Some(payload_len) =
+                                                crate::bytecode_sidecar::payload_len(&contents)
+                                            else {
+                                                break 'brk default_value;
+                                            };
+                                            contents.truncate(payload_len);
                                             break 'brk if is_cjs {
                                                 AlreadyBundled::BytecodeCjs(
                                                     contents.into_boxed_slice(),
@@ -1689,7 +1698,7 @@ impl<'a> Transpiler<'a> {
                                                 )
                                             };
                                         }
-                                        _ => {}
+                                        Err(_) => {}
                                     }
                                 }
                                 default_value
@@ -1884,15 +1893,13 @@ fn parse_data_loader<'a>(
                 // also random-access `decls[prev]`.
                 for i in 0..n {
                     let prop = &mut properties[i];
-                    // SAFETY: data-format parsers always emit
-                    // `e_string` keys.
                     let key = prop.key.as_mut().unwrap();
                     let key_loc = key.loc;
-                    let name: &[u8] = key
-                        .data
-                        .e_string_mut()
-                        .expect("infallible: variant checked")
-                        .slice(arena);
+                    // Skip named exports for YAML or JSON5 keys that aren't strings.
+                    let Some(key_string) = key.data.e_string_mut() else {
+                        continue;
+                    };
+                    let name: &[u8] = key_string.slice(arena);
                     // Do not make named exports for "default" exports
                     if name == b"default" {
                         continue;
@@ -1951,38 +1958,44 @@ fn parse_data_loader<'a>(
                 }
 
                 decls.truncate(count);
-                let stmt0 = bun_ast::Stmt::alloc(
-                    bun_ast::S::Local {
-                        decls: bun_ast::G::DeclList::move_from_list(decls),
-                        kind: bun_ast::S::Kind::KVar,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc { start: 0 },
-                );
-                let stmt1 = bun_ast::Stmt::alloc(
-                    bun_ast::S::ExportClause {
-                        items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
-                        is_single_line: false,
-                    },
-                    bun_ast::Loc { start: 0 },
-                );
-                let stmt2 = bun_ast::Stmt::alloc(
-                    bun_ast::S::ExportDefault {
-                        value: bun_ast::StmtOrExpr::Expr(expr),
-                        default_name: bun_ast::LocRef {
-                            loc: bun_ast::Loc::default(),
-                            ref_: bun_ast::Ref::NONE,
-                        },
-                    },
-                    bun_ast::Loc { start: 0 },
-                );
+                symbols.truncate(count);
 
-                let stmts =
-                    bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
-                break 'parts Box::new([bun_ast::Part {
-                    stmts,
-                    ..Default::default()
-                }]);
+                // `print_decls` aborts on a `var` with no declarations (`{"default": 1}`).
+                if count > 0 {
+                    let stmt0 = bun_ast::Stmt::alloc(
+                        bun_ast::S::Local {
+                            decls: bun_ast::G::DeclList::move_from_list(decls),
+                            kind: bun_ast::S::Kind::KVar,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc { start: 0 },
+                    );
+                    let stmt1 = bun_ast::Stmt::alloc(
+                        bun_ast::S::ExportClause {
+                            items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
+                            is_single_line: false,
+                        },
+                        bun_ast::Loc { start: 0 },
+                    );
+                    let stmt2 = bun_ast::Stmt::alloc(
+                        bun_ast::S::ExportDefault {
+                            value: bun_ast::StmtOrExpr::Expr(expr),
+                            default_name: bun_ast::LocRef {
+                                loc: bun_ast::Loc::default(),
+                                ref_: bun_ast::Ref::NONE,
+                            },
+                        },
+                        bun_ast::Loc { start: 0 },
+                    );
+
+                    let stmts = bun_ast::StoreSlice::new_mut(
+                        arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]),
+                    );
+                    break 'parts Box::new([bun_ast::Part {
+                        stmts,
+                        ..Default::default()
+                    }]);
+                }
             }
         }
 
@@ -2422,6 +2435,7 @@ impl<'a> Transpiler<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
+            code_coverage: self.options.code_coverage,
             module_type: if IS_BUN && self.options.transform_only {
                 // this is for when using `bun build --no-bundle`
                 // it should copy what was passed for the cli
@@ -2571,7 +2585,7 @@ impl<'a> Transpiler<'a> {
         // snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
         let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
-        let top_level_dir = self.fs().top_level_dir;
+        let top_level_dir = self.fs().top_level_dir();
 
         for _entry in entries.iter() {
             let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
@@ -2806,7 +2820,7 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
-        let top_level_dir = self.fs().top_level_dir;
+        let top_level_dir = self.fs().top_level_dir();
         let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 
@@ -2928,7 +2942,15 @@ impl<'a> Transpiler<'a> {
                 };
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
-                bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
+                self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "loader \"{}\" is not supported with --no-bundle",
+                        <&'static str>::from(loader),
+                    ),
+                );
+                return Ok(None);
             }
             options::Loader::Css => {
                 match self.build_css_output(

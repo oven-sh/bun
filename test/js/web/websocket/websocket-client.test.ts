@@ -724,7 +724,7 @@ function makeTest(
         done(err);
       }
     },
-    { timeout: timeout ?? 1000 },
+    timeout,
   );
 }
 

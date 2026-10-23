@@ -4,10 +4,10 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_classes.rs"))`.
+//! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_js2native.rs"))`.
 //!
 //! The codegen output lives at `<repo>/build/<profile>/codegen/` and is
-//! produced by `src/codegen/generate-classes.ts` (run as part of `bun bd`).
+//! produced by the scripts in `src/codegen/` (run as part of `bun bd`).
 //! This build script just resolves and exports the path; it does NOT run the
 //! generator (that would create a Bun→cargo→Bun bootstrap loop).
 
@@ -27,14 +27,6 @@ fn main() {
     let codegen_dir = env::var("BUN_CODEGEN_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| repo.join("build/debug/codegen"));
-
-    let gen_rs = codegen_dir.join("generated_classes.rs");
-    if !gen_rs.exists() {
-        panic!(
-            "generated_classes.rs not found at {} — run `bun src/codegen/generate-classes.ts` (or `bun bd`) first",
-            gen_rs.display()
-        );
-    }
 
     let gen_js2native_rs = codegen_dir.join("generated_js2native.rs");
     if !gen_js2native_rs.exists() {
@@ -62,7 +54,6 @@ fn main() {
     }
 
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
-    println!("cargo:rerun-if-changed={}", gen_rs.display());
     println!("cargo:rerun-if-changed={}", gen_js2native_rs.display());
     println!("cargo:rerun-if-changed={}", gen_jssink_rs.display());
     println!("cargo:rerun-if-changed={}", gen_host_exports_rs.display());

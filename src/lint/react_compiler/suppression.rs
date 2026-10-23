@@ -1,8 +1,8 @@
-//! Comments that switch the rules of React off, which make the compiler leave a function alone: oxc's
-//! `react_compiler/entrypoint/suppression.rs`, without the suppressions of Flow (`flow_suppressions: false`).
+//! Comments that disable the React rules, which make the compiler skip a function. This is oxc's
+//! `react_compiler/entrypoint/suppression.rs`, without Flow suppressions (`flow_suppressions: false`).
 //!
-//! `eslint-plugin-react-hooks` has the compiler look for none of these. It looks for comments of Flow itself, and drops single
-//! diagnostics for them: [`remove_what_flow_suppresses`].
+//! `eslint-plugin-react-hooks` doesn't have the compiler look for any of these. It looks for Flow comments itself and
+//! drops individual diagnostics because of them: [`remove_flow_suppressed`].
 
 use crate::finding::{Detail, Finding, Suggestion};
 use bun_core::strings;
@@ -10,25 +10,25 @@ use bun_lint::ast::File;
 use bun_lint::tokens::{Token, TokenKind};
 use bun_react_compiler::diagnostics::{CompilerSuggestionOperation, ErrorCategory};
 
-/// From a comment that disables a rule to the one that enables it again. For `eslint-disable-next-line` both are the same
-/// comment. For `eslint-disable` there is no `enable_comment`: see [`find_program_suppressions`].
+/// From the comment that disables a rule to the one that enables it again. For `eslint-disable-next-line` both are the
+/// same comment. For `eslint-disable` there's no `enable_comment`: see [`find_program_suppressions`].
 #[derive(Copy, Clone)]
 pub(crate) struct SuppressionRange<'a> {
     disable_comment: Token<'a>,
     enable_comment: Option<Token<'a>>,
 }
 
-/// The suppressions of a file. Each list is in the order of the file.
+/// A file's suppressions. Each list is in file order.
 #[derive(Default)]
 pub(crate) struct ProgramSuppressions<'a> {
-    /// Those of `eslint-disable-next-line`.
+    /// From `eslint-disable-next-line`.
     next_line: Vec<SuppressionRange<'a>>,
-    /// Those of `eslint-disable`.
+    /// From `eslint-disable`.
     block: Vec<SuppressionRange<'a>>,
 }
 
-/// The text of the comment without `//` or `/* */`, trimmed as `str::trim` does it. Of a `<!--` oxc takes two characters off
-/// too, so that is never a suppression.
+/// The comment's text without `//` or `/* */`, trimmed like `str::trim`. oxc also strips two characters from a `<!--`,
+/// so that's never a suppression.
 fn comment_value<'a>(comment: Token<'a>) -> &'a [u8] {
     let text = comment.text();
     let content = match comment.kind() {
@@ -42,7 +42,7 @@ fn comment_value<'a>(comment: Token<'a>) -> &'a [u8] {
     }
 }
 
-/// Whether `value` is `eslint-` or `oxlint-`, `directive`, a blank, and what starts with one of `rule_names`.
+/// True if `value` is `eslint-` or `oxlint-`, then `directive`, a space, and text that starts with one of `rule_names`.
 fn matches_directive(value: &[u8], directive: &str, rule_names: &[&str]) -> bool {
     value
         .strip_prefix(b"eslint-")
@@ -64,9 +64,9 @@ fn matches_eslint_disable(value: &[u8], rule_names: &[&str]) -> bool {
     matches_directive(value, "disable", rule_names)
 }
 
-/// The compiler's `findProgramSuppressions`. There a range is complete, and the search for its end is over, as soon as it has
-/// a comment that disables and a source. That is in the turn of the loop that finds the `eslint-disable`: no `eslint-enable`
-/// ever ends a range, and nothing is carried from one comment to the next.
+/// The compiler's `findProgramSuppressions`. There, a range counts as complete as soon as it has a disable comment and
+/// a source, which is already true in the loop iteration that finds the `eslint-disable`. So no `eslint-enable` ever
+/// ends a range, and no state carries over from one comment to the next.
 pub(crate) fn find_program_suppressions<'a>(
     file: &'a File<'a>,
     rule_names: &[&str],
@@ -96,8 +96,8 @@ pub(crate) fn find_program_suppressions<'a>(
 }
 
 impl<'a> ProgramSuppressions<'a> {
-    /// The suppressions that are within the function or wrap it, in the order of the file. One without an end does so
-    /// wherever it is, before or after the function.
+    /// The suppressions that are inside the function or wrap it, in file order. One without an end always qualifies,
+    /// whether it's before or after the function.
     pub(crate) fn filter_suppressions_that_affect_function(
         &self,
         fn_start: u32,
@@ -109,7 +109,7 @@ impl<'a> ProgramSuppressions<'a> {
             (disable_start > fn_start && enable_end.is_none_or(|end| end < fn_end))
                 || (disable_start < fn_start && enable_end.is_none_or(|end| end > fn_end))
         };
-        // One comment does not wrap a function: only those that start in it are candidates.
+        // A single comment can't wrap a function, so only those that start inside it are candidates.
         let first = self
             .next_line
             .partition_point(|it| it.disable_comment.start() <= fn_start);
@@ -169,7 +169,7 @@ pub(crate) fn suppressions_to_diagnostics(suppressions: &[SuppressionRange]) -> 
     suppressions.iter().map(diagnostic).collect()
 }
 
-/// Of the matches of `/\$FlowFixMe\[([^\]]*)\]/g`, one is for the two rules.
+/// True if one of the matches of `/\$FlowFixMe\[([^\]]*)\]/g` is for one of the two rules.
 fn has_flow_suppression(mut comment: &[u8]) -> bool {
     const START: &[u8] = b"$FlowFixMe[";
     while let Some(start) = strings::index_of(comment, START) {
@@ -188,15 +188,15 @@ fn has_flow_suppression(mut comment: &[u8]) -> bool {
     false
 }
 
-/// The plugin's `getFlowSuppressions` and `hasFlowSuppression`: a diagnostic that starts on the line after the one on which a
-/// comment with `$FlowFixMe[react-rule-hook]` or `$FlowFixMe[react-rule-unsafe-ref]` ends is not reported. In any file, of Flow or
-/// not.
-pub(crate) fn remove_what_flow_suppresses<'a>(file: &'a File<'a>, diagnostics: &mut Vec<Finding>) {
+/// The plugin's `getFlowSuppressions` and `hasFlowSuppression`. A diagnostic isn't reported if it starts on the line
+/// after the end of a comment with `$FlowFixMe[react-rule-hook]` or `$FlowFixMe[react-rule-unsafe-ref]`. This applies
+/// to every file, Flow or not.
+pub(crate) fn remove_flow_suppressed<'a>(file: &'a File<'a>, diagnostics: &mut Vec<Finding>) {
     if diagnostics.is_empty() || !strings::contains(file.text(), b"$FlowFixMe[react-rule-") {
         return;
     }
     let suppresses = |comment: &Token<'a>| has_flow_suppression(comment.text());
-    // In the order of the file.
+    // In file order, so it's sorted.
     let lines: Vec<u32> = (file.comments().filter(suppresses))
         .map(|comment| file.line_of(comment.end()))
         .collect();

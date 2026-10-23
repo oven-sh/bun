@@ -810,8 +810,9 @@ fn add_bundled_dep(
     };
     let mut json = parse();
 
-    // A folder that is not inside a `node_modules` is a workspace or a linked folder, not an
-    // installed copy. It contributes the same files that its own tarball would contain.
+    // A folder whose real path below the project has no `node_modules` component is a workspace
+    // or a linked folder, not an installed copy. The walk for installed copies reads no ignore
+    // file, so such a folder does not take it, whether or not its package.json loads.
     let below_project = (real_path.strip_prefix(&*bundle.project_path)).unwrap_or(&real_path);
     let is_own_package = !strings::contains(below_project, path::NODE_MODULES_NEEDLE);
     if is_own_package && manifests.is_none() && json.is_some_and(needs_workspace_manifests) {
@@ -820,37 +821,19 @@ fn add_bundled_dep(
         json = parse();
     }
 
-    if let (Some(source), Some(json)) = (&source, &json) {
+    if let Some(json) = &json {
         find_dependencies_to_bundle(bundle, index, json, root_path)?;
-
-        if is_own_package {
-            let mut add_file = |file: &[u8], edited: Option<Box<[u8]>>| -> Result<(), AllocError> {
-                bundle.files.push(BundledFile {
-                    path: entry_subpath(&subpath, file)?,
-                    source: entry_subpath(&real_path, file)?,
-                    edited,
-                });
-                Ok(())
-            };
-            let edited = if needs_workspace_manifests(*json) {
-                let indentation = JSON::guess_indentation(&source.contents);
-                Some(edit_root_package_json(
-                    manifests.as_ref(),
-                    &real_path,
-                    *json,
-                    source,
-                    indentation,
-                )?)
-            } else {
-                None
-            };
-            add_file(b"package.json", edited)?;
-            let (published, _) = published_files(&dir, &real_path, json, pack_bump(), log_level)?;
-            for file in published.into_paths() {
-                add_file(file.as_bytes(), None)?;
-            }
-            return Ok(());
-        }
+    }
+    if is_own_package {
+        return add_own_package(
+            bundle,
+            &subpath,
+            &real_path,
+            dir,
+            source.as_ref().zip(json.as_ref()),
+            manifests.as_ref(),
+            log_level,
+        );
     }
 
     // `is_excluded` only treats depth 1, the project root, specially. Any other depth works.
@@ -896,6 +879,78 @@ fn add_bundled_dep(
         }
     }
 
+    Ok(())
+}
+
+/// Adds the files of a bundled workspace or linked folder. Like in npm, a folder that has a
+/// package.json entry is packed as a package, and a folder that has none as a directory.
+fn add_own_package(
+    bundle: &mut Bundle,
+    subpath: &[u8],
+    real_path: &[u8],
+    dir: Dir,
+    // `None` if the package.json is missing, can't be read as a file, or does not parse.
+    manifest: Option<(&bun_ast::Source, &Expr)>,
+    workspace_manifests: Option<&WorkspaceManifests>,
+    log_level: LogLevel,
+) -> Result<(), AllocError> {
+    let mut add_file = |file: &[u8], edited: Option<Box<[u8]>>| -> Result<(), AllocError> {
+        bundle.files.push(BundledFile {
+            path: entry_subpath(subpath, file)?,
+            source: entry_subpath(real_path, file)?,
+            edited,
+        });
+        Ok(())
+    };
+
+    let json = match manifest {
+        Some((source, json)) => {
+            let edited = if needs_workspace_manifests(*json) {
+                let indentation = JSON::guess_indentation(&source.contents);
+                Some(edit_root_package_json(
+                    workspace_manifests,
+                    real_path,
+                    *json,
+                    source,
+                    indentation,
+                )?)
+            } else {
+                None
+            };
+            add_file(b"package.json", edited)?;
+            *json
+        }
+        None => match bin_kind_without_following_symlinks(real_path, b"package.json") {
+            bun_sys::FileKind::Unknown => {
+                let mut files = PackQueue::default();
+                // `is_excluded` removes `depth - 1` components from a path to anchor the patterns
+                // of an ignore file.
+                let depth = strings::count_char(subpath, b'/') + 2;
+                iterate_project_tree(
+                    &mut files,
+                    &[],
+                    Some(&[]),
+                    DirInfo(dir, subpath.into(), depth),
+                    log_level,
+                )?;
+                for file in files.into_paths() {
+                    add_file(&file.as_bytes()[subpath.len() + 1..], None)?;
+                }
+                return Ok(());
+            }
+            kind => {
+                // A package.json that does not parse is packed as it is.
+                if kind == bun_sys::FileKind::File {
+                    add_file(b"package.json", None)?;
+                }
+                Expr::init(E::Object::default(), Default::default())
+            }
+        },
+    };
+    let (published, _) = published_files(&dir, real_path, &json, pack_bump(), log_level)?;
+    for file in published.into_paths() {
+        add_file(file.as_bytes(), None)?;
+    }
     Ok(())
 }
 
@@ -974,8 +1029,8 @@ fn find_dependencies_to_bundle(
     Ok(())
 }
 
-/// `files_excludes` is set when `"files"` includes the directory `root_dir`. It has the negated
-/// entries of `"files"`.
+/// `files_excludes` is set when `root_dir` is a directory that is packed whole: one that `"files"`
+/// includes, with the negated entries of `"files"`, or a bundled folder that has no package.json.
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
@@ -1022,7 +1077,9 @@ fn iterate_project_tree(
 
             if dir_depth == 1 {
                 // The root package.json and the bundled dependencies are handled separately.
-                if entry_name == b"package.json" || entry_name == b"node_modules" {
+                if (entry_name == b"package.json" && entry.kind == bun_sys::FileKind::File)
+                    || entry_name == b"node_modules"
+                {
                     continue;
                 }
             } else if files_excludes.is_some()
@@ -2850,10 +2907,11 @@ impl Pattern {
             return None;
         }
 
-        let negation: &[u8] = if flags.contains(PatternFlags::NEGATED) {
-            b"!"
-        } else {
-            b""
+        let negation: &[u8] = match flags.contains(PatternFlags::NEGATED) {
+            // In npm and git this `!` negates and the `(` is a plain character. Side by side they would start a group.
+            true if remain.starts_with(b"(") => b"!\\",
+            true => b"!",
+            false => b"",
         };
         Some(Pattern {
             glob: glob::Prepared::new(CowString::init_owned(

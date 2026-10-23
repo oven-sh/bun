@@ -567,6 +567,8 @@ Skip the files that match. `bun lint` already skips `node_modules` and everythin
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
 
+Each pattern is a line of a `.gitignore` next to `bunfig.toml`, like [`format.ignorePatterns`](#format-ignorepatterns): `vendor/` skips every directory with that name, `/vendor/` only the one next to `bunfig.toml`, and `!` keeps what an earlier pattern skips. The exception is a project with an `eslint.config.*` file, where they're added to its [`ignores`](https://eslint.org/docs/latest/use/configure/ignore), which are globs: there `vendor/` only matches next to `bunfig.toml`, and a pattern that starts with `/` matches nothing.
+
 ### `lint.settings`
 
 Settings that rules share, such as the React version. The same as `settings` in an ESLint or oxlint config.

@@ -1,13 +1,11 @@
-//! Reading text that is UTF-8 (or WTF-8: lone surrogates as three bytes) the way JavaScript reads
-//! its UTF-16 strings.
+//! Reads text that is UTF-8 (or WTF-8: lone surrogates as three bytes) the way JavaScript reads its UTF-16 strings.
 //!
 //! A position is a byte offset. Without the `u` and `v` flags JavaScript sees a character outside
-//! the BMP as two code units. Such a character is four bytes here: the first two stand for the
-//! lead surrogate and the last two for the trail surrogate, so the position between the two code
-//! units is the offset of the character plus 2. That makes byte offsets and UTF-16 indices
-//! correspond one to one.
+//! the BMP as two code units. Such a character is four bytes here: the first two represent the lead
+//! surrogate and the last two the trail surrogate, so the position between the two code units is
+//! the character's offset plus 2. That way byte offsets and UTF-16 indices correspond one to one.
 //!
-//! A byte that is not part of a well-formed sequence reads as U+FFFD, one byte long.
+//! A byte that isn't part of a well-formed sequence reads as U+FFFD, one byte long.
 
 const REPLACEMENT: u32 = 0xFFFD;
 
@@ -20,7 +18,7 @@ pub(crate) fn code_point_at(s: &[u8], i: usize) -> (u32, usize) {
     }
 }
 
-/// Where the code point starts that `i` is in the middle of. `i` itself if it is not.
+/// If `i` is in the middle of a code point, returns that code point's start. Otherwise returns `i`.
 pub(crate) fn code_point_start(s: &[u8], i: usize) -> usize {
     (1..=3)
         .filter_map(|back| i.checked_sub(back))
@@ -38,9 +36,9 @@ pub(crate) fn trail_surrogate(cp: u32) -> u32 {
     0xDC00 + ((cp - 0x10000) & 0x3FF)
 }
 
-/// Whether `i` is between the two halves of a four-byte character, and if so that character.
+/// If `i` is between the two halves of a four-byte character, returns that character.
 #[inline]
-fn astral_around(s: &[u8], i: usize) -> Option<u32> {
+fn astral_split_at(s: &[u8], i: usize) -> Option<u32> {
     let start = i.checked_sub(2)?;
     let lead = *s.get(start)?;
     if lead < 0xF0 {
@@ -62,10 +60,10 @@ pub(crate) fn unit_at(s: &[u8], i: usize) -> (u32, usize) {
     unit_outside_ascii_at(s, i, b)
 }
 
-/// Apart, so that what is before it is inlined.
+/// Kept out of line so that the ASCII fast path in `unit_at` gets inlined.
 fn unit_outside_ascii_at(s: &[u8], i: usize, b: u8) -> (u32, usize) {
     if b & 0xC0 == 0x80 {
-        return match astral_around(s, i) {
+        return match astral_split_at(s, i) {
             Some(cp) => (trail_surrogate(cp), 2),
             None => (REPLACEMENT, 1),
         };
@@ -76,7 +74,7 @@ fn unit_outside_ascii_at(s: &[u8], i: usize, b: u8) -> (u32, usize) {
     }
 }
 
-/// Appends `bytes` to a string. What is not a Unicode scalar value becomes U+FFFD.
+/// Appends `bytes` to a string. Anything that isn't a Unicode scalar value becomes U+FFFD.
 pub(crate) fn push_lossy(out: &mut String, bytes: &[u8]) {
     let mut i = 0;
     while i < bytes.len() {
@@ -103,12 +101,13 @@ pub fn utf16_index(s: &[u8], offset: usize) -> usize {
     units
 }
 
-/// For [`utf16_index`] of many offsets in one text.
+/// Speeds up [`utf16_index`] for many offsets in one text.
 #[derive(Debug)]
 pub(crate) struct Utf16Index {
-    /// Up to here a byte is a code unit.
+    /// Before this offset, every byte is one code unit.
     ascii: usize,
-    /// After that, for every `Utf16Index::STEP` bytes: the first offset from there on where a code unit starts, and its index.
+    /// After that, one entry per `Utf16Index::STEP` bytes: the first offset at or after it where a
+    /// code unit starts, and that unit's index.
     marks: Vec<(u32, u32)>,
 }
 
@@ -129,7 +128,7 @@ impl Utf16Index {
         Utf16Index { ascii, marks }
     }
 
-    /// `utf16_index(s, offset)` for the `s` that it was made of.
+    /// `utf16_index(s, offset)`, for the `s` it was built from.
     pub(crate) fn of(&self, s: &[u8], offset: usize) -> usize {
         let offset = offset.min(s.len());
         if offset <= self.ascii {

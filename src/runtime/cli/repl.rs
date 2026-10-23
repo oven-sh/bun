@@ -199,10 +199,13 @@ impl History {
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut path_buf,
+        // Skip the history file if `$HOME` is too long.
+        let Some(path) = path::resolve_path::join_z_buf_checked::<path::platform::Auto>(
+            &mut path_buf[..],
             &[home_path, HISTORY_FILENAME],
-        );
+        ) else {
+            return Ok(());
+        };
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
@@ -730,9 +733,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
         return ReplResult::SkipEval;
     }
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let path_z = path::resolve_path::z(filename, &mut path_buf);
-    let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path_z) {
+    let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), filename) {
         sys::Result::Ok(bytes) => bytes.into(),
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
@@ -1085,8 +1086,6 @@ impl<'a> Repl<'a> {
 
         #[cfg(unix)]
         {
-            SIGINT_WAKES.store(bun_uws::Loop::get(), core::sync::atomic::Ordering::Release);
-
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
             let _ = self
                 .tty_state
@@ -2847,28 +2846,17 @@ impl<'a> Drop for Repl<'a> {
     }
 }
 
-/// The REPL is waiting on a promise and wants SIGINT to cut the wait short.
+/// The REPL is waiting on a promise and wants SIGINT to cut the wait short (async-signal-safe: atomics only).
 static SIGINT_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-/// A SIGINT arrived during such a wait: stop waiting. Not a VM stop — the VM stays usable.
+/// A SIGINT arrived during such a wait: stop waiting (the signal itself interrupts the loop's poll). Not a
+/// VM stop — the VM stays usable.
 static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
-/// The loop that wait parks in. The poll retries on EINTR, so `sigint_handler` wakes it.
-#[cfg(unix)]
-static SIGINT_WAKES: core::sync::atomic::AtomicPtr<bun_uws::Loop> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-/// Async-signal-safe: atomics and one write to the loop's wakeup fd.
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
-    use core::sync::atomic::Ordering;
-    if SIGINT_ARMED.load(Ordering::Acquire) {
-        SIGINT_DURING_WAIT.store(true, Ordering::Release);
-        let loop_ = SIGINT_WAKES.load(Ordering::Acquire);
-        if !loop_.is_null() {
-            // SAFETY: the loop is process-lifetime, and the raw extern is the
-            // thread-safe entry point (no `&mut Loop` formed off the main thread).
-            unsafe { bun_uws::us_wakeup_loop(loop_) };
-        }
+    if SIGINT_ARMED.load(core::sync::atomic::Ordering::Acquire) {
+        SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
     }
 }
 

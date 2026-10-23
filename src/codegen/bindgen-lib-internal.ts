@@ -106,16 +106,13 @@ export interface JSClass {
 
 type ValueKinds = readonly ValueKind[] | "any";
 
-const isSameKind = (a: ValueKind, b: ValueKind) =>
-  a === b || (a instanceof ClassRefType && b instanceof ClassRefType && a.cpp === b.cpp);
-
 const takes = (type: Type, kind: ValueKind | "other") =>
-  type.valueKinds === "any" || (kind !== "other" && type.valueKinds.some(own => isSameKind(own, kind)));
+  type.valueKinds === "any" || (kind !== "other" && type.valueKinds.includes(kind));
 
 const distinguishingKinds = (types: readonly Type[]): (ValueKind | "other")[] => [
   ...types
     .flatMap(type => (type.valueKinds === "any" ? [] : type.valueKinds))
-    .filter((kind, index, kinds) => kinds.findIndex(earlier => isSameKind(earlier, kind)) === index),
+    .filter((kind, index, kinds) => kinds.indexOf(kind) === index),
   "other",
 ];
 
@@ -145,6 +142,8 @@ export function indent(text: string, by: number): string {
     .join("\n");
 }
 
+const cppThenCheck = (statement: string, check: string) => (check ? `${statement}\n${check}` : statement);
+
 /** C++ statements that engage `optional`, a `std::optional`, then fill what it holds: `fill` is given a name for that. */
 export function cppEmplace(optional: string, fill: (target: string) => string): string {
   const [first, ...rest] = optional.split(/\W+/);
@@ -165,6 +164,10 @@ export abstract class Type {
   get falsyAsNull(): OptionalType {
     return new OptionalType(this, "falsyAsNull");
   }
+  /** `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`. */
+  get emptyStringAsNull(): OptionalType {
+    return new OptionalType(this, "emptyStringAsNull");
+  }
   /** Value to use when absent. Only for arguments and dictionary members. */
   default(value: unknown): DefaultType {
     return new DefaultType(this, value);
@@ -176,8 +179,8 @@ export abstract class Type {
   abstract readonly tsType: string;
 
   /** How `IDLNullable<this>::ImplementationType` says "null". */
-  get nullRepresentation(): "optional" | "pointer" {
-    return "optional";
+  get nullRepresentation(): "optional" | "pointer" | "emptyValue" {
+    return this.returnsValueUnchanged ? "emptyValue" : "optional";
   }
   /** Converting `undefined` succeeds, so a dictionary member of this type is not required. */
   get takesUndefined(): boolean {
@@ -191,7 +194,7 @@ export abstract class Type {
   get refuses(): string | null {
     return null;
   }
-  /** Written `.optional`, `.nullable`, `.falsyAsNull` or `.default()`: as an argument with only such after it, it is one a caller leaves out. */
+  /** Written `.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull` or `.default()`: as an argument with only such after it, it is one a caller leaves out. */
   get isOptional(): boolean {
     return false;
   }
@@ -210,6 +213,10 @@ export abstract class Type {
   /** Holds a JS value: the Rust type is branded with the call. */
   get holdsJSValue(): boolean {
     return this.dependencies.some(type => type.holdsJSValue);
+  }
+  /** The conversion returns the value unchanged, so Rust holds the value itself. */
+  get returnsValueUnchanged(): boolean {
+    return false;
   }
   /** Points into memory JavaScript can detach, resize or free: not for a function that can run it, and only for an argument, read once all are converted. */
   get borrowsHeap(): boolean {
@@ -261,9 +268,9 @@ export abstract class Type {
   get convertsInPlace(): boolean {
     return false;
   }
-  /** C++ statements that convert `value` into `target`, which names an object that was just default-constructed. */
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    return `${target} = ${this.cppConvert(value, ctx, name)};`;
+  /** C++ statements that convert `value` into `target`, just default-constructed. `check` returns if an exception is pending and follows what can throw; a caller that returns next passes "". */
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(`${target} = ${this.cppConvert(value, ctx, name)};`, this.conversionThrows ? check : "");
   }
 
   abstract layout(): Layout;
@@ -276,13 +283,9 @@ export abstract class Type {
     return expr;
   }
 
-  /** The type of a field of a returned dictionary. */
+  /** The type of a member of a returned dictionary, and of an alternative of a returned union. */
   rustResultFieldType(scope: RustScope): string {
     return this.rustType(scope);
-  }
-  /** The return type of a trait method. */
-  rustReturnType(scope: RustScope): string {
-    return this.rustResultFieldType(scope);
   }
   /** A Rust expression of type `bindgen::Result<'a, bindgen::JsLocal<'a>>` that consumes `value`; `heap` is in scope. */
   rustToJS(value: string, scope: RustScope): string {
@@ -435,15 +438,22 @@ export class IntegerType extends PrimitiveType {
   }
 }
 
-export class BigIntResultType extends Type {
+/** What a body returns and nothing takes, so it has no C++ type. */
+export abstract class ResultType extends Type {
   readonly idlType = "";
+  /** What a schema that takes one is told. */
+  abstract readonly refusal: string;
+  layout(): never {
+    throw new TypeError(this.refusal);
+  }
+  rustExternType(): never {
+    return this.layout();
+  }
+}
+
+export class BigIntResultType extends ResultType {
   readonly tsType = "bigint";
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "u64";
-  }
+  readonly refusal = ".asBigInt is a result; an argument is b.u64.allowBigInt";
   rustType(): string {
     return "u64";
   }
@@ -505,6 +515,11 @@ export class DoubleType extends PrimitiveType {
   constructor(idlType = "Bun::Bindgen::IDLStrictDouble", valueKinds: ValueKinds = ["number"]) {
     super(idlType, valueKinds === "any" ? "any" : "number", "f64", 8, valueKinds);
   }
+  /** As a result: a `Date` with that time value. */
+  get asDate(): DateResultType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictDouble", ".asDate follows b.f64");
+    return new DateResultType();
+  }
   /** `ToNumber`: WebIDL's `unrestricted double`. */
   get loose(): LooseDoubleType {
     return new LooseDoubleType("WebCore::IDLUnrestrictedDouble", "any");
@@ -515,6 +530,17 @@ export class LooseDoubleType extends DoubleType {
   /** `ToNumeric`: a BigInt too, as the double nearest to it, for an argument whose type is `number | bigint`. */
   get allowBigInt(): DoubleType {
     return new DoubleType("Bun::Bindgen::IDLLooseDoubleOrBigInt", "any");
+  }
+}
+
+export class DateResultType extends ResultType {
+  readonly tsType = "Date";
+  readonly refusal = ".asDate is a result";
+  rustType(): string {
+    return "f64";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::date(heap, ${value})`;
   }
 }
 
@@ -591,6 +617,11 @@ export class StringType extends Type {
   get utf8(): Utf8Type {
     return new Utf8Type(this.valueKinds === "any");
   }
+  /** As a result: the JS string, which the body made. */
+  get local(): LocalStringResultType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictString", ".local follows b.string");
+    return new LocalStringResultType();
+  }
   get nullRepresentation() {
     return "pointer" as const;
   }
@@ -615,6 +646,20 @@ export class StringType extends Type {
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::string(heap, ${value})`;
+  }
+}
+
+export class LocalStringResultType extends ResultType {
+  readonly tsType = "string";
+  readonly refusal = ".local is a result";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  rustType(): string {
+    return "bindgen::JsLocal<'a, bun_jsc::JSString>";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::any(heap, ${value})`;
   }
 }
 
@@ -674,8 +719,11 @@ export class Utf8Type extends Type {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`,
+      check,
+    );
   }
   cppAssign(target: string, value: unknown): string {
     assert(typeof value === "string", `${util.inspect(value)} is not a string`);
@@ -698,9 +746,6 @@ export class Utf8Type extends Type {
   }
   rustResultFieldType(): string {
     return "Vec<u8>";
-  }
-  rustReturnType(): string {
-    return "impl AsRef<[u8]>";
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::utf8(heap, ${value})`;
@@ -766,12 +811,17 @@ export class BytesType extends Type {
       refuseStringObject: refuse.includes("stringObject"),
     };
     const members = Object.entries(options).flatMap(([name, value]) => (value ? [`.${name} = true`] : []));
-    const sink = this.#isView ? "JSBytesView" : "JSBlobOrStringOrBuffer";
+    const takesString = options.fromString || options.toStringOtherwise;
+    const sink = !this.#isView ? "JSBlobOrStringOrBuffer" : takesString ? "JSBytesView" : "JSBlobOrBufferView";
     return `Bun::Bindgen::IDLBytes<Bun::Bindgen::${sink}, Bun::Bindgen::BytesOptions { ${members.join(", ")} }>`;
   }
   get tsType(): string {
     if (this.#options.otherwise === "toString") return "any";
-    const spelling = { string: "string", buffer: "ArrayBuffer | SharedArrayBuffer | ArrayBufferView", blob: "Blob" };
+    const spelling = {
+      string: "string",
+      buffer: "ArrayBuffer | SharedArrayBuffer | ArrayBufferView",
+      blob: "globalThis.Blob",
+    };
     return this.#options.from.map(kind => spelling[kind]).join(" | ");
   }
   get passesValue(): boolean {
@@ -780,13 +830,16 @@ export class BytesType extends Type {
   get borrowsHeap(): boolean {
     return this.#options.held === "borrowed";
   }
+  canBe(modifier: OptionalType["modifier"]): boolean {
+    return this.#options.held === "borrowed" || (this.#options.string === "asIs" && modifier === "nullable");
+  }
   get nullRepresentation() {
     return "pointer" as const;
   }
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
     const spelling = { string: ["a string"], buffer: ["ArrayBuffer", "ArrayBufferView"], blob: ["Blob"] };
     const expected = (["string", "buffer", "blob"] as const)
       .filter(kind => this.#options.from.includes(kind))
@@ -794,20 +847,18 @@ export class BytesType extends Type {
     if (!this.#options.from.includes("string")) expected[0] = `${/^A/.test(expected[0]) ? "an" : "a"} ${expected[0]}`;
     const last = expected.pop();
     const list = expected.length > 0 ? `${expected.join(", ")} or ${last}` : last!;
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)});`;
+    const convert = `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)})`;
+    return check ? `if (${convert})\n    ${check}` : `${convert};`;
   }
   cppReadLast(target: string, value: string): string[] {
     if (!this.#isView) return [];
-    return [
-      ...(this.#options.held === "borrowed" ? [`${target}.read(${value});`] : []),
-      ...(this.#options.shared === "copied"
-        ? [
-            `WTF::MallocSpan<uint8_t> ${target}Copy;`,
-            `${target}.copyIfShared(*globalObject, ${value}, ${target}Copy);`,
-            `RETURN_IF_EXCEPTION(scope, {});`,
-          ]
-        : []),
-    ];
+    if (this.#options.shared === "copied")
+      return [
+        `WTF::MallocSpan<uint8_t> ${target}Copy;`,
+        `if (${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy)) [[unlikely]]`,
+        `    RETURN_IF_EXCEPTION(scope, {});`,
+      ];
+    return this.#options.held === "borrowed" ? [`${target}.read(${value});`] : [];
   }
   layout(): Layout {
     const converted = this.#isView ? { size: 16, align: 8 } : { size: 8, align: 8 };
@@ -838,6 +889,11 @@ export class BytesType extends Type {
   }
   rustFromExtern(expr: string): string {
     return this.#rust(expr)[1];
+  }
+  rustFromExternOptional(expr: string): string {
+    return this.#options.string === "asIs"
+      ? `bindgen::StringOrJsBytes::from_extern_optional(${expr}, heap)`
+      : `${expr}.get_optional(heap)`;
   }
 }
 
@@ -879,6 +935,9 @@ export class BufferSourceType extends Type {
   get holdsJSValue(): boolean {
     return true;
   }
+  get returnsValueUnchanged(): boolean {
+    return true;
+  }
   layout(): Layout {
     return { size: 8, align: 8 };
   }
@@ -896,10 +955,44 @@ export class BufferSourceType extends Type {
   }
 }
 
+/** A function, or a proxy of one, for the body to call or to store. */
+export class CallableType extends Type {
+  readonly idlType = "Bun::Bindgen::IDLRawCallable";
+  readonly tsType = "(...args: any[]) => any";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get returnsValueUnchanged(): boolean {
+    return true;
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "JSValue";
+  }
+  rustType(): string {
+    return "bindgen::JsLocal<'a, bindgen::Callable>";
+  }
+  rustFromExtern(expr: string): string {
+    return `bindgen::JsLocal::from_extern(${expr}, heap)`;
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::any(heap, ${value})`;
+  }
+}
+
 export class AnyType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly tsType = "any";
+  /** This argument and every one after it. Only for the last argument. */
+  get variadic(): VariadicType {
+    return new VariadicType();
+  }
   get holdsJSValue(): boolean {
+    return true;
+  }
+  get returnsValueUnchanged(): boolean {
     return true;
   }
   get takesUndefined(): boolean {
@@ -932,6 +1025,36 @@ export class AnyType extends Type {
   }
 }
 
+/** This argument and every one after it, borrowed from the call frame. */
+export class VariadicType extends Type {
+  readonly idlType = "Bun::Bindgen::IDLVariadicArguments";
+  readonly tsType = "any[]";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get takesUndefined(): boolean {
+    return true;
+  }
+  get isOptional(): boolean {
+    return true;
+  }
+  get conversionThrows(): boolean {
+    return false;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternVariadicArguments";
+  }
+  rustType(): string {
+    return "&'a [bindgen::JsLocal<'a>]";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get(heap)`;
+  }
+}
+
 /** A ref-counted native object taken out of its JS wrapper. */
 export class RefType extends Type {
   readonly idlType: string;
@@ -939,14 +1062,14 @@ export class RefType extends Type {
   readonly pointee: string;
   readonly header: string | null;
   readonly #valueKinds: ValueKinds;
-  readonly #refuses: string;
+  readonly #refuses: string | null;
   constructor(
     idlType: string,
     tsType: string,
     pointee: string,
     header: string | null,
     valueKinds: ValueKinds,
-    refuses: string,
+    refuses: string | null,
   ) {
     super();
     this.idlType = idlType;
@@ -986,63 +1109,24 @@ export class RefType extends Type {
   }
 }
 
-/** What an instance of a class of a `.classes.ts` file wraps, borrowed as `JSValue::as_class_ref` borrows it. */
-export class ClassRefType extends Type {
-  readonly tsType = "object";
-  readonly cpp: string;
-  readonly idlType: string;
-  readonly rustPath: string;
-  constructor(name: string) {
-    super();
-    this.cpp = `WebCore::JS${name}`;
-    this.idlType = `Bun::Bindgen::IDLWrappedInterface<${this.cpp}, std::to_array("${name}")>`;
-    this.rustPath = `crate::generated_classes::${name}`;
-  }
-  get valueKinds(): ValueKinds {
-    return [this];
-  }
-  get refuses() {
-    return "instances that wrap nothing";
-  }
-  /** The `&'a` is branded with the call, as a JS value is. */
-  get holdsJSValue(): boolean {
-    return true;
-  }
-  get borrowsCell(): boolean {
-    return true;
-  }
-  get nullRepresentation() {
-    return "pointer" as const;
-  }
-  getHeaders(out: Set<string>): void {
-    out.add("ZigGeneratedClasses.h");
-  }
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "*mut core::ffi::c_void";
-  }
-  rustType(): string {
-    return `&'a ${this.rustPath}`;
-  }
-  rustFromExtern(expr: string): string {
-    return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
-  }
-}
-
 // ───────────────────────────── combinators ─────────────────────────────
 
 export class OptionalType extends Type {
   readonly inner: Type;
-  readonly modifier: "optional" | "nullable" | "falsyAsNull";
-  constructor(inner: Type, modifier: "optional" | "nullable" | "falsyAsNull") {
+  readonly modifier: "optional" | "nullable" | "falsyAsNull" | "emptyStringAsNull";
+  constructor(inner: Type, modifier: OptionalType["modifier"]) {
     super();
     assert(!(inner instanceof OptionalType), "already optional");
     assert(!(inner instanceof DefaultType), "put .default() last");
-    assert(!(inner instanceof AnyType), "b.any already accepts undefined and null");
-    assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
-    assert(!(inner instanceof BytesType) || inner.borrowsHeap, 'only b.bytes that is held: "borrowed" can be absent');
+    if (inner instanceof AnyType) {
+      assert(modifier === "emptyStringAsNull", "b.any already accepts undefined and null");
+    } else {
+      assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
+    }
+    assert(
+      !(inner instanceof BytesType) || inner.canBe(modifier),
+      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
+    );
     this.inner = inner;
     this.modifier = modifier;
   }
@@ -1052,6 +1136,7 @@ export class OptionalType extends Type {
       optional: "WebCore::IDLOptional",
       nullable: "WebCore::IDLNullable",
       falsyAsNull: "Bun::Bindgen::IDLFalsyAsNull",
+      emptyStringAsNull: "Bun::Bindgen::IDLEmptyStringAsNull",
     }[this.modifier];
     return `${template}<${this.inner.idlType}>`;
   }
@@ -1065,7 +1150,8 @@ export class OptionalType extends Type {
     return true;
   }
   get valueKinds(): ValueKinds {
-    if (this.inner.valueKinds === "any" || this.modifier === "falsyAsNull") return "any";
+    if (this.inner.valueKinds === "any" || this.modifier === "falsyAsNull" || this.modifier === "emptyStringAsNull")
+      return "any";
     return [...this.inner.valueKinds, "undefined", ...(this.modifier === "nullable" ? (["null"] as const) : [])];
   }
   get dependencies(): readonly Type[] {
@@ -1074,18 +1160,25 @@ export class OptionalType extends Type {
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
   }
+  get returnsValueUnchanged(): boolean {
+    return this.inner.returnsValueUnchanged;
+  }
+  get passesValue(): boolean {
+    return this.inner.passesValue;
+  }
   cppReadLast(target: string, value: string): string[] {
     return this.inner.cppReadLast(target, value);
   }
   /** What converts in place is null when default-constructed. A pointer to a class instance, which does not, is not. */
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
     const present = {
       optional: `!${value}.isUndefined()`,
       nullable: `!${value}.isUndefinedOrNull()`,
       falsyAsNull: `${value}.toBoolean(globalObject)`,
+      emptyStringAsNull: `!Bun::Bindgen::isUndefinedOrNullOrEmptyString(${value})`,
     }[this.modifier];
-    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name);
+    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name, check);
     const body = this.inner.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
     return `if (${present}) {\n${indent(body, 4)}\n}`;
   }
@@ -1119,14 +1212,13 @@ export class OptionalType extends Type {
       const inner = this.inner.rustFromExtern("value", scope);
       return inner === "value" ? `${expr}.get()` : `${expr}.get().map(|value| ${inner})`;
     }
-    if (this.inner instanceof Utf8Type || this.inner instanceof BytesType) return `${expr}.get_optional(heap)`;
-    return `{ let value = ${expr}; if value.is_null() { None } else { Some(${this.inner.rustFromExtern("value", scope)}) } }`;
+    if (this.inner instanceof BytesType) return this.inner.rustFromExternOptional(expr);
+    if (this.inner instanceof Utf8Type) return `${expr}.get_optional(heap)`;
+    const isNull = this.inner.nullRepresentation === "emptyValue" ? "is_empty" : "is_null";
+    return `if ${expr}.${isNull}() { None } else { Some(${this.inner.rustFromExtern(expr, scope)}) }`;
   }
   rustResultFieldType(scope: RustScope): string {
     return `Option<${this.inner.rustResultFieldType(scope)}>`;
-  }
-  rustReturnType(scope: RustScope): string {
-    return `Option<${this.inner.rustReturnType(scope)}>`;
   }
   rustToJS(value: string, scope: RustScope): string {
     const none = this.modifier === "optional" ? "UNDEFINED" : "NULL";
@@ -1192,12 +1284,12 @@ export class DefaultType extends Type {
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
     return `if (${this.cppIsAbsent(value)}) {
 ${indent(this.cppAssign(target, this.value), 4)}
 } else {
-${indent(this.inner.cppConvertInto(target, value, ctx, name), 4)}
+${indent(this.inner.cppConvertInto(target, value, ctx, name, check), 4)}
 }`;
   }
   cppAssign(target: string, value: unknown): string {
@@ -1227,7 +1319,10 @@ export class ArrayType extends Type {
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
     assert(!element.passesValue, "b.bytes is only for an argument");
-    assert(!element.borrowsCell, "b.classRef is only for an argument: nothing else keeps the instance alive");
+    assert(
+      !element.borrowsCell,
+      "an instance that Rust takes as &T cannot be in an array or a dictionary: only an argument's slot in the frame keeps it alive",
+    );
     assert(
       !element.borrowsHeap,
       "the bytes of a buffer are only for an argument: they are read after everything else is converted",
@@ -1280,11 +1375,34 @@ export class ArrayType extends Type {
   rustResultFieldType(scope: RustScope): string {
     return `Vec<${this.element.rustResultFieldType(scope)}>`;
   }
-  rustReturnType(scope: RustScope): string {
-    return `impl IntoIterator<Item = ${this.element.rustReturnType(scope)}>`;
-  }
   rustToJS(value: string, scope: RustScope): string {
     return `bindgen::to_js::array(heap, ${value}, |heap, value| ${this.element.rustToJS("value", scope)})`;
+  }
+}
+
+/** An object with a property for each pair of a key, in UTF-8, and a value. */
+export class RecordResultType extends ResultType {
+  readonly refusal = "b.record is a result";
+  readonly value: Type;
+  constructor(value: Type) {
+    super();
+    assert(
+      !value.holdsJSValue,
+      "the pairs of a record can be a Vec, where the GC does not see JS values: return b.any and make it with to_js::record",
+    );
+    this.value = value;
+  }
+  get tsType(): string {
+    return `Record<string, ${this.value.tsType}>`;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.value];
+  }
+  rustType(): never {
+    throw new TypeError("b.record has no Rust type to name, so it is not a member or an alternative");
+  }
+  rustToJS(value: string, scope: RustScope): string {
+    return `bindgen::to_js::record(heap, ${value}, |heap, value| ${this.value.rustToJS("value", scope)})`;
   }
 }
 
@@ -1294,6 +1412,9 @@ export abstract class NamedType extends Type {
   /** The name it is exported under, and where. Set when the generator finds it among a file's exports. */
   name = "";
   origin: Origin | null = null;
+  /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
+  accepted = false;
+  returned = false;
   get cpp(): string {
     return `Bun::Bindgen::Generated::${this.name}`;
   }
@@ -1323,8 +1444,6 @@ export class EnumerationType extends NamedType {
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
   firstEnumerationValueIndex = -1;
-  /** Reachable from a return type. Set by the generator. */
-  returned = false;
   constructor(values: readonly (string | readonly string[])[]) {
     super();
     assert(values.length > 0, "an enumeration needs at least one value");
@@ -1413,6 +1532,8 @@ export interface DictionaryOptions {
    * `if (typeof options !== "object") options = null`.
    */
   nonObjectAsEmpty?: boolean | "typeof";
+  /** As a result, the object has no prototype. */
+  nullPrototype?: boolean;
 }
 
 export class DictionaryType extends NamedType {
@@ -1421,9 +1542,6 @@ export class DictionaryType extends NamedType {
   /** Index in `Tables::memberNames` of the first name read, and of the first name written. Set by the generator. */
   firstMemberNameIndex = -1;
   firstReturnedMemberNameIndex = -1;
-  /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
-  accepted = false;
-  returned = false;
   /** An element of an array: everywhere else it is converted in place. */
   convertedByValue = false;
   constructor(members: Record<string, Type | MemberOptions>, options: DictionaryOptions = {}) {
@@ -1435,8 +1553,14 @@ export class DictionaryType extends NamedType {
       this.members.map(member => member.fieldName),
       "fields",
     );
-    for (const { name, type } of this.members) assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
-    assert(!this.borrowsCell, "b.classRef is only for an argument: nothing else keeps the instance alive");
+    for (const { name, type } of this.members) {
+      assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
+      assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
+    }
+    assert(
+      !this.borrowsCell,
+      "an instance that Rust takes as &T cannot be in an array or a dictionary: only an argument's slot in the frame keeps it alive",
+    );
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
       "nonObjectAsEmpty: every member must be optional or have a default",
@@ -1463,6 +1587,9 @@ export class DictionaryType extends NamedType {
   get nonObjectAsEmpty(): boolean | "typeof" {
     return this.options.nonObjectAsEmpty ?? false;
   }
+  get nullPrototype(): boolean {
+    return !!this.options.nullPrototype;
+  }
   get idlType(): string {
     return `WebCore::IDLDictionary<${this.cpp}>`;
   }
@@ -1472,8 +1599,8 @@ export class DictionaryType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string): string {
-    return `Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target});`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(`Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target}, ${ctx});`, check);
   }
   /** Every JS name read, in order. */
   get names(): string[] {
@@ -1549,6 +1676,7 @@ export class UnionType extends NamedType {
       assert(!(type instanceof OptionalType), `${name}: add b.null as an alternative`);
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
       assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
+      assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
       assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
@@ -1565,6 +1693,10 @@ export class UnionType extends NamedType {
       ),
     );
   }
+  /** As for a dictionary. */
+  get needsLifetime(): boolean {
+    return this.accepted ? super.needsLifetime : this.holdsJSValue;
+  }
   get alternativesByKind() {
     return alternativesByKind(this.alternatives.map(a => a.type));
   }
@@ -1578,8 +1710,11 @@ export class UnionType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`,
+      check,
+    );
   }
   get tsType(): string {
     return this.alternatives.map(a => a.type.tsType).join(" | ");
@@ -1619,6 +1754,9 @@ export class UnionType extends NamedType {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::from_extern(&${expr}${this.needsLifetime ? ", heap" : ""})`;
   }
+  rustToJS(value: string): string {
+    return `${value}.into_js(heap)`;
+  }
 }
 
 // ───────────────────────────── functions ─────────────────────────────
@@ -1636,21 +1774,26 @@ export interface SignatureOptions {
   rustPath?: string;
   /** The JS function's `length`. Defaults to the number of required arguments. */
   length?: number;
-  /** An argument named here throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)` for a value of the wrong type. */
-  expected?: Record<string, readonly string[]>;
+  /** Node's `ERR_INVALID_ARG_TYPE` for a wrong type: a list is its `(name, expected, actual)`, a string the whole message. */
+  expected?: Record<string, readonly string[] | string>;
 }
 
 export class Signature {
-  readonly args: readonly { name: string; type: Type; expected?: readonly string[] }[];
+  readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
   readonly returns: Type;
   readonly capability: Capability;
   readonly throws: boolean;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
-  constructor(options: SignatureOptions) {
+  /** `hasThisValue`: the body is also handed its own JS object. */
+  constructor(options: SignatureOptions, hasThisValue = false) {
     this.length = options.length;
     const { args = {}, expected = {} } = options;
-    this.args = Object.entries(args).map(([name, type]) => ({ name, type, expected: expected[name] }));
+    this.args = Object.entries(args).map(([name, type]) => ({
+      name,
+      type,
+      expected: Object.hasOwn(expected, name) ? expected[name] : undefined,
+    }));
     for (const [name, types] of Object.entries(expected)) {
       assert(name in args, `expected: ${name} is not an argument`);
       assert(types.length > 0, `expected: ${name} expects nothing`);
@@ -1667,8 +1810,14 @@ export class Signature {
       this.length === undefined || (Number.isInteger(this.length) && this.length >= 0),
       `length: ${this.length} is not a count`,
     );
+    for (const { name, type } of this.args.slice(0, -1))
+      assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
     for (const { name, type } of this.args) {
-      assert(!isMadeOf(type, BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
+      assert(
+        !holdsClassWithMutates(type),
+        `${name}: a class with a mutates member is not an argument type: it could be the receiver`,
+      );
+      refuseResultType(name, type);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
@@ -1682,7 +1831,7 @@ export class Signature {
     );
     assert(!(this.returns instanceof DefaultType), "a result has no default");
     assert(
-      !this.returns.holdsJSValue || this.capability !== "none",
+      !this.returns.holdsJSValue || this.capability !== "none" || hasThisValue,
       'returning a JS value takes capability: "heap" or "js"',
     );
   }
@@ -1692,9 +1841,22 @@ export class Signature {
   }
 }
 
-/** `type` is a `kind`, or something it is made of is. */
-function isMadeOf(type: Type, kind: new (...args: never[]) => Type): boolean {
-  return type.dependencies.some(dependency => isMadeOf(dependency, kind)) || type instanceof kind;
+function holdsClassWithMutates(type: Type): boolean {
+  return (type instanceof ClassType && !type.sharedThis) || type.dependencies.some(holdsClassWithMutates);
+}
+
+/** The first `ResultType` that `type` is or is made of. */
+function resultTypeIn(type: Type): ResultType | undefined {
+  if (type instanceof ResultType) return type;
+  for (const dependency of type.dependencies) {
+    const found = resultTypeIn(dependency);
+    if (found) return found;
+  }
+}
+
+function refuseResultType(name: string, type: Type): void {
+  const result = resultTypeIn(type);
+  assert(!result, `${name}: ${result?.refusal}`);
 }
 
 /** Call a signature, or look at the kind of one more argument. */
@@ -1756,26 +1918,42 @@ export class FunctionDefinition {
 
 /** A native function. */
 export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
-  /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
+  /** `&mut self` instead of `&self`. No member of such a class has `capability: "js"`, and the class is not an argument type. */
   mutates?: boolean;
-  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. */
+  /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. */
   passThis?: boolean;
+  /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
+  invalidThis?: "throw" | "undefined";
   /** Key the function by this private builtin name (`$name` in src/js) instead of a string. */
   privateSymbol?: string;
-  /** The trait's function. Defaults to the property's name in snake_case. */
+  /** The Rust function. Defaults to the property's name in snake_case. */
   rustName?: string;
+  /** Overrides the function's `name`. Only for an `@@` key, where it defaults to `[Symbol.x]`. */
+  name?: string;
 }
 
 export interface GetterField {
   getter: Type;
-  /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). */
-  setter?: true;
-  /** Computed once per object, then kept in the wrapper. */
-  cache?: true;
+  /** Also generate a setter. In a class that has a `mutates` member it takes `&mut self`. Its `capability` is the getter's unless it names its own. */
+  setter?: true | { capability: Capability };
+  /** Returns an internal field, and computes it while that is empty. `true` declares one of the getter's name, a string names one declared elsewhere. */
+  cache?: true | string;
+  /** With `cache`: any value assigned to the property replaces the cached one, without calling Rust. */
+  writable?: true;
   capability?: Capability;
   throws?: boolean;
   /** As a function's. */
+  passThis?: boolean;
+  /** The getter is `get_` and this name, the setter `set_` and this name. Defaults to the property's name in snake_case. */
   rustName?: string;
+  /** Defaults to the class's. */
+  configurable?: boolean;
+}
+
+/** An accessor that reads an internal field in C++, without calling Rust. With `setter: true` it also stores any value assigned to it. */
+export interface InternalFieldField {
+  internalField: string;
+  setter?: true;
 }
 
 /** A function written in JavaScript: the export of this name in `src/js/builtins/<class name>.ts`. */
@@ -1784,25 +1962,67 @@ export interface BuiltinField {
   length: number;
 }
 
-/** Several functions are the overloads of one. `rustName` tells their Rust functions apart. */
-export type Field = FunctionField | readonly FunctionField[] | GetterField | BuiltinField;
+/** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
+export type Field = FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField;
 export type StaticField =
-  Omit<FunctionField, "mutates" | "passThis" | "privateSymbol"> | Omit<GetterField, "setter" | "cache">;
+  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
+  | Omit<GetterField, "cache" | "writable" | "passThis">;
+
+export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
+  /** The constructor creates the object itself, with `structure.create(..)`, and returns it: it can then set internal fields. */
+  passStructure?: boolean;
+}
 
 export interface ClassOptions {
-  /** Path of the Rust struct. It implements the generated `${name}Class` trait. */
+  /** Path of the Rust struct. The members are its own methods. */
   rustPath: string;
-  /** Absent: JavaScript cannot construct one, and there is no constructor object. */
-  construct?: Omit<SignatureOptions, "rustPath" | "returns">;
+  /** The struct is intrusively refcounted and the JS object holds one ref, so it can outlive the object. Every member takes `&self`. */
+  refCounted?: boolean;
+  /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
+  finalize?: boolean;
+  /** `false`: hand-written C++ can subclass `JSName`, and an instance of the subclass is an instance of this class. With `refCounted`. */
+  final?: boolean;
+  /** `impl bun_jsc::JsClass` is not generated: write it by hand, calling `js_Name::to_js` and `js_Name::from_js`. With `refCounted`. */
+  overridesToJS?: boolean;
+  /** JavaScript only sees a function bound to the instance. Members are called with that function as `this` and get its `boundThis`. */
+  forBind?: boolean;
+  /** Traits to bring into scope, for members that are trait methods. */
+  rustTraits?: readonly string[];
+  /** The prototype inherits from `Error.prototype` instead of `Object.prototype`, and its `name` is the class's. */
+  prototypeBase?: "Error";
+  /** `true`: native properties are configurable. */
+  configurable?: boolean;
+  /** `false`: native properties are non-enumerable. */
+  enumerable?: boolean;
+  /** `fn memory_cost(&self) -> usize`: the extra memory the struct owns, for a heap snapshot. */
+  memoryCost?: boolean;
+  /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
+  estimatedSize?: boolean;
+  /** Absent: JavaScript cannot construct one, and there is no constructor object. `"illegal"`: there is one, and `new` on it throws `Illegal constructor`. */
+  construct?: ConstructOptions | "illegal";
+  /** `Name(..)` without `new`, which otherwise throws. The Rust function is `call`. */
+  call?: Omit<SignatureOptions, "rustPath">;
+  /** JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each. */
+  internalFields?: readonly string[];
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
-  /** JS values the object holds. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
-  internalFields?: readonly string[];
-  /** `false`: native properties are non-configurable. */
-  configurable?: boolean;
 }
+
+/** The property's name without a leading `_` or `@@`, for use in generated identifiers. */
+export const memberIdentifier = (name: string) => name.replace(/^(_+|@@)/, "");
+/** `iterator` for the key `@@iterator`, `undefined` for a key that is not a well-known symbol. */
+export const wellKnownSymbol = (name: string) => (name.startsWith("@@") ? name.slice(2) : undefined);
+
+type Receiver = "ref" | "mut" | "static";
+const memberReceiver = (isStatic: boolean, sharedThis: boolean, mutates: boolean): Receiver =>
+  isStatic ? "static" : mutates && !sharedThis ? "mut" : "ref";
+const refuseReentrancy = (name: string, isStatic: boolean, sharedThis: boolean, capability: Capability) =>
+  assert(
+    isStatic || sharedThis || capability !== "js",
+    `${name}: JavaScript could call a mutates member of the same object while this one runs`,
+  );
 
 function memberRustName(name: string): string {
   assert(/^[a-z_][a-z0-9_]*$/.test(name), `${name}: rustName is written in snake_case`);
@@ -1812,20 +2032,25 @@ function memberRustName(name: string): string {
 export class Method extends Signature {
   readonly name: string;
   readonly rustName: string;
-  readonly receiver: "ref" | "mut" | "wrapper" | "static";
+  readonly hasDefaultRustName: boolean;
+  readonly receiver: Receiver;
   readonly passThis: boolean;
+  readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
-  constructor(name: string, options: FunctionField, isStatic = false) {
-    super(options);
+  readonly functionName: string | undefined;
+  constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false) {
+    super(options, !isStatic && !!options.passThis);
     this.name = name;
-    this.rustName = memberRustName(options.rustName ?? snakeCase(name.replace(/^_+/, "")));
-    assert(
-      !(options.mutates && this.capability === "js"),
-      `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
-    );
-    this.receiver = isStatic ? "static" : this.capability === "js" ? "wrapper" : options.mutates ? "mut" : "ref";
-    this.passThis = !isStatic && this.capability !== "js" && !!options.passThis;
+    this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
+    this.hasDefaultRustName = options.rustName === undefined;
+    refuseReentrancy(name, isStatic, sharedThis, this.capability);
+    this.receiver = memberReceiver(isStatic, sharedThis, !!options.mutates);
+    this.passThis = !isStatic && !!options.passThis;
+    this.invalidThis = options.invalidThis ?? "throw";
     this.privateSymbol = options.privateSymbol;
+    assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
+    this.functionName = options.name;
+    assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only for an @@ key`);
   }
 }
 
@@ -1834,27 +2059,68 @@ export class Getter {
   readonly type: Type;
   readonly capability: Capability;
   readonly throws: boolean;
+  /** Has a setter written in Rust. */
   readonly hasSetter: boolean;
-  readonly cached: boolean;
+  readonly writable: boolean;
+  readonly internalField: string | undefined;
+  readonly declaresInternalField: boolean;
   readonly isStatic: boolean;
   readonly rustName: string;
-  /** Where a cached one keeps the value. Set by its class. */
-  internalFieldIndex = -1;
-  constructor(name: string, options: GetterField, isStatic = false) {
+  readonly setterRustName: string;
+  readonly hasDefaultRustName: boolean;
+  readonly receiver: Receiver;
+  readonly setterReceiver: Receiver;
+  readonly passThis: boolean;
+  readonly setterCapability: Capability;
+  readonly configurable: boolean | undefined;
+  constructor(name: string, options: GetterField, isStatic = false, sharedThis = false) {
     this.name = name;
     this.isStatic = isStatic;
-    this.rustName = memberRustName(options.rustName ?? snakeCase(name));
+    const rustName = options.rustName ?? snakeCase(memberIdentifier(name));
+    this.rustName = memberRustName(`get_${rustName}`);
+    this.setterRustName = `set_${rustName}`;
+    this.hasDefaultRustName = options.rustName === undefined;
     this.type = options.getter;
     this.capability = options.capability ?? "none";
+    this.setterCapability = typeof options.setter === "object" ? options.setter.capability : this.capability;
+    refuseReentrancy(name, isStatic, sharedThis, this.capability);
+    refuseReentrancy(name, isStatic, sharedThis, this.setterCapability);
+    this.receiver = memberReceiver(isStatic, sharedThis, false);
+    this.setterReceiver = memberReceiver(isStatic, sharedThis, true);
+    this.passThis = !!options.passThis;
+    assert(!(this.passThis && isStatic), `${name}: a static getter has no passThis`);
     this.throws = options.throws ?? false;
-    this.hasSetter = options.setter ?? false;
-    assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
-    assert(!(isStatic && (options.cache || options.setter)), `${name}: a static getter has no cache and no setter`);
+    this.hasSetter = !!options.setter;
+    this.writable = !!options.writable;
+    assert(!this.writable || options.cache, `${name}: writable is only for a cached getter`);
     assert(
-      !this.type.holdsJSValue || this.capability !== "none",
+      !(this.writable && this.hasSetter),
+      `${name}: writable stores the value itself, so there is no setter to call`,
+    );
+    assert(
+      !(options.cache && this.hasSetter && !this.passThis),
+      `${name}: the setter of a cached getter takes passThis, to replace the cached value`,
+    );
+    if (this.hasSetter) refuseResultType(name, this.type);
+    assert(!(isStatic && options.cache), `${name}: a static getter has no cache`);
+    assert(
+      !this.type.holdsJSValue || this.capability !== "none" || this.passThis,
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
-    this.cached = !!options.cache;
+    this.internalField = options.cache === true ? name : options.cache;
+    this.declaresInternalField = options.cache === true;
+    this.configurable = options.configurable;
+  }
+}
+
+export class InternalFieldAccessor {
+  readonly name: string;
+  readonly internalField: string;
+  readonly hasSetter: boolean;
+  constructor(name: string, options: InternalFieldField) {
+    this.name = name;
+    this.internalField = options.internalField;
+    this.hasSetter = options.setter ?? false;
   }
 }
 
@@ -1867,7 +2133,7 @@ export class Builtin {
   }
 }
 
-export type ClassMember = FunctionDefinition | Getter | Builtin;
+export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin;
 
 /** Stands for the class being declared, in its own signatures. */
 class SelfType extends Type {
@@ -1875,7 +2141,7 @@ class SelfType extends Type {
   readonly tsType = "this";
   toCpp(): string {
     throw new TypeError(
-      "b.self is an argument, a result or a getter of the class's own members, as it is: not .nullable, not in an array",
+      "b.self is an argument, a result or a getter of the class's own members, used directly or as .optional / .nullable: not in an array",
     );
   }
   layout(): Layout {
@@ -1890,105 +2156,184 @@ class SelfType extends Type {
 }
 export const selfType = new SelfType();
 
-/** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. */
+/** As a result: the wrapper, `JsWrapper<'a, T>`. As an argument: `&'a T`. */
 export class ClassType extends NamedType {
   readonly rustPath: string;
+  readonly refCounted: boolean;
+  /** No member has `mutates`, so every member takes `&self`. */
+  readonly sharedThis: boolean;
+  readonly finalize: boolean;
   readonly construct: Signature | null;
+  readonly passStructure: boolean;
+  readonly call: FunctionDefinition | null;
+  readonly memoryCost: boolean;
+  readonly estimatedSize: boolean;
+  readonly overridesToJS: boolean;
+  readonly final: boolean;
+  readonly rustTraits: readonly string[];
+  readonly forBind: boolean;
+  readonly illegalConstructor: boolean;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
   readonly getters: readonly Getter[];
+  readonly internalFieldAccessors: readonly InternalFieldAccessor[];
   readonly staticFunctions: readonly FunctionDefinition[];
   readonly staticGetters: readonly Getter[];
   readonly builtins: readonly Builtin[];
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
+  /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
-  /** Each has an internal field of its own, after `internalFields`. */
-  readonly cachedGetters: readonly Getter[];
   readonly configurable: boolean;
-  /** Index in `Tables::classes`. Set by the generator. */
+  readonly enumerable: boolean;
+  readonly prototypeBase: "Error" | undefined;
+  /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
   constructor(options: ClassOptions) {
     super();
     this.rustPath = options.rustPath;
-    const own = (type: Type) => (type === selfType ? this : type);
+    this.refCounted = options.refCounted ?? false;
+    this.finalize = options.finalize ?? false;
+    assert(this.refCounted || !this.finalize, "finalize is only for a refCounted class: otherwise implement Drop");
+    this.sharedThis = !Object.values(options.proto ?? {})
+      .flat()
+      .some(field => "mutates" in field && field.mutates);
+    assert(this.sharedThis || !this.refCounted, "a refCounted class has no mutates: every member takes &self");
+    assert(
+      this.sharedThis || !options.estimatedSize,
+      "estimatedSize: a marking thread would read the struct while a mutates member writes it",
+    );
+    const own = (type: Type): Type => {
+      if (type === selfType) return this;
+      return type instanceof OptionalType && type.inner === selfType ? new OptionalType(this, type.modifier) : type;
+    };
     const resolve = <T extends SignatureOptions>(signature: T): T => ({
       ...signature,
       args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),
       ...(signature.returns ? { returns: own(signature.returns) } : {}),
     });
-    this.construct = options.construct ? new Signature(resolve(options.construct)) : null;
+    this.illegalConstructor = options.construct === "illegal";
+    this.construct = options.construct
+      ? new Signature(options.construct === "illegal" ? {} : resolve(options.construct))
+      : null;
+    this.passStructure = typeof options.construct === "object" && !!options.construct.passStructure;
+    assert(
+      !this.passStructure || this.construct!.capability !== "none",
+      'passStructure: creating the object takes capability: "heap" or "js"',
+    );
+    this.memoryCost = options.memoryCost ?? false;
+    this.estimatedSize = options.estimatedSize ?? false;
+    this.overridesToJS = options.overridesToJS ?? false;
+    assert(this.refCounted || !this.overridesToJS, "overridesToJS is only for a refCounted class");
+    this.final = options.final ?? true;
+    assert(
+      this.refCounted || this.final,
+      "final: false is only for a refCounted class: otherwise the struct is stored in the object, where a subclass's fields would go",
+    );
+    this.rustTraits = options.rustTraits ?? [];
+    this.forBind = options.forBind ?? false;
+    assert(
+      !(this.forBind && options.prototypeBase),
+      "forBind has no prototypeBase: the prototype inherits from Function.prototype",
+    );
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
+        assert(
+          !wellKnownSymbol(name) || !("builtin" in field || "internalField" in field || "getter" in field),
+          `${name}: only a function has an @@ key`,
+        );
         if ("builtin" in field) {
           assert(!isStatic, `${name}: a builtin is a property of the prototype`);
           return new Builtin(name, field.length);
         }
+        if ("internalField" in field) {
+          assert(!isStatic, `${name}: an internalField accessor is a property of the prototype`);
+          return new InternalFieldAccessor(name, field);
+        }
         if ("getter" in field) {
           assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
-          return new Getter(name, { ...field, getter: own(field.getter) }, isStatic);
+          return new Getter(name, { ...field, getter: own(field.getter) }, isStatic, this.sharedThis);
         }
         const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
-        assert(
-          overloads.every(overload => overload.privateSymbol === overloads[0]?.privateSymbol),
-          `${name}: its overloads have one privateSymbol`,
+        for (const key of ["privateSymbol", "invalidThis", "name", "enumerable", "configurable"] as const)
+          assert(
+            overloads.every(overload => overload[key] === overloads[0]?.[key]),
+            `${name}: its overloads have one ${key}`,
+          );
+        assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
+        const fn = new FunctionDefinition(
+          overloads.map(overload => new Method(name, resolve(overload), isStatic, this.sharedThis)),
         );
-        const fn = new FunctionDefinition(overloads.map(overload => new Method(name, resolve(overload), isStatic)));
         fn.name = name;
         return fn;
       });
     this.protoMembers = members(options.proto ?? {}, false);
     this.staticMembers = members(options.static ?? {}, true);
+    assert(this.construct || !options.call, "call needs a constructor object: add construct");
+    this.call = options.call ? (members({ call: options.call }, true)[0] as FunctionDefinition) : null;
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
+    this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
     this.staticFunctions = this.staticMembers.filter(member => member instanceof FunctionDefinition);
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
-    this.internalFields = options.internalFields ?? [];
+    this.internalFields = [
+      ...(options.internalFields ?? []),
+      ...getters.filter(getter => getter.declaresInternalField).map(getter => getter.name),
+    ];
+    for (const { name, internalField } of [...getters, ...this.internalFieldAccessors])
+      assert(
+        internalField === undefined || this.internalFields.includes(internalField),
+        `${name}: there is no internal field ${internalField}`,
+      );
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
+    // A `rustName` may be another member's function.
     assertDistinct(
       [
         "constructor",
-        ...this.methods.map(method => method.rustName),
-        ...[...getters, ...this.staticGetters].flatMap(getter => [
-          getter.rustName,
-          ...(getter.hasSetter ? [`set_${snakeCase(getter.name)}`] : []),
-        ]),
+        ...this.methods.filter(method => method.hasDefaultRustName).map(method => method.rustName),
+        ...[...getters, ...this.staticGetters]
+          .filter(getter => getter.hasDefaultRustName)
+          .flatMap(getter => [getter.rustName, ...(getter.hasSetter ? [getter.setterRustName] : [])]),
       ],
       "members' Rust functions",
     );
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
-    this.cachedGetters = getters.filter(getter => getter.cached);
-    this.cachedGetters.forEach((getter, index) => (getter.internalFieldIndex = this.internalFields.length + index));
-    this.configurable = options.configurable ?? true;
-    for (const method of this.methods) {
-      assert(
-        method.receiver !== "mut" || !method.args.some(arg => arg.type === this),
-        `${method.name}: &mut self and an argument of the same class may be the same object`,
-      );
-    }
+    assert(
+      !this.forBind ||
+        (this.internalFieldAccessors.length === 0 && getters.every(getter => !getter.hasSetter && !getter.writable)),
+      "forBind: a member is a function or a getter without a setter",
+    );
+    this.configurable = options.configurable ?? false;
+    this.enumerable = options.enumerable ?? true;
+    this.prototypeBase = options.prototypeBase;
   }
-  /** Every signature of the prototype's and the constructor's functions. */
+  /** The prototype's and the constructor's functions, and `call`. */
+  get nativeFunctions(): readonly FunctionDefinition[] {
+    return [...this.functions, ...this.staticFunctions, ...(this.call ? [this.call] : [])];
+  }
   get methods(): readonly Method[] {
-    return [...this.functions, ...this.staticFunctions].flatMap(fn => fn.signatures as readonly Method[]);
-  }
-  get numberOfInternalFields(): number {
-    return this.internalFields.length + this.cachedGetters.length;
+    return this.nativeFunctions.flatMap(fn => fn.signatures as readonly Method[]);
   }
   get cpp(): string {
     return `Bun::Bindgen::Generated::JS${this.name}`;
   }
   get idlType(): string {
-    return `Bun::Bindgen::IDLRawInterface<${this.cpp}>`;
+    return this.refCounted
+      ? `Bun::Bindgen::IDLWrappedInterface<${this.cpp}, std::to_array("${this.name}")>`
+      : `Bun::Bindgen::IDLRawInterface<${this.cpp}>`;
   }
   get valueKinds(): ValueKinds {
     return [this];
   }
   get holdsJSValue(): boolean {
+    return true;
+  }
+  get borrowsCell(): boolean {
     return true;
   }
   get nullRepresentation() {
@@ -2009,13 +2354,14 @@ export class ClassType extends NamedType {
     return "*mut core::ffi::c_void";
   }
   rustType(): string {
-    return `bindgen::JsWrapper<'a, ${this.rustPath}>`;
+    return `&'a ${this.rustPath}`;
   }
   rustFromExtern(expr: string): string {
-    return `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap)`;
+    if (this.refCounted) return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
+    return `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap).payload_ref()`;
   }
   rustToJS(value: string): string {
-    return `bindgen::to_js::any(heap, ${value}.as_value())`;
+    return `bindgen::to_js::any(heap, ${value})`;
   }
 }
 

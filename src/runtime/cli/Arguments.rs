@@ -96,6 +96,13 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
         parse_param!(
             "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
         ),
+        parse_param!(
+            "--use-system-ca                   Use the system's trusted certificate authorities"
+        ),
+        parse_param!(
+            "--use-openssl-ca                  Use OpenSSL's default CA store instead of the bundled one"
+        ),
+        parse_param!("--use-bundled-ca                  Use bundled CA store"),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
     &[parse_param!("<POS>...")],
@@ -275,11 +282,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
     ),
-    parse_param!(
-        "--use-system-ca                   Use the system's trusted certificate authorities"
-    ),
-    parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
-    parse_param!("--use-bundled-ca                  Use bundled CA store"),
     parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
     parse_param!("--tls-min-v1.1                    Set the default TLS minimum to TLSv1.1"),
     parse_param!("--tls-min-v1.2                    Set the default TLS minimum to TLSv1.2"),
@@ -771,10 +773,14 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-use bun_core::Global::Bun__Node__UseSystemCA;
+use crate::generated_bindgen::node_tls_binding::CAStore;
 
-pub(crate) fn get_use_system_ca() -> bool {
-    Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed)
+pub(crate) fn get_ca_store() -> CAStore {
+    match Global::ca_store() {
+        Global::CAStore::Bundled => CAStore::Bundled,
+        Global::CAStore::System => CAStore::System,
+        Global::CAStore::OpenSSL => CAStore::Openssl,
+    }
 }
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
@@ -1057,6 +1063,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if !args.options(b"--conditions").is_empty() {
         opts.conditions = slice_to_owned(args.options(b"--conditions"));
     }
+
+    Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
     // runtime commands
     if matches!(
@@ -1513,7 +1521,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
         }
-        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
             bun_core::pretty_errorln!(

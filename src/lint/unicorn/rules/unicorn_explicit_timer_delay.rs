@@ -57,7 +57,7 @@ impl Rule for ExplicitTimerDelay {
     }
 }
 
-/// `setTimeout`, `window.setTimeout`, where the first name is that of a global variable.
+/// `setTimeout` or `window.setTimeout`, where the first name is a global variable.
 fn timer_name(call_expr: Call<'_>) -> Option<Name<'_>> {
     let callee = get_inner_expression(call_expr.callee());
     let (name, global) = match callee.kind() {

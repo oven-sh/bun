@@ -36,7 +36,8 @@ const UNWANTED_PUBLIC_ACCESSIBILITY: Message = Message::new(
 
 const ACCESSIBILITY: Flags = Flags::PUBLIC.union(Flags::PRIVATE).union(Flags::PROTECTED);
 
-/// `head`: what is reported, which starts after the decorators, where the modifier belongs. `key`: what oxlint points at.
+/// `head` is the reported span. It starts after the decorators, where the modifier belongs. `key` is what oxlint points
+/// at.
 fn report_missing<'a>(
     node: Node<'a>,
     head: impl Fn() -> Span,
@@ -45,8 +46,10 @@ fn report_missing<'a>(
     name: Cow<'a, [u8]>,
     cx: &Cx<'a, ExplicitMemberAccessibility>,
 ) {
-    let place = if cx.language().is_oxlint { key() } else { None }.unwrap_or_else(&head);
-    let report = cx.report(place, MISSING_ACCESSIBILITY).called_with(node);
+    let report_span = if cx.language().is_oxlint { key() } else { None }.unwrap_or_else(&head);
+    let report = cx
+        .report(report_span, MISSING_ACCESSIBILITY)
+        .called_with(node);
     let mut report = report.data("type", node_type).data("name", name);
     for accessibility in ["public", "private", "protected"] {
         report = report.suggest_with(
@@ -96,7 +99,7 @@ impl ExplicitMemberAccessibility {
         if !is_wrong || member.is_signature() || member.key().is_some_and(Key::is_private) {
             return;
         }
-        // oxlint has a key that is a string without quotes, and no name for one that is computed.
+        // oxlint prints a string key without quotes, and prints no name for a computed key.
         let name = match cx.language().is_oxlint {
             true => Cow::Borrowed(utils::oxlint::member_key_name(member).unwrap_or_default()),
             false => get_name_from_member(member).name,
@@ -109,7 +112,7 @@ impl ExplicitMemberAccessibility {
         match check {
             Level::Explicit => {
                 let key = || match member.key() {
-                    // With the parentheses of `[(a)]`.
+                    // Including the parentheses of `[(a)]`.
                     Some(key) => Some(match key.kind() {
                         KeyKind::Computed(e) => e.outer_span(),
                         _ => key.inner_span(cx.file()),

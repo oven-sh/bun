@@ -1656,11 +1656,9 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_js_parser",
- "bun_paths",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
- "bun_sema_parser",
  "bun_sys",
  "bun_threading",
  "libc",
@@ -1750,17 +1748,17 @@ dependencies = [
 name = "bun_sourcemap_jsc"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
  "bun_core",
  "bun_io",
+ "bun_js_parser",
+ "bun_js_printer",
  "bun_jsc",
  "bun_options_types",
  "bun_paths",
  "bun_sourcemap",
- "bun_url",
  "bun_wyhash",
 ]
 
@@ -1771,6 +1769,7 @@ dependencies = [
  "bun_alloc",
  "bun_analytics",
  "bun_core",
+ "bun_crash_handler",
  "bun_dispatch",
  "bun_errno",
  "bun_event_loop",

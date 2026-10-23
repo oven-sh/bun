@@ -441,6 +441,16 @@ pub(crate) mod help_command {
     /// The spacing between commands is intentional.
     macro_rules! print_cli_helptext {
         ($printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
+            if lint_command::IS_ENABLED {
+                print_cli_helptext!(
+                    @lint "  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint\n",
+                    $printer, $prefix, $args $(, $extra)*
+                )
+            } else {
+                print_cli_helptext!(@lint "", $printer, $prefix, $args $(, $extra)*)
+            }
+        };
+        (@lint $lint:literal, $printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
             $printer!(
                 concat!($prefix, "\
 <b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
@@ -450,8 +460,7 @@ pub(crate) mod help_command {
             <d>dev<r>                  Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
-  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
-  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
+", $lint, "  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -779,11 +788,14 @@ pub(crate) mod command {
         let in_packages = |arg: &&[u8]| {
             *arg == b"--workspaces" || arg.starts_with(b"--filter") || arg.starts_with(b"-F")
         };
+        let asks_version = |arg: &&[u8]| matches!(*arg, b"--version" | b"-v" | b"--revision");
         let project_has_it = match tag {
             Tag::AutoCommand => false,
+            Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand => is_of_the_project(name),
+            // `bun --cwd dir --version test` prints the version.
+            _ if after_value && arguments_before(name).iter().any(asks_version) => true,
             // `bun --workspaces --cwd dir run` runs the `run` script of each package.
             Tag::RunCommand => after_value && arguments_before(name).iter().any(in_packages),
-            Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand => is_of_the_project(name),
             // `bun create` would ignore the `--cwd`, and a reserved word is no command.
             Tag::CreateCommand | Tag::ReservedCommand => after_value,
             // `bun --cwd dir build` is `bun build` only if the project has no `build` to run. Scripts have `bun` in `PATH`.
@@ -891,7 +903,7 @@ pub(crate) mod command {
         if x == RootCommandMatcher::case(b"check") {
             return Tag::CheckCommand;
         }
-        if x == RootCommandMatcher::case(b"lint") {
+        if x == RootCommandMatcher::case(b"lint") && super::lint_command::IS_ENABLED {
             return Tag::LintCommand;
         }
         if x == RootCommandMatcher::case(b"fmt") {
@@ -1311,7 +1323,7 @@ pub(crate) mod command {
                 // The "run" of `bun run -e code` is not an argument of the code.
                 ctx.positionals.clear();
             }
-            lint_command::read_program_of_script(ctx);
+            lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1354,6 +1366,10 @@ pub(crate) mod command {
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
         let argv = argv_zslice();
+        // `bun --filter init dev`: `init` is the value of a flag, and is taken for the folder.
+        if super::script_or_command::place_of_command(b"init").is_none() {
+            return super::init_command::InitCommand::exec(&argv[2.min(argv.len())..]);
+        }
         print_help_if_asked_before(b"init", Tag::InitCommand);
         if let Some(cwd) = lint_command::cwd_before(b"init") {
             lint_command::change_directory(cwd);
@@ -1424,7 +1440,7 @@ pub(crate) mod command {
     }
 
     /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
-    pub(crate) fn after_command<'a>(
+    fn after_command<'a>(
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
@@ -1807,11 +1823,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         if use_bunx {
             let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+                Vec::with_capacity(3 + args.len() - template_name_start + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
             }
+            bunx_args.extend(Global::ca_store_flag());
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
             // the prefixed package name is a process singleton — park the owning
@@ -1843,12 +1860,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                path_buf[..entry.len()].copy_from_slice(entry);
-                path_buf[entry.len()] = 0;
-                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
-                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    &entry[..],
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
                     Ok(f) => f,
                     Err(err) => {
                         Output::err(err, "failed to open lockfile", ());
@@ -1943,7 +1960,11 @@ Flags:
   <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
   <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
   <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
+  <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
+  <cyan>--use-system-ca<r>, <cyan>--use-openssl-ca<r>, <cyan>--use-bundled-ca<r>  Choose the CA store to trust during installation
   <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
+  <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 
@@ -2245,6 +2266,9 @@ Full documentation is available at <magenta>https://bun.com/docs/lint<r>
   <cyan>-r, --react<r>            Initialize a React project
       <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
       <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
+      <cyan>--use-system-ca<r>    Use the system's trusted certificate authorities during installation
+      <cyan>--use-openssl-ca<r>   Use OpenSSL's default CA store instead of the bundled one during installation
+      <cyan>--use-bundled-ca<r>   Use bundled CA store during installation
 
 <b>Examples:<r>
   <b><green>bun init<r>

@@ -170,6 +170,7 @@ typecheck:
 
 - **One line per error.** When the output is not a terminal, `bun check` prints errors in the format of `tsc --pretty false`. Problem matchers and scripts written for `tsc` keep working.
 - **Errors go to stdout.** The summary line goes to stderr.
+- **A `message` line fails the run too.** TypeScript labels one error `message` instead of `error`: TS1450, for `import()` with no argument or more than two. `bun check` exits with code `1` for it, like `tsc --noEmit`.
 - **No cache to save or restore.** `bun check` does not write `.tsbuildinfo` files. Every run checks the whole project.
 - **An empty run fails.** If there is nothing to check, `bun check` exits with code `1`. A job that runs in the wrong directory fails instead of passing.
 - **Shared runners.** `bun check` starts one thread per CPU core. Use `--threads 4` to use fewer.

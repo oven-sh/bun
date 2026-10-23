@@ -380,7 +380,7 @@ pub(crate) fn init_watch_trigger() {
 }
 
 /// If the previous process's watcher recorded which files triggered
-/// this restart, read the newline-separated absolute-path list out of
+/// this restart, read the NUL-terminated absolute-path list out of
 /// the trigger file, delete the file, and return the set. Returns null
 /// if the file is absent, empty, or every path no longer exists (in
 /// which case the caller falls back to querying git).
@@ -408,7 +408,8 @@ fn consume_watch_trigger() -> Option<StringSet> {
         let _ = sys::unlink(&trigger_path);
 
         let mut set = StringSet::new();
-        for path in strings::tokenize_any(&contents, b"\r\n") {
+        for path in strings::tokenize(&contents, jsc::hot_reloader::WATCH_CHANGED_PATHS_TERMINATOR)
+        {
             // The watcher may see a file disappear (delete/rename). A path
             // that no longer exists cannot appear in the module graph this
             // run, so drop it; its importers will still be picked up if the
@@ -460,22 +461,28 @@ fn get_changed_files(
     // Find the git repository root so we can make the paths git prints
     // absolute (git prints paths relative to the repo toplevel with these
     // commands).
-    let git_root: Box<[u8]> =
-        match run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]) {
-            GitResult::SpawnFailed => return Err(GitError::GitFailed),
-            GitResult::ExitError { stderr } => {
-                if !stderr.is_empty() {
-                    Output::err_generic(
-                        "--changed: {s}",
-                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
-                    );
-                } else {
-                    Output::err_generic("--changed requires running inside a git repository", ());
-                }
+    let tree = match run_git(
+        git_path,
+        top_level_dir,
+        &[b"rev-parse", b"--show-cdup", b"--show-toplevel"],
+    ) {
+        GitResult::SpawnFailed => return Err(GitError::GitFailed),
+        GitResult::ExitError { stderr } => {
+            return Err(git_failed(&stderr, || {
+                Output::err_generic("--changed requires running inside a git repository", ());
+            }));
+        }
+        GitResult::Ok { stdout } => match WorkTree::parse(top_level_dir, &stdout) {
+            Some(tree) => tree,
+            None => {
+                Output::err_generic(
+                    "--changed: `git rev-parse --show-cdup` printed a path that is too long",
+                    (),
+                );
                 return Err(GitError::GitFailed);
             }
-            GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
-        };
+        },
+    };
 
     let mut set = StringSet::new();
 
@@ -483,53 +490,40 @@ fn get_changed_files(
         // Uncommitted (unstaged + staged). `git diff HEAD` covers both.
         // On a repo with no commits, `HEAD` is unresolved; fall back to just
         // `git diff` (unstaged) + staged.
-        match run_git(
+        match list_names(
             git_path,
             top_level_dir,
-            &[b"diff", b"--name-only", b"HEAD", b"--"],
+            b"diff",
+            &[b"--name-only", b"HEAD", b"--"],
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
-            GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+            GitResult::Ok { stdout } => append_paths(&mut set, &tree.root, &stdout),
             GitResult::ExitError { .. } => {
-                match run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]) {
-                    GitResult::SpawnFailed => return Err(GitError::GitFailed),
-                    GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
-                    GitResult::ExitError { .. } => {}
-                }
-
-                match run_git(
-                    git_path,
-                    top_level_dir,
-                    &[b"diff", b"--name-only", b"--cached", b"--"],
-                ) {
-                    GitResult::SpawnFailed => return Err(GitError::GitFailed),
-                    GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
-                    GitResult::ExitError { .. } => {}
+                let unstaged: &[&[u8]] = &[b"--name-only", b"--"];
+                let staged: &[&[u8]] = &[b"--name-only", b"--cached", b"--"];
+                for args in [unstaged, staged] {
+                    let stdout = list_names_or_fail(git_path, top_level_dir, b"diff", args)?;
+                    append_paths(&mut set, &tree.root, &stdout);
                 }
             }
         }
     } else {
-        match run_git(
+        match list_names(
             git_path,
             top_level_dir,
-            &[b"diff", b"--name-only", since, b"--"],
+            b"diff",
+            &[b"--name-only", since, b"--"],
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::ExitError { stderr } => {
-                if !stderr.is_empty() {
-                    Output::err_generic(
-                        "--changed: {s}",
-                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
-                    );
-                } else {
+                return Err(git_failed(&stderr, || {
                     Output::err_generic(
                         "--changed: git diff against {f} failed",
                         (bun_fmt::quote(since),),
                     );
-                }
-                return Err(GitError::GitFailed);
+                }));
             }
-            GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+            GitResult::Ok { stdout } => append_paths(&mut set, &tree.root, &stdout),
         }
     }
 
@@ -539,22 +533,62 @@ fn get_changed_files(
     // supplement with ls-files in both branches above. `--full-name`
     // forces repo-root-relative output regardless of our cwd, matching
     // `git diff --name-only`.
-    match run_git(
+    let stdout = list_names_or_fail(
         git_path,
         top_level_dir,
+        b"ls-files",
         &[
-            b"ls-files",
             b"--others",
             b"--exclude-standard",
             b"--full-name",
+            b"--",
+            // Without a pathspec `ls-files` lists only what is below the cwd.
+            &tree.pathspec,
         ],
-    ) {
-        GitResult::SpawnFailed => return Err(GitError::GitFailed),
-        GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
-        GitResult::ExitError { .. } => {}
-    }
+    )?;
+    append_paths(&mut set, &tree.root, &stdout);
 
     Ok(set)
+}
+
+/// The work tree that bun's cwd is in.
+struct WorkTree {
+    /// Absolute path of the root. Git lists names relative to it.
+    root: Box<[u8]>,
+    /// The root, as a pathspec for a git command that runs in bun's cwd.
+    pathspec: Box<[u8]>,
+}
+
+impl WorkTree {
+    /// Reads what `git rev-parse --show-cdup --show-toplevel` printed in `cwd`.
+    fn parse(cwd: &[u8], printed: &[u8]) -> Option<WorkTree> {
+        // The cdup line is only `../` segments. The toplevel line can hold a line break.
+        if printed.starts_with(b"../") || printed.starts_with(b"\n") {
+            let up = strings::split_once_char(printed, b'\n').map_or(printed, |(up, _)| up);
+            if up.is_empty() {
+                return Some(WorkTree {
+                    root: Box::from(cwd),
+                    pathspec: Box::from(&b"."[..]),
+                });
+            }
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let root = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                cwd,
+                &mut buf.0,
+                &[up],
+            )?;
+            return Some(WorkTree {
+                root: Box::from(root),
+                pathspec: Box::from(up),
+            });
+        }
+        // Outside the work tree (`GIT_WORK_TREE`) git prints the root twice and runs at the root.
+        let root = &printed[..printed.len() / 2];
+        Some(WorkTree {
+            root: Box::from(root.strip_suffix(b"\n").unwrap_or(root)),
+            pathspec: Box::from(&b"."[..]),
+        })
+    }
 }
 
 pub(crate) enum GitResult {
@@ -569,13 +603,14 @@ pub(crate) enum GitResult {
 }
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
-    let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
+    let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 5);
     argv.push(git_path);
-    // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
-    // and emits octal escapes. We want raw UTF-8 paths so they match the
-    // bundler's resolved paths byte-for-byte.
+    // A user's `diff.relative=true` lists only the files below the cwd, relative to it.
     argv.push(b"-c");
-    argv.push(b"core.quotePath=off");
+    argv.push(b"diff.relative=false");
+    // A rename is listed by its new name only, and the old name can still be on disk.
+    argv.push(b"-c");
+    argv.push(b"diff.renames=false");
     argv.extend_from_slice(args);
 
     let proc = match spawn_sync::spawn(&spawn_sync::Options {
@@ -625,16 +660,51 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     }
 }
 
-/// Parse newline-delimited repo-relative paths from git output, join each
+/// Runs `git <command> -z <args>`: git ends each name with a NUL and does not quote it.
+fn list_names(git_path: &[u8], cwd: &[u8], command: &[u8], args: &[&[u8]]) -> GitResult {
+    run_git(git_path, cwd, &[&[command, b"-z"], args].concat())
+}
+
+/// [`list_names`] for a listing whose failure would otherwise read as "no changed files".
+fn list_names_or_fail(
+    git_path: &[u8],
+    cwd: &[u8],
+    command: &[u8],
+    args: &[&[u8]],
+) -> core::result::Result<Vec<u8>, GitError> {
+    match list_names(git_path, cwd, command, args) {
+        GitResult::SpawnFailed => Err(GitError::GitFailed),
+        GitResult::ExitError { stderr } => Err(git_failed(&stderr, || {
+            Output::err_generic("--changed: git {s} failed", (BStr::new(command),));
+        })),
+        GitResult::Ok { stdout } => Ok(stdout),
+    }
+}
+
+/// Reports a git command that failed: git's own message, or `otherwise` when git printed none.
+fn git_failed(stderr: &[u8], otherwise: impl FnOnce()) -> GitError {
+    let message = strings::trim(stderr, b" \r\n\t");
+    if message.is_empty() {
+        otherwise();
+    } else {
+        Output::err_generic("--changed: {s}", (BStr::new(message),));
+    }
+    GitError::GitFailed
+}
+
+/// Parse NUL-terminated repo-relative paths from git output, join each
 /// with the repository root, and insert existing files into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
-    for line in strings::tokenize_any(stdout, b"\r\n") {
-        let rel = strings::trim(line, b" \t");
-        if rel.is_empty() {
+    for rel in strings::tokenize(stdout, b"\0") {
+        // A path that does not fit the buffer is too long to open, so no source has it.
+        let Some(abs) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            git_root,
+            &mut buf.0,
+            &[rel],
+        ) else {
             continue;
-        }
-        let abs = resolve_path::join_abs_string_buf::<platform::Auto>(git_root, &mut buf.0, &[rel]);
+        };
         // Skip deletions; the bundler can only parse files that exist.
         if !sys::exists(abs) {
             continue;

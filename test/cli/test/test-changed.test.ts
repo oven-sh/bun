@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { bunEnv, bunExe, isASAN, isWindows, MAX_PATH_BYTES, tempDir, tmpdirSync } from "harness";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, truncateSync, writeFileSync } from "node:fs";
+import { basename, delimiter, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
 // headroom on slow ASAN/CI machines.
@@ -49,11 +49,13 @@ function initRepo(cwd: string) {
 async function runTestChanged(
   cwd: string,
   extra: string[] = [],
+  flag = "--changed",
+  env: Record<string, string | undefined> = gitEnv,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--changed", ...extra],
+    cmd: [bunExe(), "test", flag, ...extra],
     cwd,
-    env: gitEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -66,6 +68,35 @@ async function runTestChanged(
  *  header in bun test's stderr). */
 function ranFiles(stderr: string, names: string[]): string[] {
   return names.filter(n => stderr.includes(n + ":")).sort();
+}
+
+// Stands in for git where no state of a real repository gives the answer. It
+// fails the command named by STAND_IN_FAILS the way git reports a fatal error,
+// and it answers the command named by STAND_IN_ANSWERS with STAND_IN_ANSWER.
+// It is a shell script, so the cases that use it skip Windows.
+const gitStandIn = `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "$STAND_IN_FAILS" ]; then
+    echo "fatal: the stand-in for git does not run $arg" >&2
+    exit 128
+  fi
+  if [ "$arg" = "$STAND_IN_ANSWERS" ]; then
+    printf '%s\\n' "$STAND_IN_ANSWER"
+    exit 0
+  fi
+done
+exec "$STAND_IN_GIT" "$@"
+`;
+
+/** Writes the stand-in for git into `dir` and returns the environment that finds it before git. */
+function standInEnv(
+  dir: string,
+  vars: { STAND_IN_FAILS?: string; STAND_IN_ANSWERS?: string; STAND_IN_ANSWER?: string },
+) {
+  const bin = join(dir, "stand-in");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "git"), gitStandIn, { mode: 0o755 });
+  return { ...gitEnv, ...vars, PATH: bin + delimiter + gitEnv.PATH, STAND_IN_GIT: Bun.which("git")! };
 }
 
 // The --watch test at the end is the slow one; everything else is independent
@@ -257,6 +288,303 @@ describe.concurrent("bun test --changed", () => {
     // a.test.ts (helper.ts changed between HEAD~1 and HEAD) and the
     // brand-new untracked file should both run.
     expect(ranFiles(stderr, [...names, "new.test.ts"])).toEqual(["a.test.ts", "new.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  const passingTest = (name: string, dependency?: string) =>
+    `import { test, expect } from "bun:test";\n` +
+    (dependency ? `import { value } from ${JSON.stringify(dependency)};\n` : `const value = 1;\n`) +
+    `test(${JSON.stringify(name)}, () => expect(value).toBe(1));\n`;
+
+  const monorepo = {
+    "package.json": JSON.stringify({ name: "root", private: true }),
+    "packages/a/package.json": JSON.stringify({ name: "a", type: "module" }),
+    "packages/a/a.test.ts": passingTest("a", "../b/value"),
+    "packages/a/local.ts": `export const value = 1;\n`,
+    "packages/a/local.test.ts": passingTest("local", "./local"),
+    "packages/a/plain.test.ts": passingTest("plain"),
+    "packages/b/package.json": JSON.stringify({ name: "b", type: "module" }),
+    "packages/b/value.js": `export const value = 1;\n`,
+  };
+  const monorepoTests = ["a.test.ts", "fresh.test.ts", "local.test.ts", "plain.test.ts"];
+
+  // `git ls-files` lists only what is below its cwd unless a pathspec names
+  // more. The pathspec keeps its meaning under the pathspec variables that a
+  // git hook or a wrapper can export.
+  test.each([
+    { flag: "--changed", ran: ["a.test.ts"] },
+    { flag: "--changed=HEAD", ran: ["a.test.ts"] },
+    { flag: "--changed", fromRoot: true, ran: ["a.test.ts"] },
+    { flag: "--changed", args: ["./", "../b"], ran: ["a.test.ts", "fresh.test.ts"] },
+    { flag: "--changed=HEAD", args: ["./", "../b"], ran: ["a.test.ts", "fresh.test.ts"] },
+    { flag: "--changed", env: { GIT_GLOB_PATHSPECS: "1" }, ran: ["a.test.ts"] },
+    { flag: "--changed", env: { GIT_LITERAL_PATHSPECS: "1" }, ran: ["a.test.ts"] },
+  ])("untracked file outside the cwd is a changed file: %j", async ({ flag, fromRoot, args = [], env, ran }) => {
+    using dir = tempDir("test-changed-untracked-outside-cwd", monorepo);
+    initRepo(String(dir));
+    // A new file that `../b/value` now resolves to in place of value.js, and a new test.
+    writeFileSync(join(String(dir), "packages", "b", "value.ts"), `export const value = 1;\n`);
+    writeFileSync(join(String(dir), "packages", "b", "fresh.test.ts"), passingTest("fresh"));
+
+    const { stderr, exitCode } = fromRoot
+      ? await runTestChanged(String(dir), ["--cwd", join("packages", "a")], flag)
+      : await runTestChanged(join(String(dir), "packages", "a"), args, flag, { ...gitEnv, ...env });
+    expect(ranFiles(stderr, monorepoTests)).toEqual(ran);
+    expect(exitCode).toBe(0);
+  });
+
+  // The other side of the wider list: an untracked file that no test here
+  // imports counts as a change, and a file that .gitignore names does not.
+  test.each(["--changed", "--changed=HEAD"])("%s counts an untracked file that no test imports", async flag => {
+    using dir = tempDir("test-changed-untracked-unrelated", {
+      ...monorepo,
+      "packages/b/.gitignore": "generated.ts\n",
+      "packages/a/generated.test.ts": passingTest("generated", "../b/generated"),
+    });
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), "packages", "b", "generated.ts"), `export const value = 1;\n`);
+    writeFileSync(join(String(dir), "packages", "b", "notes.txt"), "notes\n");
+
+    const { stderr, exitCode } = await runTestChanged(join(String(dir), "packages", "a"), [], flag);
+    expect(stderr).toContain("--changed: 1 changed file, but no test files are affected\n");
+    expect(ranFiles(stderr, [...monorepoTests, "generated.test.ts"])).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  // With `diff.relative` set, `git diff` lists only the files below the cwd, by
+  // names relative to the cwd.
+  test.each(["--changed", "--changed=HEAD"])("diff.relative does not change what %s lists", async flag => {
+    using dir = tempDir("test-changed-diff-relative", monorepo);
+    initRepo(String(dir));
+    git(String(dir), "config", "diff.relative", "true");
+    appendFileSync(join(String(dir), "packages", "b", "value.js"), "// touched\n");
+    appendFileSync(join(String(dir), "packages", "a", "local.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(join(String(dir), "packages", "a"), [], flag);
+    expect(ranFiles(stderr, monorepoTests)).toEqual(["a.test.ts", "local.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // With rename detection `git diff` lists a rename by its new name only. Here
+  // the old name is still on disk: the file is taken out of the index and a
+  // copy is added under a new name.
+  test.each(["--changed", "--changed=HEAD"])(
+    "%s lists a file that is untracked and copied to a new name",
+    async flag => {
+      using dir = tempDir("test-changed-untrack-and-copy", {
+        "package.json": JSON.stringify({ name: "untrack-and-copy", type: "module" }),
+        "config.ts": `export const host = "localhost";\nexport const port = 8080;\nexport const value = 1;\n`,
+        "config.test.ts": passingTest("config", "./config.ts"),
+        "plain.test.ts": passingTest("plain"),
+      });
+      initRepo(String(dir));
+      git(String(dir), "rm", "-q", "--cached", "config.ts");
+      writeFileSync(join(String(dir), ".gitignore"), "config.ts\n");
+      copyFileSync(join(String(dir), "config.ts"), join(String(dir), "config.example.ts"));
+      git(String(dir), "add", ".gitignore", "config.example.ts");
+      appendFileSync(join(String(dir), "config.ts"), "// a local edit\n");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir), [], flag);
+      expect(ranFiles(stderr, ["config.test.ts", "plain.test.ts"])).toEqual(["config.test.ts"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Git prints a name in C quotes when it holds a quote, a control character
+  // or a byte above 0x7f, unless it is asked for NUL-terminated names. A reader
+  // that splits on line breaks and trims blanks loses the other names. Windows
+  // cannot hold a quote, a tab or a line break in a file name. The accented
+  // name is precomposed, so that row is about the quotes and not about the
+  // form that macOS stores.
+  const oddNames = [
+    " dep.ts",
+    "d\u00e9p-\u65e5\u672c.ts",
+    ...(isWindows ? [] : ['de"p.ts', "de\tp.ts", "de\np.ts", "de\rp.ts"]),
+  ];
+  test.each(oddNames)("change to a dependency named %j selects the importing test", async name => {
+    using dir = tempDir("test-changed-odd-name", {
+      "package.json": JSON.stringify({ name: "odd-name", type: "module" }),
+      [name]: `export const value = 1;\n`,
+      "odd.test.ts": passingTest("odd", "./" + name),
+      "plain.test.ts": passingTest("plain"),
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), name), "// touched\n");
+
+    for (const flag of ["--changed", "--changed=HEAD"]) {
+      const { stderr, exitCode } = await runTestChanged(String(dir), [], flag);
+      expect(ranFiles(stderr, ["odd.test.ts", "plain.test.ts"])).toEqual(["odd.test.ts"]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // Windows removes a trailing blank from a name and cannot hold a line break in one.
+  test.skipIf(isWindows).each(["repo ", "repo\n"])("works in a repository directory named %j", async repo => {
+    using dir = tempDir("test-changed-odd-root", {
+      [repo + "/package.json"]: JSON.stringify({ name: "odd-root", type: "module" }),
+      [repo + "/dep.ts"]: `export const value = 1;\n`,
+      [repo + "/dep.test.ts"]: passingTest("dep", "./dep"),
+      [repo + "/plain.test.ts"]: passingTest("plain"),
+    });
+    const root = join(String(dir), repo);
+    initRepo(root);
+    appendFileSync(join(root, "dep.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(root);
+    expect(ranFiles(stderr, ["dep.test.ts", "plain.test.ts"])).toEqual(["dep.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Git then prints the work tree where it prints `../` segments otherwise, and
+  // it runs each command at the root of the work tree. The work tree has a line
+  // break in its name where the system can hold one.
+  test.each(["--changed", "--changed=HEAD"])("cwd outside the work tree (GIT_WORK_TREE): %s", async flag => {
+    const repo = isWindows ? "repo" : "re\npo";
+    using dir = tempDir("test-changed-work-tree", {
+      [repo + "/package.json"]: JSON.stringify({ name: "work-tree", type: "module" }),
+      [repo + "/ dep.ts"]: `export const value = 1;\n`,
+      "tests/package.json": JSON.stringify({ name: "tests", type: "module" }),
+      "tests/edited.test.ts": passingTest("edited", `../${repo}/ dep.ts`),
+      "tests/added.test.ts": passingTest("added", `../${repo}/new.ts`),
+      "tests/plain.test.ts": passingTest("plain"),
+    });
+    const root = join(String(dir), repo);
+    initRepo(root);
+    appendFileSync(join(root, " dep.ts"), "// touched\n");
+    writeFileSync(join(root, "new.ts"), `export const value = 1;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(join(String(dir), "tests"), [], flag, {
+      ...gitEnv,
+      GIT_DIR: join(root, ".git"),
+      GIT_WORK_TREE: root,
+    });
+    expect(ranFiles(stderr, ["added.test.ts", "edited.test.ts", "plain.test.ts"])).toEqual([
+      "added.test.ts",
+      "edited.test.ts",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Without a commit `git diff HEAD` fails, and the list comes from `git diff`,
+  // `git diff --cached` and `git ls-files`. The leading blank shows that each
+  // of the three is read as git wrote it.
+  test("repository with no commits lists staged, unstaged and untracked files", async () => {
+    const names = [" fresh.test.ts", " intent.test.ts", " staged.test.ts", "ignored.test.ts"];
+    using dir = tempDir("test-changed-no-commits", {
+      "package.json": JSON.stringify({ name: "no-commits", type: "module" }),
+      ".gitignore": "ignored.test.ts\n",
+      ...Object.fromEntries(names.map(name => [name, passingTest(name)])),
+    });
+    git(String(dir), "init", "-q");
+    git(String(dir), "add", "--", "package.json", ".gitignore", " staged.test.ts");
+    git(String(dir), "add", "--intent-to-add", "--", " intent.test.ts");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual([" fresh.test.ts", " intent.test.ts", " staged.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("git failure is an error, not an empty list of changes", async () => {
+    using dir = tempDir("test-changed-git-fails", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "c.test.ts"), "// touched\n");
+    // Every `git diff` and `git ls-files` fails on an index that is cut short.
+    truncateSync(join(String(dir), ".git", "index"), 20);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain("error: --changed: fatal:");
+    expect(ranFiles(stderr, names)).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  // A damaged index fails every listing at once. The stand-in fails one command
+  // alone. It fails each `git diff`, because a bare --changed reads a failure
+  // of `git diff HEAD` alone as a repository with no commits.
+  test.skipIf(isWindows).each([
+    { flag: "--changed", fails: "diff" },
+    { flag: "--changed", fails: "ls-files" },
+    { flag: "--changed=HEAD", fails: "ls-files" },
+  ])("failing git listing is an error, not an empty list: %j", async ({ flag, fails }) => {
+    using dir = tempDir("test-changed-listing-fails", fixture);
+    initRepo(String(dir));
+    // One change for `git diff` to list and one for `git ls-files`.
+    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
+    writeFileSync(join(String(dir), "new.test.ts"), passingTest("new"));
+
+    const env = standInEnv(String(dir), { STAND_IN_FAILS: fails });
+    const { stderr, exitCode } = await runTestChanged(String(dir), [], flag, env);
+    expect(stderr).toContain(`error: --changed: fatal: the stand-in for git does not run ${fails}\n`);
+    expect(ranFiles(stderr, [...names, "new.test.ts"])).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Git prints one `../` for each directory between the cwd and the root. An
+  // answer that no path buffer holds must not be joined to the cwd.
+  test.skipIf(isWindows)("root that does not fit a path buffer is an error", async () => {
+    using dir = tempDir("test-changed-long-root", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "c.test.ts"), "// touched\n");
+
+    const env = standInEnv(String(dir), {
+      STAND_IN_ANSWERS: "rev-parse",
+      STAND_IN_ANSWER: "../" + Buffer.alloc(MAX_PATH_BYTES, "d/").toString(),
+    });
+    const { stderr, exitCode } = await runTestChanged(String(dir), [], "--changed", env);
+    expect(stderr).toContain("error: --changed: `git rev-parse --show-cdup` printed a path that is too long\n");
+    expect(ranFiles(stderr, names)).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Git can list a path that is longer than any path the system opens: here a
+  // file that is only in a commit. Windows path buffers hold any name git lists.
+  test.skipIf(isWindows)("listed path that is too long to open is not a changed file", async () => {
+    using dir = tempDir("test-changed-long-path", fixture);
+    initRepo(String(dir));
+    // The name alone is below the limit, so git lists it. Joined to the root it is above.
+    const length = MAX_PATH_BYTES - 12;
+    const directories = Math.floor(length / 101);
+    const name =
+      Array.from({ length: directories }, () => Buffer.alloc(100, "d").toString() + "/").join("") +
+      Buffer.alloc(length - directories * 101, "f").toString();
+    const blob = git(String(dir), "hash-object", "-w", "README.md").trim();
+    git(String(dir), "update-index", "--add", "--cacheinfo", `100644,${blob},${name}`);
+    git(String(dir), "commit", "-q", "-m", "long");
+    expect(git(String(dir), "diff", "--name-only", "HEAD", "--")).toBe(name + "\n");
+    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(["b.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A `--changed --watch` restart reads the paths that the watcher saw change
+  // from a list, and does not ask git. Here there is no repository and no git,
+  // so a run that asks git fails. A path can hold a line break.
+  test.skipIf(isWindows).each([
+    { paths: ["de\np.ts", "dep-b.ts"], ran: ["wa.test.ts", "wb.test.ts"] },
+    { paths: ["dep-b.ts", "de\np.ts"], ran: ["wa.test.ts", "wb.test.ts"] },
+    { paths: ["dep-b.ts", "deleted.ts", "de\np.ts"], ran: ["wa.test.ts", "wb.test.ts"] },
+  ])("restart list %j selects the tests that import its paths", async ({ paths, ran }) => {
+    using dir = tempDir("test-changed-restart-list", {
+      "package.json": JSON.stringify({ name: "restart-list", type: "module" }),
+      "de\np.ts": `export const value = 1;\n`,
+      "dep-b.ts": `export const value = 1;\n`,
+      "dep-c.ts": `export const value = 1;\n`,
+      "wa.test.ts": passingTest("wa", "./de\np.ts"),
+      "wb.test.ts": passingTest("wb", "./dep-b"),
+      "wc.test.ts": passingTest("wc", "./dep-c"),
+      "no-git/.keep": "",
+    });
+    const list = join(String(dir), "restart-list");
+    writeFileSync(list, paths.map(path => join(String(dir), path) + "\0").join(""));
+
+    const { stderr, exitCode } = await runTestChanged(String(dir), [], "--changed", {
+      ...bunEnv,
+      PATH: join(String(dir), "no-git"),
+      BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE: list,
+    });
+    expect(ranFiles(stderr, ["wa.test.ts", "wb.test.ts", "wc.test.ts"])).toEqual(ran);
+    expect(existsSync(list)).toBe(false);
     expect(exitCode).toBe(0);
   });
 
@@ -530,6 +858,61 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill();
     reader.releaseLock();
   }, 60_000);
+
+  // The watcher hands the restarted process the paths it saw change. A path
+  // can hold a line break.
+  test("editing a dirty file with a line break in its name reruns only its test", async () => {
+    using dir = tempDir("test-changed-watch-line-break", {
+      "package.json": JSON.stringify({ name: "watch", type: "module" }),
+      "de\np.ts": `export const A = 1;\n`,
+      "dep-b.ts": `export const B = 2;\n`,
+      "wa.test.ts": `import { test, expect } from "bun:test";\nimport { A } from "./de\\np.ts";\ntest("wa", () => expect(A).toBe(1));\n`,
+      "wb.test.ts": `import { test, expect } from "bun:test";\nimport { B } from "./dep-b";\ntest("wb", () => expect(B).toBe(2));\n`,
+    });
+    initRepo(String(dir));
+    // Both dependencies are dirty, so a restart that asks git reruns both tests.
+    appendFileSync(join(String(dir), "de\np.ts"), "// dirty\n");
+    appendFileSync(join(String(dir), "dep-b.ts"), "// dirty\n");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let seen = 0;
+
+    /** The output of the next run, up to its summary line. */
+    async function nextRun(): Promise<string> {
+      const summary = /Ran \d+ tests? across \d+ files?\./g;
+      while (true) {
+        summary.lastIndex = seen;
+        if (summary.test(buf)) {
+          const run = buf.slice(seen, summary.lastIndex);
+          seen = summary.lastIndex;
+          return run;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before the next run ended\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    // Initial run: git lists both dependencies.
+    expect(ranFiles(await nextRun(), ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts", "wb.test.ts"]);
+
+    appendFileSync(join(String(dir), "de\np.ts"), "// touched again\n");
+    expect(ranFiles(await nextRun(), ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
+
+    proc.kill();
+    reader.releaseLock();
+  });
 
   test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {
     using dir = tempDir("test-changed-watch-trigger-name", {

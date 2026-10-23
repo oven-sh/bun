@@ -1874,7 +1874,7 @@ pub(crate) mod __gated_printer {
                 v.left_flags.insert(ExprFlag::ExprResultIsUnused);
             }
 
-            if e.op == Op::Code::BinAssign {
+            if self.code_coverage() && e.op == Op::Code::BinAssign {
                 v.left_flags.insert(ExprFlag::IsAssignTarget);
             }
 

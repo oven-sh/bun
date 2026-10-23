@@ -897,7 +897,7 @@ If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` fil
 
 ### Embed directories
 
-Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
+Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable. Bun mounts each asset under its basename, next to the entry point: `--asset ./build/client` lands at `path.join(import.meta.dir, "client")`, and `--asset ./config/app.json` at `path.join(import.meta.dir, "app.json")`. The leading directories of the path you pass are dropped, and a directory keeps its internal tree. The embedded files are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
 
 <Tabs>
   <Tab title="CLI">
@@ -931,7 +931,7 @@ for (const entry of fs.readdirSync(publicDir, { withFileTypes: true })) {
 const html = await Bun.file(path.join(publicDir, "index.html")).text();
 ```
 
-Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
+Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Two assets with the same basename are merged into one directory (`--asset a/b --asset x/b` both land under `b/`). Two files that resolve to the same embedded path are an error. Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
 You can also embed individual files via the `with { type: "file" }` import attribute or, for files that use the `file` loader (images, fonts, and so on) as well as `.wasm` and `.node` files, by adding them as extra entry points. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
 

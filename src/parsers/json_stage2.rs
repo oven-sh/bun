@@ -196,7 +196,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let _ = self.add_range_error(r, format_args!("Unexpected end of file"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
-            let _ = self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));
+            let raw = bun_core::fmt::escape_control_chars(raw);
+            let _ = self.add_range_error(r, format_args!("Unexpected {raw}"));
         }
         crate::Error::ParserError
     }
@@ -209,10 +210,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let _ = self.add_range_error(r, format_args!("Expected {what} but found end of file"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
-            let _ = self.add_range_error(
-                r,
-                format_args!("Expected {what} but found \"{}\"", bstr::BStr::new(raw)),
-            );
+            let raw = bun_core::fmt::escape_control_chars(raw);
+            let _ = self.add_range_error(r, format_args!("Expected {what} but found \"{raw}\""));
         }
     }
 
@@ -882,7 +881,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             key_range,
             format_args!(
                 "Duplicate key \"{}\" in object literal",
-                bstr::BStr::new(key_text)
+                bun_core::fmt::escape_control_chars(key_text)
             ),
         );
     }
@@ -1067,11 +1066,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     ) -> PResult<(f64, usize)> {
         let n = t.len();
         let mut i = prefix_len;
-        let mut value: f64 = 0.0;
+        let mut integer = bun_core::fmt::RadixInteger::default();
         let mut is_first = true;
         let mut is_invalid_legacy_octal = false;
         let mut last_underscore_end: usize = usize::MAX;
-        let base = radix as f64;
+        let bits_per_digit = radix.trailing_zeros();
         while i < n {
             let c = t[i];
             let digit: u32 = match c {
@@ -1115,7 +1114,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 }
                 _ => break,
             };
-            value = value * base + digit as f64;
+            integer.push_digit(bits_per_digit, digit);
             i += 1;
             is_first = false;
         }
@@ -1125,6 +1124,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
             return Err(self.syntax_err_at(pos));
         }
+        let mut value = integer.to_f64();
         if is_invalid_legacy_octal {
             let text = &t[..i];
             let s = core::str::from_utf8(text).expect("ascii");

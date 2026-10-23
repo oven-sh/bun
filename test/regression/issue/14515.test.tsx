@@ -1,5 +1,8 @@
 import { test } from "bun:test";
 
+declare const $on: any;
+type InlineInputAttrs = any;
+
 export function Input(a: InlineInputAttrs, ch: DocumentFragment) {
   const o_model = a.model;
   const nullable = (a.type || "").indexOf("null") > -1;

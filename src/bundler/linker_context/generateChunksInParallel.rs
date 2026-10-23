@@ -31,8 +31,7 @@ use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 
-/// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 // `Chunk.final_rel_path` is an owned `Box<[u8]>`; assignments
 // below move the boxed buffer directly — no lifetime promotion needed.
@@ -302,7 +301,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // deeply nested AST) must fail the build instead of joining the chunk
         // as silently truncated output. Dev server excluded: its callers turn
         // any `Err` here into an OOM panic (see `finish_from_bake_dev_server`),
-        // so unprintable parts keep the old dropped-code behavior there.
+        // so its `finalize_bundle` records each failed part as a per-file failure.
         if !IS_DEV_SERVER {
             let mut had_print_error = false;
             // Without code splitting a failing file is printed once per chunk
@@ -399,6 +398,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             sources: Vec<bun_ptr::BackRef<Chunk>>,
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
+        let mut has_unusable_output_path = false;
+        // Without an output directory the paths are only returned, so they can have any length.
+        let opens_output_paths =
+            !c.resolver().opts.output_dir.is_empty() || c.options.compile_mode.is_executable();
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk.
@@ -424,6 +427,19 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // which importers of the chunk would copy verbatim.
             while let Some(i) = strings::index_of(&rel_path, b"/./") {
                 rel_path.drain(i..i + 2);
+            }
+
+            let input: &[u8] = c.parse_graph().input_files.items_source()
+                [chunk.entry_point.source_index() as usize]
+                .path
+                .pretty;
+            if opens_output_paths
+                && !chunk
+                    .template
+                    .check_output_path(c.log_disjoint(), input, &rel_path)
+            {
+                has_unusable_output_path = true;
+                continue;
             }
 
             let claimed = path_names_map.get_or_put(&rel_path)?;
@@ -525,6 +541,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             return Err(crate::Error::DuplicateOutputPath);
         }
+
+        if has_unusable_output_path {
+            return Err(crate::Error::BuildFailed);
+        }
     }
 
     // After final_rel_path is computed for all chunks, fix up module_info
@@ -576,6 +596,20 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 resolved.extend_from_slice(normalizer[0]);
                 resolved.extend_from_slice(normalizer[1]);
                 let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result
+            }
+        }
+
+        // The printer's module info only covers the code it printed, but every chunk also
+        // includes `--banner` and `--footer`.
+        let raw_text = c.options.raw_text_module_syntax();
+        if raw_text.import_meta || raw_text.top_level_await {
+            for chunk in chunks.iter_mut() {
+                if let crate::chunk::Content::Javascript(js) = &mut chunk.content
+                    && let Some(mi) = js.module_info.as_mut()
+                {
+                    mi.flags.contains_import_meta |= raw_text.import_meta;
+                    mi.flags.has_tla |= raw_text.top_level_await;
+                }
             }
         }
 
@@ -706,6 +740,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
+        stack: Vec::new(),
     };
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
@@ -773,7 +808,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // so the sourceMappingURL resolves relative to the HTML
                         // file rather than a JS file next to the .map. Point at
                         // the .map path relative to the HTML chunk's directory.
-                        let mut relative_platform_buf = path::path_buffer_pool::get();
                         let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
@@ -801,13 +835,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 if html_dir.is_empty() {
                                     &source_map_final_rel_path
                                 } else {
-                                    path::resolve_path::relative_platform_buf::<
+                                    path::resolve_path::relative_platform::<
                                         path::platform::Posix,
                                         false,
                                     >(
-                                        &mut relative_platform_buf[..],
-                                        html_dir,
-                                        &source_map_final_rel_path,
+                                        html_dir, &source_map_final_rel_path
                                     )
                                 },
                             )
@@ -1093,7 +1125,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
                     if c.chunk_gets_bytecode(chunk) {
-                        let mut fdpath = bun_paths::path_buffer_pool::get();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
@@ -1136,6 +1167,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             if bytecode_order.is_some() {
                                 linked_bytecode_url = Some(source_provider_url.clone());
                             }
+                            // Executables embed the raw payload (aligned by the module graph).
+                            let bytecode = if c.options.compile_mode.is_executable() {
+                                bytecode
+                            } else {
+                                crate::bytecode_sidecar::frame(bytecode)
+                            };
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
                                 "Bytecode cache generated {}: {}",
@@ -1147,11 +1184,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     }
                                 )
                             );
-                            fdpath[..chunk.final_rel_path.len()]
-                                .copy_from_slice(&chunk.final_rel_path);
-                            fdpath[chunk.final_rel_path.len()..][..BYTECODE_EXTENSION.len()]
-                                .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
-
                             let mut input_path_buf: Vec<u8> = Vec::new();
                             input_path_buf.extend_from_slice(&chunk.final_rel_path);
                             input_path_buf.extend_from_slice(BYTECODE_EXTENSION.as_bytes());
@@ -1312,10 +1344,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         crate::chunk::Content::Html => Box::default(),
                     },
                     bake_extra: 'brk: {
-                        if c.framework.is_none() || IS_DEV_SERVER {
+                        let Some(framework) = c.framework else {
                             break 'brk BakeExtra::default();
-                        }
-                        if !c.framework.unwrap().is_built_in_react {
+                        };
+                        if IS_DEV_SERVER {
                             break 'brk BakeExtra::default();
                         }
 
@@ -1328,12 +1360,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {
-                            extra.route = if static_route_visitor
-                                .has_transitive_use_client(chunk.entry_point.source_index())
+                            // Without server components there are no "use client"
+                            // boundaries, so the visitor would report every route as static.
+                            extra.route = if framework.server_components.is_some()
+                                && !static_route_visitor
+                                    .has_transitive_use_client(chunk.entry_point.source_index())
                             {
-                                BakeRouteKind::Route
-                            } else {
                                 BakeRouteKind::FullyStaticRoute
+                            } else {
+                                BakeRouteKind::Route
                             };
                         }
 
@@ -1708,14 +1743,21 @@ struct LinkedBytecode {
     names_out: Option<(&'static [u8], Vec<u8>)>,
 }
 
-/// The builtins section of the executable being built: the target's, or this one's.
+/// Returns the builtins section of the executable being built: `target_section`, or this bun's
+/// if `None`. Returns `None` if this bun can't compile that section's modules.
 fn builtins_of(target_section: Option<&[u8]>) -> Option<bun_exe_format::builtins::Builtins<'_>> {
-    let section = target_section.unwrap_or_else(|| crate::bundle_v2::dispatch::host_builtins());
-    match bun_exe_format::builtins::Builtins::parse(section) {
+    use bun_exe_format::builtins::Builtins;
+    let builtins = Builtins::parse(crate::bundle_v2::dispatch::host_builtins()).and_then(|host| {
+        match target_section {
+            Some(section) => Builtins::parse(section)?.require_same_engine(&host),
+            None => Ok(host),
+        }
+    });
+    match builtins {
         Ok(builtins) => Some(builtins),
         Err(e) => {
             debug!(
-                "Internal module bytecode: builtins section unreadable ({})",
+                "Internal module bytecode: builtins section unusable ({})",
                 <&'static str>::from(&e)
             );
             None

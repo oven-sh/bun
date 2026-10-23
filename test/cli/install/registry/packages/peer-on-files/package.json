@@ -1,0 +1,27 @@
+{
+  "_id": "peer-on-files",
+  "name": "peer-on-files",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "peer-on-files",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "files": "*"
+      },
+      "peerDependenciesMeta": {
+        "files": {
+          "optional": true
+        }
+      },
+      "_id": "peer-on-files@1.0.0",
+      "dist": {
+        "integrity": "sha512-hzameqZFR3zTGv4G767dFQyyq7nfOp6BegLlAdadjl0APSDLELkgjWnG+KFApM4H0qPdymVCekdPESCB9fusjg==",
+        "shasum": "a95df32378fdf3bcd591969a2427b1cfca78a0d9",
+        "tarball": "http://localhost:4873/peer-on-files/-/peer-on-files-1.0.0.tgz"
+      }
+    }
+  }
+}

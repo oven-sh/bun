@@ -104,7 +104,7 @@ struct OptionToken<'a> {
     negative: bool,
 
     /// The full raw arg string (e.g. "--arg=1").
-    /// If the value existed as-is in the input "args" list, it is stored as so, otherwise is null
+    /// The element only for a lone option. A raw name that is cut out needs the classified string: a second conversion can differ.
     raw: ValueRef<'a>,
 }
 
@@ -633,7 +633,7 @@ fn tokenize_args(
                                 None => &short_option,
                             }),
                             parse_type: OptionParseType::LoneShortOption,
-                            raw: arg_ref,
+                            raw: ValueRef::Bunstr(&arg),
                             option_idx,
                             negative: false,
                         }))?;
@@ -657,7 +657,7 @@ fn tokenize_args(
                                 None => &short_option,
                             }),
                             parse_type: OptionParseType::ShortOptionAndValue,
-                            raw: arg_ref,
+                            raw: ValueRef::Bunstr(&arg),
                             option_idx,
                             negative: false,
                         }))?;
@@ -741,7 +741,7 @@ fn tokenize_args(
                     inline_value: true,
                     name: ValueRef::Bunstr(&long_option),
                     parse_type: OptionParseType::LongOptionAndValue,
-                    raw: arg_ref,
+                    raw: ValueRef::Bunstr(&arg),
                     option_idx: find_option_by_long_name(&long_option, options),
                     optgroup_idx: None,
                     negative: false,

@@ -772,10 +772,6 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC::CustomGetterSetter *arg
 
 #ifdef __cplusplus
 
-BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
-BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
-
-
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
 

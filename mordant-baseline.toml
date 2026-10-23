@@ -204,7 +204,6 @@
 "generic_body_not_generic:src/runtime/webcore/ReadableStream.rs" = 2
 "generic_body_not_generic:src/runtime/webcore/TextDecoder.rs" = 1
 "parallel_bools:src/runtime/shell/IOWriter.rs" = 1
-"reimplemented_helper:src/runtime/hw_exports.rs" = 1
 "safe_fn_returns_shared_mut:src/runtime/api/JSBundler.rs" = 2
 "safe_fn_returns_shared_mut:src/runtime/cli/mod.rs" = 1
 "safe_fn_returns_shared_mut:src/runtime/cli/pack_command.rs" = 1

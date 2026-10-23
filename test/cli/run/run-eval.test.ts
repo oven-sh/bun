@@ -203,6 +203,123 @@ describe("--print for cjs/esm", () => {
   });
 });
 
+// `--print` reads the result once the event loop is done. A promise that is
+// settled by then prints its value. One that is still pending prints as
+// `Promise { <pending> }`: nothing more runs for it, neither unref'd work nor
+// anything after an unhandled error. Either way the process leaves through the
+// regular exit path ('exit' listeners, exit code).
+//
+// A script whose timer must not run blocks in Bun.sleepSync after it arms the
+// timer, so the timer is overdue by the time the loop is done.
+describe.concurrent("--print of a promise once the event loop is done", () => {
+  const exitListener = `process.on("exit", () => console.log("exit listener ran"));`;
+
+  async function print(script: string, { flags = [], stdin }: { flags?: string[]; stdin?: string } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "--print", script],
+      env: bunEnv,
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["a shell command", "Bun.$`echo hi`.text()", "hi\n\n"],
+    ["a ref'd timer", `new Promise(resolve => setTimeout(resolve, 1, "later"))`, "later\n"],
+  ])("settled by %s: prints the value, then runs 'exit' listeners", async (_, script, printed) => {
+    const { stdout, stderr, exitCode } = await print(`${exitListener} ${script}`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${printed}exit listener ran\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows the `.then()` of a stdin read has not run when the loop ends:
+  // https://github.com/oven-sh/bun/issues/41850
+  test.failingIf(isWindows)("settled by a stdin read: prints the value, then runs 'exit' listeners", async () => {
+    const { stdout, stderr, exitCode } = await print(`${exitListener} Bun.stdin.text().then(text => text.trim())`, {
+      stdin: "from stdin\n",
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from stdin\nexit listener ran\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["resolve", "reject"])(
+    "only an unref'd timer is left: the %s() timer does not run, exits 0 after 'exit' listeners",
+    async settle => {
+      const { stdout, stderr, exitCode } = await print(
+        `${exitListener}
+         new Promise((resolve, reject) => {
+           setTimeout(() => { console.log("timer ran"); ${settle}("late"); }, 1).unref();
+           Bun.sleepSync(10);
+         })`,
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Promise { <pending> }\nexit listener ran\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each(["resolve", "reject"])(
+    "unhandled rejection stopped the loop: the %s() timer does not run, exits 1 after 'exit' listeners",
+    async settle => {
+      const { stdout, stderr, exitCode } = await print(
+        `${exitListener}
+         Promise.reject(new Error("early rejection"));
+         new Promise((resolve, reject) => {
+           setTimeout(() => { console.log("timer ran"); ${settle}("late"); }, 1);
+           Bun.sleepSync(10);
+         })`,
+      );
+      expect(stderr).toContain("early rejection");
+      expect(stdout).toBe("Promise { <pending> }\nexit listener ran\n");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // The error is reported before the entry is evaluated, so the loop never
+  // runs a turn.
+  test.each([
+    ["uncaught exception", `queueMicrotask(() => { throw new Error("boom"); });`],
+    ["unhandled rejection", `Promise.reject(new Error("boom"));`],
+  ])("%s in a --preload stopped the loop: the timer does not run, exits 1 after 'exit' listeners", async (_, fail) => {
+    using dir = tempDir("print-pending-after-preload-error", { "preload.mjs": `${exitListener}\n${fail}\n` });
+    const { stdout, stderr, exitCode } = await print(
+      `const result = Bun.sleep(1).then(() => 5); Bun.sleepSync(10); result`,
+      { flags: ["--preload", join(String(dir), "preload.mjs")] },
+    );
+    expect(stderr).toContain("error: boom");
+    expect(stdout).toBe("Promise { <pending> }\nexit listener ran\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("uncaught exception from a timer stopped the loop: the timer it armed does not run, 'exit' listeners see code 1", async () => {
+    const { stdout, stderr, exitCode } = await print(
+      `process.on("exit", code => console.log("exit listener ran with", code));
+       new Promise(resolve => {
+         setTimeout(() => {
+           setTimeout(() => resolve("settled late"), 1);
+           Bun.sleepSync(10);
+           throw new Error("thrown in timer");
+         }, 1);
+       })`,
+    );
+    expect(stderr).toContain("thrown in timer");
+    expect(stdout).toBe("Promise { <pending> }\nexit listener ran with 1\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("never settles: prints the promise and exits normally", async () => {
+    const { stdout, stderr, exitCode } = await print(`${exitListener} new Promise(() => {})`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("Promise { <pending> }\nexit listener ran\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');

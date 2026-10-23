@@ -959,6 +959,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         // still matches an Error. When the types differ, every arm returns before it
         // recurses, so dispatching on the expected type never swaps the received/expected
         // order of a nested comparison.
+        // An expected function of any kind (a native constructor, a mock, a callable Proxy)
+        // matches only itself, and sameValue above has already accepted that.
+        if (c2->isCallable()) return false;
         std::optional<bool> isSpecialEqual = c1->type() == c2->type()
             ? specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, gcBuffer, stack, scope, c1, c2)
             : specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial>(globalObject, gcBuffer, stack, scope, c2, c1);
@@ -1484,6 +1487,18 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity, isPartial> : nullptr,
 };
 
+static bool urlSearchParamsEntriesFoundIn(WebCore::URLSearchParams& params, const WebCore::URLSearchParams& other)
+{
+    auto iter = params.createIterator();
+    while (const auto& maybePair = iter.next()) {
+        const auto& maybeValue = other.get(maybePair->key);
+        if (!maybeValue || maybeValue != maybePair->value) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in
 // `specialObjectsDequal` below stay specialised per mode.
@@ -1929,19 +1944,18 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
                 if (urlSearchParams1 && urlSearchParams2) {
                     auto& wrapped1 = urlSearchParams1->wrapped();
-                    const auto& wrapped2 = urlSearchParams2->wrapped();
+                    auto& wrapped2 = urlSearchParams2->wrapped();
                     if (wrapped1.size() != wrapped2.size()) {
                         return false;
                     }
 
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (!maybeValue || maybeValue != value) {
-                            return false;
-                        }
+                    if (!urlSearchParamsEntriesFoundIn(wrapped1, wrapped2)) {
+                        return false;
+                    }
+                    // The other modes call this arm a second time with the sides swapped. Subset
+                    // matching calls it once, and `a=1&a=1` must not match `a=1&b=1`.
+                    if (mode.isPartial && !urlSearchParamsEntriesFoundIn(wrapped2, wrapped1)) {
+                        return false;
                     }
 
                     goto compareAsNormalValue;

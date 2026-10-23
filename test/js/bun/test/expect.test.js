@@ -3841,6 +3841,20 @@ describe("expect()", () => {
       expect({ f: {} }).not.toMatchObject({ f: fn });
     });
 
+    test("an expected native constructor, mock function or callable Proxy matches only itself", () => {
+      const mockFn = jest.fn();
+      expect({ f: mockFn }).toMatchObject({ f: mockFn });
+      expect({ f: mockFn }).toMatchObject({ f: expect.any(Function) });
+      expect({ f: jest.fn() }).not.toMatchObject({ f: jest.fn() });
+      expect({ f: Map }).toMatchObject({ f: Map });
+      expect({ f: Map }).not.toMatchObject({ f: Set });
+      expect({ f: {} }).not.toMatchObject({ f: Set });
+      const proxy = new Proxy(() => 1, {});
+      expect({ f: proxy }).toMatchObject({ f: proxy });
+      expect({ f: new Proxy(() => 1, {}) }).not.toMatchObject({ f: new Proxy(() => 1, {}) });
+      expect({ f: Object.assign(() => 1, { x: 1 }) }).not.toMatchObject({ f: Object.assign(() => 1, { x: 1 }) });
+    });
+
     test("a plain expected object is matched against the properties of any received value", () => {
       expect({ d: new Date(5) }).toMatchObject({ d: {} });
       expect({ e: new Error("x") }).toMatchObject({ e: { message: "x" } });
@@ -3880,6 +3894,32 @@ describe("expect()", () => {
         expect({ t: Temporal.PlainDate.from("2024-01-01") }).toMatchObject({ t: Temporal.PlainDate.from("2024-01-01") });
         expect({ t: Temporal.PlainDate.from("2024-01-01") }).not.toMatchObject({ t: Temporal.PlainDate.from("2024-01-02") });
         expect({ t: {} }).not.toMatchObject({ t: Temporal.PlainDate.from("2024-01-01") });
+      });
+
+      test("an expected ArrayBuffer, typed array, URL, URLSearchParams or Headers is compared as a value", () => {
+        const bytes = (...b) => new Uint8Array(b).buffer;
+        expect({ b: bytes(1, 2) }).toMatchObject({ b: bytes(1, 2) });
+        expect({ b: bytes(1, 2) }).not.toMatchObject({ b: bytes(1, 3) });
+        expect({ b: bytes(1, 2) }).not.toMatchObject({ b: new ArrayBuffer(0) });
+        expect({ b: {} }).not.toMatchObject({ b: new ArrayBuffer(0) });
+        expect({ a: new Uint8Array([1, 2]) }).toMatchObject({ a: new Uint8Array([1, 2]) });
+        expect({ a: new Uint8Array([1, 2, 3]) }).not.toMatchObject({ a: new Uint8Array([1, 2]) });
+        expect({ a: [1, 2] }).not.toMatchObject({ a: new Uint8Array([1, 2]) });
+
+        expect({ u: new URL("https://example.com/a") }).toMatchObject({ u: new URL("https://example.com/a") });
+        expect({ u: new URL("https://example.com/a") }).not.toMatchObject({ u: new URL("https://example.com/b") });
+
+        expect({ p: new URLSearchParams("a=1&b=2") }).toMatchObject({ p: new URLSearchParams("a=1&b=2") });
+        expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("a=2") });
+        expect({ p: new URLSearchParams("a=1&b=2") }).not.toMatchObject({ p: new URLSearchParams("a=1") });
+        // the same size, and every entry of one side has its value on the other side
+        expect({ p: new URLSearchParams("a=1&a=1") }).not.toMatchObject({ p: new URLSearchParams("a=1&b=1") });
+        expect({ p: new URLSearchParams("a=1&b=1") }).not.toMatchObject({ p: new URLSearchParams("a=1&a=1") });
+
+        expect({ h: new Headers({ a: "1", b: "2" }) }).toMatchObject({ h: new Headers({ b: "2", a: "1" }) });
+        expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ a: "2" }) });
+        expect({ h: new Headers({ a: "1", b: "2" }) }).not.toMatchObject({ h: new Headers({ a: "1" }) });
+        expect({ h: new Headers() }).not.toMatchObject({ h: new Headers({ a: "1" }) });
       });
 
       test("Bun.deepMatch compares an expected Date, Error, Set, Map or function as a value", () => {

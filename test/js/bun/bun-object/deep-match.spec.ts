@@ -90,6 +90,11 @@ describe("Bun.deepMatch", () => {
     [{ e: new Error("a") }, { e: Object.assign(new Error("a"), { code: 1 }) }],
     [{ r: /a/g }, { r: /a/g }],
     [{ n: new Number(1) }, { n: new Number(1) }],
+    // ArrayBuffers, Headers, URLSearchParams and URLs are compared by their contents
+    [{ b: new Uint8Array([1, 2]).buffer }, { b: new Uint8Array([1, 2]).buffer }],
+    [new Headers({ a: "1", b: "2" }), new Headers({ b: "2", a: "1" })],
+    [{ query: new URLSearchParams("a=1&b=2") }, { query: new URLSearchParams("a=1&b=2"), path: "/" }],
+    [{ u: new URL("https://example.com/a") }, { u: new URL("https://example.com/a") }],
     // a plain object in the subset matches the properties of any object
     [{ message: "a" }, new Error("a")],
     [{ e: { message: "a" } }, { e: new Error("a") }],
@@ -166,9 +171,26 @@ describe("Bun.deepMatch", () => {
     [{ e: new Error("a") }, { e: { message: "b" } }],
     [{ e: new Error("a") }, { e: {} }],
 
-    // Functions match by identity only
+    // Functions match by identity only, native constructors and callable proxies too
     [{ f: () => 1 }, { f: () => 1 }],
     [{ f: () => 1 }, { f: {} }],
+    [{ f: Map }, { f: Set }],
+    [{ f: Map }, { f: {} }],
+    [{ f: new Proxy(() => 1, {}) }, { f: new Proxy(() => 1, {}) }],
+    [{ f: Object.assign(() => 1, { x: 1 }) }, { f: Object.assign(() => 1, { x: 1 }) }],
+
+    // ArrayBuffers, Headers, URLSearchParams and URLs are compared by their contents
+    [{ b: new ArrayBuffer(0) }, { b: new Uint8Array([1, 2, 3]).buffer }],
+    [{ b: new Uint8Array([1, 2, 3]).buffer }, { b: new Uint8Array([3, 2, 1]).buffer }],
+    [{ b: new ArrayBuffer(0) }, { b: {} }],
+    [new Headers({ a: "1" }), new Headers({ a: "2" })],
+    [{ headers: new Headers({ a: "1" }) }, { headers: new Headers({ a: "1", b: "2" }) }],
+    [new URLSearchParams("a=1"), new URLSearchParams("a=2")],
+    [{ query: new URLSearchParams("a=1") }, { query: new URLSearchParams("a=1&b=2") }],
+    // the same size, and every entry of one side has its value on the other side
+    [{ query: new URLSearchParams("a=1&b=1") }, { query: new URLSearchParams("a=1&a=1") }],
+    [{ query: new URLSearchParams("a=1&a=1") }, { query: new URLSearchParams("a=1&b=1") }],
+    [{ u: new URL("https://example.com/a") }, { u: new URL("https://example.com/b") }],
 
     // Boxed primitives and RegExps are compared by their value
     [{ r: /a/ }, { r: /b/ }],
@@ -246,6 +268,9 @@ describe("Bun.deepMatch", () => {
     expect(Bun.deepMatch(foo, baz)).toBe(false);
     expect(Bun.deepMatch({ f: foo }, { f: foo })).toBe(true);
     expect(Bun.deepMatch({ f: foo }, { f: bar })).toBe(false);
+    expect(Bun.deepMatch(Set, Set)).toBe(true);
+    expect(Bun.deepMatch(Set, Map)).toBe(false);
+    expect(Bun.deepMatch(Set, {})).toBe(false);
   });
 
   it("matches a subset value that appears under several keys", () => {

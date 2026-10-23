@@ -155,7 +155,8 @@ export const HTMLRewriterTransform = b.class({
   internalFields: [
     "response",
     "inputStream",
-    "outputStream",
+    /** The output's ReadableStream once `.body` is read, or the promise of a read that waits on the pending body. */
+    "outputConsumer",
     "pendingPromise",
     "handlerError",
     "suspensionPromise",

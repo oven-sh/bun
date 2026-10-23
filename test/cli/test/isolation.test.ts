@@ -1671,6 +1671,9 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
 // - monitorEventLoopDelay().enable(): the per-thread monitor holds the file's
 //   histogram. It is disabled at the swap and only ever holds the histogram
 //   weakly, so an enabled monitor must not keep the file's global alive.
+// - HTMLRewriter: the promise that `.text()` and the like wait on, for an
+//   output whose `.body` was not read, was a GC root until the rewrite ended,
+//   and a rewrite of a stream that the file left open never ends.
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
@@ -1837,6 +1840,22 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     });
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
+
+  test.each(["text", "json", "bytes", "arrayBuffer", "blob", "formData"])(
+    "HTMLRewriter output.%s() left waiting on a stream that stays open",
+    async read => {
+      using dir = tempDir(
+        "isolate-leak-rewrite-read",
+        makeLeakFixture(`
+          const open = new ReadableStream({ start: controller => void controller.enqueue(new TextEncoder().encode("<b>x")) });
+          new HTMLRewriter()
+            .transform(new Response(open, { headers: { "content-type": "application/x-www-form-urlencoded" } }))
+            .${read}();
+        `),
+      );
+      expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+    },
+  );
 });
 
 // fs.watchFile's StatWatcher is thread-safe-refcounted: the scheduler queue

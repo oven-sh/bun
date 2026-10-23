@@ -1127,6 +1127,24 @@ impl SourceHandle {
         }
     }
 
+    /// `true` if the producer holds the read's `promise`, so that the body does not root it.
+    #[must_use]
+    pub fn hold_read_promise(self, promise: JSValue) -> bool {
+        match self {
+            SourceHandle::HTMLRewriter(p) => p.hold_read_promise(promise),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::FetchResponseBody(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::TestingCancelOnDrain(_) => false,
+        }
+    }
+
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),

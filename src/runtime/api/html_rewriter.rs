@@ -641,7 +641,7 @@ pub struct RewriterPipe {
 
     // ── output side ──────────────────────────────────────────────────────
     /// Set by [`Self::on_readable_stream_available`]; `None` until JS reads
-    /// `.body` on the output Response. Kept alive by the cell's `outputStream`
+    /// `.body` on the output Response. Kept alive by the cell's `outputConsumer`
     /// slot.
     output: Cell<Option<bun_ptr::BackRef<ByteStream>>>,
     /// lol-html output of the current `write`/`end`/`resume` call; flushed to
@@ -779,6 +779,59 @@ impl RewriterPipe {
         Self::deref_nn(pipe.into());
     }
 
+    /// For `PendingValue::set_promise`: `true` when the cell holds `promise` in `outputConsumer`.
+    pub(crate) fn hold_read_promise(&self, promise: JSValue) -> bool {
+        // A settle under way, or the abandonment of a parked handler, takes it from the body.
+        if self.phase.get() == RewritePhase::Done || self.is_suspended() {
+            return false;
+        }
+        let Some(cell) = self.cell.try_get() else {
+            return false;
+        };
+        js_HTMLRewriterTransform::output_consumer_set_cached(cell, &self.global, promise);
+        true
+    }
+
+    /// Roots the promise that the cell holds in the body, where a settle takes it.
+    fn root_read_promise(&self) {
+        let (Some(cell), Some(response)) = (self.cell.try_get(), self.response.get().as_deref())
+        else {
+            return;
+        };
+        let webcore::body::Value::Locked(locked) = response.get_body_value() else {
+            return;
+        };
+        // Once `.body` is read the producer is detached and the slot holds the stream.
+        if !matches!(locked.producer, SourceHandle::HTMLRewriter(_)) {
+            return;
+        }
+        let Some(promise) = js_HTMLRewriterTransform::output_consumer_get_cached(cell) else {
+            return;
+        };
+        promise.protect();
+        locked.promise = Some(promise);
+        js_HTMLRewriterTransform::output_consumer_set_cached(cell, &self.global, JSValue::ZERO);
+    }
+
+    /// The reverse, once a parked handler has resumed and the rewrite waits for input again.
+    fn unroot_read_promise(&self) {
+        if self.is_suspended() {
+            return;
+        }
+        let (Some(cell), Some(response)) = (self.cell.try_get(), self.response.get().as_deref())
+        else {
+            return;
+        };
+        let webcore::body::Value::Locked(locked) = response.get_body_value() else {
+            return;
+        };
+        let Some(promise) = locked.promise.take() else {
+            return;
+        };
+        js_HTMLRewriterTransform::output_consumer_set_cached(cell, &self.global, promise);
+        promise.unprotect();
+    }
+
     /// Record a handler's exception for the enclosing lol-html call to pick
     /// up once it returns. Rooted by the cell's `handlerError` WriteBarrier
     /// slot until it is taken.
@@ -897,7 +950,7 @@ impl RewriterPipe {
         }
         self.cell
             .try_get()
-            .and_then(js_HTMLRewriterTransform::output_stream_get_cached)
+            .and_then(js_HTMLRewriterTransform::output_consumer_get_cached)
             .is_some_and(|stream| webcore::readable_stream::is_locked_value(stream, &self.global))
     }
 
@@ -1314,7 +1367,7 @@ impl RewriterPipe {
             bytes.parent_const().set_owner(cell);
             this.output.set(Some(bytes));
         }
-        js_HTMLRewriterTransform::output_stream_set_cached(cell, global_this, readable.value);
+        js_HTMLRewriterTransform::output_consumer_set_cached(cell, global_this, readable.value);
         // If the rewrite already completed before a reader attached, deliver
         // the terminal `Done` now so the first `read()` resolves.
         if this.phase.get() == RewritePhase::Done
@@ -1654,6 +1707,7 @@ impl RewriterPipe {
         let Some(response) = self.response.get().as_deref() else {
             return;
         };
+        self.root_read_promise();
         // For a waiting `.blob()`'s content type.
         let headers = response.get_fetch_headers().map(NonNull::from);
         let body_value = response.get_body_value();
@@ -1764,6 +1818,8 @@ impl RewriterPipe {
     /// Attaches the `.then()` reaction for the handler that [`Self::park_suspension`] parked.
     fn begin_suspension(&self) {
         debug_assert!(self.suspended_wrapper.get().is_some());
+        // `abandon_suspension` rejects a waiting read after the cell is collected.
+        self.root_read_promise();
 
         // The `.then()` context is a `NativePromiseContext` holding the
         // Transform cell: while the promise can settle, the reaction roots
@@ -1810,6 +1866,8 @@ impl RewriterPipe {
     /// Put `err` on the output `Response`'s body / ByteStream.
     fn fail(&self, mut err: webcore::body::ValueError) {
         let _pin = self.pin();
+        // Before the input's `cancel()` runs script: that can be the cell's last collection.
+        self.root_read_promise();
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
         self.release_handlers();
@@ -2004,6 +2062,7 @@ pub(crate) fn on_handler_resolve(
     pipe.end_suspension();
     // Runs the rest of the transform: more handlers (script), sink writes, stream delivery.
     pipe.resume_rewrite();
+    pipe.unroot_read_promise();
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
     // Handler errors are captured into the stream by the pipe; what can still be pending here is

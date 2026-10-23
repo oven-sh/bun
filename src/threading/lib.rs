@@ -1,6 +1,5 @@
 //! bun_threading crate root — thin re-exports.
 
-pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;
 #[path = "Futex.rs"]
@@ -26,7 +25,6 @@ pub mod wait_group;
 
 // ─── re-exports ───────────────────────────────────────────────────────────
 
-pub use channel::Channel;
 pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.

@@ -5,8 +5,11 @@
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
 use ::core::ffi::c_char;
-use ::core::sync::atomic::{AtomicBool, Ordering};
+use ::core::ptr::NonNull;
+use ::core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Write as _;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
@@ -3272,52 +3275,153 @@ pub(crate) enum Filter {
     ScriptAndDescriptions,
 }
 
-type DoneChannel =
-    bun_threading::Channel<u32, bun_collections::linear_fifo::StaticBuffer<u32, 256>>;
+/// All remote images of a document share it, request setup included. Nothing prints until it ends.
+const REMOTE_IMAGE_DEADLINE: Duration = Duration::from_secs(3);
 
-/// One pending remote-image download. Lives on the heap so its
-/// `async_http.task` (embedded in ThreadPool.Task) has a stable
-/// address — HTTPThread.schedule does `container_of` on that task,
-/// so moving the struct would break the worker's callback.
+/// The body bytes that all the remote images of a document may add up to.
+const REMOTE_IMAGE_BYTE_BUDGET: usize = 64 * 1024 * 1024;
+
+enum RemoteImage {
+    Pending,
+    Failed,
+    Fetched(Vec<u8>),
+}
+
+struct RemoteImageBatchState {
+    /// Requests whose last callback has not run.
+    pending: usize,
+    over_budget: bool,
+    /// The render took `images` and waits no longer.
+    closed: bool,
+    /// One per URL, in `RemoteImageBatch::urls` order.
+    images: Vec<RemoteImage>,
+}
+
+/// Every request holds a reference, so a callback that runs after the wait ended finds it alive.
+struct RemoteImageBatch {
+    urls: Vec<Box<[u8]>>,
+    /// The bytes of the request headers, which every request borrows.
+    header_bytes: Box<[u8]>,
+    /// `aborted` and `response_body_streaming` of every request.
+    signals: bun_http::signals::Store,
+    /// Body bytes received so far, over all requests.
+    received: AtomicUsize,
+    state: bun_threading::Guarded<RemoteImageBatchState>,
+    settled: bun_threading::Condvar,
+}
+
+impl RemoteImageBatch {
+    /// Returns at `deadline` at the latest, and aborts the requests that still run.
+    fn settle(&self, deadline: Instant, request_ids: &[u32]) -> Vec<RemoteImage> {
+        let mut state = self.state.lock();
+        while state.pending > 0 && !state.over_budget {
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            if self
+                .settled
+                .timed_wait_guarded(&mut state, left.as_nanos() as u64)
+                .is_err()
+            {
+                break;
+            }
+        }
+        state.closed = true;
+        let unfinished = state.pending > 0;
+        let images = ::core::mem::take(&mut state.images);
+        drop(state);
+
+        if unfinished {
+            self.signals.aborted.store(true, Ordering::SeqCst);
+            for (id, image) in request_ids.iter().zip(&images) {
+                if matches!(image, RemoteImage::Pending) {
+                    bun_http::http_thread().schedule_shutdown_by_id(*id);
+                }
+            }
+        }
+        images
+    }
+}
+
+/// Owned by the HTTP thread from `HTTPThread::schedule` on, and freed in its last callback.
 struct RemoteImageDownload {
-    // Assigned immediately after the struct literal in
-    // prefetchRemoteImages (can't be set in the literal because
-    // AsyncHTTP.init needs a pointer to response_buffer, which only
-    // has a stable address once the owning struct is live).
-    // Self-referential: borrows from `url: Box<[u8]>` below.
-    async_http: bun_http::AsyncHTTP<'static>,
-    response_buffer: bun_core::MutableString,
-    url: Box<[u8]>,
-    done: *const DoneChannel,
+    /// `None` until `AsyncHTTP::init` can take the address of this allocation as its context.
+    async_http: Option<bun_http::AsyncHTTP<'static>>,
+    batch: Arc<RemoteImageBatch>,
+    index: usize,
+    /// Status 200, no compressed coding, and the batch within its byte budget.
+    keep_body: bool,
+    body: Vec<u8>,
 }
 
 impl RemoteImageDownload {
-    fn on_done(
+    /// Decompression is off, so such a body would reach the terminal still compressed.
+    fn has_compressed_coding(metadata: &bun_http::HTTPResponseMetadata) -> bool {
+        metadata.response.headers.list.iter().any(|header| {
+            strings::eql_case_insensitive_ascii(header.name(), b"content-encoding", true)
+                && bun_http::header_value_iterator::HeaderValueIterator::init(header.value()).any(
+                    |coding| {
+                        bun_http::Encoding::from_token(coding)
+                            .is_some_and(bun_http::Encoding::is_compressed)
+                    },
+                )
+        })
+    }
+
+    /// Runs on the HTTP thread, once per body chunk and once when the request ends.
+    fn on_progress(
         this: *mut RemoteImageDownload,
-        async_http: *mut bun_http::AsyncHTTP<'static>,
+        _: *mut bun_http::AsyncHTTP<'static>,
         mut result: bun_http::HTTPClientResult<'_>,
     ) {
-        // The worker's
-        // ThreadlocalAsyncHTTP is about to be freed, so copy its
-        // mutated state back into our owned AsyncHTTP before writing
-        // to the channel.
-        // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`;
-        // `async_http` is the worker-thread temporary whose `.real` points back at
-        // `this.async_http`.
-        unsafe {
-            let this = &mut *this;
-            let async_http = &mut *async_http;
-            if let Some(real) = async_http.real {
-                // Raw bitwise overwrite with
-                // NO destructor on the old value: `ptr::write` —
-                // `*real.as_ptr() = …` would run Drop on the previous
-                // `this.async_http` (whose state the fresh copy still aliases).
-                real.as_ptr().write(::core::ptr::read(async_http));
+        // SAFETY: `this` is the allocation `prefetch_remote_images` made for
+        // this request. From `HTTPThread::schedule` on, only the HTTP thread
+        // reaches it, and only this callback touches these fields.
+        let (batch, keep_body, body) =
+            unsafe { (&*(*this).batch, &mut (*this).keep_body, &mut (*this).body) };
+
+        if let Some(metadata) = &result.metadata {
+            *keep_body = metadata.status_code() == 200 && !Self::has_compressed_coding(metadata);
+        }
+        let chunk_len = result.body.len() + result.body_owned.len();
+        let received = batch.received.fetch_add(chunk_len, Ordering::SeqCst) + chunk_len;
+        if received > REMOTE_IMAGE_BYTE_BUDGET {
+            *keep_body = false;
+            *body = Vec::new();
+            if !batch.signals.aborted.swap(true, Ordering::SeqCst) {
+                batch.state.lock().over_budget = true;
+                batch.settled.notify_one();
             }
-            result.body_into(&mut this.response_buffer.list);
-            // Channel payload is a placeholder tick — the main thread
-            // walks `downloads[]` to read per-task state after N wakeups.
-            let _ = (*this.done).write_item(0);
+        } else if *keep_body {
+            result.body_into(body);
+        }
+        if result.has_more {
+            return;
+        }
+
+        // SAFETY: this is the request's last callback. The HTTP thread made
+        // its last access to the allocation before the call, and the borrows
+        // above are not used again.
+        let RemoteImageDownload {
+            async_http,
+            batch,
+            index,
+            keep_body,
+            body,
+        } = *unsafe { bun_core::heap::take(this) };
+        drop(async_http);
+        let image = if result.fail.is_none() && keep_body && !body.is_empty() {
+            RemoteImage::Fetched(body)
+        } else {
+            RemoteImage::Failed
+        };
+        let mut state = batch.state.lock();
+        if !state.closed {
+            state.images[index] = image;
+        }
+        state.pending -= 1;
+        if state.pending == 0 {
+            batch.settled.notify_one();
         }
     }
 }
@@ -3339,6 +3443,7 @@ impl RunCommand {
     /// http(s) image URL it finds to a temp file, and populate `out_map`
     /// with url → temp-path entries. Failures are silent — an image that
     /// can't be downloaded just falls back to alt-text rendering.
+    /// The downloads share `REMOTE_IMAGE_DEADLINE` and `REMOTE_IMAGE_BYTE_BUDGET`.
     fn prefetch_remote_images(
         contents: &[u8],
         md_opts: md::Options,
@@ -3379,114 +3484,104 @@ impl RunCommand {
 
         bun_http::http_thread::init(&Default::default());
 
-        // Heap-allocate each Download so AsyncHTTP.task has a stable
-        // address (see RemoteImageDownload doc comment).
-        let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
-        // Drop frees response_buffer + the Box for each download.
+        let count = remote_urls.len();
+        // The byte budget counts the bytes on the wire, so ask for a body with no content coding.
+        let headers = bun_http::HeaderBuilder::from_pairs(&[(b"Accept-Encoding", b"identity")])
+            .unwrap_or_oom();
+        let batch = Arc::new(RemoteImageBatch {
+            urls: remote_urls,
+            header_bytes: headers.content.written_slice().into(),
+            signals: bun_http::signals::Store::default(),
+            received: AtomicUsize::new(0),
+            state: bun_threading::Guarded::new(RemoteImageBatchState {
+                pending: 0,
+                over_budget: false,
+                closed: false,
+                images: (0..count).map(|_| RemoteImage::Pending).collect(),
+            }),
+            settled: bun_threading::Condvar::new(),
+        });
+        // `on_progress` counts the byte budget chunk by chunk.
+        batch
+            .signals
+            .response_body_streaming
+            .store(true, Ordering::SeqCst);
 
-        let done_channel = DoneChannel::init_static();
-
-        // Kick off every download in parallel. Accumulate tasks into a
-        // single ThreadPool.Batch, then ship the whole batch to the
-        // HTTP thread in one schedule() call — worker picks up and runs
-        // them concurrently.
-        let mut batch = bun_threading::thread_pool::Batch::default();
-        for raw_url in remote_urls.into_iter() {
-            let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
-                continue;
-            };
-            // `AsyncHTTP` holds non-nullable `fn()` pointers (result_callback,
-            // task.callback), so `mem::zeroed()` would be instant UB. Allocate
-            // an uninit `Box`, write the cheap fields first to obtain stable
-            // heap addresses for `url`/`response_buffer`, then `ptr::write`
-            // the fully-formed `AsyncHTTP` last.
-            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> =
-                Box::new(::core::mem::MaybeUninit::uninit());
-            let slot = d.as_mut_ptr();
-            // SAFETY: writing to uninitialized fields of a freshly-allocated
-            // `MaybeUninit` slot; no prior value is dropped.
-            unsafe {
-                ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
-                ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
-                ::core::ptr::addr_of_mut!((*slot).done).write(&raw const done_channel);
-            }
-            // SAFETY: `(*slot).url` is heap-owned and outlives the AsyncHTTP
-            // (freed only when `downloads` drops after the channel drains).
-            let url_static: &'static [u8] = unsafe {
-                let url = &*::core::ptr::addr_of!((*slot).url);
-                ::core::slice::from_raw_parts(url.as_ptr(), url.len())
-            };
-            let d_ptr: *mut RemoteImageDownload = slot;
-            let async_http = bun_http::AsyncHTTP::init(
-                bun_http::Method::GET,
-                bun_url::URL::parse(url_static),
-                Default::default(),
-                b"",
-                b"",
-                bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
-                    d_ptr,
-                    RemoteImageDownload::on_done,
-                ),
-                bun_http::FetchRedirect::Follow,
-                Default::default(),
-            );
-            // SAFETY: last field — all four fields are now initialized.
-            unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
-            // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
-            let mut d: Box<RemoteImageDownload> = unsafe {
-                bun_core::heap::take(bun_core::heap::into_raw(d).cast::<RemoteImageDownload>())
-            };
-            d.async_http.schedule(&mut batch);
-            downloads.push(d);
-        }
-        if downloads.is_empty() {
-            return;
-        }
-        bun_http::HTTPThread::schedule(batch);
-
-        // Block the main thread on the channel until every scheduled
-        // download has reported back. readItem() uses a mutex+condvar,
-        // no busy loop. The payload value is unused — each wakeup just
-        // means "one more task finished".
-        let mut completed: usize = 0;
-        while completed < downloads.len() {
-            if done_channel.read_item().is_err() {
+        let deadline = Instant::now() + REMOTE_IMAGE_DEADLINE;
+        let mut request_ids: Vec<u32> = Vec::with_capacity(count);
+        let mut tasks = bun_threading::thread_pool::Batch::default();
+        for (index, url) in batch.urls.iter().enumerate() {
+            // An image that gets no request stays `Pending` and renders as alt text.
+            if Instant::now() >= deadline {
                 break;
             }
-            completed += 1;
+            let download = bun_core::heap::into_raw(Box::new(RemoteImageDownload {
+                async_http: None,
+                batch: Arc::clone(&batch),
+                index,
+                keep_body: false,
+                body: Vec::new(),
+            }));
+            // SAFETY: `url`, the header bytes and the two signals live in
+            // `batch`, which `download` keeps alive for as long as its request
+            // exists.
+            let (url, header_bytes): (&'static [u8], &'static [u8]) = unsafe {
+                (
+                    bun_ptr::detach_lifetime(url),
+                    bun_ptr::detach_lifetime(&batch.header_bytes),
+                )
+            };
+            let signals = bun_http::Signals {
+                aborted: Some(NonNull::from(&batch.signals.aborted)),
+                response_body_streaming: Some(NonNull::from(
+                    &batch.signals.response_body_streaming,
+                )),
+                ..Default::default()
+            };
+            // SAFETY: `download` is a fresh allocation that nothing else
+            // reaches before `HTTPThread::schedule` below.
+            let async_http =
+                unsafe { &mut (*download).async_http }.insert(bun_http::AsyncHTTP::init(
+                    bun_http::Method::GET,
+                    bun_url::URL::parse(url),
+                    headers.entries.clone().unwrap_or_oom(),
+                    header_bytes,
+                    b"",
+                    bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
+                        download,
+                        RemoteImageDownload::on_progress,
+                    ),
+                    bun_http::FetchRedirect::Follow,
+                    bun_http::async_http::Options {
+                        signals: Some(signals),
+                        // A decoder would expand the body before `on_progress` counts it.
+                        disable_decompression: Some(true),
+                        ..Default::default()
+                    },
+                ));
+            request_ids.push(async_http.async_http_id);
+            async_http.schedule(&mut tasks);
         }
+        batch.state.lock().pending = request_ids.len();
+        bun_http::HTTPThread::schedule(tasks);
+        let images = batch.settle(deadline, &request_ids);
 
-        // Second pass: walk completed downloads, write successful
-        // bodies to temp files, populate out_map. All disk I/O is done
-        // AFTER every network request has settled.
+        // Second pass: write the fetched bodies to temp files and populate out_map.
         let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
-        for d in downloads.iter_mut() {
-            if d.async_http.err.is_some() {
+        for (url, image) in batch.urls.iter().zip(images) {
+            let RemoteImage::Fetched(bytes) = image else {
                 continue;
-            }
-            let status = d
-                .async_http
-                .response
-                .as_ref()
-                .map(|r| r.status_code)
-                .unwrap_or(0);
-            if status != 200 {
-                continue;
-            }
-            let bytes = d.response_buffer.slice();
-            if bytes.is_empty() {
-                continue;
-            }
+            };
 
             // Extension is best-effort from the URL path; Kitty inspects
             // the file's magic bytes regardless.
-            let ext: &[u8] = if d.url.ends_with(b".png") {
+            let ext: &[u8] = if url.ends_with(b".png") {
                 b".png"
-            } else if d.url.ends_with(b".jpg") || d.url.ends_with(b".jpeg") {
+            } else if url.ends_with(b".jpg") || url.ends_with(b".jpeg") {
                 b".jpg"
-            } else if d.url.ends_with(b".gif") {
+            } else if url.ends_with(b".gif") {
                 b".gif"
-            } else if d.url.ends_with(b".webp") {
+            } else if url.ends_with(b".webp") {
                 b".webp"
             } else {
                 b".bin"
@@ -3527,7 +3622,7 @@ impl RunCommand {
                 Ok(f) => f,
                 Err(_) => continue,
             };
-            let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
+            let ok = sys::File::from_fd(fd).write_all(&bytes).is_ok();
             if !ok {
                 // openA + CREAT leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup
@@ -3535,14 +3630,12 @@ impl RunCommand {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            // Dupe d.url for the map key — `collector.urls` owns the backing
-            // bytes. Check capacity first while `path` is still
-            // borrowable for `unlink_staged_path`.
+            // Check capacity first while `path` is still borrowable for `unlink_staged_path`.
             if out_map.try_reserve(1).is_err() {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            out_map.put_assume_capacity(&d.url, path.into_boxed_slice());
+            out_map.put_assume_capacity(url, path.into_boxed_slice());
         }
     }
 
@@ -3694,7 +3787,7 @@ impl RunCommand {
         // this process races Kitty's open() and typically drops images
         // silently (q=2 suppresses the error). System tmp cleanup
         // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
-        // bun-md-*.png files, which are small (~100KB each) and rare.
+        // bun-md-* files: at most `REMOTE_IMAGE_BYTE_BUDGET` per run, with no bound over runs.
         0
     }
 

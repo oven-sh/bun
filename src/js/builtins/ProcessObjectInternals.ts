@@ -73,6 +73,19 @@ export function getStdioWriteStream(
     }
   }
 
+  let isNetSocket = isTTY || fdType === BunProcessStdinFdType.pipe;
+  if (fdType === BunProcessStdinFdType.socket) {
+    // Node builds a net.Socket over a TCP or a unix stream socket only. Any other socket gets a plain Writable.
+    const type = $newRustFunction("udp_socket.rs", "jsDgramGuessHandleType", 1)(fd);
+    isNetSocket = type === "TCP" || type === "PIPE";
+  }
+  // A net.Socket in Node, where emitClose is off: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L415
+  if (isNetSocket) stream._writableState.emitClose = false;
+
+  function emitCloseNT(stream) {
+    stream.emit("close");
+  }
+
   if (fd === 1 || fd === 2) {
     stream.destroySoon = stream.destroy;
     stream._destroy = function (err, cb) {
@@ -80,9 +93,7 @@ export function getStdioWriteStream(
       this._undestroy();
 
       if (!this._writableState.emitClose) {
-        process.nextTick(() => {
-          this.emit("close");
-        });
+        process.nextTick(emitCloseNT, this);
       }
     };
   }

@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7861,6 +7862,164 @@ describe("css tests", () => {
     minify_test("@page toc,index{margin:1em}", "@page toc,index{margin:1em}");
     minify_test("@page CompanyLetterHead:first{margin:1em}", "@page CompanyLetterHead:first{margin:1em}");
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
+  });
+
+  describe("layer", () => {
+    // The first declaration of a layer name fixes the place of that layer in
+    // the cascade order, so an empty named `@layer a {}` is a declaration and
+    // must stay. In the first case the order is (a, b), so `b` wins.
+    const kept: [source: string, expected: string][] = [
+      [
+        "@layer a {} @layer b {} @layer b { .x { color: red } } @layer a { .x { color: blue } }",
+        "@layer a{}@layer b{}@layer b{.x{color:red}}@layer a{.x{color:#00f}}",
+      ],
+      ["@layer a {}", "@layer a{}"],
+      ["@layer a.b {}", "@layer a.b{}"],
+      ["@layer a {} .x { color: red } @layer b {}", "@layer a{}.x{color:red}@layer b{}"],
+      ["@layer a, b; @layer c {}", "@layer a,b;@layer c{}"],
+      // A layer declared in a conditional rule joins the order only when the
+      // condition matches, so the block stays inside the rule.
+      ["@media screen { @layer a {} }", "@media screen{@layer a{}}"],
+      ["@supports (display:grid) { @layer a {} }", "@supports (display:grid){@layer a{}}"],
+      ["@container (width > 100px) { @layer a {} }", "@container (width>100px){@layer a{}}"],
+      ["@scope (.a) { @layer a {} }", "@scope(.a){@layer a{}}"],
+      ["@starting-style { @layer a {} }", "@starting-style{@layer a{}}"],
+      ["@-moz-document url-prefix() { @layer a {} }", "@-moz-document url-prefix(){@layer a{}}"],
+      ["@layer a { @layer b {} @layer c {} }", "@layer a{@layer b{}@layer c{}}"],
+      // A block that the minifier empties still declares its layer.
+      ["@layer a { @media not all { .x { color: red } } }", "@layer a{}"],
+      ["@layer a { .x {} }", "@layer a{}"],
+      // Nested in a style rule, a `@layer a;` statement is not valid. The block is.
+      [".foo { color: red; @layer a {} }", ".foo{color:red;@layer a{}}"],
+      [".foo { color: red; @media screen { @layer a {} } }", ".foo{color:red;@media screen{@layer a{}}}"],
+      // Equal `@media` rules merge, and the merged rule is minified a second time.
+      ["@media screen { @layer a {} } @media screen { @layer b {} }", "@media screen{@layer a{}@layer b{}}"],
+    ];
+    for (const [source, expected] of kept) {
+      minify_test(source, expected);
+    }
+    // Each output parses back to itself.
+    for (const expected of new Set(kept.map(([, expected]) => expected))) {
+      minify_test(expected, expected);
+    }
+
+    // An empty anonymous layer cannot be named again, so it declares nothing.
+    minify_test("@layer {} .x { color: red }", ".x{color:red}");
+    minify_test("@layer a { @layer {} }", "@layer a{}");
+
+    // With nesting compiled away, the block moves out of the style rule.
+    prefix_test(".bar { color: red; @layer a {} }", ".bar { color: red; } @layer a {}", { chrome: Some(90 << 16) });
+
+    // Not minified.
+    cssTest(
+      "@layer a {} @layer b { .x { color: red } }",
+      `@layer a {
+      }
+
+      @layer b {
+        .x {
+          color: red;
+        }
+      }
+      `,
+    );
+  });
+
+  describe("supports", () => {
+    // Adjacent rules with the same condition merge into the first rule. Each
+    // rule is minified one time, before the merge, so its rules keep their
+    // order and do not fold into the rules before them.
+    minify_test(
+      "@supports (display:grid) { .a { color: red } } @supports (display:grid) { .b { color: blue } }",
+      "@supports (display:grid){.a{color:red}.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (display:grid) { .a { color: red } } @supports (display:grid) { .a { color: blue } } @supports (display:grid) { .c { color: green } }",
+      "@supports (display:grid){.a{color:red}.a{color:#00f}.c{color:green}}",
+    );
+    minify_test(
+      "@supports (display:grid) { .a::-moz-selection { color: red } .a::selection { color: red } } @supports (display:grid) { .b { color: blue } }",
+      "@supports (display:grid){.a::-moz-selection{color:red}.a::selection{color:red}.b{color:#00f}}",
+    );
+    // A kept empty layer block must not hide the rule after it, or the other way round.
+    minify_test(
+      "@supports (display:grid) { @layer a {} } @supports (display:grid) { .x { color: red } }",
+      "@supports (display:grid){@layer a{}.x{color:red}}",
+    );
+    minify_test(
+      "@supports (display:grid) { .x { color: red } } @supports (display:grid) { @layer a {} }",
+      "@supports (display:grid){.x{color:red}@layer a{}}",
+    );
+    // Rules with different conditions, or with a rule between them, stay apart.
+    minify_test(
+      "@supports (display:grid) { .a { color: red } } @supports (display:flex) { .b { color: blue } }",
+      "@supports (display:grid){.a{color:red}}@supports (display:flex){.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (display:grid) { .a { color: red } } .c { color: green } @supports (display:grid) { .b { color: blue } }",
+      "@supports (display:grid){.a{color:red}}.c{color:green}@supports (display:grid){.b{color:#00f}}",
+    );
+    // https://github.com/oven-sh/bun/issues/24770
+    minify_test(
+      `.test {
+        box-shadow: none;
+        @supports (color:blue) { border-top: 1px solid blue; }
+        @supports (color:blue) { border-left: 1px solid blue; }
+        @supports (color:blue) { box-shadow: 0 0 10px blue; }
+      }`,
+      ".test{box-shadow:none;@supports (color:blue){&{border-top:1px solid #00f}&{border-left:1px solid #00f}&{box-shadow:0 0 10px #00f}}}",
+    );
+
+    // No declaration of a merged rule is lost, for any target. The printed
+    // shape differs per target: Chrome 87, the oldest Chrome in the default
+    // targets of `bun build`, has no `:is()`, so `&` rules do not fold there.
+    const declarations = (output: string, names: string[]) =>
+      names.filter(name => output.replace(/\s+/g, "").includes(name));
+    const block = (body: string) => `@supports (display:grid) { ${body} }`;
+    const customProperties = ["--p0:0", "--p1:1", "--p2:2"];
+    const sources: [name: string, source: string, expected: string[]][] = [
+      ["adjacent rules", [0, 1, 2].map(i => block(`.a { --p${i}: ${i} }`)).join(" "), customProperties],
+      ["nested blocks", `.a { ${[0, 1, 2].map(i => block(`--p${i}: ${i}`)).join(" ")} }`, customProperties],
+      [
+        "nested blocks with a declaration between",
+        `.a { ${[0, 1, 2].map(i => `--q${i}: ${i}; ${block(`--p${i}: ${i}`)}`).join(" ")} }`,
+        customProperties,
+      ],
+      // A later normal declaration does not replace an earlier `!important` one.
+      [
+        "!important, then a normal declaration",
+        `.a { ${block("color: red !important")} ${block("color: blue")} }`,
+        ["color:red!important", "color:#00f"],
+      ],
+    ];
+    for (const [name, source, expected] of sources) {
+      test(`${name}, no targets`, () => {
+        expect(declarations(cssInternals.minifyTestWithOptions(source, ""), expected)).toEqual(expected);
+      });
+      for (const chrome of [90, 87]) {
+        test(`${name}, chrome ${chrome}`, () => {
+          expect(declarations(cssInternals.prefixTest(source, "", { chrome: chrome << 16 }), expected)).toEqual(
+            expected,
+          );
+        });
+      }
+    }
+
+    // Each nested rule counts one time against the limit of 65536 selectors,
+    // so a run of 256 rules under a parent with two selectors compiles.
+    test("a run of 256 rules nested under two selectors", () => {
+      const run = Array.from({ length: 256 }, (_, i) => block(`.x${i} { width: ${i + 1}px }`)).join("");
+      const output = cssInternals._test(`.a, .b { ${run} }`, "", { chrome: 80 << 16 });
+      expect(output.match(/width: \d+px/g)).toHaveLength(256);
+    });
+
+    // The fallback rules of a colour are made one time: each of the 16 rules
+    // prints one time with the fallback and one time in `@supports (color: lab(0% 0 0))`.
+    test("a run of 16 rules that need a colour fallback", () => {
+      const run = Array.from({ length: 16 }, (_, i) => block(`.c${i} { border-color: var(--x, lab(50% 20 30)) }`));
+      const output = cssInternals._test(run.join(""), "", { chrome: 80 << 16 });
+      expect(output.match(/\.c\d+ \{/g)).toHaveLength(32);
+    });
   });
 
   describe("container", () => {

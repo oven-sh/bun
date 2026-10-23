@@ -5925,7 +5925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.fn_only_data_visit.is_this_nested {
             // In the REPL, top-level `this` must evaluate to the global object
             // (matching Node's `> this` and `deno repl > this`). The REPL wraps
-            // user input in an arrow IIFE that has no `exports` binding, so the
+            // some input in an arrow IIFE, and no input has an `exports` binding, so the
             // CommonJS substitution below would emit a reference to an
             // undefined `exports`. Leaving `E::This` in place lets the arrow
             // inherit `this` from the enclosing (global) scope at runtime.

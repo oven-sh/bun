@@ -6762,7 +6762,7 @@ impl VirtualMachine {
         }
 
         // Don't show source code preview for REPL frames — it would show the
-        // transformed IIFE wrapper code, not what the user typed.
+        // transformed code, not what the user typed.
         if frames[top].source_url.eq_ascii(b"[repl]") {
             enable_source_code_preview.set(false);
         }

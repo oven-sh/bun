@@ -187,7 +187,7 @@ pub struct Options<'a> {
     /// - Wraps lone object literals `{...}` in parentheses
     /// - Hoists variable declarations for REPL persistence
     /// - Wraps last expression in { value: expr } for result capture
-    /// - Wraps code with await in async IIFE
+    /// - Wraps code with await in async IIFE, strict code or a top-level return in a sync IIFE
     pub repl_mode: bool,
 
     /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.

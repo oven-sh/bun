@@ -4116,12 +4116,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn process_import_statement(
         &mut self,
         stmt_: S::Import,
-        path: ParsedPath<'a>,
+        mut path: ParsedPath<'a>,
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
-        let is_macro =
+        let mut is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
+        if is_macro && self.options.features.macro_imports_are_plain {
+            // `MacroContext::call` resolves the path without the `macro:` prefix, so the ordinary import gets that path.
+            path.text = path
+                .text
+                .strip_prefix(crate::Macro::NAMESPACE_WITH_COLON)
+                .unwrap_or(path.text);
+            is_macro = false;
+        }
         let mut stmt = stmt_;
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);

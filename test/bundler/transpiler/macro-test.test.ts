@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -809,5 +809,82 @@ describe("macro VM env loader", () => {
     const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
     expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
     expect(withMacro).toEqual(withoutMacro);
+  });
+});
+
+// `bun create <component>` bundles the component to learn what it reaches, and prints no code. It reads a macro
+// import as an ordinary import: the file of the macro is a file of the component, and the macro is not called.
+// Windows: `bun create <component>` does not reach its install step there.
+describe.concurrent.todoIf(isWindows)("bun create <component>", () => {
+  // The registry has no packages: `bun create` prints what it installs, and then its install step fails.
+  async function create(files: Record<string, string>, entry: string) {
+    using dir = tempDir("macro-create-component", files);
+    using registry = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "create", entry],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        // `bun create` exits without freeing the bundler. The ASAN lane would turn that into exit code 134.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      install: stdout.split("\n").find(line => line.includes("--only-missing install")) ?? "",
+      created: stdout.split("\n").filter(line => line.startsWith(" create ")).length,
+      macroRan: existsSync(path.join(String(dir), "MACRO_RAN")),
+      stderr,
+      exitCode,
+    };
+  }
+
+  test.each([
+    ["an import attribute", `"./macro.ts" with { type: "macro" }`],
+    ["the macro: prefix", `"macro:./macro.ts"`],
+  ])("does not call a macro imported with %s, and installs what its file imports", async (_, specifier) => {
+    const { install, macroRan, stderr, exitCode } = await create(
+      {
+        "App.tsx": `import { one } from ${specifier};\nexport default function App() { return <div>{one()}</div>; }\n`,
+        "macro.ts": `import "bar";\nimport { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nexport function one() {\n  writeFileSync(join(import.meta.dir, "MACRO_RAN"), "");\n  return 1;\n}\n`,
+        // Installed, so that a call of the macro could load its file.
+        "node_modules/bar/package.json": JSON.stringify({ name: "bar", version: "1.0.0" }),
+        "node_modules/bar/index.js": "",
+      },
+      "./App.tsx",
+    );
+    expect({ install, macroRan }, stderr).toEqual({
+      install: expect.stringContaining(" install -- bar "),
+      macroRan: false,
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  test("picks the template from the class names in the file of a macro, as in any file of the component", async () => {
+    const { install, stderr } = await create(
+      {
+        "App.tsx": `import { one } from "./macro.tsx" with { type: "macro" };\nexport default function App() { return <div>{one()}</div>; }\n`,
+        "macro.tsx": `// <div className="flex items-center p-4 text-xl" />\nexport function one() {\n  return 1;\n}\n`,
+      },
+      "./App.tsx",
+    );
+    expect(install, stderr).toContain(" install -- bun-plugin-tailwind tailwindcss ");
+  });
+
+  test("fails for a macro import that is never called and names a missing export", async () => {
+    // As for an ordinary import. A TypeScript file drops an import that it never uses, so this is a .jsx file.
+    const { install, created, stderr, exitCode } = await create(
+      {
+        "App.jsx": `import { missing } from "./macro.js" with { type: "macro" };\nexport default function App() { return <div>hi</div>; }\n`,
+        "macro.js": `export function one() {\n  return 1;\n}\n`,
+      },
+      "./App.jsx",
+    );
+    expect(stderr).toContain(`No matching export in "macro.js" for import "missing"`);
+    expect({ install, created, exitCode }).toEqual({ install: "", created: 0, exitCode: 1 });
   });
 });

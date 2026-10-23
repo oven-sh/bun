@@ -36,19 +36,23 @@ test.concurrent(
     const script = /* js */ `
     const fs = require("fs");
     const path = require("path");
-    // Each subprocess gets its own file so concurrent runs don't race on
-    // unlink/watch of a shared path. Under 'bun -e' there is no script
-    // slot, so the first extra CLI arg is argv[1].
-    const file = path.join(process.argv[1], "target-" + process.pid + ".txt");
+    // Each subprocess gets its own directory and file so concurrent runs
+    // don't race on unlink/watch of a shared path. Under 'bun -e' there is
+    // no script slot, so the first extra CLI arg is argv[1].
+    const own = path.join(process.argv[1], "target-" + process.pid);
+    fs.mkdirSync(own);
+    const file = path.join(own, "target.txt");
     fs.writeFileSync(file, "initial");
 
-    const watcher = fs.watch(file, () => {
+    // macOS watches a directory with FSEvents (the crash site above) and a
+    // file with kqueue. argv[2] selects which of the two this run watches.
+    const watcher = fs.watch(process.argv[2] === "dir" ? own : file, () => {
       // Inside the callback: drop the watcher (→ unregister_watcher →
       // enqueue_task_concurrent, which reads self.loop_), then exit
       // (→ close_and_wait → shutdown → enqueue_task_concurrent again while
       // the CF thread is still inside cf_thread_loop).
       watcher.close();
-      try { fs.unlinkSync(file); } catch {}
+      try { fs.rmSync(own, { recursive: true, force: true }); } catch {}
       process.exit(0);
     });
 
@@ -74,13 +78,14 @@ test.concurrent(
     // Run the sequence many times. On an unpatched macOS aarch64 release build
     // this reproduces the 0xC segfault within a handful of iterations; on other
     // platforms it still exercises the reader-thread spawn + shutdown path.
+    // Every second run watches the directory, the others watch the file.
     // Batch them so a failure surfaces quickly without serializing 40 spawns.
     const iterations = 40;
     const width = 8;
     for (let base = 0; base < iterations; base += width) {
-      const batch = Array.from({ length: Math.min(width, iterations - base) }, async () => {
+      const batch = Array.from({ length: Math.min(width, iterations - base) }, async (_, i) => {
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script, String(dir)],
+          cmd: [bunExe(), "-e", script, String(dir), (base + i) % 2 === 0 ? "dir" : "file"],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",

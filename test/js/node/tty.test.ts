@@ -241,6 +241,15 @@ describe("WriteStream end()", () => {
   });
 });
 
+describe("WriteStream without an fd", () => {
+  // It has no fd and no sink yet, so it waits for 'ready'.
+  it("is pending", () => {
+    const stream = new WriteStream(undefined as any);
+    expect(stream.pending).toBe(true);
+    stream.destroy();
+  });
+});
+
 describe("WriteStream.prototype.getColorDepth", () => {
   const getColorDepth = (env: Record<string, string>) => WriteStream.prototype.getColorDepth.call(undefined, env);
 

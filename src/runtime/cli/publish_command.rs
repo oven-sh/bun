@@ -1042,7 +1042,7 @@ impl PublishCommand {
 
                         let Some(token) = otp_done_json.get_string_cloned(&done_bump, b"token")?
                         else {
-                            Output::err("WebLogin", "missing `token` field in reponse json", ());
+                            Output::err("WebLogin", "missing `token` field in response json", ());
                             Global::crash();
                         };
                         if http::async_http::breaks_header_line(token) {

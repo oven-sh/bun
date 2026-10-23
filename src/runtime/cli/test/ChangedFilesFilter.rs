@@ -20,6 +20,7 @@ use bstr::BStr;
 
 use bun_alloc::Arena;
 use bun_ast::Index;
+use bun_bundler::bundle_v2::ScannedEntryPoint;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
@@ -135,13 +136,8 @@ pub(crate) fn filter<'a>(
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
-    // git names a file by its real path, so the scan must too, also when the
-    // run keeps the paths of links.
-    let mut args = ctx.args.clone();
-    args.preserve_symlinks = None;
-
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, args, Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -174,10 +170,10 @@ pub(crate) fn filter<'a>(
     // scope exit; the arena bulk-free skips Drop.
     let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
-    // The bundler source index of each test_files slot. The scan fills it by
+    // The bundler source of each test_files slot. The scan fills it by
     // position: a test file can have another path in the graph, and one that
     // does not resolve has no source.
-    let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
+    let mut slot_to_source = vec![ScannedEntryPoint::default(); test_files.len()];
 
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
@@ -289,11 +285,21 @@ pub(crate) fn filter<'a>(
     // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
     debug_assert_eq!(test_files.len(), slot_to_source.len());
+    // The run loads a file once, by its real path, unless it keeps the paths
+    // of links. Then the first test file that names the file stands for it.
+    let one_module_per_file = !vm.transpiler.resolver.opts.preserve_symlinks;
     for i in 0..total {
         let tf = test_files[i];
-        let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.as_bytes())
-            || maybe_source.is_some_and(|src| affected.is_set(src as usize));
+        let slot = slot_to_source[i];
+        let by_path = changed_files.contains(tf.as_bytes());
+        let by_graph = slot
+            .source_index
+            .is_some_and(|src| affected.is_set(src as usize));
+        let keep = if slot.is_duplicate && one_module_per_file {
+            by_path && !by_graph
+        } else {
+            by_path || by_graph
+        };
 
         if keep {
             test_files[write] = tf;
@@ -312,6 +318,9 @@ pub(crate) fn filter<'a>(
     // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
     // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
     unsafe { bundle.transpiler.deinit() };
+    // The log is in the CLI arena too. It holds a message for each test file
+    // that did not resolve.
+    bundle.transpiler.log_mut().clear_and_free();
 
     Ok(Result {
         test_files: &mut test_files[0..write],

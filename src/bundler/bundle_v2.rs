@@ -27,7 +27,7 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 use self::bake_types as bake;
 pub use bv2_impl::{
     BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    OnDependenciesAnalyze, singleton,
+    OnDependenciesAnalyze, ScannedEntryPoint, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -3575,11 +3575,11 @@ pub mod bv2_impl {
         fn enqueue_entry_points_for_scan(
             &mut self,
             entry_points: &[&[u8]],
-            source_indexes: &mut [Option<IndexInt>],
+            scanned: &mut [ScannedEntryPoint],
         ) -> Result<(), Error> {
             self.reserve_entry_points_normal(entry_points.len())?;
-            for (entry_point, source_index) in entry_points.iter().zip(source_indexes) {
-                *source_index = self.enqueue_entry_point_normal::<true>(entry_point)?;
+            for (entry_point, scanned) in entry_points.iter().zip(scanned) {
+                *scanned = self.enqueue_entry_point_normal::<true>(entry_point)?;
             }
             Ok(())
         }
@@ -3597,37 +3597,40 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// Returns the source index of a new entry point. `SCAN` also returns it for an
-        /// entry point whose file is already in the graph.
+        /// `SCAN` also finds the source of an entry point whose file is already in the graph.
         /// Always inline, so that the loop of `bun build` has no call for each entry point.
         #[inline(always)]
         fn enqueue_entry_point_normal<const SCAN: bool>(
             &mut self,
             entry_point: &[u8],
-        ) -> Result<Option<IndexInt>, Error> {
+        ) -> Result<ScannedEntryPoint, Error> {
             if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                 entry_point,
                 self.transpiler.options.target,
                 None,
             ) {
-                return Ok(None);
+                return Ok(ScannedEntryPoint::default());
             }
 
             // Check FileMap first for in-memory entry points
             if let Some(file_map) = self.file_map {
                 if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point) {
-                    return self.enqueue_entry_item(
+                    let source_index = self.enqueue_entry_item(
                         &mut { file_map_result },
                         true,
                         self.transpiler.options.target,
                         None,
-                    );
+                    )?;
+                    return Ok(ScannedEntryPoint {
+                        source_index,
+                        is_duplicate: false,
+                    });
                 }
             }
 
             // no plugins were matched
             let Ok(mut resolved) = self.transpiler.resolve_entry_point(entry_point) else {
-                return Ok(None);
+                return Ok(ScannedEntryPoint::default());
             };
 
             let target = 'brk: {
@@ -3649,10 +3652,16 @@ pub mod bv2_impl {
                 // An earlier entry point is the same file. `enqueue_entry_item` returned
                 // before it wrote to `resolved`, so its path is still the key of the map.
                 if let Some(path) = resolved.path_const() {
-                    return Ok(self.path_to_source_index_map(target).get_path(path));
+                    return Ok(ScannedEntryPoint {
+                        source_index: self.path_to_source_index_map(target).get_path(path),
+                        is_duplicate: true,
+                    });
                 }
             }
-            Ok(source_index)
+            Ok(ScannedEntryPoint {
+                source_index,
+                is_duplicate: false,
+            })
         }
 
         pub(crate) fn enqueue_entry_points_dev_server(
@@ -4353,6 +4362,15 @@ pub mod bv2_impl {
         }
     }
 
+    /// What `BundleV2::scan_module_graph_from_cli` reports for one entry point.
+    #[derive(Clone, Copy, Default)]
+    pub struct ScannedEntryPoint {
+        /// Index into `graph.input_files`. `None` when the entry point did not resolve.
+        pub source_index: Option<IndexInt>,
+        /// An earlier entry point is the same file, and has the same `source_index`.
+        pub is_duplicate: bool,
+    }
+
     pub struct DependenciesScanner {
         pub(crate) ctx: *mut (),
         pub entry_points: Box<[Box<[u8]>]>,
@@ -4619,19 +4637,18 @@ pub mod bv2_impl {
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
         ///
-        /// `source_indexes[i]` is set to the index of `entry_points[i]` in
-        /// `graph.input_files`, or `None` when it did not resolve. The graph
-        /// names a file by its real path, which can differ from the entry point,
-        /// and `graph.entry_points` has no slot for an entry point that did not
-        /// resolve or that names a file again.
+        /// `scanned[i]` is set to where `entry_points[i]` is in the graph. The
+        /// graph names a file by its real path, which can differ from the entry
+        /// point, and `graph.entry_points` has no slot for an entry point that
+        /// did not resolve or that names a file again.
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
             entry_points: &[&[u8]],
-            source_indexes: &mut [Option<IndexInt>],
+            scanned: &mut [ScannedEntryPoint],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            debug_assert_eq!(entry_points.len(), source_indexes.len());
+            debug_assert_eq!(entry_points.len(), scanned.len());
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
 
@@ -4643,7 +4660,7 @@ pub mod bv2_impl {
             // allocation. If a later allocation fails we must still drain the
             // pool so workers aren't left holding pointers into the caller's
             // stack-allocated Transpiler.
-            if let Err(err) = this.enqueue_entry_points_for_scan(entry_points, source_indexes) {
+            if let Err(err) = this.enqueue_entry_points_for_scan(entry_points, scanned) {
                 this.wait_for_parse();
                 return Err(err);
             }

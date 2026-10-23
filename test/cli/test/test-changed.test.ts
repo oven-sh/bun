@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -431,8 +431,8 @@ test("hot", () => {
       links: [string, string][];
       /** The git repository, relative to the temporary directory. */
       repo?: string;
-      /** The change that is not committed, relative to the repository. */
-      change: string;
+      /** The change that is not committed, relative to the repository: a file to edit, or a link and its new target. */
+      change: string | [string, string];
       /** Where `bun test` runs, relative to the repository. */
       cwd?: string;
       args?: (dir: string) => string[];
@@ -457,6 +457,12 @@ test("hot", () => {
       headers: ["contract.test.ts", "plain.test.ts"],
       ran: ["contract.test.ts"],
       status: "1 changed file, running 1/2 test files",
+    };
+    const twoTests = {
+      ...suite,
+      files: { ...suite.files, "shared-tests/other.test.ts": limitTest("./limits") },
+      headers: ["contract.test.ts", "other.test.ts", "plain.test.ts"],
+      ran: ["contract.test.ts", "other.test.ts"],
     };
     // `l` is a link to the directory of the test, and the test is named through it.
     const positional = {
@@ -492,11 +498,6 @@ test("hot", () => {
         ...suite,
         change: "shared-tests/contract.test.ts",
       },
-      // The scan does not keep the paths of links when the run does: git names the real file.
-      "a test in a linked directory with --preserve-symlinks": {
-        ...suite,
-        args: () => ["--changed", "--preserve-symlinks"],
-      },
       "a test in a linked directory that is the root in bunfig.toml": {
         ...suite,
         files: { ...suite.files, "packages/a/bunfig.toml": `[test]\nroot = "./tests/shared"\n` },
@@ -523,17 +524,44 @@ test("hot", () => {
         ran: ["t.test.ts"],
         status: "1 changed file, running 1/1 test file",
       },
-      // The walk from the root finds contract.test.ts under its real path and
-      // through packages/a. `bun test` lists it twice, and so does --changed.
-      "a test found under its real path and through a link": {
-        ...suite,
-        cwd: ".",
+      // Two selected files, so that --parallel starts workers.
+      "tests in a linked directory with --parallel": {
+        ...twoTests,
+        args: () => ["--changed", "--parallel=2"],
         status: "1 changed file, running 2/3 test files",
       },
-      "a test found under its real path and through a link with --parallel": {
+      // The walk from the root finds each shared test under its real path and
+      // through packages/a. The run loads the file once, so one of the two is selected.
+      "a test found under its real path and through a link runs once": {
         ...suite,
         cwd: ".",
+        status: "1 changed file, running 1/3 test files",
+      },
+      "tests found under their real path and through a link run once with --parallel": {
+        ...twoTests,
+        cwd: ".",
         args: () => ["--changed", "--parallel=2"],
+        status: "1 changed file, running 2/5 test files",
+      },
+      // The walk finds the link `aaa` before shared-tests/, and the change is to the test file.
+      "a test found through a link and then under its real path runs once when it changes": {
+        files: {
+          "package.json": pkg("link-first"),
+          "shared-tests/limits.ts": limit(1),
+          "shared-tests/contract.test.ts": limitTest("./limits"),
+          "plain.test.ts": plainTest,
+        },
+        links: [["aaa", "shared-tests"]],
+        change: "shared-tests/contract.test.ts",
+        headers: ["contract.test.ts", "plain.test.ts"],
+        ran: ["contract.test.ts"],
+        status: "1 changed file, running 1/3 test files",
+      },
+      // With --preserve-symlinks the run loads the two paths as two modules.
+      "a test found under its real path and through a link with --preserve-symlinks": {
+        ...suite,
+        cwd: ".",
+        args: () => ["--changed", "--preserve-symlinks"],
         status: "1 changed file, running 2/3 test files",
       },
     };
@@ -555,6 +583,19 @@ test("hot", () => {
         headers: ["t.test.ts", "plain.test.ts"],
         ran: ["t.test.ts"],
         status: "1 changed file, running 1/2 test files",
+      },
+      // The walk finds y.test.ts first. git names only the link, so the link is the selected one.
+      "a test file link that the change points at a test of the walk": {
+        files: {
+          "package.json": pkg("repointed"),
+          "x.test.ts": plainTest,
+          "y.test.ts": plainTest,
+        },
+        links: [["links/t.test.ts", "../x.test.ts"]],
+        change: ["links/t.test.ts", "../y.test.ts"],
+        headers: ["x.test.ts", "y.test.ts"],
+        ran: ["y.test.ts"],
+        status: "1 changed file, running 1/3 test files",
       },
       // package.json is a file, so the second of the four test files does not
       // resolve and has no place in the module graph.
@@ -598,7 +639,12 @@ test("hot", () => {
           appendFileSync(join(repo, ".gitignore"), `/${relative(repo, at).replaceAll(sep, "/")}\n`);
       }
       initRepo(repo);
-      touch(repo, c.change);
+      if (typeof c.change === "string") {
+        touch(repo, c.change);
+      } else {
+        rmSync(join(repo, c.change[0]));
+        symlinkSync(c.change[1], join(repo, c.change[0]));
+      }
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", ...(c.args?.(root) ?? ["--changed"])],

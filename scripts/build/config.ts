@@ -18,6 +18,13 @@ import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
+/**
+ * The checkout this build system is part of: two directories above this file. Not derived from process.cwd():
+ * ninja runs the regen edge from the build directory, which an explicit --build-dir can put anywhere.
+ * test/internal/source-lints/build-scripts-no-process-cwd.test.ts keeps configure off process.cwd().
+ */
+export const repoRoot: string = resolve(import.meta.dirname, "..", "..");
+
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
@@ -806,7 +813,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const assertions = partial.assertions ?? (debug || asan);
 
   // ─── Paths ───
-  const cwd = findRepoRoot();
+  const cwd = repoRoot;
   // Windows cross-compiles get their own default build dir — the native
   // build of the same profile (build/debug, build/release) already holds
   // host-target objects at the same obj/ paths, and mixing COFF into an ELF
@@ -1036,9 +1043,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     );
   }
 
-  // PGO: paths resolved to absolute. generate/use are mutually exclusive.
-  const pgoGenerate = partial.pgoGenerate ? resolve(partial.pgoGenerate) : undefined;
-  const pgoUse = partial.pgoUse ? resolve(partial.pgoUse) : undefined;
+  // PGO: paths resolved against the checkout, like every other path override. generate/use are mutually exclusive.
+  const pgoGenerate = partial.pgoGenerate ? resolve(cwd, partial.pgoGenerate) : undefined;
+  const pgoUse = partial.pgoUse ? resolve(cwd, partial.pgoUse) : undefined;
   if (pgoGenerate && pgoUse) {
     throw new BuildError("--pgo-generate and --pgo-use are mutually exclusive");
   }
@@ -1514,33 +1521,6 @@ function compareVersionStrings(a: string, b: string): number {
     if (ai !== bi) return ai < bi ? -1 : 1;
   }
   return 0;
-}
-
-/**
- * Find the repository root by walking up from cwd looking for package.json
- * with name "bun". Exported so `resolveToolchain()` in configure.ts can
- * resolve paths correctly when invoked from ninja (where cwd = build dir).
- */
-export function findRepoRoot(): string {
-  let dir = process.cwd();
-  while (true) {
-    const pkgPath = join(dir, "package.json");
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string };
-        if (pkg.name === "bun") {
-          return dir;
-        }
-      } catch {
-        // Invalid JSON, keep walking
-      }
-    }
-    const parent = resolve(dir, "..");
-    if (parent === dir) {
-      throw new BuildError("Could not find bun repository root", { hint: "Run this from within the bun repository" });
-    }
-    dir = parent;
-  }
 }
 
 /**

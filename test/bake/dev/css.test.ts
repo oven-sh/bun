@@ -810,6 +810,42 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+devTest("the files under an @import with a bare layer are in one @layer block", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `@import "./lib.css" layer;`,
+    "lib.css": `@import "./leaf.css";\n.t { color: green; }`,
+    "leaf.css": `div.t { color: red; }`,
+  },
+  async test(dev) {
+    const stylesheet = async () => {
+      const href = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+      return await (await dev.fetch(href)).text();
+    };
+    const bundled = (leafColor: string) =>
+      `@layer {
+  /* leaf.css */
+  div.t {
+    color: ${leafColor};
+  }
+
+  /* lib.css */
+  .t {
+    color: green;
+  }
+}
+
+/* styles.css */
+
+`;
+    expect(await stylesheet()).toBe(bundled("red"));
+    await dev.write("leaf.css", `div.t { color: navy; }`);
+    expect(await stylesheet()).toBe(bundled("navy"));
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

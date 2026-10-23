@@ -501,13 +501,7 @@ pub(crate) fn find_imported_files_in_css_order<'a, 'ctx>(
     }
     debug_css_order(this, &order, CssOrderDebugStep::AfterHoisting);
 
-    let order = optimize_css_order(
-        this,
-        css_asts,
-        has_anonymous_layer_import,
-        order,
-        wip_order,
-    );
+    let order = optimize_css_order(this, css_asts, has_anonymous_layer_import, order, wip_order);
     if !has_sealed_anonymous_layer {
         return Ok(CssOrder {
             entries: order,
@@ -900,7 +894,8 @@ fn flatten_anonymous_layers(order: Vec<CssImportOrder>) -> CssOrder {
     let mut entries: Vec<CssImportOrder> = Vec::init_capacity(order.len());
     let mut layers: Vec<CssAnonymousLayer> = Vec::new();
     // An explicit stack: a chain of bare `layer` imports can be as deep as the import graph.
-    let mut stack: Vec<(std::vec::IntoIter<CssImportOrder>, usize)> = vec![(order.into_iter(), ROOT)];
+    let mut stack: Vec<(std::vec::IntoIter<CssImportOrder>, usize)> =
+        vec![(order.into_iter(), ROOT)];
     while let Some((rest, layer)) = stack.last_mut() {
         let Some(mut entry) = rest.next() else {
             if *layer != ROOT {
@@ -948,7 +943,10 @@ fn put_inside(entry: &mut CssImportOrder, chain: &Vec<ImportConditions>, arena: 
     } else {
         let len = chain.len() + entry.conditions.len();
         let slab = arena.alloc_uninit_slice::<ImportConditions>(len);
-        let both = chain.slice_const().iter().chain(entry.conditions.slice_const());
+        let both = chain
+            .slice_const()
+            .iter()
+            .chain(entry.conditions.slice_const());
         for (dst, src) in slab.iter_mut().zip(both) {
             // SAFETY: never dropped (see the note at `bitwise_copy`).
             dst.write(unsafe { bitwise_copy(src) });
@@ -1133,16 +1131,11 @@ fn is_conditional_import_redundant(
         return false;
     }
 
-    // The earlier copy is in an anonymous layer that the later copy is not in. Each
-    // anonymous layer is a layer of its own, so the later copy cannot stand for it.
-    if earlier.slice()[later.len()..]
+    // When the earlier copy is in an anonymous layer that the later copy is not in, the
+    // later copy cannot stand for it: each anonymous layer is a layer of its own.
+    !earlier.slice()[later.len()..]
         .iter()
         .any(ImportConditions::has_anonymous_layer)
-    {
-        return false;
-    }
-
-    true
 }
 
 #[derive(Clone, Copy)]

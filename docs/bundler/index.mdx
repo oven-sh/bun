@@ -1406,6 +1406,8 @@ The bundler always loads `export *` re-exports (it never defers them) to avoid c
 
 **Plugins:** Resolve and load plugins work with barrel optimization. Deferred submodules go through the plugin pipeline when they are eventually loaded.
 
+**Re-exports from other packages:** A deferred re-export is not loaded, whatever it points at. If the barrel re-exports a name from another package that has side effects (a polyfill, for example) and nothing imports that name, that package is not loaded and its top-level code does not run. This differs from esbuild and from Bun 1.3.9, which load it. To load the package, import it directly (`import "pkg"`). In automatic mode, a package author can also list the barrel file in `"sideEffects"` instead of setting `false`: the bundler then loads every re-export of that barrel. A package listed in `optimizeImports` skips its unused re-exports whatever its `"sideEffects"` field says.
+
 ### Re-exported namespaces
 
 Property reads on an import that turns out to be a module namespace are linked straight to the export they name, the same as a named import. This covers namespaces reached indirectly:

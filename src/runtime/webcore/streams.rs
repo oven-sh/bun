@@ -999,6 +999,8 @@ pub enum SourceHandle {
     FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
     ServerRequestBody(crate::server::AnyRequestContext),
     S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
+    /// `Mut`: the producer frees itself through this pointer when the stream lets go of it.
+    FormDataBody(BackRef<crate::webcore::form_data_body::Producer, bun_ptr::Mut>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
     /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
     /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
@@ -1042,6 +1044,9 @@ impl SourceHandle {
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
             SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
+            SourceHandle::FormDataBody(p) => {
+                crate::webcore::form_data_body::Producer::on_stream_cancelled(p.as_ptr())
+            }
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => {}
@@ -1100,6 +1105,9 @@ impl SourceHandle {
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_drained(),
+            SourceHandle::FormDataBody(p) => {
+                crate::webcore::form_data_body::Producer::on_stream_drained(p.as_ptr())
+            }
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
@@ -1115,6 +1123,9 @@ impl SourceHandle {
         match self {
             SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_collected(),
+            SourceHandle::FormDataBody(p) => {
+                crate::webcore::form_data_body::Producer::on_stream_cancelled(p.as_ptr())
+            }
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
@@ -1131,6 +1142,9 @@ impl SourceHandle {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
             SourceHandle::S3DownloadBody(p) => p.on_consumer_attached(),
+            SourceHandle::FormDataBody(p) => {
+                crate::webcore::form_data_body::Producer::on_consumer_attached(p.as_ptr())
+            }
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController(_)

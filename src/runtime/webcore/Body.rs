@@ -4,6 +4,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::blob::BodyFacts;
+use crate::webcore::form_data_body::FormDataBody;
 use crate::webcore::jsc::{
     self as jsc, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData, JSGlobalObject,
     JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
@@ -1043,7 +1044,16 @@ impl Value {
         if let Some(form_data) = as_dom_form_data(value) {
             // SAFETY: shim returns a live JSC heap cell.
             return match Blob::from_dom_form_data(global_this, unsafe { &mut *form_data }) {
-                Ok(blob) => Ok(Value::Blob(blob)),
+                Ok(FormDataBody::Bytes(blob)) => Ok(Value::Blob(blob)),
+                Ok(FormDataBody::Deferred(deferred)) => {
+                    let content_type = deferred.content_type.clone();
+                    let readable =
+                        deferred.into_stream(&global_this.js_thread_of_caller_no_frame())?;
+                    Ok(Value::Locked(PendingValue {
+                        content_type,
+                        ..PendingValue::from_stream(readable, global_this)
+                    }))
+                }
                 Err(err) => Err(err.throw(global_this)),
             };
         }

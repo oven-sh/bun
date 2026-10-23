@@ -25,10 +25,12 @@ use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
-use crate::webcore::blob::BodyFacts;
-use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
+use crate::webcore::blob::{
+    Any as AnyBlob, Blob, BlobContentType, BodyFacts, SizeType as BlobSizeType, Store as BlobStore,
+};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
+use crate::webcore::form_data_body::FormDataBody;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
@@ -248,10 +250,22 @@ impl HTTPRequestBody {
         }
     }
 
-    pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+    /// `stream_content_type` receives the type of a body that is a stream Bun made. An `AnyBlob` has its own.
+    pub(crate) fn from_js(
+        cx: &bun_jsc::JsThread<'_>,
+        value: JSValue,
+        stream_content_type: &mut BlobContentType,
+    ) -> JsResult<HTTPRequestBody> {
         if let Some(form_data) = jsc::DOMFormData::from_js(value) {
             return match Blob::from_dom_form_data(cx.global(), form_data) {
-                Ok(blob) => Ok(HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob))),
+                Ok(FormDataBody::Bytes(blob)) => Ok(HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob))),
+                Ok(FormDataBody::Deferred(deferred)) => {
+                    *stream_content_type = deferred.content_type.clone();
+                    Ok(HTTPRequestBody::ReadableStream(ReadableStreamStrong::init(
+                        deferred.into_stream(cx)?,
+                        cx.global(),
+                    )))
+                }
                 Err(err) => Err(cx
                     .global()
                     .throw_value(super::system_type_error(&err, cx.global()))),

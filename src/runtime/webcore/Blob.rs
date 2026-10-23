@@ -23,6 +23,7 @@ use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
+use crate::webcore::form_data_body::{self, FormDataBody};
 use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
@@ -174,7 +175,7 @@ pub(crate) trait BlobExt {
     fn from_dom_form_data(
         global_this: &JSGlobalObject,
         form_data: &mut jsc::DOMFormData,
-    ) -> bun_sys::Result<Blob>
+    ) -> bun_sys::Result<FormDataBody>
     where
         Self: Sized;
     fn content_type(&self) -> &[u8];
@@ -789,7 +790,7 @@ impl BlobExt for Blob {
     fn from_dom_form_data(
         global_this: &JSGlobalObject,
         form_data: &mut jsc::DOMFormData,
-    ) -> bun_sys::Result<Blob> {
+    ) -> bun_sys::Result<FormDataBody> {
         // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
         const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
@@ -805,6 +806,7 @@ impl BlobExt for Blob {
             joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
             read_error: None,
+            s3_parts: Vec::new(),
         };
         // Size the node list up front: a file entry pushes at most 13 slices, a
         // string entry 8, plus 3 for the closing boundary.
@@ -888,23 +890,30 @@ impl BlobExt for Blob {
         context.joiner.push_static(boundary);
         context.joiner.push_static(b"--\r\n");
 
-        let store = Store::init(
-            context
-                .joiner
-                .done()
-                .map(|b| b.into_vec())
-                .unwrap_or_else(|_| bun_core::out_of_memory()),
-        );
-        let blob = Blob::init_with_store(store, global_this);
+        let bytes = context
+            .joiner
+            .done()
+            .map(|b| b.into_vec())
+            .unwrap_or_else(|_| bun_core::out_of_memory());
         const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
         let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
         ct.extend_from_slice(CONTENT_TYPE_PREFIX);
         ct.extend_from_slice(boundary);
-        blob.content_type
-            .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
+        let content_type = BlobContentType::Owned(std::sync::Arc::from(ct));
+
+        if !context.s3_parts.is_empty() {
+            return Ok(FormDataBody::Deferred(form_data_body::Deferred {
+                bytes,
+                parts: context.s3_parts,
+                content_type,
+            }));
+        }
+
+        let blob = Blob::init_with_store(Store::init(bytes), global_this);
+        blob.content_type.set(content_type);
         blob.content_type_was_set.set(true);
 
-        Ok(blob)
+        Ok(FormDataBody::Bytes(blob))
     }
 
     fn content_type(&self) -> &[u8] {
@@ -3429,6 +3438,8 @@ struct FormDataContext<'a> {
     boundary: &'a [u8], // borrowed; outlives the joiner
     /// Set by the first file-backed entry that can't be read. Later entries are skipped.
     read_error: Option<bun_sys::Error>,
+    /// The S3 entries, whose bytes are not in `joiner`.
+    s3_parts: Vec<form_data_body::S3Part>,
 }
 
 /// Which piece of a `multipart/form-data` entry a string is, selecting the
@@ -3561,18 +3572,25 @@ impl FormDataContext<'_> {
 
                 if blob.store.get().is_some() {
                     // `read_file` reads a file of unknown size to EOF. macOS reports only the buffered bytes as a pipe's `st_size`.
-                    if blob.size.get() == MAX_SIZE && !blob.needs_to_read_file() {
+                    // An S3 object of unknown size is requested whole.
+                    if blob.size.get() == MAX_SIZE && !blob.needs_to_read_file() && !blob.is_s3() {
                         blob.resolve_size();
                     }
                     let store = blob
                         .store
                         .get()
-                        .as_deref()
+                        .as_ref()
                         .expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
-                            // TODO: s3
-                            // we need to make this async and use download/downloadSlice
+                            // The object is read when the body is. An empty window has nothing to read.
+                            if blob.size.get() != 0 {
+                                self.s3_parts.push(form_data_body::S3Part::new(
+                                    joiner.len,
+                                    blob,
+                                    store.clone(),
+                                ));
+                            }
                         }
                         store::Data::File(file) => {
                             // TODO: make this async + lazy

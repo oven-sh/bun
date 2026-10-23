@@ -1119,7 +1119,7 @@ pub(crate) fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
-fn download_stream(
+pub(crate) fn download_stream(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
@@ -1307,73 +1307,30 @@ fn download_stream(
     task_ptr
 }
 
-pub struct S3DownloadStreamWrapper {
-    stream: crate::webcore::byte_stream::ProducerHold,
-    pub path: Box<[u8]>,
-    pub global: GlobalRef, // JSC_BORROW
-    /// Non-owning. The task frees itself on the main thread once `has_more == false`,
-    /// which first drops this wrapper (clearing the stream's producer handle), so this
-    /// pointer is never observed dangling from `on_stream_cancelled`.
-    pub task: Cell<*mut S3HttpDownloadStreamingTask>,
+/// The stream an S3 download feeds, and the download: chunk delivery and the receive
+/// backpressure. An S3 body has one download. A form body runs one per S3 part.
+#[derive(Default)]
+pub(crate) struct S3DownloadFeed {
+    pub(crate) stream: crate::webcore::byte_stream::ProducerHold,
+    /// Non-owning. The task frees itself on the main thread after its callback with
+    /// `has_more == false`. The owner of this feed is gone or has cleared this by then, so the
+    /// pointer is never observed dangling.
+    pub(crate) task: Cell<*mut S3HttpDownloadStreamingTask>,
 }
 
-impl S3DownloadStreamWrapper {
-    fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
-    /// `this` is the heap pointer from `new` (write and dealloc provenance): the terminal
-    /// callback frees the wrapper through it, so no reference derived from it may outlive
-    /// this call.
-    fn callback(
-        chunk: &MutableString,
-        has_more: bool,
-        request_err: Option<Error::S3Error>,
-        this: *mut Self,
-    ) {
-        let _guard = scopeguard::guard(this, move |s| {
-            if !has_more {
-                // SAFETY: `s` is the live allocation from `new`; the HTTP thread does not call
-                // back after the terminal chunk, so this is the only owner left.
-                drop(unsafe { bun_core::heap::take(s) });
-            }
-        });
-        // SAFETY: live until the guard runs, which is after the last use of this borrow.
-        let self_ = unsafe { &*this };
-
-        if let Some(err) = request_err {
-            let Some(bytes) = self_.stream.take() else {
-                return;
-            };
-            bytes.on_data(crate::webcore::streams::StreamResult::Err(
-                crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
-                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
-                    &self_.global,
-                )),
-            ));
-            return;
-        }
-        if has_more {
-            let Some(bytes) = self_.stream.bytes() else {
-                return;
-            };
-            bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                // chunk.list is borrowed for the duration of on_data.
-                bun_ptr::RawSlice::new(chunk.list.as_slice()),
-            ));
-            // `on_data` can cancel us, which releases the hold.
-            if self_.stream.is_held() {
-                self_.after_chunk_delivered(&bytes);
-            }
-            return;
-        }
-        let Some(bytes) = self_.stream.take() else {
+impl S3DownloadFeed {
+    /// A chunk that is not the last one. `chunk` is borrowed for the duration of the call.
+    pub(crate) fn deliver(&self, chunk: &[u8]) {
+        let Some(bytes) = self.stream.bytes() else {
             return;
         };
-        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-            // chunk.list is borrowed for the duration of on_data.
-            bun_ptr::RawSlice::new(chunk.list.as_slice()),
+        bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
+            bun_ptr::RawSlice::new(chunk),
         ));
+        // `on_data` can cancel us, which releases the hold.
+        if self.stream.is_held() {
+            self.after_chunk_delivered(&bytes);
+        }
     }
 
     /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`
@@ -1421,23 +1378,18 @@ impl S3DownloadStreamWrapper {
         self.unpark();
     }
 
-    /// The stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
-    /// touches no JS cell.
-    pub(crate) fn on_stream_collected(&self) {
-        self.on_stream_cancelled();
-    }
-
-    pub(crate) fn on_stream_cancelled(&self) {
-        // The download may still be in progress, but the callback will see no stream and skip
-        // delivery. When the download finishes (has_more == false) the task frees this wrapper.
+    /// Nothing reads the rest. Touches no JS cell (safe inside a GC sweep).
+    pub(crate) fn cancel(&self) {
+        // The download may still be in progress, but its callback will see no stream and skip
+        // delivery.
         self.stream.release();
         // Abort the in-flight HTTP request so the HTTP thread delivers a final
-        // callback with `has_more == false`, which frees the task and this wrapper.
+        // callback with `has_more == false`, which frees the task and lets the owner go.
         // Without this, a server that never sends the terminal chunk would leak both.
         let task = self.task.replace(core::ptr::null_mut());
         if !task.is_null() {
             // SAFETY: task is live until its own `on_response` frees it on this thread,
-            // which has not happened yet (it would have dropped this wrapper first).
+            // which has not happened yet (its last callback would have cleared `task` first).
             unsafe {
                 (*task)
                     .signal_store
@@ -1446,10 +1398,86 @@ impl S3DownloadStreamWrapper {
                 (*task).poll_ref.unref(bun_io::js_vm_ctx());
                 // Wake the HTTP thread so it observes the abort even when the
                 // socket is idle; otherwise the final `has_more == false`
-                // callback never fires and both the task and wrapper leak.
+                // callback never fires and both the task and its owner leak.
                 bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
             }
         }
+    }
+}
+
+pub struct S3DownloadStreamWrapper {
+    /// The last callback of the download frees this wrapper, so `feed.task` never dangles.
+    feed: S3DownloadFeed,
+    pub path: Box<[u8]>,
+    pub global: GlobalRef, // JSC_BORROW
+}
+
+impl S3DownloadStreamWrapper {
+    fn new(init: Self) -> *mut Self {
+        bun_core::heap::into_raw(Box::new(init))
+    }
+
+    /// `this` is the heap pointer from `new` (write and dealloc provenance): the terminal
+    /// callback frees the wrapper through it, so no reference derived from it may outlive
+    /// this call.
+    fn callback(
+        chunk: &MutableString,
+        has_more: bool,
+        request_err: Option<Error::S3Error>,
+        this: *mut Self,
+    ) {
+        let _guard = scopeguard::guard(this, move |s| {
+            if !has_more {
+                // SAFETY: `s` is the live allocation from `new`; the HTTP thread does not call
+                // back after the terminal chunk, so this is the only owner left.
+                drop(unsafe { bun_core::heap::take(s) });
+            }
+        });
+        // SAFETY: live until the guard runs, which is after the last use of this borrow.
+        let self_ = unsafe { &*this };
+
+        if let Some(err) = request_err {
+            let Some(bytes) = self_.feed.stream.take() else {
+                return;
+            };
+            bytes.on_data(crate::webcore::streams::StreamResult::Err(
+                crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
+                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
+                    &self_.global,
+                )),
+            ));
+            return;
+        }
+        if has_more {
+            self_.feed.deliver(chunk.list.as_slice());
+            return;
+        }
+        let Some(bytes) = self_.feed.stream.take() else {
+            return;
+        };
+        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
+            // chunk.list is borrowed for the duration of on_data.
+            bun_ptr::RawSlice::new(chunk.list.as_slice()),
+        ));
+    }
+
+    pub(crate) fn on_stream_drained(&self) {
+        self.feed.on_stream_drained();
+    }
+
+    pub(crate) fn on_consumer_attached(&self) {
+        self.feed.on_consumer_attached();
+    }
+
+    /// The stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
+    /// touches no JS cell.
+    pub(crate) fn on_stream_collected(&self) {
+        self.feed.cancel();
+    }
+
+    /// When the download finishes (has_more == false) the task frees this wrapper.
+    pub(crate) fn on_stream_cancelled(&self) {
+        self.feed.cancel();
     }
 
     fn opaque_callback(
@@ -1492,13 +1520,12 @@ pub(crate) fn readable_stream(
     let readable_value = reader_mut.to_readable_stream(cx)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
-        stream: Default::default(),
+        feed: S3DownloadFeed::default(),
         path: Box::<[u8]>::from(path),
         global: global_static,
-        task: Cell::new(core::ptr::null_mut()),
     });
     // SAFETY: `reader` is the live source made above; `wrapper` the live heap allocation.
-    unsafe { (*wrapper).stream.hold(&raw mut reader_mut.context) };
+    unsafe { (*wrapper).feed.stream.hold(&raw mut reader_mut.context) };
 
     reader_mut
         .producer
@@ -1522,7 +1549,7 @@ pub(crate) fn readable_stream(
         // SAFETY: on the success path `download_stream` only schedules work onto the HTTP
         // thread; the wrapper is freed via `opaque_callback` on this (main) thread, which
         // cannot run until we return to the event loop, so `wrapper` is still live here.
-        unsafe { (*wrapper).task.set(task) };
+        unsafe { (*wrapper).feed.task.set(task) };
     }
     Ok(readable_value)
 }

@@ -399,6 +399,16 @@ fn reject_before_send(
     Ok(JSPromise::rejected_promise(global_this, reason).to_js())
 }
 
+/// The `Content-Type` the body gives a header list that has none: a Blob's own, or `of_stream`
+/// for a stream.
+fn body_content_type<'a>(
+    body: &'a mut HTTPRequestBody,
+    of_stream: &'a BlobContentType,
+) -> Option<&'a [u8]> {
+    any_blob_content_type_opt(body.get_any_blob().map(|blob| &*blob))
+        .or_else(|| (!of_stream.is_empty()).then(|| of_stream.as_slice()))
+}
+
 /// Shared implementation of fetch
 fn fetch_impl(
     ctx: &JSGlobalObject,
@@ -858,10 +868,16 @@ fn fetch_impl(
     //
     // body: BodyInit | null | undefined;
     //
+    let mut stream_content_type = BlobContentType::default();
     let mut body = sources
         .member(
             |object| match object.fast_get(global_this, jsc::BuiltinName::Body)? {
-                Some(body) => HTTPRequestBody::from_js(&ctx.js_thread(context), body).map(Some),
+                Some(body) => HTTPRequestBody::from_js(
+                    &ctx.js_thread(context),
+                    body,
+                    &mut stream_content_type,
+                )
+                .map(Some),
                 None => Ok(None),
             },
             |req| {
@@ -939,7 +955,7 @@ fn fetch_impl(
             Some(from_fetch_headers(
                 global_this,
                 Some(fetch_headers),
-                any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
+                body_content_type(&mut body, &stream_content_type),
             )?)
         }
         None => None,
@@ -1202,11 +1218,11 @@ fn fetch_impl(
         }
     }
 
-    if headers.is_none() && body.has_content_type_from_user() {
+    if headers.is_none() && (body.has_content_type_from_user() || !stream_content_type.is_empty()) {
         headers = Some(from_fetch_headers(
             global_this,
             None,
-            any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
+            body_content_type(&mut body, &stream_content_type),
         )?);
     }
 

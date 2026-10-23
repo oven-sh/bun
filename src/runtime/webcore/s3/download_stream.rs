@@ -15,7 +15,7 @@ use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
 
-pub struct S3HttpDownloadStreamingTask {
+pub(crate) struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
@@ -25,11 +25,12 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: NonNull<()>,
-    pub callback: fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
+    pub(crate) callback:
+        fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
     pub(crate) has_schedule_callback: AtomicBool,
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) signals: Signals,
-    pub poll_ref: KeepAlive,
+    pub(crate) poll_ref: KeepAlive,
 
     pub(crate) mutex: Mutex,
     pub(crate) reported_response_buffer: MutableString,

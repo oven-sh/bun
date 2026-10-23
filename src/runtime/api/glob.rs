@@ -1,6 +1,6 @@
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
-use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
@@ -9,7 +9,7 @@ use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
 
-use crate::generated_bindgen::glob::{GlobClass, GlobScanArgument, GlobScanOptions};
+use crate::generated_bindgen::glob::{GlobScanArgument, GlobScanOptions};
 
 /// `Bun.Glob`, declared in `Glob.bind.ts`.
 pub(crate) struct Glob {
@@ -22,6 +22,7 @@ pub(crate) enum ScanError<'a> {
     Sys(syscall::Error),
     Runtime(crate::Error),
     CwdTooLong(&'static str),
+    NullBytes(&'static str, Box<[u8]>),
     Js(bindgen::Error<'a>),
 }
 impl<'a> IntoError<'a> for ScanError<'a> {
@@ -33,6 +34,13 @@ impl<'a> IntoError<'a> for ScanError<'a> {
             ScanError::CwdTooLong(fn_name) => heap.error(format_args!(
                 "{fn_name}: invalid `cwd`, longer than {MAX_PATH_BYTES} bytes"
             )),
+            ScanError::NullBytes(name, value) => heap.error_with_code(
+                bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The argument '{name}' must be a string without null bytes. Received {}",
+                    bun_core::fmt::quote(&value)
+                ),
+            ),
             ScanError::Js(err) => err,
         }
     }
@@ -59,6 +67,9 @@ impl ScanOpts {
         }
         if cwd.len() > MAX_PATH_BYTES {
             return Err(ScanError::CwdTooLong(fn_name));
+        }
+        if bun_core::strings::contains_char(cwd, 0) {
+            return Err(ScanError::NullBytes("cwd", Box::from(cwd)));
         }
         if resolve_path::Platform::AUTO.is_absolute(cwd) {
             return Ok(Some(Box::from(cwd)));
@@ -346,6 +357,12 @@ impl Glob {
         argument: Option<GlobScanArgument<'a>>,
         fn_name: &'static str,
     ) -> Result<AnyGlobWalker, ScanError<'a>> {
+        if bun_core::strings::contains_char(self.pattern.slice(), 0) {
+            return Err(ScanError::NullBytes(
+                "pattern",
+                Box::from(self.pattern.slice()),
+            ));
+        }
         let match_opts = ScanOpts::new(argument, fn_name)?;
 
         fn init_walker<'a, A: walk::Accessor>(
@@ -406,17 +423,15 @@ impl Glob {
     }
 }
 
-impl GlobClass for Glob {
-    type Error<'a> = ScanError<'a>;
-
-    fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
+impl Glob {
+    pub(crate) fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
         Glob {
             shape: bun_glob::matcher::Shape::of(pattern.slice()),
             pattern,
         }
     }
 
-    fn r#match<'a>(&self, str: &'a [u8]) -> bool {
+    pub(crate) fn r#match<'a>(&self, str: &'a [u8]) -> bool {
         bun_glob::matcher::match_prepared::<{ cfg!(windows) }>(
             self.pattern.slice(),
             &self.shape,
@@ -426,12 +441,12 @@ impl GlobClass for Glob {
         .matches()
     }
 
-    fn scan<'a>(
-        this: JsWrapper<'a, Self>,
+    pub(crate) fn scan<'a>(
+        &self,
         cx: &mut JsScope<'a>,
         options: Option<GlobScanArgument<'a>>,
     ) -> Result<JsLocal<'a>, ScanError<'a>> {
-        let walker = this.with(&cx.payloads, |glob| glob.make_glob_walker(options, "scan"))?;
+        let walker = self.make_glob_walker(options, "scan")?;
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
         Job::<WalkTask>::schedule(
@@ -442,7 +457,7 @@ impl GlobClass for Glob {
         Ok(JsLocal::new(&cx.heap, value))
     }
 
-    fn scan_sync<'a>(
+    pub(crate) fn scan_sync<'a>(
         &self,
         heap: &JsHeap<'a>,
         options: Option<GlobScanArgument<'a>>,

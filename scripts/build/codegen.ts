@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
-import type { CodegenFields } from "./config.ts";
+import { webkitVersionName, type CodegenFields } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
@@ -321,7 +321,6 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
   emitErrorCode(ctx);
-  emitGeneratedClasses(ctx);
   emitHostExports(ctx);
   emitCppBind(ctx);
   emitJsModules(ctx);
@@ -464,6 +463,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       "completions/bun.zsh",
       "completions/bun.fish",
       "src/runtime/bake/bun-framework-react/client.tsx",
+      "src/runtime/bake/bun-bake-react/client.tsx",
       "src/lint/linter/config/presets.txt",
       "src/lint/linter/deprecated.txt",
       "src/lint/linter/schema/schemas.txt",
@@ -699,42 +699,6 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppHeaders.push(...cppOutputs);
 }
 
-function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
-  const script = resolve(cfg.cwd, "src", "codegen", "generate-classes.ts");
-
-  const outputs = [
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.cpp"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureHeader.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMClientIsoSubspaces.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMIsoSubspaces.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureImpl.h"),
-    // Rust sibling: include!()'d by src/runtime/generated_classes.rs. Must be
-    // a declared output: bun_runtime's dep-info names it, and ninja can only
-    // rebuild that crate in the same build as this step if it knows the file.
-    resolve(cfg.codegenDir, "generated_classes.rs"),
-  ];
-  const types = resolve(cfg.typesDir, "ZigGeneratedClasses.d.ts");
-
-  n.build({
-    outputs: [...outputs, types],
-    rule: "codegen",
-    inputs: [script, ...sources.zigGeneratedClasses],
-    orderOnlyInputs: [dirStamp],
-    vars: {
-      cwd: cfg.cwd,
-      desc: "ZigGeneratedClasses.{cpp,h,rs}",
-      args: shJoin(cfg, [script, ...sources.zigGeneratedClasses, cfg.codegenDir, cfg.typesDir]),
-    },
-  });
-
-  o.all.push(...outputs, types);
-  o.generatedTypes.push(types);
-  o.rustInputs.push(...outputs);
-  o.cppSources.push(outputs[1]!); // .cpp
-  o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
-}
-
 function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
   const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
@@ -833,6 +797,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // replacements.ts bakes js_classes.ts indices into every bundled module ($inherits(N, ...)).
+  const jsClassesInput = resolve(cfg.cwd, "src", "jsc", "bindings", "js_classes.ts");
+  // bundle-modules.ts hashes this header's entries into the builtins section (engineStamp).
+  const builtinNamesInput = resolve(cfg.cwd, "src", "js", "builtins", "BunBuiltinNames.h");
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -841,12 +809,14 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+createInternalModuleById.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
+    resolve(cfg.codegenDir, "JSClasses+enum.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "BuiltinModuleKeys.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
-    // a declared output, for the same reason as generated_classes.rs.
+    // a declared output: bun_runtime's dep-info names it, and ninja can only
+    // rebuild that crate in the same build as this step if it knows the file.
     resolve(cfg.codegenDir, "generated_js2native.rs"),
     // Specifier → module-ID tag table: include!()'d by the
     // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
@@ -863,14 +833,30 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs: [...outputs, ...types],
     rule: "codegen_bun",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    inputs: [
+      script,
+      ...sources.js,
+      ...sources.jsCodegen,
+      extraInput,
+      errorCodeInput,
+      jsClassesInput,
+      builtinNamesInput,
+    ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir, typesOnlyFlag(cfg, sources)]),
+      args: shJoin(cfg, [
+        "run",
+        script,
+        debugFlag(cfg),
+        cfg.buildDir,
+        cfg.typesDir,
+        typesOnlyFlag(cfg, sources),
+        `--webkit-version=${webkitVersionName(cfg.webkitVersion)}`,
+      ]),
     },
   });
 
@@ -899,7 +885,7 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "bake.server.js"),
     resolve(cfg.codegenDir, "bake.error.js"),
   ];
-  // The enums of dev_server/mod.rs as TypeScript, written beside the runtime sources that import it. It is the
+  // The enums of dev_server/protocol.rs as TypeScript, written beside the runtime sources that import it. It is the
   // same in every profile, like the declarations in cfg.typesDir.
   const generatedTs = resolve(cfg.cwd, "src", "runtime", "bake", "generated.ts");
 
@@ -950,6 +936,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     ...outputNames.map(name => resolve(cfg.codegenDir, `${name}.h`)),
     resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"),
     resolve(cfg.codegenDir, "GeneratedBindings+Counts.h"),
+    resolve(cfg.codegenDir, "GeneratedBindings+Classes.h"),
   ];
   const rust = [...new Set(compiled.map(src => crates.get(src)))].map(crate =>
     resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),

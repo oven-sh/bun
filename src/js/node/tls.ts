@@ -3,9 +3,9 @@ const { isArrayBufferView } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
-const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
-const setListenerSecureContext = $newRustFunction("Listener.rs", "jsSetSecureContext", 2);
-const firstFlightBeforeFin = $newRustFunction("runtime/socket/socket.rs", "jsFirstFlightBeforeFin", 1);
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
+const setListenerSecureContext = $bindgen("Listener.bind.ts", "setSecureContext");
+const firstFlightBeforeFin = $bindgen("socket_body.bind.ts", "firstFlightBeforeFin");
 const { throwNotImplemented } = require("internal/shared");
 const { idnaToASCII } = require("internal/url");
 const {
@@ -435,7 +435,7 @@ function checkServerIdentity(hostname, cert) {
 // — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
 // native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
 // that used to live in this file.
-const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
+const NativeSecureContext = $bindgen("SecureContext.bind.ts", "SecureContext");
 
 // Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
 // boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
@@ -1583,23 +1583,28 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
-const getUseSystemCA = $newRustFunction("bun.rs", "getUseSystemCA", 0);
+const getCAStore = $bindgen("node_tls_binding.bind.ts", "getCAStore");
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
-  const bundled = cacheBundledRootCertificates();
-  for (let i = 0; i < bundled.length; ++i) {
-    ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
-  }
+  // As in Node, what OpenSSL's default certificate file and directory hold is not listed.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L157
+  const store = getCAStore();
+  if (store !== "openssl") {
+    const bundled = cacheBundledRootCertificates();
+    for (let i = 0; i < bundled.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+    }
 
-  // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
-  if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
-    const system = cacheSystemCACertificates();
-    for (let i = 0; i < system.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+    // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
+    if (store === "system" || process.env.NODE_USE_SYSTEM_CA === "1") {
+      const system = cacheSystemCACertificates();
+      for (let i = 0; i < system.length; ++i) {
+        ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+      }
     }
   }
 

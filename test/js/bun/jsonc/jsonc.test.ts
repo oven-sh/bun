@@ -154,9 +154,9 @@ test("Bun.JSONC.parse throws a SyntaxError on invalid input", () => {
 });
 
 test("Bun.JSONC.parse throws on undefined and null input", () => {
-  expect(() => Bun.JSONC.parse(undefined as any)).toThrow("Expected a string to parse");
-  expect(() => (Bun.JSONC.parse as any)()).toThrow("Expected a string to parse");
-  expect(() => Bun.JSONC.parse(null as any)).toThrow("Expected a string to parse");
+  expect(() => Bun.JSONC.parse(undefined as any)).toThrow("input must be a string");
+  expect(() => (Bun.JSONC.parse as any)()).toThrow("input must be a string");
+  expect(() => Bun.JSONC.parse(null as any)).toThrow("input must be a string");
 });
 
 test("Bun.JSONC.parse stringifies non-string input like JSON.parse does", () => {

@@ -85,7 +85,8 @@ impl InstallCompletionsCommand {
         use bun_core::{WStr, w};
         use bun_sys::windows;
 
-        // Symlinks are not always allowed: `bunx.exe` is a hardlink to `bun.exe`, recreated every time.
+        // Symlinks aren't always allowed, so `bunx.exe` is a hard link to `bun.exe` that's
+        // recreated every time.
         let image_path: &[u16] = windows::exe_path_w();
         let last_sep =
             strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
@@ -486,7 +487,7 @@ impl InstallCompletionsCommand {
                         break 'brk true;
                     };
 
-                    // Sometimes, stat() says the file is 0 bytes: read at least 64 KB.
+                    // Sometimes stat() says the file is 0 bytes, so read at least 64 KB.
                     let Ok(end_pos) = dot_zshrc.get_end_pos() else {
                         break 'brk true;
                     };

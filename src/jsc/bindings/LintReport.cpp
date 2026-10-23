@@ -662,6 +662,87 @@ __attribute__((minsize)) NEVER_INLINE Mapped mapSuggestions(JSGlobalObject* glob
     return mapped;
 }
 
+// oxlint's `getOffsetFromLineColumn`. ESLint passes on whatever line and column a rule gives. oxlint wants a place in the text.
+double offsetForOxlint(JSGlobalObject* globalObject, LintHost* host, JSValue position)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    LintReportState& state = host->report;
+    JSValue lineValue, columnValue;
+    if (!host->readPosition(position, lineValue, columnValue)) {
+        lineValue = position.get(globalObject, state.line);
+        RETURN_IF_EXCEPTION(scope, {});
+        columnValue = position.get(globalObject, state.column);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    // `(value | 0) === value`
+    auto isInt32 = [](JSValue value) { return value.isNumber() && JSC::toInt32(value.asNumber()) == value.asNumber(); };
+    if (!isInt32(lineValue) || !isInt32(columnValue)) {
+        throwTypeError(globalObject, scope, "Expected an object with integer `line` and `column` properties"_s);
+        return {};
+    }
+    // After the getters, which can run anything.
+    auto& starts = host->lineStarts();
+    unsigned length = host->text()->length();
+    int64_t line = JSC::toInt32(lineValue.asNumber()), column = JSC::toInt32(columnValue.asNumber());
+    int64_t lines = starts.size();
+    if (line <= 0 || line > lines) {
+        if (!column && !line)
+            return 0;
+        if (!column && line == lines + 1)
+            return length;
+        throwRangeError(globalObject, scope, makeString("Line number out of range (line "_s, line, " requested). Line numbers should be 1-based, and less than or equal to number of lines in file ("_s, lines, ")."_s));
+        return {};
+    }
+    int64_t offset = starts[static_cast<size_t>(line - 1)] + column;
+    if (offset < 0 || offset > length) {
+        throwRangeError(globalObject, scope, "Line/column pair translates to an out of range offset"_s);
+        return {};
+    }
+    return offset;
+}
+
+// What oxlint's `report` does with a `loc`: where it starts and where it ends in the text.
+std::pair<double, double> rangeForOxlint(JSGlobalObject* globalObject, LintHost* host, JSValue loc)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    LintReportState& state = host->report;
+    // `typeof value === "object"`, of what isn't null
+    auto isObject = [](JSValue value) { return value.isObject() && !value.isCallable(); };
+    if (!isObject(loc)) {
+        throwTypeError(globalObject, scope, "`loc` must be an object if provided"_s);
+        return {};
+    }
+    JSValue start, end;
+    if (!host->readLoc(loc, start, end)) {
+        bool hasStart = asObject(loc)->hasOwnProperty(globalObject, state.start);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!hasStart) {
+            double offset = offsetForOxlint(globalObject, host, loc);
+            RETURN_IF_EXCEPTION(scope, {});
+            return { offset, offset };
+        }
+        start = loc.get(globalObject, state.start);
+        RETURN_IF_EXCEPTION(scope, {});
+        end = loc.get(globalObject, state.end);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (!isObject(start)) {
+        throwTypeError(globalObject, scope, "`loc.start` must be an object"_s);
+        return {};
+    }
+    double from = offsetForOxlint(globalObject, host, start);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (end.isUndefinedOrNull())
+        return { from, from };
+    if (!isObject(end)) {
+        throwTypeError(globalObject, scope, "`loc.end` must be an object or null/undefined"_s);
+        return {};
+    }
+    double to = offsetForOxlint(globalObject, host, end);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { from, to };
+}
+
 } // namespace
 
 const LintReportState::Shape* LintReportState::shapeOf(JSGlobalObject* globalObject, LintHost* host, Structure* structure)
@@ -771,6 +852,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
     // for. The lines and columns are read when the report is made.
     JSValue start, line, column, endLine, endColumn;
     bool hasEnd = false;
+    // The start, or the end, is at `index` in the text.
+    auto locate = [&](bool isEnd, double index) {
+        auto found = host->positionOf(index);
+        (isEnd ? endLine : line) = jsNumber(found.line);
+        (isEnd ? endColumn : column) = jsNumber(found.column + 1);
+    };
     Fix fix;
     auto locateAndFix = [&] {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -796,10 +883,13 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
                 RETURN_IF_EXCEPTION(scope, );
                 double number = index.toNumber(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
-                auto found = host->positionOf(number);
-                (i ? endLine : line) = jsNumber(found.line);
-                (i ? endColumn : column) = jsNumber(found.column + 1);
+                locate(i, number);
             }
+        } else if (!isOfNode && host->isOxlint()) {
+            auto range = rangeForOxlint(globalObject, host, loc);
+            RETURN_IF_EXCEPTION(scope, );
+            locate(false, range.first);
+            locate(true, range.second);
         } else {
             // ESLint's `normalizeReportLoc`: a `loc` without a `start` is the start. The `loc` of a node is taken as it is.
             if (JSValue end; !host->readLoc(loc, start, end)) [[unlikely]] {
@@ -838,13 +928,18 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
 
     JSString* messageString = toStringOrDescription(globalObject, message);
     RETURN_IF_EXCEPTION(scope, {});
-    // `position.line` and `position.column + 1`
+    // `position.line + 0` and `position.column + 1`
     auto read = [&](JSValue position, JSValue& line, JSValue& column) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!host->readPosition(position, line, column)) [[unlikely]] {
             line = position.get(globalObject, state.line);
             RETURN_IF_EXCEPTION(scope, );
+            line = jsAdd(globalObject, line, jsNumber(0));
+            RETURN_IF_EXCEPTION(scope, );
             column = position.get(globalObject, state.column);
+            RETURN_IF_EXCEPTION(scope, );
+        } else if (!line.isNumber()) [[unlikely]] {
+            line = jsAdd(globalObject, line, jsNumber(0));
             RETURN_IF_EXCEPTION(scope, );
         }
         scope.release();

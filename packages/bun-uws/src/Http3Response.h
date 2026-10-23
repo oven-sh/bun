@@ -209,8 +209,11 @@ private:
             h.name = base + (uintptr_t) h.name;
             h.value = base + (uintptr_t) h.value;
         }
-        us_quic_stream_send_headers((us_quic_stream_t *) this,
-            d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream);
+        if (us_quic_stream_send_headers((us_quic_stream_t *) this,
+                d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream) != 0) {
+            /* Later writes fail, and on_stream_close reports the abort as it does for a reset by the peer. */
+            us_quic_stream_reset_internal_error((us_quic_stream_t *) this);
+        }
         d->hdrBuf.shrink(0);
         d->hdrs.shrink(0);
     }

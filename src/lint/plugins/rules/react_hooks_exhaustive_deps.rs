@@ -15,7 +15,7 @@ pub struct ExhaustiveDeps {
     require_explicit_effect_deps: bool,
 }
 
-/// Upstream has no ids, and puts its messages together.
+/// Upstream has no message ids and builds its messages by concatenation.
 const TEXT: Message = Message::new("", "{{text}}");
 
 /// The first element of the pattern in `const [state, setState] = useState()`.
@@ -29,18 +29,18 @@ enum StateVariable<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The calls of hooks that take dependencies.
+    /// The calls to hooks that take dependencies.
     calls: Vec<Expr<'a>>,
     /// `settings["react-hooks"].additionalEffectHooks`
     additional_hooks: Option<Regex>,
-    /// What follows is kept from one call to the next. An identifier is told by where it starts.
+    /// The fields below carry over from one call to the next. An identifier is keyed by its start offset.
     set_state_call_sites: FxHashMap<u32, StateVariable<'a>>,
     state_variables: FxHashSet<u32>,
     use_effect_event_variables: FxHashSet<u32>,
     stable_known_value_cache: FxHashMap<usize, bool>,
     function_without_captured_value_cache: FxHashMap<usize, bool>,
-    /// The innermost call of a name, or function, around something.
-    call_or_function_around: AncestorMemo<'a, Node<'a>>,
+    /// Caches the innermost enclosing function, or call whose callee is an identifier.
+    enclosing_call_or_function: AncestorMemo<'a, Node<'a>>,
     oxlint: RefCell<oxlint::exhaustive_deps::Memo<'a>>,
 }
 
@@ -52,11 +52,11 @@ struct Dependency<'a> {
 
 struct DeclaredDependency {
     key: Vec<u8>,
-    /// It is declared outside the component.
+    /// True if it's declared outside the component.
     is_external: bool,
 }
 
-/// A change that is suggested: what describes it, and the fixes that make it.
+/// A suggested change: its description and the fixes that apply it.
 type Suggested = (Vec<u8>, Vec<Fix>);
 
 fn text(parts: &[&[u8]]) -> Vec<u8> {
@@ -82,7 +82,7 @@ fn join_english(items: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
-/// Without the `as T` around it.
+/// Strips the `as T` wrappers.
 fn without_as(mut e: Expr) -> Expr {
     loop {
         match e.kind() {
@@ -97,7 +97,7 @@ fn is_member_expression(e: Expr) -> bool {
     matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && !e.is_jsx_tag_name() && !e.is_in_type_query()
 }
 
-/// The `MemberExpression` that is the parent of `e`.
+/// Returns `e`'s parent if it's a `MemberExpression`.
 fn parent_member(e: Expr) -> Option<Expr> {
     match e.parent() {
         Node::Expr(parent) if !e.is_chain_root() && is_member_expression(parent) => Some(parent),
@@ -105,7 +105,7 @@ fn parent_member(e: Expr) -> Option<Expr> {
     }
 }
 
-/// `e.parent` is a call and `e` is what it calls.
+/// True if `e.parent` is a call and `e` is its callee.
 fn is_callee(e: Expr) -> bool {
     match e.parent() {
         Node::Expr(parent) if !e.is_chain_root() => matches!(parent.kind(), ExprKind::Call(call) if call.callee() == e),
@@ -113,7 +113,7 @@ fn is_callee(e: Expr) -> bool {
     }
 }
 
-/// `e.parent` is an `AssignmentExpression` and `e` is its left side.
+/// True if `e.parent` is an `AssignmentExpression` and `e` is its left side.
 fn is_left_of_assignment(e: Expr) -> bool {
     match e.parent() {
         Node::Expr(parent) if !e.is_chain_root() => {
@@ -123,7 +123,7 @@ fn is_left_of_assignment(e: Expr) -> bool {
     }
 }
 
-/// `e.current`, where `e` is the object.
+/// Returns the `current` in `e.current`, where `e` is the object.
 fn current_of(e: Expr) -> Option<Ident> {
     match parent_member(e)?.kind() {
         ExprKind::Dot { obj, name, .. } if obj == e && name.name().is("current") => Some(name),
@@ -131,8 +131,8 @@ fn current_of(e: Expr) -> Option<Ident> {
     }
 }
 
-/// With `()` for what is passed and returned:
-/// `(props)` is `(props)`, `(props).foo` is `(props.foo)`, `(props).foo.bar` is `(props.foo.bar)`.
+/// With `()` marking the node passed in and the node returned: `(props)` returns `(props)`, `(props).foo` returns
+/// `(props.foo)`, `(props).foo.bar` returns `(props.foo.bar)`.
 fn get_dependency(mut node: Expr) -> Expr {
     loop {
         if let Some(parent) = parent_member(node)
@@ -152,32 +152,32 @@ fn get_dependency(mut node: Expr) -> Expr {
     }
 }
 
-/// For the paths `foo`, `foo.bar`, `foo.bar.baz`: whether all uses of the last member are optional. A tree, so that a path of n
-/// members takes n entries.
+/// For the paths `foo`, `foo.bar`, `foo.bar.baz`: whether every use of the last member is optional. Stored as a tree,
+/// so a path of n members takes n entries.
 #[derive(Default)]
 struct OptionalChains<'a> {
-    /// The number of a path, by the number of what it is a member of, which is 0 for a variable, and its last name.
+    /// Maps (parent path's number, or 0 for a variable; last name) to the path's number.
     paths: FxHashMap<(u32, &'a [u8]), u32>,
-    /// By the number of the path less 1. `None`: it is only a part of other paths.
+    /// Indexed by the path's number minus 1. `None` means the path only occurs as a prefix of other paths.
     is_optional: Vec<Option<bool>>,
 }
 
 impl<'a> OptionalChains<'a> {
-    fn member(&mut self, of: u32, name: &'a [u8]) -> u32 {
-        *self.paths.entry((of, name)).or_insert_with(|| {
+    fn member(&mut self, parent_path: u32, name: &'a [u8]) -> u32 {
+        *self.paths.entry((parent_path, name)).or_insert_with(|| {
             self.is_optional.push(None);
             self.is_optional.len() as u32
         })
     }
 
-    /// It is optional only if all its uses are.
+    /// A path is optional only if all its uses are.
     fn add_use(&mut self, path: u32, is_optional: bool) {
         if let Some(known) = (path as usize).checked_sub(1).and_then(|it| self.is_optional.get_mut(it)) {
             *known = Some(is_optional && *known != Some(false));
         }
     }
 
-    /// `path` with `?.` where all uses of a member are optional.
+    /// Prints `path` with `?.` wherever all uses of a member are optional.
     fn format(&self, path: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(path.len() + 2);
         let mut at = Some(0);
@@ -193,7 +193,7 @@ impl<'a> OptionalChains<'a> {
     }
 }
 
-/// The names in `foo.bar?.[baz.qux]`, in this order. `None` where upstream throws.
+/// Returns the names in `foo.bar?.[baz.qux]`, in this order, or `None` where upstream throws.
 fn names_of_property_chain<'a>(node: Expr<'a>) -> Option<SmallVec<[&'a [u8]; 2]>> {
     enum Next<'a> {
         Chain(Expr<'a>),
@@ -215,7 +215,7 @@ fn names_of_property_chain<'a>(node: Expr<'a>) -> Option<SmallVec<[&'a [u8]; 2]>
                 stack.push(Next::Name(name.bytes()));
                 stack.push(Next::Chain(obj));
             }
-            // Upstream does not look at `computed` of what is in a `ChainExpression`.
+            // Upstream doesn't check `computed` inside a `ChainExpression`.
             ExprKind::Index { obj, index, .. } if node.is_chain_root() => {
                 stack.push(Next::Chain(index));
                 stack.push(Next::Chain(obj));
@@ -226,12 +226,13 @@ fn names_of_property_chain<'a>(node: Expr<'a>) -> Option<SmallVec<[&'a [u8]; 2]>
     Some(names)
 }
 
-/// `foo` is `foo`, `foo.bar` is `foo.bar`, `foo?.bar.baz` is `foo.bar.baz`. `None` where upstream throws.
+/// `foo` returns `foo`, `foo.bar` returns `foo.bar`, `foo?.bar.baz` returns `foo.bar.baz`. Returns `None` where
+/// upstream throws.
 fn analyze_property_chain<'a>(node: Expr<'a>, optional_chains: Option<&mut OptionalChains<'a>>) -> Option<Vec<u8>> {
     let Some(chains) = optional_chains else {
         return names_of_property_chain(node).map(|it| it.join(&b"."[..]));
     };
-    // The names of each member and whether it is optional, the last member first.
+    // Each member's names and whether it's optional, last member first.
     let mut members: SmallVec<[(SmallVec<[&'a [u8]; 2]>, bool); 4]> = SmallVec::new();
     let mut object = node;
     let variable = loop {
@@ -262,8 +263,7 @@ fn analyze_property_chain<'a>(node: Expr<'a>, optional_chains: Option<&mut Optio
     Some(result)
 }
 
-/// The name of the hook that `callee` is, and whether it is written `React.name`.
-/// It is a name, or a member of a name: what nearly every other call is told from by two loads.
+/// Fast pre-check: the callee is an identifier or a member of one. Two loads rule out nearly every other call.
 fn may_be_hook(callee: Expr) -> bool {
     match callee.tag() {
         ExprTag::Ident => true,
@@ -272,6 +272,7 @@ fn may_be_hook(callee: Expr) -> bool {
     }
 }
 
+/// Returns the name of the hook that `callee` refers to, and whether it's written `React.name`.
 fn hook_name(callee: Expr) -> Option<(Name, bool)> {
     match callee.kind() {
         ExprKind::Ident(name) => Some((name, false)),
@@ -292,9 +293,9 @@ fn is_effect_name(name: &[u8]) -> bool {
     false
 }
 
-/// What kind of value, which is a new one each time, the expression makes.
+/// Returns the kind of value the expression creates, if it creates a new one every time it runs.
 fn get_construction_expression_type<'a>(e: Expr<'a>) -> Option<&'static str> {
-    // One of the values that `first` or `second` can have is of such a kind.
+    // True if one of the values that `first` or `second` can evaluate to is of such a kind.
     let is_construction = |first: Expr<'a>, second: Option<Expr<'a>>| {
         let mut values: SmallVec<[Expr; 8]> = std::iter::once(first).chain(second).collect();
         while let Some(value) = values.pop() {
@@ -341,31 +342,31 @@ fn get_construction_expression_type<'a>(e: Expr<'a>) -> Option<&'static str> {
 
 #[derive(Default)]
 struct DepTreeNode<'k> {
-    /// It is used in the code.
+    /// Used in the code.
     is_used: bool,
-    /// It is among the dependencies.
+    /// Listed in the dependencies.
     is_satisfied_recursively: bool,
     /// Something deeper is used in the code.
     is_subtree_used: bool,
-    /// It is among the dependencies, and it or something deeper is used in the code.
+    /// Listed in the dependencies, and it or something deeper is used in the code.
     is_satisfying: bool,
-    /// It is among the dependencies, and declared outside the component.
+    /// Listed in the dependencies, and declared outside the component.
     is_external: bool,
     is_suggested: bool,
     is_duplicate: bool,
     is_unnecessary: bool,
-    /// In the order in which they are added.
+    /// In insertion order.
     children: Vec<(&'k [u8], usize)>,
 }
 
 struct DepTree<'k> {
     nodes: Vec<DepTreeNode<'k>>,
-    /// The child of a node by its name.
+    /// Maps (node, name) to the child.
     child: FxHashMap<(usize, &'k [u8]), usize>,
 }
 
 impl<'k> DepTree<'k> {
-    fn get_or_create_node_by_path(&mut self, path: &'k [u8], mut on_the_way: impl FnMut(&mut DepTreeNode)) -> usize {
+    fn get_or_create_node_by_path(&mut self, path: &'k [u8], mut visit_node: impl FnMut(&mut DepTreeNode)) -> usize {
         let mut at = 0;
         for key in strings::split(path, b".") {
             at = *self.child.entry((at, key)).or_insert_with(|| {
@@ -374,17 +375,17 @@ impl<'k> DepTree<'k> {
                 self.nodes[at].children.push((key, child));
                 child
             });
-            on_the_way(&mut self.nodes[at]);
+            visit_node(&mut self.nodes[at]);
         }
         at
     }
 
-    /// Finds what is missing, and marks what is satisfying.
+    /// Returns the missing dependencies, and marks the satisfying ones.
     fn scan(&mut self) -> Vec<Vec<u8>> {
         let mut missing = Vec::new();
-        // The path of the node on top of the stack, or of a child of it.
+        // The path of the node on top of the stack, or of one of its children.
         let mut path: Vec<u8> = Vec::new();
-        // A node, how many of its children are done, and the length of its path.
+        // (node, number of its children already visited, length of its path)
         let mut stack = vec![(0, 0, 0)];
         while let Some(top) = stack.last_mut() {
             let (at, next, length) = *top;
@@ -443,11 +444,11 @@ fn collect_recommendations(dependencies: &[Dependency], declared: &[DeclaredDepe
     let (mut suggested, mut unnecessary, mut duplicate) = (Vec::new(), Vec::new(), Vec::new());
     for (DeclaredDependency { key, .. }, node) in declared.iter().zip(nodes_of_declared) {
         let node = &mut tree.nodes[node];
-        // Each list has a key once.
+        // A key goes into each list at most once.
         let (list, is_in_list) = if node.is_satisfying && node.is_suggested {
             (&mut duplicate, &mut node.is_duplicate)
         } else if node.is_satisfying || is_effect && !key.ends_with(b".current") && !node.is_external {
-            // An effect may have more dependencies than it uses.
+            // An effect may list more dependencies than it uses.
             (&mut suggested, &mut node.is_suggested)
         } else {
             (&mut unnecessary, &mut node.is_unnecessary)
@@ -467,7 +468,7 @@ fn collect_recommendations(dependencies: &[Dependency], declared: &[DeclaredDepe
 
 // ───────────────────────────── the rule ─────────────────────────────
 
-/// The hooks that take dependencies, whatever the options say.
+/// The hooks that take dependencies regardless of the options.
 const HOOKS: [&str; 5] = ["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"];
 
 impl Rule for ExhaustiveDeps {
@@ -543,7 +544,7 @@ impl Rule for ExhaustiveDeps {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // What is learned from one call is used for the next ones.
+        // Later calls use what earlier calls recorded, so they're checked in source order.
         let mut calls = std::mem::take(&mut cx.state.calls);
         utils::sort::sort_unstable_by_key(&mut calls, |it| (it.span().start, std::cmp::Reverse(it.span().end)));
         for call in calls {
@@ -552,7 +553,7 @@ impl Rule for ExhaustiveDeps {
     }
 }
 
-/// What is the same for all of `visitFunctionWithDependencies`.
+/// State shared by all of `visitFunctionWithDependencies`.
 struct Visit<'a> {
     /// `scopeManager.acquire(node)`
     scope: Scope<'a>,
@@ -560,13 +561,13 @@ struct Visit<'a> {
 }
 
 impl<'a> Visit<'a> {
-    /// It is one of the scopes around the function, up to that of the component.
+    /// True if it's one of the scopes around the function, up to and including the component's.
     fn is_pure(&self, scope: Scope<'a>) -> bool {
         scope != self.scope && scope.contains(self.scope) && self.component_scope.contains(scope)
     }
 }
 
-/// For a function expression with a name, ESLint has the scope of the name around that of the function, with the same node.
+/// For a named function expression, ESLint has a scope for the name around the function's scope, with the same node.
 fn scope_with_name(function_scope: Scope) -> Scope {
     match function_scope.parent() {
         Some(parent) if parent.kind() == ScopeKind::FunctionExpressionName => parent,
@@ -574,7 +575,7 @@ fn scope_with_name(function_scope: Scope) -> Scope {
     }
 }
 
-/// The `VariableDeclarator` that is `defs[0].node`, and the identifier in it that declares the variable.
+/// Returns the `VariableDeclarator` that's `defs[0].node`, and the identifier in it that declares the variable.
 fn declarator_of(symbol: Symbol) -> Option<(VarDecl, Pat)> {
     match symbol.declarations().next()? {
         declaration @ Declaration::Var(pat) if !declaration.is_catch_parameter() => match declaration.node()? {
@@ -586,7 +587,7 @@ fn declarator_of(symbol: Symbol) -> Option<(VarDecl, Pat)> {
 }
 
 impl ExhaustiveDeps {
-    /// At which position a hook takes the function with the dependencies. `None` if it is not such a hook.
+    /// Returns the index of the argument that's the function with dependencies, or `None` if it isn't such a hook.
     fn get_reactive_hook_callback_index(&self, callee: Expr, state: &State) -> Option<usize> {
         let (name, is_in_namespace) = hook_name(callee)?;
         match name.bytes() {
@@ -610,7 +611,7 @@ impl ExhaustiveDeps {
             if self.enable_dangerous_autofix_this_may_cause_infinite_loops {
                 report = report.fix(|_| fixes.clone());
             }
-            report = report.suggest_change_of_behavior(TEXT, &[("text", &description)], |_| fixes);
+            report = report.suggest_behavior_change(TEXT, &[("text", &description)], |_| fixes);
         }
         drop(report);
     }
@@ -726,7 +727,8 @@ impl ExhaustiveDeps {
         self.report_problem(cx, reactive_hook, message, Some((description, vec![fix])));
     }
 
-    /// `const [state, setState] = useState()`, `const ref = useRef()` and the like: what React returns the same each time.
+    /// `const [state, setState] = useState()`, `const ref = useRef()` and the like: values that React returns unchanged
+    /// on every render.
     fn is_stable_known_hook_value<'a>(resolved: Symbol<'a>, state: &mut State<'a>) -> bool {
         if let Some(&known) = state.stable_known_value_cache.get(&resolved.key()) {
             return known;
@@ -756,7 +758,7 @@ impl ExhaustiveDeps {
             return false;
         };
         let id = declarator.pat();
-        // The elements, if it is `[a, b]`. An element is the variable if it is nothing but its name.
+        // The two elements, if it's `[a, b]`. An element only counts as the variable if it's a plain identifier.
         let pair = match id.kind() {
             PatKind::Array(elements) if elements.len() == 2 => elements.first().zip(elements.last()),
             _ => None,
@@ -804,7 +806,7 @@ impl ExhaustiveDeps {
         }
     }
 
-    /// A function of the component that refers to nothing that changes.
+    /// True for a function in the component that doesn't refer to anything that changes.
     fn is_function_without_captured_values<'a>(resolved: Symbol<'a>, visit: &Visit<'a>, state: &mut State<'a>) -> bool {
         if let Some(&known) = state.function_without_captured_value_cache.get(&resolved.key()) {
             return known;
@@ -815,7 +817,7 @@ impl ExhaustiveDeps {
     }
 
     fn compute_is_function_without_captured_values<'a>(resolved: Symbol<'a>, visit: &Visit<'a>, state: &mut State<'a>) -> bool {
-        // The node of the scope that is looked for among those directly in the component.
+        // The node of the scope to look for among the component's direct child scopes.
         let block = match resolved.declarations().next() {
             Some(Declaration::Fn(func)) if func.kind() == FnKind::Decl && func.has_body() => Node::Func(func),
             Some(Declaration::Var(_)) => match declarator_of(resolved).and_then(|it| it.0.init()).map(Expr::kind) {
@@ -872,10 +874,10 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         let hook_text = reactive_hook.text();
 
         let mut dependencies: Vec<Dependency<'a>> = Vec::new();
-        // Where each is in `dependencies`.
+        // Each key's index in `dependencies`.
         let mut dependency_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let mut optional_chains = OptionalChains::default();
-        // `ref.current` in the function that an effect returns.
+        // `ref.current` in the cleanup function that an effect returns.
         let mut current_refs_in_effect_cleanup: Vec<(Vec<u8>, Reference<'a>, Ident<'a>)> = Vec::new();
         let mut current_ref_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let callback_parent = match node.owner() {
@@ -913,7 +915,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                 if matches!(dependency_node.parent(), Node::Type(_)) {
                     continue;
                 }
-                // The function itself, which is not defined yet.
+                // The function itself, which isn't defined yet.
                 if callback_parent.is_some() && declarator_of(resolved).and_then(|it| it.0.init()) == callback_parent {
                     continue;
                 }
@@ -939,7 +941,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         }
 
         for (dependency, reference, current_name) in &current_refs_in_effect_cleanup {
-            // Whether React sets the ref, or the code does.
+            // Check whether React sets the ref or the code does.
             let found_current_assignment = reference.symbol().is_some_and(|symbol| {
                 symbol.references().any(|it| {
                     it.expr().is_some_and(|e| current_of(e).is_some() && parent_member(e).is_some_and(is_left_of_assignment))
@@ -958,7 +960,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
             self.report_problem(cx, current_name, message, None);
         }
 
-        // Assignments to variables of the component are lost.
+        // Assignments to the component's variables are lost after the render.
         let mut has_stale_assignments = false;
         for dependency in &dependencies {
             if let Some(write_expr) = dependency.references.iter().find_map(|it| it.write_expr()) {
@@ -983,7 +985,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
             if is_auto_deps_hook {
                 return;
             }
-            // A call of `setState` directly in an effect without dependencies tends to loop.
+            // Calling `setState` directly in an effect without dependencies tends to loop.
             let set_state_inside_effect_without_deps = dependencies.iter().find(|dependency| {
                 dependency.references.iter().any(|reference| {
                     cx.state.set_state_call_sites.contains_key(&reference.span().start)
@@ -1113,11 +1115,11 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         let mut suggested_deps = suggested;
 
         if duplicate.len() + missing.len() + unnecessary.len() == 0 {
-            // Dependencies that are new on every render.
+            // Check for dependencies that are new on every render.
             return self.report_constructions(&visit, &declared_dependencies, declared_dependencies_node, reactive_hook_name, cx);
         }
 
-        // An effect can have reasons for more dependencies than it uses, nothing else has.
+        // Only an effect can have a reason to list more dependencies than it uses.
         if !is_effect && !missing.is_empty() {
             suggested_deps = collect_recommendations(&dependencies, &[], is_effect).suggested;
         }
@@ -1157,7 +1159,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                     b"' aren't valid dependencies because mutating them doesn't re-render the component.",
                 ]);
             } else if let Some(DeclaredDependency { key: dep, .. }) = declared_dependencies.iter().find(|it| it.is_external)
-                // Not for what has just been moved into the function.
+                // Not for something that was just moved into the function.
                 && scope.get_bytes(dep).is_none()
             {
                 extra_warning = text(&[
@@ -1168,7 +1170,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
             }
         }
 
-        // `props.foo()` makes `props` a dependency, as it is the `this` of the call.
+        // `props.foo()` makes `props` a dependency, because it's the call's `this`.
         if extra_warning.is_empty()
             && missing.iter().any(|it| it == b"props")
             && let Some(props) = dependency_with_key(b"props")
@@ -1184,7 +1186,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         }
 
         if extra_warning.is_empty() {
-            // A prop that is called and left out: its author may not know `useCallback`.
+            // A prop that's called but not listed. Its author may not know about `useCallback`.
             let missing_callback_dep = missing.iter().find(|missing_dep| {
                 let top_scope_ref = component_scope.get_bytes(missing_dep);
                 let Some(used_dep) = dependency_with_key(missing_dep) else {
@@ -1224,7 +1226,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         self.report_problem(cx, declared_dependencies_node, message, Some((description, vec![fix])));
     }
 
-    /// `scanForConstructions`, and what is reported about them.
+    /// `scanForConstructions`, plus the reports about what it finds.
     fn report_constructions<'a>(
         &self,
         visit: &Visit<'a>,
@@ -1289,7 +1291,8 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                 b") change on every render. ",
                 &advice,
             ]);
-            // Only a function in a variable: an object may be changed later, and a declaration is hoisted.
+            // Only for a function stored in a variable, because an object may be mutated later and a declaration is
+            // hoisted.
             let suggestion = init.filter(|_| is_used_outside_of_hook && dep_type == "function").map(|init| {
                 let fixes = vec![
                     Fix {
@@ -1308,7 +1311,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
     }
 }
 
-/// Whether the outermost function around the reference, inside the effect, is what the effect returns.
+/// True if the outermost function around the reference, inside the effect, is the one the effect returns.
 fn is_inside_effect_cleanup<'a>(reference: Reference<'a>, effect: Func<'a>) -> bool {
     let mut is_in_returned_function = false;
     for scope in reference.scope().chain().take_while(|it| it.node() != Node::Func(effect)) {
@@ -1325,7 +1328,7 @@ fn is_inside_effect_cleanup<'a>(reference: Reference<'a>, effect: Func<'a>) -> b
 }
 
 fn is_used_outside_of_hook<'a>(variable: Symbol<'a>, scope: Scope<'a>, declared_dependencies_node: Expr<'a>) -> bool {
-    // ESLint has another variable for the name of a class inside the class.
+    // ESLint has a separate variable for a class's name inside the class.
     let own_scope = match variable.declarations().next() {
         Some(Declaration::Class(class)) => class.scope(),
         _ => None,
@@ -1339,7 +1342,7 @@ fn is_used_outside_of_hook<'a>(variable: Symbol<'a>, scope: Scope<'a>, declared_
             if found_write_expr {
                 return true;
             }
-            // The first is not a use.
+            // The first write isn't a use.
             found_write_expr = true;
             continue;
         }
@@ -1358,7 +1361,7 @@ fn is_call_of_name_or_function(node: Node) -> bool {
     }
 }
 
-/// What to say about `setState(something(missingDep))`.
+/// Returns the advice for `setState(something(missingDep))`.
 fn set_state_recommendation<'a, 'd>(
     missing: &[Vec<u8>],
     dependency_with_key: impl Fn(&[u8]) -> Option<&'d Dependency<'a>>,
@@ -1375,22 +1378,22 @@ where
             let Some(id) = reference.expr() else {
                 continue;
             };
-            // The innermost call in the component, around it, of what sets a state. Which names do is learned from call to call
-            // of a hook, so what is kept is where the calls of names are.
+            // Find the innermost enclosing call, within the component, to a state setter. Which names are setters is
+            // learned from one hook call to the next, so the cache only stores where the calls to identifiers are.
             let mut at = Node::Expr(id);
             let found = loop {
-                let around = state.call_or_function_around.find(at, |_, it| is_call_of_name_or_function(it).then_some(it));
-                let Some(around) = around.filter(|it| *it != component) else {
+                let enclosing = state.enclosing_call_or_function.find(at, |_, it| is_call_of_name_or_function(it).then_some(it));
+                let Some(enclosing) = enclosing.filter(|it| *it != component) else {
                     break None;
                 };
-                if let Some(ExprKind::Call(call)) = around.as_expr().map(Expr::kind)
+                if let Some(ExprKind::Call(call)) = enclosing.as_expr().map(Expr::kind)
                     && let Some(setter) = call.callee().as_ident()
                     && let Some(&state_variable) = state.set_state_call_sites.get(&call.callee().span().start)
                     && !matches!(state_variable, StateVariable::Missing)
                 {
                     break Some((setter, state_variable));
                 }
-                at = around;
+                at = enclosing;
             };
             if let Some((setter, state_variable)) = found {
                 let setter = setter.bytes();
@@ -1425,7 +1428,7 @@ where
                         b"'.",
                     ]));
                 }
-                // A parameter that is missing is a prop, or something in one.
+                // A missing parameter is a prop, or part of one.
                 if matches!(reference.symbol().and_then(|it| it.declarations().next()), Some(Declaration::Param(_))) {
                     return Some(text(&[
                         b" If '",

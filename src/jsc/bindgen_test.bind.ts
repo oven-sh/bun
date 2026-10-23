@@ -28,6 +28,18 @@ export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
+export const stringLength = b.fn({ args: { text: b.string.default("absent") }, returns: b.usize });
+export const expectedByNode = b.fn({
+  args: { text: b.string, data: b.bytes({ from: ["string", "buffer"] }).optional, flag: b.bool.default(false) },
+  expected: { text: ["string"], data: ["Buffer", "TypedArray", "DataView", "string"] },
+  returns: b.usize,
+});
+export const TestFlag = b.dictionary({ flag: b.bool.loose.default(false) });
+export const expectedMessage = b.fn({
+  args: { data: b.bytes({ from: ["buffer"] }), options: TestFlag.nullable.default({}), more: TestFlag.default({}) },
+  expected: { data: "data is not a buffer.", options: ["object"] },
+  returns: b.usize,
+});
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });
@@ -59,6 +71,24 @@ export const TestNames = b.dictionary({
 });
 export const names = b.fn({ args: { text: b.string.utf8 }, returns: TestNames });
 
+export const TestBare = b.dictionary({ id: b.u32, label: b.string.utf8.optional }, { nullPrototype: true });
+export const bare = b.fn({ args: { id: b.u32 }, returns: TestBare });
+
+export const dateOf = b.fn({ args: { time: b.f64 }, returns: b.f64.asDate });
+export const latin1 = b.fn({
+  args: { bytes: b.bytes({ from: ["buffer"] }) },
+  returns: b.string.local,
+  capability: "heap",
+});
+export const TestTextOrBytes = b.union({ text: b.string.utf8, bytes: b.bufferSource, nothing: b.null });
+export const textOrBytes = b.fn({
+  args: { text: b.string.utf8, as: b.u8 },
+  returns: TestTextOrBytes,
+  capability: "heap",
+  throws: true,
+});
+export const positions = b.fn({ args: { text: b.string.utf8 }, returns: b.record(b.usize) });
+
 export const TestValue = b.union({
   number: b.f64,
   flag: b.bool,
@@ -71,29 +101,116 @@ export const sumArray = b.fn({ args: { numbers: b.array(b.i32) }, returns: b.f64
 export const range = b.fn({ args: { length: b.u32 }, returns: b.array(b.u32) });
 export const words = b.fn({ args: { text: b.string.utf8 }, returns: b.array(b.string.utf8) });
 
-export const sumBytes = b.fn({ args: { bytes: b.bufferSource.bytes }, returns: b.u32 });
-export const sumBytesOptional = b.fn({ args: { bytes: b.bufferSource.bytes.nullable }, returns: b.u32.nullable });
+export const sumBytes = b.fn({ args: { bytes: b.bytes({ from: ["buffer"] }) }, returns: b.u32 });
 /** Converting `text` can run JavaScript. */
 export const sumBytesThenText = b.fn({
-  args: { bytes: b.bufferSource.bytes, text: b.string.loose.utf8 },
+  args: { bytes: b.bytes({ from: ["buffer"] }), text: b.string.loose.utf8 },
   returns: b.u32,
 });
 /** The sum before `callback` runs, then after it. */
 export const sumBeforeAndAfterCallback = b.fn({
-  args: { buffer: b.bufferSource, callback: b.any },
+  args: { buffer: b.bufferSource, callback: b.callable },
   returns: b.array(b.u32),
   capability: "js",
   throws: true,
 });
 
-/** The original value if the converted text is not empty. */
-export const withValueEcho = b.fn({
-  args: { text: b.string.loose.utf8.withValue },
+/** What `callback` returns, or `fallback` if there is no `callback`. */
+export const callOr = b.fn({
+  args: { callback: b.callable.nullable, fallback: b.any },
   returns: b.any,
+  capability: "js",
+  throws: true,
+});
+export const fillBuffer = b.fn({
+  args: { buffer: b.bufferSource.allowShared, value: b.u8 },
+  returns: b.usize,
   capability: "heap",
 });
+/** -1 without any. */
+export const sumBytesIfAny = b.fn({
+  args: { bytes: b.bytes({ from: ["string", "buffer"] }).nullable, text: b.string.loose.utf8.default("") },
+  returns: b.i32,
+});
+export const stringOrObjectEcho = b.fn({ args: { text: b.string.allowStringObject }, returns: b.string });
 
-export const TestFailure = b.enumeration(["type", "range", "plain", "syscall", "value"]);
+type BytesOptions = Parameters<typeof b.bytes>[0];
+const bytesOfWith = (options: BytesOptions) =>
+  b.fn({ args: { data: b.bytes(options) }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
+export const bytesOf = bytesOfWith({ from: ["string", "buffer"] });
+export const bytesOfString = bytesOfWith({ from: ["string"] });
+export const bytesOfRefusingStringObject = bytesOfWith({ from: ["string", "buffer"], refuse: ["stringObject"] });
+export const bytesOfBufferOrBlob = bytesOfWith({ from: ["buffer", "blob"] });
+export const bytesOfOrToString = bytesOfWith({ from: ["string", "buffer", "blob"], otherwise: "toString" });
+export const bytesOfRefusingUndefined = bytesOfWith({
+  from: ["string", "buffer"],
+  otherwise: "toString",
+  refuse: ["undefined"],
+});
+/** `after` is converted after `data`, and can run JavaScript. */
+const bytesOfThenWith = (options: Omit<BytesOptions, "from">, rustName: string) =>
+  b.fn({
+    args: { data: b.bytes({ from: ["string", "buffer", "blob"], ...options }), after: b.f64.loose },
+    returns: b.array(b.u8),
+    rustPath: `crate::bindgen_test::${rustName}`,
+  });
+export const bytesOfThen = bytesOfThenWith({}, "bytes_of_then");
+export const bytesOfThenCopyingShared = bytesOfThenWith({ shared: "copied" }, "bytes_of_then");
+export const bytesOfThenCopied = bytesOfThenWith({ held: "copied" }, "bytes_of_then_copied");
+/** Given one value twice: whether both are its own memory, and not a copy each. */
+const bytesOfAreSameMemoryWith = (shared: BytesOptions["shared"]) => {
+  const data = b.bytes({ from: ["string", "buffer", "blob"], shared });
+  return b.fn({
+    args: { data, again: data },
+    returns: b.bool,
+    rustPath: "crate::bindgen_test::bytes_of_are_same_memory",
+  });
+};
+export const bytesOfAreSameMemory = bytesOfAreSameMemoryWith("borrowed");
+export const bytesOfAreSameMemoryCopyingShared = bytesOfAreSameMemoryWith("copied");
+/** The bytes before `callback` runs, then after it. */
+const bytesBeforeAndAfterCallbackWith = (shared: BytesOptions["shared"]) =>
+  b.fn({
+    args: {
+      data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", shared, held: "handle" }),
+      callback: b.callable,
+    },
+    returns: b.array(b.array(b.u8)),
+    capability: "js",
+    throws: true,
+    rustPath: "crate::bindgen_test::bytes_before_and_after_callback",
+  });
+export const bytesBeforeAndAfterCallback = bytesBeforeAndAfterCallbackWith("borrowed");
+export const bytesBeforeAndAfterCallbackCopyingShared = bytesBeforeAndAfterCallbackWith("copied");
+/** The bytes another thread reads after `callback` has run. */
+export const pinnedBytesAfterCallback = b.fn({
+  args: { data: b.bytes({ from: ["string", "buffer"], held: "pinned" }), callback: b.callable },
+  returns: b.array(b.u8),
+  capability: "js",
+  throws: true,
+});
+/** The size of a code unit of a string, 0 for anything else, then the bytes. */
+export const stringAsIsOrBytes = b.fn({
+  args: {
+    data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", string: "asIs", held: "handle" }),
+  },
+  returns: b.array(b.u8),
+  capability: "heap",
+});
+/** As `stringAsIsOrBytes`, or nothing. */
+export const stringAsIsOrBytesIfAny = b.fn({
+  args: { data: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }).nullable },
+  returns: b.array(b.u8).nullable,
+  capability: "heap",
+});
+/** Which of the two are present. */
+export const presentUnlessEmptyString = b.fn({
+  args: { number: b.f64.emptyStringAsNull, value: b.any.emptyStringAsNull },
+  returns: b.array(b.bool),
+});
+export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt });
+
+export const TestFailure = b.enumeration(["type", "range", "plain", "code", "syscall", "outOfMemory", "value"]);
 export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability: "heap", throws: true });
 
 export const TestCounter = b.class({
@@ -103,27 +220,72 @@ export const TestCounter = b.class({
   proto: {
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
-    tag: { getter: b.any, capability: "heap", cache: true, throws: true },
-    increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
+    tag: { getter: b.any, cache: true, capability: "heap", throws: true },
+    sameTag: { getter: b.any, cache: "tag", capability: "heap", throws: true },
+    increment: { args: { by: b.i32.default(1) }, returns: b.i32 },
+    /** By a number, or by the length of a string, as many times. */
+    add: [
+      { args: { text: b.string.utf8, times: b.i32.default(1) }, returns: b.i32, rustName: "add_length" },
+      { args: { by: b.i32 }, returns: b.i32, rustName: "add_number" },
+    ],
+    forgetTag: { capability: "heap", passThis: true },
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
     /** Calls the listener, which may call back into this object, then returns the count. */
-    notify: { returns: b.i32, capability: "js", throws: true },
+    notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** `other` may be `this`. */
-    plus: { args: { other: b.self }, returns: b.i32, capability: "js" },
+    plus: { args: { other: b.self }, returns: b.i32 },
   },
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
     alive: { returns: b.usize },
+    /** How many are alive. The prototype has a `count` too. */
+    count: { getter: b.usize, rustName: "static_count" },
+    limit: { getter: b.any, capability: "heap", throws: true },
   },
 });
 
-/** Keeps a `TestCounter` alive from Rust. */
-export const TestHolder = b.class({
-  rustPath: "crate::bindgen_test::TestHolder",
-  construct: { args: { counter: TestCounter }, capability: "heap" },
+/** `mutates`: `increment` and the setter take `&mut self`. */
+export const TestMutates = b.class({
+  rustPath: "crate::bindgen_test::TestMutates",
+  construct: { args: { count: b.i32 } },
   proto: {
-    counter: { getter: TestCounter, capability: "heap" },
-    incrementCounter: { returns: b.i32, capability: "js" },
+    count: { getter: b.i32 },
+    label: { getter: b.string.utf8, setter: true },
+    increment: { args: { by: b.i32 }, returns: b.i32, mutates: true },
+  },
+});
+
+/** A `refCounted` class: Rust can keep a ref after the object is collected. */
+export const TestRefCounted = b.class({
+  rustPath: "crate::bindgen_test::TestRefCounted",
+  refCounted: true,
+  finalize: true,
+  construct: { args: { value: b.i32.default(0) } },
+  internalFields: ["listener"],
+  proto: {
+    value: { getter: b.i32, setter: true },
+    listener: { getter: b.any, setter: { capability: "js" }, passThis: true },
+    sameListener: { setter: true, internalField: "listener" },
+    readOnlyListener: { internalField: "listener" },
+    /** Calls the listener, which may call back into this object, then returns the value. */
+    notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
+    /** Makes Rust hold a ref until `TestRefCounted.release()`. */
+    keep: {},
+    "@@dispose": {},
+    "@@toPrimitive": { returns: b.i32, name: "", rustName: "get_value" },
+    valueOrUndefined: { returns: b.i32, invalidThis: "undefined", rustName: "get_value" },
+    /** Returns `this`, or nothing if the value is negative. */
+    orUndefined: { returns: b.self.optional, passThis: true },
+    orNull: { returns: b.self.nullable, passThis: true, rustName: "or_undefined" },
+    isSame: { args: { other: b.self.nullable }, returns: b.bool },
+  },
+  static: {
+    /** The instance kept by `keep()`, as `[value, finalized]`. */
+    kept: { returns: b.array(b.i32) },
+    release: {},
+    alive: { returns: b.usize },
+    /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */
+    valueFromJS: { args: { object: b.any }, returns: b.i32.nullable },
   },
 });
 
@@ -136,11 +298,100 @@ export const TestToken = b.class({
 });
 export const makeToken = b.fn({ args: { id: b.u32 }, returns: TestToken, capability: "heap" });
 
+/** `enumerable` / `configurable`, `prototypeBase`, `call`, `writable` and a cached setter. */
+export const TestError = b.class({
+  rustPath: "crate::bindgen_test::TestError",
+  prototypeBase: "Error",
+  configurable: true,
+  enumerable: false,
+  construct: { args: { code: b.i32 } },
+  /** An instance whose code is the sum. */
+  call: { args: { codes: b.any.variadic }, returns: b.self, capability: "heap" },
+  proto: {
+    code: { getter: b.i32 },
+    nonConfigurableCode: { getter: b.i32, configurable: false },
+    describe: { returns: b.string.utf8 },
+    countArguments: { args: { args: b.any.variadic }, returns: b.usize },
+    /** Computed once. Assigning replaces it without calling Rust. */
+    message: { getter: b.string.utf8, cache: true, writable: true },
+    /** Computed once. Assigning a number stores its double. */
+    detail: { getter: b.any, setter: true, cache: true, capability: "heap", passThis: true },
+  },
+  static: {
+    /** Process-wide. */
+    level: { getter: b.i32, setter: true },
+  },
+});
+
+const note = {
+  estimatedSize: true,
+  construct: {
+    passStructure: true,
+    args: { text: b.any, size: b.usize.default(0) },
+    capability: "heap",
+    throws: true,
+  },
+  internalFields: ["text"],
+  proto: { text: { internalField: "text" } },
+} as const;
+/** `passStructure`, `estimatedSize` and `memoryCost`: it reports `size` bytes. */
+export const TestNote = b.class({ ...note, rustPath: "crate::bindgen_test::TestNote", memoryCost: true });
+export const TestRefCountedNote = b.class({
+  ...note,
+  rustPath: "crate::bindgen_test::TestRefCountedNote",
+  refCounted: true,
+});
+
+/** `forBind`: the bound `this` of a function. */
+export const TestBoundThis = b.class({
+  rustPath: "crate::bindgen_test::TestBoundThis",
+  forBind: true,
+  construct: { args: { value: b.i32 } },
+  proto: {
+    value: { getter: b.i32 },
+    /** Says how many times it was computed. */
+    label: { getter: b.string, cache: true },
+    plus: { args: { other: b.i32 }, returns: b.i32 },
+  },
+});
+
+/** `rustTraits`, `overridesToJS` and `final: false`. */
+export const TestNonFinal = b.class({
+  rustPath: "crate::bindgen_test::TestNonFinal",
+  refCounted: true,
+  final: false,
+  overridesToJS: true,
+  rustTraits: ["crate::bindgen_test::TestNonFinalExt"],
+  construct: { args: { value: b.i32 } },
+  proto: { value: { getter: b.i32 } },
+  static: { doubled: { args: { value: b.i32 }, returns: b.any, capability: "heap" } },
+});
+
+/** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
+export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
+/** Whether `from_js_direct` takes the value as a `TestNote` or a `TestRefCountedNote`. */
+export const isNoteFromJSDirect = b.fn({ args: { note: b.any }, returns: b.bool });
+export const errorConstructor = b.fn({ returns: b.any, capability: "js" });
+/** The arguments after the first, as an array. */
+export const afterFirst = b.fn({
+  args: { first: b.any, rest: b.any.variadic },
+  returns: b.any,
+  capability: "heap",
+  throws: true,
+});
+
+export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });
+export const looseInteger = b.fn({ args: { value: b.u16.loose }, returns: b.u16 });
+export const looseIntegerOrBigInt = b.fn({ args: { value: b.u16.loose.allowBigInt }, returns: b.u16 });
+export const looseDoubleOrBigInt = b.fn({ args: { value: b.f64.loose.allowBigInt }, returns: b.f64 });
+/** In decimal: a number does not hold every `u64`. */
+export const wideIntegerOrBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.string.utf8 });
+
 /** An alternative for each kind of value. What `bytes` and `blob` refuse, and everything else, goes to `options`. */
 export const TestAnything = b.union({
   nothing: b.null,
   flag: b.bool,
-  integer: b.i32,
+  integer: b.i32.allowBigInt,
   text: b.string,
   bytes: b.bufferSource.arrayBuffer,
   blob: b.blob,
@@ -149,7 +400,7 @@ export const TestAnything = b.union({
   list: b.array(b.f64),
   options: TestOptions,
 });
-export const describeAnything = b.fn({ args: { value: TestAnything }, returns: b.string.utf8, capability: "js" });
+export const describeAnything = b.fn({ args: { value: TestAnything }, returns: b.string.utf8 });
 
 /** Told apart by the first argument, then by the second. */
 export const overloaded = b.overloads(
@@ -173,7 +424,6 @@ export const overloaded = b.overloads(
   {
     args: { counter: TestCounter },
     returns: b.string.utf8,
-    capability: "js",
     rustPath: "crate::bindgen_test::overloaded_counter",
   },
 );
@@ -191,7 +441,6 @@ export const TestOuter = b.dictionary({
   value: b.any,
   choice: TestChoice,
   rest: TestColorOrRest,
-  counter: TestCounter.nullable,
 });
 /** What a default written in the schema gives each member, the nested ones included. */
 export const describeDefaults = b.fn({

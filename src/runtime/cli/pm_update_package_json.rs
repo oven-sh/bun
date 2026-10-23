@@ -29,14 +29,15 @@ fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Resu
     update_package_json_and_install_and_cli(ctx, subcommand, &cli).map_err(Into::into)
 }
 
-/// `--analyze`: bundles the source files, then installs what they import as if it were typed.
+/// For `--analyze`. Bundles the source files, then installs what they import as if it had been
+/// typed on the command line.
 pub(crate) fn analyze_dependencies_and_install(
     ctx: &mut ContextData,
     cli: &mut CommandLineArguments,
     verb: &'static [u8],
     install: &mut dyn FnMut(&mut ContextData, &CommandLineArguments) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    // Raw pointers: `BuildCommand::exec` holds the same `ContextData` across the callback.
+    // Raw pointers, because `BuildCommand::exec` holds the same `ContextData` across the callback.
     struct Analyzer<'a> {
         ctx: *mut ContextData,
         cli: *mut CommandLineArguments,

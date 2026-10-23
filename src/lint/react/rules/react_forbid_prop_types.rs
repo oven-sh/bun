@@ -14,7 +14,7 @@ use std::ops::Range;
 /// Disallow certain propTypes.
 pub struct ForbidPropTypes {
     forbid: Vec<Box<[u8]>>,
-    /// `mention_bit` of each of `forbid`, and of the private name with that text.
+    /// `mention_bit` of each name in `forbid`, and of the private name with the same text.
     bits_of_forbidden: Vec<u32>,
     check_context_types: bool,
     check_child_context_types: bool,
@@ -22,7 +22,7 @@ pub struct ForbidPropTypes {
 
 const FORBIDDEN_PROP_TYPE: Message = Message::new("forbiddenPropType", "Prop type \"{{target}}\" is forbidden");
 
-/// What the listener for `ImportDeclaration` sets.
+/// The variables that the `ImportDeclaration` listener sets.
 #[derive(Copy, Clone, Default)]
 struct Packages<'a> {
     prop_types_package_name: Option<Name<'a>>,
@@ -30,35 +30,37 @@ struct Packages<'a> {
     is_foreign_prop_types_package: bool,
 }
 
-/// An import that sets something, once a foreign package is imported: before that the names do not matter.
+/// An import that sets one of those variables. Only recorded once a foreign package has been imported, because the
+/// names don't matter before that.
 struct Imported<'a> {
     start: u32,
-    /// What is set after it.
+    /// The variables' values after this import.
     packages: Packages<'a>,
 }
 
-/// The node that a listener of upstream is called with.
-struct Listened<'a> {
+/// The node that one of upstream's listeners is called with.
+struct ListenerNode<'a> {
     span: Span,
-    /// How many of `State::imports` come before it.
+    /// The number of `State::imports` before it.
     imports: usize,
-    /// What they have set.
+    /// The variables' values at that point.
     packages: Packages<'a>,
 }
 
 #[derive(Copy, Clone)]
 struct Forbidden<'a> {
-    listened: Span,
+    listener_node: Span,
     declaration: Span,
     target: &'a [u8],
 }
 
 pub struct State<'a> {
-    /// In the order of the source.
+    /// In source order.
     imports: Vec<Imported<'a>>,
-    /// What is reported at the end, so that what is said twice about a property comes in the order of upstream's walk.
+    /// Reported in `finish`, so that two reports about the same property come in upstream's traversal order.
     forbidden: Vec<Forbidden<'a>>,
-    /// By where the object literal of a variable starts and `Listened::imports`: what of `forbidden` is about it.
+    /// Maps (start of a variable's object literal, `ListenerNode::imports`) to the range of `forbidden` that's about
+    /// it.
     known: FxHashMap<(u32, usize), Range<usize>>,
 }
 
@@ -102,7 +104,7 @@ impl Rule for ForbidPropTypes {
         {
             return on.members().props();
         }
-        // Private names, and the fields with a type annotation that upstream takes for declarations.
+        // Private names, and the fields with a type annotation that upstream treats as declarations.
         if file.mentions_any(&["#propTypes", "props", "#props"])
             || (context && file.mentions_any(&["#contextTypes", "context", "#context"]))
             || (child_context && file.mentions("#childContextTypes"))
@@ -157,7 +159,7 @@ impl Rule for ForbidPropTypes {
             false => None,
         };
         if let Some(value) = value {
-            self.check_node(value, &cx.state.listened(member.span()), cx);
+            self.check_node(value, &cx.state.listener_node(member.span()), cx);
         }
     }
 
@@ -169,20 +171,20 @@ impl Rule for ForbidPropTypes {
             && let Node::Expr(object) = property.parent()
             && !object.is_assignment_target()
         {
-            self.check_properties(properties, &cx.state.listened(object.span()), cx);
+            self.check_properties(properties, &cx.state.listener_node(object.span()), cx);
         }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut forbidden = std::mem::take(&mut cx.state.forbidden);
-        utils::sort::sort_by_key(&mut forbidden, |it| it.listened.sort_key(0, 0));
+        utils::sort::sort_by_key(&mut forbidden, |it| it.listener_node.sort_key(0, 0));
         for it in forbidden {
             cx.report(it.declaration, FORBIDDEN_PROP_TYPE).data("target", it.target);
         }
     }
 }
 
-/// What the listener for `ImportDeclaration` does, for all of the file.
+/// Does what the `ImportDeclaration` listener does, for the whole file.
 fn imports_of<'a>(file: &'a File<'a>) -> Vec<Imported<'a>> {
     if !file.mentions("PropTypes") {
         return Vec::new();
@@ -223,7 +225,8 @@ fn imports_of<'a>(file: &'a File<'a>) -> Vec<Imported<'a>> {
     imports
 }
 
-/// `node.type === "MemberExpression" ? node.property.name : node.name`, for a node that is reached from above.
+/// `node.type === "MemberExpression" ? node.property.name : node.name`. Seen from its parent, the root of an optional
+/// chain is a `ChainExpression`, so it has neither.
 fn name_of(node: Expr<'_>) -> Option<&[u8]> {
     match node.as_ident() {
         Some(name) => Some(name.bytes()),
@@ -233,7 +236,7 @@ fn name_of(node: Expr<'_>) -> Option<&[u8]> {
 }
 
 impl<'a> Packages<'a> {
-    /// `isPropTypesPackage`, for a node that is reached from above.
+    /// `isPropTypesPackage`. Seen from its parent, the root of an optional chain is a `ChainExpression`.
     fn is_prop_types_package(self, node: Expr<'a>) -> bool {
         match node.kind() {
             ExprKind::Ident(name) => {
@@ -249,15 +252,15 @@ impl<'a> Packages<'a> {
 }
 
 impl<'a> State<'a> {
-    fn listened(&self, span: Span) -> Listened<'a> {
+    fn listener_node(&self, span: Span) -> ListenerNode<'a> {
         let imports = self.imports.partition_point(|it| it.start < span.start);
         let packages = imports.checked_sub(1).and_then(|last| self.imports.get(last)).map(|it| it.packages);
-        Listened { span, imports, packages: packages.unwrap_or_default() }
+        ListenerNode { span, imports, packages: packages.unwrap_or_default() }
     }
 }
 
 impl ForbidPropTypes {
-    /// What the listeners begin with, without `isPropTypesPackage`.
+    /// The check that the listeners start with, minus `isPropTypesPackage`.
     fn is_checked_declaration(&self, node: Node<'_>) -> bool {
         is_prop_types_declaration(node)
             || (self.check_context_types && is_context_types_declaration(node))
@@ -268,23 +271,23 @@ impl ForbidPropTypes {
         &self,
         target: Option<&'a [u8]>,
         declaration: Prop<'a>,
-        listened: &Listened<'a>,
+        listener_node: &ListenerNode<'a>,
         cx: &mut Cx<'a, Self>,
     ) {
         if let Some(target) = target
             && self.forbid.iter().any(|it| target == &**it)
         {
-            cx.state.forbidden.push(Forbidden { listened: listened.span, declaration: declaration.span(), target });
+            cx.state.forbidden.push(Forbidden { listener_node: listener_node.span, declaration: declaration.span(), target });
         }
     }
 
     fn check_properties<'a>(
         &self,
         declarations: List<'a, Prop<'a>>,
-        listened: &Listened<'a>,
+        listener_node: &ListenerNode<'a>,
         cx: &mut Cx<'a, Self>,
     ) {
-        let packages = listened.packages;
+        let packages = listener_node.packages;
         for declaration in declarations {
             let Some(mut value) = declaration.value().filter(|_| declaration.kind() != PropKind::Spread) else {
                 continue;
@@ -299,42 +302,43 @@ impl ForbidPropTypes {
                     continue;
                 }
                 for arg in call.args() {
-                    self.report_if_forbidden(name_of(arg), declaration, listened, cx);
+                    self.report_if_forbidden(name_of(arg), declaration, listener_node, cx);
                 }
                 value = call.callee();
             }
             if packages.is_prop_types_package(value) {
-                self.report_if_forbidden(name_of(value), declaration, listened, cx);
+                self.report_if_forbidden(name_of(value), declaration, listener_node, cx);
             }
         }
     }
 
-    /// `checkProperties` of the object literal that a variable is, which costs its length only the first time.
-    fn check_properties_of_variable<'a>(&self, init: Expr<'a>, listened: &Listened<'a>, cx: &mut Cx<'a, Self>) {
+    /// `checkProperties` of a variable's object literal. The result is cached, so only the first call walks the
+    /// properties.
+    fn check_properties_of_variable<'a>(&self, init: Expr<'a>, listener_node: &ListenerNode<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(properties) = init.kind() else {
             return;
         };
-        let key = (init.span().start, listened.imports);
+        let key = (init.span().start, listener_node.imports);
         let Some(known) = cx.state.known.get(&key).cloned() else {
             let first = cx.state.forbidden.len();
-            self.check_properties(properties, listened, cx);
+            self.check_properties(properties, listener_node, cx);
             cx.state.known.insert(key, first..cx.state.forbidden.len());
             return;
         };
         cx.state.forbidden.extend_from_within(known.clone());
         let added = cx.state.forbidden.len() - known.len();
         for it in cx.state.forbidden.iter_mut().skip(added) {
-            it.listened = listened.span;
+            it.listener_node = listener_node.span;
         }
     }
 
-    fn check_node<'a>(&self, mut node: Expr<'a>, listened: &Listened<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_node<'a>(&self, mut node: Expr<'a>, listener_node: &ListenerNode<'a>, cx: &mut Cx<'a, Self>) {
         loop {
             match node.kind() {
-                ExprKind::Object(properties) => self.check_properties(properties, listened, cx),
+                ExprKind::Object(properties) => self.check_properties(properties, listener_node, cx),
                 ExprKind::Ident(name) => {
                     if let Some(Found::Init(init)) = find_variable_by_name(Node::Expr(node), name) {
-                        self.check_properties_of_variable(init, listened, cx);
+                        self.check_properties_of_variable(init, listener_node, cx);
                     }
                 }
                 ExprKind::Call(call) if !node.is_chain_root() => {
@@ -351,7 +355,8 @@ impl ForbidPropTypes {
         }
     }
 
-    /// The listener for `MemberExpression`, for a `node` that is the `left` of its parent. Nothing comes of a `right`.
+    /// The `MemberExpression` listener, for a `node` that's its parent's `left`. If it's the `right`, upstream checks
+    /// the member expression itself, which does nothing.
     fn member_expression<'a>(&self, node: Expr<'a>, right: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(right.tag(), ExprTag::Object | ExprTag::Ident | ExprTag::Call)
             || !matches!(node.tag(), ExprTag::Dot | ExprTag::Index)
@@ -359,13 +364,13 @@ impl ForbidPropTypes {
         {
             return;
         }
-        let listened = cx.state.listened(node.span());
-        if listened.packages.is_prop_types_package(node) || self.is_checked_declaration(Node::Expr(node)) {
-            self.check_node(right, &listened, cx);
+        let listener_node = cx.state.listener_node(node.span());
+        if listener_node.packages.is_prop_types_package(node) || self.is_checked_declaration(Node::Expr(node)) {
+            self.check_node(right, &listener_node, cx);
         }
     }
 
-    /// The listener for `CallExpression`.
+    /// The `CallExpression` listener.
     fn call_expression<'a>(&self, node: Expr<'a>, call: Call<'a>, cx: &mut Cx<'a, Self>) {
         let Some(ExprKind::Object(properties)) = call.args().first().map(Expr::kind) else {
             return;
@@ -374,9 +379,9 @@ impl ForbidPropTypes {
         if !callee.is_ident("shape") && !is_member_called(callee, "shape") {
             return;
         }
-        let listened = cx.state.listened(node.span());
-        if callee.object().is_none_or(|object| listened.packages.is_prop_types_package(object)) {
-            self.check_properties(properties, &listened, cx);
+        let listener_node = cx.state.listener_node(node.span());
+        if callee.object().is_none_or(|object| listener_node.packages.is_prop_types_package(object)) {
+            self.check_properties(properties, &listener_node, cx);
         }
     }
 }

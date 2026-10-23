@@ -1,12 +1,15 @@
 #pragma once
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <utility>
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
+#include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 
 namespace Bun::Bindgen {
@@ -41,6 +44,7 @@ template<> struct ExternTraits<int32_t> : TrivialExtern<int32_t> {};
 template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
 template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
+template<> struct ExternTraits<void*> : TrivialExtern<void*> {};
 
 enum ExternNullPtr : uint8_t {};
 
@@ -119,6 +123,54 @@ template<> struct ExternTraits<JSStringUTF8View> {
         return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
     }
 };
+
+template<> struct ExternTraits<JSBlobOrBufferView> {
+    using ExternType = ExternBytes;
+
+    static ExternType convertToExtern(JSBlobOrBufferView&& cppValue)
+    {
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSBytesView> {
+    using ExternType = ExternBytes;
+
+    // As for JSStringUTF8View.
+    static ExternType convertToExtern(JSBytesView&& cppValue)
+    {
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSBlobOrStringOrBuffer> {
+    using ExternType = WTF::StringImpl*;
+
+    static ExternType convertToExtern(JSBlobOrStringOrBuffer&& cppValue)
+    {
+        return ExternTraits<WTF::String>::convertToExtern(cppValue.takeString());
+    }
+};
+
+struct ExternVariadicArguments {
+    const JSC::EncodedJSValue* data;
+    size_t length;
+};
+
+template<> struct ExternTraits<JSC::ArgList> {
+    using ExternType = ExternVariadicArguments;
+
+    static ExternType convertToExtern(JSC::ArgList&& cppValue)
+    {
+        return { cppValue.data(), cppValue.size() };
+    }
+};
+
+// `data()` is never null, which a Rust slice needs.
+inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned startIndex)
+{
+    return { callFrame, static_cast<int>(std::min<size_t>(startIndex, callFrame->argumentCount())) };
+}
 
 // A converted argument and the argument itself.
 template<typename T>

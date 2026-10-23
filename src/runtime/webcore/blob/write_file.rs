@@ -263,7 +263,12 @@ impl WriteFile {
     /// See `ReadFile::fail_cancelled`.
     #[cfg(not(windows))]
     fn fail_cancelled(&mut self) {
-        let err = sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write);
+        self.fail_wait(&sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write));
+    }
+
+    /// See `ReadFile::fail_wait`.
+    #[cfg(not(windows))]
+    fn fail_wait(&mut self, err: &sys::Error) {
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.state
@@ -274,6 +279,10 @@ impl WriteFile {
     /// `self` again.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_writable(&mut self) {
+        if let Err(err) = io::IoRequestLoop::ensure_init() {
+            self.fail_wait(&err);
+            return self.on_finish();
+        }
         if !self.io_parking.park() {
             self.fail_cancelled();
             return self.on_finish();

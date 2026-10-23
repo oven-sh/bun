@@ -2106,7 +2106,7 @@ function parserOnIncoming(server, socket, state, req, keepAlive, dispatchBits?) 
     giveSocket(res, socket);
   }
 
-  res.on("finish", () => resOnFinish(req, res, socket, state, server));
+  res.on("finish", resOnFinish.bind(undefined, req, res, socket, state, server));
 
   let expectation = kNoExpectation;
   if (req.httpVersionMajor === 1 && req.httpVersionMinor === 1) {

@@ -1178,7 +1178,7 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
     this.uncork();
   }
 
-  const finish = err => onFinish(this, err);
+  const finish = onFinish.bind(undefined, this);
   // As in Node, a last write to a connection that was gone before end() doesn't complete the message or call the callback.
   const lastWrite = this[kSocket]?.destroyed ? nop : finish;
 

@@ -1,0 +1,14 @@
+[package]
+name = "bun_tar"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bun_core.workspace = true

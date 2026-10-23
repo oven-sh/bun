@@ -1911,6 +1911,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_tar"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_tcc_sys"
 version = "0.0.0"
 dependencies = [

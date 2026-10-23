@@ -160,6 +160,14 @@ export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
 // You should call fs.closeSync(fd) when you're done with it.
 export const memfd_create = $bindgen("node_fs_binding.bind.ts", "createMemfdForTesting") as (size: number) => number;
 
+// POSIX-only. Finish `fs.writevSync(fd, buffers, position)` as if its first write(2) had taken `amt` bytes, and return the total.
+export const fsWriteRest: (
+  fd: number,
+  buffers: ArrayBufferView[],
+  position: number | null | undefined,
+  amt: number,
+) => number = $bindgen("node_fs_binding.bind.ts", "writeRestForTesting");
+
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $bindgen("Stat.bind.ts", "createStatsForIno");
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $bindgen(

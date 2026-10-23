@@ -49,7 +49,6 @@ use crate::generated_bindgen::s3_upload_stream::{
 };
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
-use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
 use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
@@ -563,6 +562,28 @@ pub(crate) fn writable_stream(
     Ok(sink.to_js(cx.global()))
 }
 
+/// What [`upload_stream`] tells its caller's callback.
+pub(crate) enum S3UploadStreamResult<'a> {
+    Success,
+    /// The stream was used after the caller checked it. Nothing was sent. Holds the reason.
+    Refused(JSValue),
+    /// The body stream failed with this error: at the attach, when nothing was sent, or during
+    /// the upload.
+    BodyFailed(JSValue),
+    /// Every other failure: of S3, of the connection to it, or of a body stream that gave no
+    /// error. Borrowed for the duration of the callback.
+    Failure(Error::S3Error<'a>),
+}
+
+/// Where a streaming upload reports its outcome: one channel, used once. A caller with a
+/// callback gets no promise, so no rejection can land where nothing observes it.
+enum UploadStreamDone {
+    /// The promise [`upload_stream`] returned.
+    Promise(bun_jsc::JSPromiseStrong),
+    Callback(fn(S3UploadStreamResult<'_>, *mut c_void), *mut c_void),
+    Delivered,
+}
+
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
@@ -571,9 +592,7 @@ pub(crate) struct S3UploadStreamWrapper {
 
     pub sink: Option<NonNull<NetworkSink>>,
     pub task: RefPtr<MultiPartUpload>,
-    pub(crate) end_promise: bun_jsc::JSPromiseStrong,
-    pub callback: Option<fn(S3UploadResult, *mut c_void)>,
-    pub(crate) callback_context: *mut c_void,
+    done: UploadStreamDone,
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
     /// Roots the source ReadableStream, and the JS pump reachable only through it, until this wrapper drops.
@@ -627,19 +646,26 @@ impl S3UploadStreamWrapper {
         drop(unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) });
     }
 
-    /// Stream pump rejected. Rejects the caller's end_promise, fails the upload,
+    /// Stream pump rejected. Reports the pump's error as the outcome, fails the upload,
     /// and balances the +1 ref taken for the pump promise in `upload_stream`.
     pub(crate) fn handle_reject_stream(&mut self, err: JSValue) {
         bun_output::scoped_log!(S3UploadStream, "handleRejectStream");
         self.detach_sink();
         // SAFETY: adopts the pump ref; released at scope exit, after the borrows below.
         let _pump_ref = unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) };
-        if self.end_promise.has_value() && !err.is_empty_or_undefined_or_null() {
-            // if we have a explicit error, reject the promise
+        if !err.is_empty_or_undefined_or_null() {
+            // if we have a explicit error, it is the outcome
             // if not when calling .fail will create a S3Error instance
             // this match the previous behavior
-            let _ = self.end_promise.reject(&self.global, Ok(err));
-            self.end_promise = bun_jsc::JSPromiseStrong::empty();
+            match core::mem::replace(&mut self.done, UploadStreamDone::Delivered) {
+                UploadStreamDone::Promise(mut promise) => {
+                    let _ = promise.reject(&self.global, Ok(err));
+                }
+                UploadStreamDone::Callback(callback, context) => {
+                    callback(S3UploadStreamResult::BodyFailed(err), context);
+                }
+                UploadStreamDone::Delivered => {}
+            }
         }
         // idempotent (`state != Finished`); `task.ended` was set by the pump's close path
         let _ = self.task.fail(Error::S3Error {
@@ -657,7 +683,8 @@ impl S3UploadStreamWrapper {
         // runs on every path; the promise slots are settled until one settle leaves an
         // exception pending, which is what this returns (nothing settles over it).
         let mut settled: JsResult<()> = Ok(());
-        match &result {
+        // What `done` gets: its promise settles with `settle`, its callback is told `outcome`.
+        let (settle, outcome) = match result {
             S3UploadResult::Success => {
                 let uploaded = JSValue::js_number(self_.task.uploaded_bytes.get() as f64);
                 if let Some(sink) = self_.sink_mut() {
@@ -669,12 +696,7 @@ impl S3UploadStreamWrapper {
                         settled = sink.end_promise.resolve(&global, uploaded);
                     }
                 }
-                if self_.end_promise.has_value() {
-                    if settled.is_ok() {
-                        settled = self_.end_promise.resolve(&global, uploaded);
-                    }
-                    self_.end_promise = bun_jsc::JSPromiseStrong::empty();
-                }
+                (Ok(uploaded), S3UploadStreamResult::Success)
             }
             S3UploadResult::Failure(err) => {
                 // If the native ByteStream source errored, prefer the original
@@ -682,7 +704,7 @@ impl S3UploadStreamWrapper {
                 // `.name`) over the generic `UnknownError` passed to `fail()`.
                 let stashed = self_.sink_mut().and_then(|s| s.upstream_error.try_swap());
                 let js_err = stashed
-                    .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
+                    .unwrap_or_else(|| s3_error_to_js(&err, &global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
                 let mut is_native = false;
                 if let Some(sink) = self_.sink_mut() {
@@ -723,17 +745,26 @@ impl S3UploadStreamWrapper {
                     // releases the remaining ref at scope exit.
                     unsafe { Self::deref(std::ptr::from_mut::<Self>(self_)) };
                 }
-                if self_.end_promise.has_value() {
-                    if settled.is_ok() {
-                        settled = self_.end_promise.reject(&global, Ok(js_err));
-                    }
-                    self_.end_promise = bun_jsc::JSPromiseStrong::empty();
+                // Only a body stream that failed stashes its error.
+                let outcome = match stashed {
+                    Some(reason) => S3UploadStreamResult::BodyFailed(reason),
+                    None => S3UploadStreamResult::Failure(err),
+                };
+                (Err(js_err), outcome)
+            }
+        };
+
+        match core::mem::replace(&mut self_.done, UploadStreamDone::Delivered) {
+            UploadStreamDone::Promise(mut promise) => {
+                if settled.is_ok() {
+                    settled = match settle {
+                        Ok(uploaded) => promise.resolve(&global, uploaded),
+                        Err(js_err) => promise.reject(&global, Ok(js_err)),
+                    };
                 }
             }
-        }
-
-        if let Some(callback) = self_.callback {
-            callback(result, self_.callback_context);
+            UploadStreamDone::Callback(callback, context) => callback(outcome, context),
+            UploadStreamDone::Delivered => {}
         }
         settled
     }
@@ -773,6 +804,10 @@ impl Drop for S3UploadStreamWrapper {
 /// consumes the readable stream and upload to s3
 ///
 /// `credentials` is moved into the `MultiPartUpload`.
+///
+/// The outcome has one channel. With `callback`, every outcome goes to it, once: a refusal too,
+/// and that one before this returns. The value returned is then `undefined`. Without
+/// `callback`, the promise returned settles with the outcome.
 pub(crate) fn upload_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
     path: &[u8],
@@ -786,79 +821,21 @@ pub(crate) fn upload_stream(
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
     request_payer: bool,
-    callback: Option<fn(S3UploadResult, *mut c_void)>,
+    callback: Option<fn(S3UploadStreamResult<'_>, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
+    // The callers check the stream before they read their options. A getter there can use it.
     if readable_stream.is_disturbed(cx.global()) {
-        return Ok(bun_jsc::JSPromise::rejected_promise(
-            cx.global(),
-            cx.global()
-                .create_error_instance(format_args!("ReadableStream is already disturbed")),
-        )
-        .to_js());
-    }
-
-    match readable_stream.ptr {
-        ReadableStreamPtr::Invalid => {
-            return Ok(bun_jsc::JSPromise::rejected_promise(
-                cx.global(),
-                cx.global()
-                    .create_error_instance(format_args!("ReadableStream is invalid")),
-            )
-            .to_js());
-        }
-        // The File/Bytes payload types
-        // differ (`*FileReader` vs `*ByteStream`), so the arms are
-        // unrolled here.
-        ReadableStreamPtr::Bytes(_) => {
-            // BACKREF: see `Source::bytes()` — payload live while the
-            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
-            let stream = readable_stream.ptr.bytes().expect("matched Bytes");
-            if matches!(
-                stream.pending.get().result,
-                crate::webcore::streams::StreamResult::Err(_)
-            ) {
-                // we got an error, fail early
-                let err = match stream.pending.with_mut(|p| {
-                    core::mem::replace(&mut p.result, crate::webcore::streams::StreamResult::Done)
-                }) {
-                    crate::webcore::streams::StreamResult::Err(err) => err,
-                    _ => unreachable!(),
-                };
-                stream.pending.set(crate::webcore::streams::Pending {
-                    result: crate::webcore::streams::StreamResult::Done,
-                    ..Default::default()
-                });
-                let js_err = err.to_js(cx.global());
-                js_err.ensure_still_alive();
-                return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
+        let reason = cx
+            .global()
+            .create_error_instance(format_args!("ReadableStream is already disturbed"));
+        return Ok(match callback {
+            Some(callback) => {
+                callback(S3UploadStreamResult::Refused(reason), callback_context);
+                JSValue::UNDEFINED
             }
-        }
-        ReadableStreamPtr::File(_) => {
-            // BACKREF: see `Source::file()` — payload live while the
-            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
-            let stream = readable_stream.ptr.file().expect("matched File");
-            if matches!(
-                stream.pending.get().result,
-                crate::webcore::streams::StreamResult::Err(_)
-            ) {
-                // we got an error, fail early
-                let err = match stream.pending.with_mut(|p| {
-                    core::mem::replace(&mut p.result, crate::webcore::streams::StreamResult::Done)
-                }) {
-                    crate::webcore::streams::StreamResult::Err(err) => err,
-                    _ => unreachable!(),
-                };
-                stream.pending.set(crate::webcore::streams::Pending {
-                    result: crate::webcore::streams::StreamResult::Done,
-                    ..Default::default()
-                });
-                let js_err = err.to_js(cx.global());
-                js_err.ensure_still_alive();
-                return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
-            }
-        }
-        _ => {}
+            None => bun_jsc::JSPromise::rejected_promise(cx.global(), reason).to_js(),
+        });
     }
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
@@ -932,12 +909,13 @@ pub(crate) fn upload_stream(
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
             ref_count: Cell::new(2), // +1 for the stream pump (released by the .then shim / handle_*_stream)
             sink: None,
-            callback,
-            callback_context,
+            done: match callback {
+                Some(callback) => UploadStreamDone::Callback(callback, callback_context),
+                None => UploadStreamDone::Promise(bun_jsc::JSPromiseStrong::init(cx.global())),
+            },
             path: bun_ptr::RawSlice::new(&task.path),
             // SAFETY: adopts one of `task_ptr`'s two initial refs.
             task: unsafe { RefPtr::from_raw(task_ptr) },
-            end_promise: bun_jsc::JSPromiseStrong::init(cx.global()),
             readable_stream_ref: ReadableStreamStrong::default(),
             global: global_static,
         }));
@@ -961,9 +939,12 @@ pub(crate) fn upload_stream(
     ctx.sink = Some(NonNull::from(&mut *sink));
 
     // Captured before `assign_to_stream`: a synchronously-draining stream may
-    // resolve + clear `ctx.end_promise` before control returns here.
-    let end_promise_value = ctx.end_promise.value();
-    end_promise_value.ensure_still_alive();
+    // settle + clear `ctx.done` before control returns here.
+    let returned = match &ctx.done {
+        UploadStreamDone::Promise(promise) => promise.value(),
+        _ => JSValue::UNDEFINED,
+    };
+    returned.ensure_still_alive();
 
     // Transition WaitStreamCheck → NotStarted before the pump can deliver the
     // first chunk: `readStreamIntoSink`'s `readMany()` drains a pre-enqueued
@@ -988,7 +969,7 @@ pub(crate) fn upload_stream(
                 let err_js = err.to_js(cx.global());
                 err_js.ensure_still_alive();
                 ctx.handle_reject_stream(err_js);
-                return Ok(end_promise_value);
+                return Ok(returned);
             }
 
             let buffered = byte_stream.take_buffer();
@@ -1011,7 +992,7 @@ pub(crate) fn upload_stream(
                             let _ = sink.end(None);
                         }
                         ctx.handle_resolve_stream();
-                        return Ok(end_promise_value);
+                        return Ok(returned);
                     }
                     _ => {}
                 }
@@ -1030,7 +1011,7 @@ pub(crate) fn upload_stream(
             // `!had_last`: the stream-pump +1 (rc=2) is released by
             // `NetworkSink::end_from_stream` after the terminal write/fail so the
             // sink outlives the synchronous `resolve()` re-entry.
-            return Ok(end_promise_value);
+            return Ok(returned);
         }
         // sink already attached: fall through to the JS pump.
     }
@@ -1045,7 +1026,7 @@ pub(crate) fn upload_stream(
 
     if let Some(err_value) = assignment_result.to_error() {
         ctx.handle_reject_stream(err_value);
-        return Ok(end_promise_value);
+        return Ok(returned);
     }
 
     if !assignment_result.is_empty_or_undefined_or_null() {
@@ -1074,7 +1055,7 @@ pub(crate) fn upload_stream(
                     ctx.handle_reject_stream(result);
                 }
             }
-            return Ok(end_promise_value);
+            return Ok(returned);
         }
     }
 
@@ -1087,7 +1068,7 @@ pub(crate) fn upload_stream(
         }
     }
     ctx.handle_resolve_stream();
-    Ok(end_promise_value)
+    Ok(returned)
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)

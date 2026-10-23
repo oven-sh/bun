@@ -2121,6 +2121,266 @@ describe("s3 upload stream body error", () => {
     expect(received).toBe(totalBytes);
     expect(exitCode).toBe(0);
   });
+
+  // fetch("s3://", { body: stream }) reports the upload on its own promise. A failed upload also
+  // rejected a second promise that nothing could reach: an unhandled rejection beside the 500
+  // response. Now an error that the body stream produced rejects the fetch, as it does for an
+  // http: URL. Every other failure resolves the 500 response, as before.
+  it("fetch(s3://) with a stream body reports a failed upload once", async () => {
+    const fixture = /* js */ `
+      const path = require("node:path");
+
+      const requests = [];
+      const bucket = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(request) {
+          const url = new URL(request.url);
+          requests.push(request.method + " " + url.pathname + url.search);
+          await request.arrayBuffer();
+          if (url.pathname === "/bucket/denied") {
+            return new Response("<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", {
+              status: 403,
+            });
+          }
+          return new Response("", { headers: { ETag: '"etag"' } });
+        },
+      });
+      const s3 = {
+        endpoint: "http://127.0.0.1:" + bucket.port,
+        bucket: "bucket",
+        accessKeyId: "id",
+        secretAccessKey: "secret",
+        retry: 0,
+      };
+
+      const hello = () =>
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("hello"));
+            controller.close();
+          },
+        });
+      const put = (key, body, options = s3, method = "PUT") => fetch("s3://" + key, { method, body, s3: options });
+      // \`own\` is the error that the body stream failed with.
+      const outcome = (upload, own) =>
+        upload.then(
+          response => "resolved " + response.status + (response.ok ? "" : " " + response.statusText),
+          error =>
+            error === own
+              ? "rejected with the stream's error"
+              : "rejected " + (typeof error.code === "string" ? error.code : error.name),
+        );
+      const results = {};
+
+      results["the upload succeeds"] = await outcome(put("stored", hello()));
+
+      // The S3 side fails.
+      results["S3 answers 403"] = await outcome(put("denied", hello()));
+      results["no credentials for the destination"] = await outcome(put("stored", hello(), { endpoint: s3.endpoint }));
+      {
+        let pulls = 0;
+        const open = Promise.withResolvers();
+        const stream = new ReadableStream({
+          async pull(controller) {
+            if (pulls++ === 0) return controller.enqueue(new Uint8Array(6 * 1024 * 1024));
+            await open.promise;
+            controller.close();
+          },
+        });
+        results["S3 answers 403 to CreateMultipartUpload, the stream is open"] = await outcome(
+          put("denied", stream, { ...s3, partSize: 5 * 1024 * 1024 }),
+        );
+        open.resolve();
+      }
+
+      // The body stream fails and gives no error.
+      results["controller.error() without an error"] = await outcome(
+        put("stored", new ReadableStream({ pull: controller => controller.error() })),
+      );
+      for (const nothing of [undefined, null]) {
+        results["a direct stream, pull() throws " + nothing] = await outcome(
+          put(
+            "stored",
+            new ReadableStream({
+              type: "direct",
+              pull() {
+                throw nothing;
+              },
+            }),
+          ),
+        );
+      }
+
+      // The body stream fails with an error.
+      const streams = {
+        "controller.error(error) in the first pull": error =>
+          new ReadableStream({ pull: controller => controller.error(error) }),
+        "controller.error(error) after a chunk": error => {
+          let pulls = 0;
+          return new ReadableStream({
+            pull(controller) {
+              if (pulls++ === 0) controller.enqueue(new Uint8Array(1024));
+              else controller.error(error);
+            },
+          });
+        },
+        "a direct stream, controller.close(error)": error =>
+          new ReadableStream({ type: "direct", pull: controller => controller.close(error) }),
+        "a direct stream, pull() throws an error": error =>
+          new ReadableStream({
+            type: "direct",
+            pull() {
+              throw error;
+            },
+          }),
+      };
+      for (const [name, stream] of Object.entries(streams)) {
+        const error = new Error(name);
+        results[name] = await outcome(put("stored", stream(error)), error);
+      }
+      {
+        const error = new Error("POST");
+        results["POST, controller.error(error) in the first pull"] = await outcome(
+          put("stored", streams["controller.error(error) in the first pull"](error), s3, "POST"),
+          error,
+        );
+      }
+      results["the stream of a file that does not exist"] = await outcome(
+        put("stored", Bun.file(path.resolve("missing.bin")).stream()),
+      );
+      {
+        const stream = hello();
+        let reader;
+        results["an s3 option getter locks the stream"] = await outcome(
+          put("stored", stream, {
+            ...s3,
+            get accessKeyId() {
+              reader ??= stream.getReader();
+              return s3.accessKeyId;
+            },
+          }),
+        );
+      }
+      // The start of a message with a body of 65536 bytes.
+      const partial = "Content-Length: 65536\\r\\n\\r\\n" + Buffer.alloc(1024, "a").toString();
+      {
+        // A fetch response body is a native stream. Its source drops the connection after the
+        // upload took the stream.
+        const cut = Promise.withResolvers();
+        const source = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(socket) {
+              socket.write("HTTP/1.1 200 OK\\r\\n" + partial);
+              cut.promise.then(() => socket.terminate());
+            },
+          },
+        });
+        const download = await fetch("http://127.0.0.1:" + source.port + "/");
+        const upload = put("stored", download.body);
+        cut.resolve();
+        results["the source of a response body drops the connection"] = await outcome(upload);
+        source.stop(true);
+      }
+      // A server relays a request body to S3, and its client leaves.
+      for (const when of ["before", "during"]) {
+        const leave = Promise.withResolvers();
+        const relayed = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          async fetch(request) {
+            if (when === "before" && !request.signal.aborted) {
+              leave.resolve();
+              await new Promise(resolve => request.signal.addEventListener("abort", resolve, { once: true }));
+            }
+            let result = "pending";
+            const upload = outcome(put("stored", request.body)).then(value => (result = value));
+            if (when === "during") {
+              leave.resolve();
+              await upload;
+            } else {
+              // The stream has failed already. The upload used to stay pending for it.
+              const deadline = Date.now() + 1000;
+              while (result === "pending" && Date.now() < deadline) await Bun.sleep(1);
+            }
+            relayed.resolve(result);
+            return new Response("");
+          },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { data() {}, error() {}, close() {} },
+        });
+        client.write("POST / HTTP/1.1\\r\\nHost: x\\r\\n" + partial);
+        await leave.promise;
+        client.terminate();
+        results["a relayed request body, the client leaves " + when + " the upload"] = await relayed.promise;
+        await server.stop(true);
+      }
+
+      // Waits for requests in flight, so a request that went out is counted.
+      await bucket.stop();
+      console.log(JSON.stringify({ results, requests }));
+    `;
+    using dir = tempDir("s3-fetch-stream-failure", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        // "no credentials for the destination" needs none from the environment.
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
+        S3_BUCKET: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+        AWS_BUCKET: undefined,
+        // An inherited proxy would take the requests away from the stubs.
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const unchanged500 = "resolved 500 UnknownError";
+    const rejected = "rejected with the stream's error";
+    // The child has no unhandledRejection listener: a rejection that nothing handles is in stderr
+    // and in the exit code.
+    expect({ stderr, exitCode, signalCode: proc.signalCode, ...JSON.parse(stdout || "{}") }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+      results: {
+        "the upload succeeds": "resolved 200",
+        // The response is the same as before. It is not decided here whether these reject.
+        "S3 answers 403": "resolved 500 AccessDenied",
+        "no credentials for the destination": "resolved 500 ERR_S3_MISSING_CREDENTIALS",
+        "S3 answers 403 to CreateMultipartUpload, the stream is open": "resolved 500 AccessDenied",
+        "controller.error() without an error": unchanged500,
+        "a direct stream, pull() throws undefined": unchanged500,
+        "a direct stream, pull() throws null": unchanged500,
+        // An error that the body stream produced rejects the fetch.
+        "controller.error(error) in the first pull": rejected,
+        "controller.error(error) after a chunk": rejected,
+        "a direct stream, controller.close(error)": rejected,
+        "a direct stream, pull() throws an error": rejected,
+        "POST, controller.error(error) in the first pull": rejected,
+        "the stream of a file that does not exist": "rejected ENOENT",
+        "an s3 option getter locks the stream": "rejected ERR_INVALID_STATE",
+        "the source of a response body drops the connection": "rejected ECONNRESET",
+        "a relayed request body, the client leaves before the upload": "rejected AbortError",
+        "a relayed request body, the client leaves during the upload": "rejected AbortError",
+      },
+      requests: ["PUT /bucket/stored", "PUT /bucket/denied", "POST /bucket/denied?uploads="],
+    });
+  });
 });
 
 describe("presigned url signature", () => {

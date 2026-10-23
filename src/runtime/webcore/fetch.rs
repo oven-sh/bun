@@ -1754,8 +1754,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 global: global_this,
             });
             // Shim: erases both the payload type and the `Result` return when
-            // coercing to the `fn (S3UploadResult, *mut c_void)` callback shape.
-            fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
+            // coercing to the `fn (S3UploadStreamResult, *mut c_void)` callback shape.
+            fn s3_stream_wrapper_resolve(
+                result: s3::S3UploadStreamResult<'_>,
+                ctx: *mut libc::c_void,
+            ) {
                 // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
                 // 'static lifetime is a raw-pointer fiction (the pointee's real
                 // lifetime is managed by the resolve callback itself).
@@ -1764,7 +1767,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
-            let _ = s3::upload_stream(
+            //
+            // Every outcome goes to the callback, which can run before the call returns. The
+            // call returns `undefined`.
+            s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
                 readable_stream.get().unwrap(),
@@ -1978,7 +1984,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
+    fn resolve(result: s3::S3UploadStreamResult, self_: *mut Self) -> JsResult<()> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };
@@ -1986,7 +1992,7 @@ impl<'a> S3StreamWrapper<'a> {
         // `defer bun.destroy(self)` + `defer free(url_proxy_buffer)` →
         // Box<Self> and Box<[u8]> Drop at end of scope.
         match result {
-            s3::S3UploadResult::Success => {
+            s3::S3UploadStreamResult::Success => {
                 let response = Box::new(Response::init(
                     response::Init {
                         method: Method::PUT,
@@ -2004,7 +2010,13 @@ impl<'a> S3StreamWrapper<'a> {
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }
-            s3::S3UploadResult::Failure(err) => {
+            // An error that the body stream produced rejects, as it does for an `http:` URL.
+            // Every other failure still resolves the 500 response below.
+            s3::S3UploadStreamResult::Refused(reason)
+            | s3::S3UploadStreamResult::BodyFailed(reason) => {
+                self_.promise.reject_with_async_stack(global, Ok(reason))?;
+            }
+            s3::S3UploadStreamResult::Failure(err) => {
                 let response = Box::new(Response::init(
                     response::Init {
                         method: Method::PUT,

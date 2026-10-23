@@ -50,7 +50,7 @@ Linted 1 file [6.46ms]
 error: script "lint" exited with code 1
 ```
 
-Only the default layout is Bun's. Every other format, such as `-f unix`, `-f json`, or `-f github`, prints exactly what oxlint prints.
+Only the default layout is Bun's. Every other format, such as `-f unix`, `-f json`, or `-f github`, prints exactly what oxlint prints. `-f stylish` does so in a pipe and in an `-o` file. In a terminal, [control characters show as text](#differences-from-oxlint).
 
 ---
 
@@ -152,6 +152,7 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
 - **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
+- **In a terminal, `-f stylish` shows control characters as text.** A file name, a message, or a rule name can contain a character that a terminal acts on, such as ESC. Bun prints `\x1b` in its place. Piped output and `-o` files have what oxlint prints.
 - **No language server.** `--lsp` is an error. Keep `oxlint` if your editor's oxc extension uses it.
 
 ---

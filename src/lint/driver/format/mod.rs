@@ -13,9 +13,11 @@ pub(crate) mod summary;
 mod unix;
 mod xml;
 
+use crate::paths;
 use crate::results::{Counts, FileResult};
 use crate::run::Pool;
-use bun_core::fmt::TerminalHyperlink;
+use bun_core::fmt::{TerminalHyperlink, escape_control_chars_multiline};
+use bun_core::strings;
 use bun_lint::linter::{LintMessage, RuleId};
 use std::borrow::Cow;
 
@@ -34,7 +36,7 @@ pub(crate) enum Format {
     Github,
     /// oxlint's `default`: `pretty`, followed by everything else oxlint prints.
     OxlintDefault,
-    /// oxlint's format of the same name, byte for byte.
+    /// oxlint's format of the same name, byte for byte except in a terminal: [`link`], [`escaped`].
     OxlintStylish,
     OxlintJson,
     OxlintUnix,
@@ -100,6 +102,11 @@ impl Format {
                 | Format::Gitlab
                 | Format::Sarif
         )
+    }
+
+    /// True for `stylish` in a terminal: control characters print as text there ([`escaped`]).
+    pub(crate) fn escapes(self, to_terminal: bool) -> bool {
+        to_terminal && matches!(self, Format::Stylish | Format::OxlintStylish)
     }
 
     /// True if it's meant for people and isn't parsed by tools.
@@ -169,8 +176,10 @@ pub(crate) struct Meta<'m> {
     pub(crate) help: Option<WithHelp<'m>>,
     pub(crate) cwd: &'m [u8],
     pub(crate) color: bool,
-    /// Rule names are hyperlinks to their docs pages. On when the report goes to a terminal with colors.
-    pub(crate) links: bool,
+    /// The report goes to a terminal: not to a pipe, and not to the file of `-o`.
+    pub(crate) to_terminal: bool,
+    /// [`Format::escapes`]
+    pub(crate) escapes: bool,
     /// Width in columns of the terminal the report goes to. 0 if it doesn't go to a terminal.
     pub(crate) width: usize,
     /// `--color`, `--no-color`
@@ -207,12 +216,12 @@ fn display_position(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
 }
 
 /// Wraps `name`, which is a format's name for the rule behind `message`, in a hyperlink to the rule's docs page. `None` if
-/// [`Meta::links`] is off or the rule has no page.
+/// the report doesn't go to a terminal with colors, or the rule has no page.
 fn link(name: &[u8], message: &LintMessage, meta: &Meta) -> Option<Vec<u8>> {
     let url = message
         .rule_id
         .as_ref()
-        .filter(|_| meta.links)?
+        .filter(|_| meta.color && meta.to_terminal)?
         .docs_url()?;
     Some(format!("{}", TerminalHyperlink::new(&url, name, true)).into_bytes())
 }
@@ -222,7 +231,41 @@ fn linked<'n>(name: &'n [u8], message: &LintMessage, meta: &Meta) -> Cow<'n, [u8
     link(name, message, meta).map_or(Cow::Borrowed(name), Cow::Owned)
 }
 
+/// A part of a `stylish` report that a linted file or the config has a say in.
+#[derive(Copy, Clone)]
+enum Cell {
+    /// A path or a rule name: one line.
+    Name,
+    /// Keeps its tabs and line breaks: a rule's message can have several lines.
+    Message,
+}
+
+/// `text` as `stylish` prints it in `cell`: with control characters as text such as `\x1b`, if the report escapes.
+#[inline]
+fn escaped<'t>(cell: Cell, text: &'t [u8], meta: &Meta) -> Cow<'t, [u8]> {
+    match meta.escapes {
+        true => escape(cell, text),
+        false => Cow::Borrowed(text),
+    }
+}
+
+/// [`escaped`] for a report that escapes.
+#[inline(never)]
+fn escape(cell: Cell, text: &[u8]) -> Cow<'_, [u8]> {
+    // The escapers stop where this does. Most text has no such byte.
+    if strings::index_of_needs_escape_for_java_script_string(text, b'"').is_none() {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(match cell {
+        Cell::Name => paths::escaped(text),
+        Cell::Message => escape_control_chars_multiline(text)
+            .to_string()
+            .into_bytes(),
+    })
+}
+
 /// Returns what ESLint's formatter of that name returns for `results`, which are sorted by path, or what oxlint prints.
+/// In a terminal, `stylish` differs from both: [`link`], [`escaped`].
 pub(crate) fn format(format: Format, results: &[FileResult], meta: &Meta) -> Vec<u8> {
     let mut out = Vec::new();
     match format {

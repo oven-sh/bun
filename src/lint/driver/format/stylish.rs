@@ -1,14 +1,15 @@
-//! ESLint's `stylish` formatter, byte for byte, and oxlint's `stylish`.
+//! ESLint's `stylish` formatter and oxlint's `stylish`: byte for byte, except in a terminal ([`link`], [`escaped`]).
 
 use super::info::Source;
 use super::oxlint::is_error;
-use super::{Meta, link, linked};
+use super::{Cell, Meta, escaped, link, linked};
 use crate::results::{Counts, FileResult};
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::LintMessage;
 use bun_lint::regex::Regex;
+use std::borrow::Cow;
 use std::io::Write;
 use std::sync::LazyLock;
 
@@ -112,13 +113,17 @@ fn write_line_with_position(out: &mut Vec<u8>, color: bool, line: &[u8]) {
     out.extend_from_slice(line);
 }
 
-struct Row {
+struct Row<'m> {
     line: Vec<u8>,
     column: Vec<u8>,
     is_error: bool,
-    message: Vec<u8>,
+    message: Cow<'m, [u8]>,
     message_len: usize,
+    /// The message as ESLint has it, if [`escaped`] has changed it.
+    unescaped: Option<&'m [u8]>,
     rule: Vec<u8>,
+    /// [`escaped`] has changed the rule's name.
+    is_rule_escaped: bool,
     /// [`link`]
     link: Option<Vec<u8>>,
 }
@@ -150,7 +155,8 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     out.push(b'\n');
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         counts.add(result.counts);
-        styled(out, color, &UNDERLINE, &result.path);
+        let path = escaped(Cell::Name, &result.path, meta);
+        styled(out, color, &UNDERLINE, &path);
         out.push(b'\n');
         let rows: Vec<Row> = (result.messages.iter())
             .map(|message| {
@@ -160,16 +166,29 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
                     }
                     text => text,
                 };
+                let shown = escaped(Cell::Message, text, meta);
+                let unescaped = match &shown {
+                    Cow::Owned(shown) if shown[..] != *text => Some(text),
+                    _ => None,
+                };
                 let rule = (message.rule_id.as_ref()).map(|id| id.to_vec());
-                let rule = rule.unwrap_or_default();
+                let mut rule = rule.unwrap_or_default();
+                let shown_rule = match escaped(Cell::Name, &rule, meta) {
+                    Cow::Owned(shown) if shown != rule => Some(shown),
+                    _ => None,
+                };
+                let is_rule_escaped = shown_rule.is_some();
+                rule = shown_rule.unwrap_or(rule);
                 Row {
                     line: number(message.line),
                     column: number(message.column),
                     is_error: message.is_fatal || message.severity == Severity::Error,
-                    message: text.to_vec(),
-                    message_len: visible_len(text),
+                    message_len: visible_len(&shown),
+                    message: shown,
+                    unescaped,
                     link: link(&rule, message, meta),
                     rule,
+                    is_rule_escaped,
                 }
             })
             .collect();
@@ -220,11 +239,20 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
             if i > 0 {
                 out.push(b'\n');
             }
+            // ESLint looks for a position on every line. A later line with an escape sequence is written as it is.
+            let mut of_message = (row.unescaped)
+                .map(|it| strings::split(it, b"\n").zip(strings::split(&row.message, b"\n")));
+            let last = (row.is_rule_escaped).then(|| strings::count_char(&text, b'\n'));
             for (j, line) in strings::split(&text, b"\n").enumerate() {
                 if j > 0 {
                     out.push(b'\n');
                 }
-                write_line_with_position(out, color, line);
+                let pair = of_message.as_mut().and_then(Iterator::next);
+                let is_escaped = pair.is_some_and(|(unescaped, shown)| unescaped != shown);
+                match j > 0 && (is_escaped || last == Some(j)) {
+                    true => out.extend_from_slice(line),
+                    false => write_line_with_position(out, color, line),
+                }
             }
         }
         out.extend_from_slice(b"\n\n");
@@ -303,6 +331,7 @@ fn write_file_as_oxlint(
     let path = fs::real_path(&paths::resolve(cwd, filename))
         .map_or_else(|| filename.to_vec(), paths::to_native);
     out.push(b'\n');
+    let path = escaped(Cell::Name, &path, meta);
     styled_until_reset(out, color, &UNDERLINE, &path);
     out.push(b'\n');
     let width = rows.iter().map(|it| it.position.len()).max().unwrap_or(0);
@@ -316,9 +345,11 @@ fn write_file_as_oxlint(
             false => styled_until_reset(out, color, &YELLOW, b"warning"),
         }
         out.extend_from_slice(b"  ");
-        out.extend_from_slice(&row.message.message);
+        let text = escaped(Cell::Message, &row.message.message, meta);
+        out.extend_from_slice(&text);
         out.extend_from_slice(b"  ");
-        styled_until_reset(out, color, &DIM, &linked(&row.code, row.message, meta));
+        let code = escaped(Cell::Name, &row.code, meta);
+        styled_until_reset(out, color, &DIM, &linked(&code, row.message, meta));
         out.push(b'\n');
     }
 }

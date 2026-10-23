@@ -970,6 +970,113 @@ booga"
       .runAsTest("quotes");
   });
 
+  describe("comments", () => {
+    TestBuilder.command /* sh */ `echo one # note
+echo two`
+      .stdout("one\ntwo\n")
+      .runAsTest("trailing comment ends the statement");
+
+    TestBuilder.command /* sh */ `rm -rf build   # clean the previous output
+cp -R src build
+ls`
+      .ensureTempDir()
+      .directory("src")
+      .file("src/index.js", "keep me\n")
+      .directory("build")
+      .file("build/old.js", "stale\n")
+      .stdout(out => expect(out.split("\n").filter(Boolean).sort()).toEqual(["build", "src"]))
+      .fileEquals("src/index.js", "keep me\n")
+      .fileEquals("build/index.js", "keep me\n")
+      .runAsTest("rm with a trailing comment does not take the next line as arguments");
+
+    const nested = (outer: string, next: string) =>
+      `if ${outer}; then\n  if true; then\n    echo both\n  fi # inner\n${next}\n  echo none\nfi`;
+
+    // Each script prints this in bash and in dash (dash has no `[[ ]]`), with nothing on stderr.
+    const scripts: [name: string, script: string, stdout: string][] = [
+      ["CRLF line ends", "echo one # note\r\necho two # note\r\n", "one\ntwo\n"],
+      ["a backslash at the end of the comment", "echo one # note \\\necho two", "one\ntwo\n"],
+      ["`else` after the inner `fi`", nested("false", "else"), "none\n"],
+      ["`else` after the inner `fi`, outer condition true", nested("true", "else"), "both\n"],
+      ["`elif` after the inner `fi`", nested("false", "elif true; then\n  echo elif\nelse"), "elif\n"],
+      ["`else` after a command", "if true; then\n  echo a # note\nelse\n  echo b\nfi", "a\n"],
+      ["`else` after a command, condition false", "if false; then\n  echo a # note\nelse\n  echo b\nfi", "b\n"],
+      ["`fi` after a command", "if true; then\n  echo a # note\nfi", "a\n"],
+      ["`then` after the condition", "if true # note\nthen echo a; fi", "a\n"],
+      ["a command after an assignment", 'FOO=bar # note\necho "[$FOO]"', "[bar]\n"],
+      // The first form of each of the next five worked before, because the comment took its newline with it.
+      ["after `&&`", "echo a && # note\necho b\necho c && # note\n\necho d\necho e &&\necho f", "a\nb\nc\nd\ne\nf\n"],
+      ["after `||`", "false || # note\necho b\nfalse || # note\n\necho d\nfalse ||\necho f", "b\nd\nf\n"],
+      ["after `|`", "echo a | # note\ncat\necho b | # note\n\ncat\necho c |\ncat", "a\nb\nc\n"],
+      [
+        "inside `[[ ]]`",
+        "[[ a == a # note\n]] && echo 1\n[[ # note\n\na == a ]] && echo 2\n[[\n-n a\n]] && echo 3",
+        "1\n2\n3\n",
+      ],
+      [
+        "before a closing backquote",
+        "echo `echo 1 # note\n`\necho `echo 2 # note\n\n`\necho `echo 3\n`\necho `echo 4;`",
+        "1\n2\n3\n4\n",
+      ],
+      ["up to a closing backquote", "echo `echo 1 # note`\necho `echo 2 # note`\necho `echo 3 # note`", "1\n2\n3\n"],
+      ["backslash-newline in backquotes", "echo `echo a # note \\\nb\n`", "a\n"],
+      [
+        "after each word of an `if` clause",
+        "if true # 1\nthen # 2\n  echo a # 3\nelif false # 4\nthen # 5\n  echo b\nelse # 6\n  echo c\nfi # 7\necho d",
+        "a\nd\n",
+      ],
+      ["a comment line in a continued command", "echo a \\\n# note\necho b", "a\nb\n"],
+      ["text before a backquote substitution", "echo x`echo y`", "xy\n"],
+      ["an empty substitution", 'a=``; echo "[$a]"\necho x``y$()z', "[]\nxyz\n"],
+      // bash rejects an empty clause body. Bun takes it on one line (`then else`), and the same over several lines.
+      ["an empty `then` body, condition true", "if true; then # note\nelse\n  echo no\nfi\necho tail", "tail\n"],
+      ["an empty `then` body, condition false", "if false; then # note\nelse\n  echo yes\nfi", "yes\n"],
+      ["an empty `then` body with a comment line", "if true; then\n  # note\nelse\n  echo no\nfi\necho tail", "tail\n"],
+    ];
+    for (const [name, script, stdout] of scripts) {
+      TestBuilder.command`${{ raw: script }}`.stdout(stdout).runAsTest(name);
+    }
+
+    // bash and dash print the same. The second pair of backquotes runs `-rf build`, which is not a command.
+    TestBuilder.command`${{ raw: "echo `echo a # remove it with `rm` -rf build\n`\necho next" }}`
+      .ensureTempDir()
+      .file("build", "keep me\n")
+      .stdout("arm\nnext\n")
+      .stderr("bun: command not found: -rf\n")
+      .fileEquals("build", "keep me\n")
+      .runAsTest("a backquote in a backquoted comment ends the substitution");
+
+    TestBuilder.command`FOO=bar # note
+${BUN} -e ${"console.log(process.env.FOO)"}`
+      .stdout("undefined\n")
+      .runAsTest("an assignment before a comment is not a prefix of the command on the next line");
+
+    // bash prints `new`: FOO is in the environment, so the assignment reaches the child.
+    TestBuilder.command`FOO=new # note
+${BUN} -e ${"console.log(process.env.FOO)"}`
+      .env({ ...bunEnv, FOO: "old" })
+      .stdout("new\n")
+      .todo("an assignment to an exported name does not reach later commands (#32202)")
+      .runAsTest("an assignment to an exported name before a comment");
+
+    // What bash and dash print. These rules are not changed here.
+    const todo: [name: string, reason: string, script: string, stdout: string][] = [
+      [
+        "a line that starts with a redirection",
+        "it is a parse error",
+        "echo a # note\n> out.log echo b\ncat out.log",
+        "a\nb\n",
+      ],
+      ["`#` after `;`", "it runs a command named `#`", "echo a;# note\necho b", "a\nb\n"],
+      ["`#` after a tab", "a tab does not end a word", "echo a\t# note\necho b", "a\nb\n"],
+      ["`#` at the start of a substitution", "it runs a command named `#`", "echo `# note ; echo no\necho a\n`", "a\n"],
+      ["`#` after backslash-newline in a word", "it starts a comment", "echo a\\\n# note\necho b", "a# note\nb\n"],
+    ];
+    for (const [name, reason, script, stdout] of todo) {
+      TestBuilder.command`${{ raw: script }}`.ensureTempDir().stdout(stdout).todo(reason).runAsTest(name);
+    }
+  });
+
   describe("glob expansion", () => {
     // Issue #8403: https://github.com/oven-sh/bun/issues/8403
     TestBuilder.command`ls *.sdfljsfsdf`

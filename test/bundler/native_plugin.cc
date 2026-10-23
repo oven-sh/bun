@@ -181,6 +181,38 @@ plugin_impl_baz(const OnBeforeParseArguments *args,
   plugin_impl_with_needle(args, result, "baz");
 }
 
+// Fetches the source and keeps it as the result.
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_fetch_and_keep(const OnBeforeParseArguments *args,
+                           OnBeforeParseResult *result) {
+  if (result->fetchSourceCode(args, result) != 0) {
+    exit(1);
+  }
+  if (args->external) {
+    ((External *)args->external)->foo_count.fetch_add(1);
+  }
+}
+
+// Fetches the source and returns the bytes after its first line: a pointer into the buffer that Bun read.
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_fetch_and_skip_line(const OnBeforeParseArguments *args,
+                                OnBeforeParseResult *result) {
+  if (result->fetchSourceCode(args, result) != 0) {
+    exit(1);
+  }
+  const uint8_t *newline =
+      (const uint8_t *)memchr(result->source_ptr, '\n', result->source_len);
+  if (newline == nullptr) {
+    exit(1);
+  }
+  size_t skipped = (size_t)(newline + 1 - result->source_ptr);
+  result->source_ptr += skipped;
+  result->source_len -= skipped;
+  if (args->external) {
+    ((External *)args->external)->foo_count.fetch_add(1);
+  }
+}
+
 extern "C" void finalizer(napi_env env, void *data, void *hint) {
   External *external = (External *)data;
   if (external != nullptr) {

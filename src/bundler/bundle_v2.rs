@@ -1480,7 +1480,7 @@ pub mod bv2_impl {
             pub(crate) fn put_or_overwrite_asset_erased<P>(
                 &self,
                 path: &P,
-                contents: &[u8],
+                contents: Vec<u8>,
                 content_hash: u64,
             ) -> crate::Result<()> {
                 self.put_or_overwrite_asset(
@@ -5590,11 +5590,7 @@ pub mod bv2_impl {
                 drop(on_parse_finalizers);
             }
 
-            // Plugin file/asset-loader bytes that `process_files_to_copy` will
-            // `mem::take` are stored as `Cow::Owned` so that handoff is zero-copy.
-            // Everything else is `Cow::Borrowed` (file reads land in the worker
-            // arena; non-asset plugin bytes are owned by `free_list`), so this loop
-            // is N×branch with no work for plugin-free bundles.
+            // Frees the bytes of the copied files (`Cow::Owned` rows) that nothing took: N×branch for the other rows.
             for s in self.graph.input_files.items_source_mut() {
                 if matches!(s.contents, std::borrow::Cow::Owned(_)) {
                     s.contents = std::borrow::Cow::Borrowed(b"");
@@ -7818,6 +7814,11 @@ pub mod bv2_impl {
                             &mut result.source.contents,
                         );
                     }
+                    // `parse_worker::on_complete` frees `result` without running Drop.
+                    debug_assert!(matches!(
+                        result.source.contents,
+                        std::borrow::Cow::Borrowed(_)
+                    ));
                     // Borrowck forbids holding `&input_files.source[i]` while writing
                     // other `input_files` columns through the MultiArrayList accessor
                     // methods (each takes `&mut input_files`), so copy out the
@@ -7857,12 +7858,12 @@ pub mod bv2_impl {
                     {
                         if let Some(dev) = this.dev_server {
                             let source =
-                                &this.graph.input_files.items_source()[result_source_index];
+                                &mut this.graph.input_files.items_source_mut()[result_source_index];
+                            // The dev server serves the asset from its own store: move the bytes that the row owns, copy borrowed ones.
+                            let contents = core::mem::take(&mut source.contents).into_owned();
                             dev.put_or_overwrite_asset_erased(
                                 &source.path,
-                                // SAFETY: when shouldCopyForBundling is true, the
-                                // contents are allocated by bun.default_allocator
-                                &source.contents,
+                                contents,
                                 result.content_hash_for_additional_file,
                             )
                             .expect("oom");

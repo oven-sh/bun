@@ -787,6 +787,39 @@ console.log(JSON.stringify(json))
     },
   ];
 
+  // The result of a plugin can point into the buffer that `fetchSourceCode` read for it. Bun hashes
+  // and emits those bytes after the plugin returns, so the read has to stay valid until then.
+  it.each([
+    { symbol: "plugin_impl_fetch_and_keep", skippedLines: 0 },
+    { symbol: "plugin_impl_fetch_and_skip_line", skippedLines: 1 },
+  ])("emits a copied asset that $symbol fetched", async ({ symbol, skippedLines }) => {
+    const lines = ["first line", Buffer.alloc(256 * 1024, "asset bytes ").toString()];
+    const dir = tempDirWithFiles("native-plugin-fetched-asset", {
+      "entry.ts": `import url from "./asset.bin";\nconsole.log(url);\n`,
+      "asset.bin": lines.join("\n"),
+    });
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      entrypoints: [path.join(dir, "entry.ts")],
+      plugins: [
+        {
+          name: "fetch",
+          setup(build) {
+            build.onBeforeParse({ filter: /\.bin$/ }, { napiModule, symbol, external });
+          },
+        },
+      ],
+    });
+
+    const asset = result.outputs.find(output => output.kind === "asset")!;
+    expect({ fetched: napiModule.getFooCount(external), asset: await asset.text() }).toEqual({
+      fetched: 1,
+      asset: lines.slice(skippedLines).join("\n"),
+    });
+  });
+
   for (const { name, contents, loader } of additional_files) {
     it(`works with ${loader} loader`, async () => {
       await Bun.$`echo ${contents} > ${name}`;

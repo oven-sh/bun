@@ -102,6 +102,7 @@ pub struct HtmlImports {
 }
 
 pub struct InputFile {
+    /// `Cow::Owned` contents are a copied file's bytes: this row owns them until `process_files_to_copy` or the dev server takes them.
     pub(crate) source: bun_ast::Source,
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,

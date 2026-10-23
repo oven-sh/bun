@@ -2000,20 +2000,19 @@ pub mod cache {
     ///
     /// Replaces the prior `&'static [u8]` + `Box::leak`/`heap::take` pair
     /// (forbidden per docs/PORTING.md §Forbidden patterns). The enum makes
-    /// provenance explicit so `deinit` matches on the variant instead of
+    /// provenance explicit so drop frees by the variant instead of
     /// guessing — the old scheme would `heap::take` a `MutableString`-owned
     /// pointer on the `use_shared_buffer=true` path (UB).
     #[derive(Default)]
     pub enum Contents {
-        /// Empty / static literal. No-op on `deinit`.
+        /// Empty / static literal. Owns nothing.
         #[default]
         Empty,
         /// Heap-owned buffer (default-allocator path). Freed when this variant
-        /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
-        /// sit in spare capacity past `len`.
+        /// drops. A file read leaves no spare capacity, so `into_boxed_slice()` does not reallocate.
         Owned(Vec<u8>),
         /// Bytes live in a caller-supplied `bun_alloc::Arena` (the per-call
-        /// `MimallocArena` from `ParseOptions.arena`). NOT freed on `deinit` —
+        /// `MimallocArena` from `ParseOptions.arena`). NOT freed on drop —
         /// bulk-reclaimed by `mi_heap_destroy` when the arena drops. This is
         /// the arena arm of
         /// `read_file_with_allocator`: the
@@ -2026,11 +2025,11 @@ pub mod cache {
         },
         /// Borrows the per-thread `shared_buffer` (or other caller-kept-alive
         /// storage). Caller guarantees the pointee outlives all reads through
-        /// this `Entry`. NOT freed on `deinit`.
+        /// this `Entry`. NOT freed on drop.
         SharedBuffer { ptr: *const u8, len: usize },
         /// Externally-owned bytes the producer keeps alive past this `Entry`
         /// (native-plugin buffers are freed by the bundler's
-        /// `BundleV2.finalizers`); NOT freed on `deinit`.
+        /// `BundleV2.finalizers`); NOT freed on drop.
         External { ptr: *const u8, len: usize },
     }
 
@@ -2105,8 +2104,7 @@ pub mod cache {
 
     /// `contents` is provenance-tagged (see
     /// [`Contents`]); callers feed `entry.contents()` into `bun_ast::Source`.
-    /// Ownership is **manual** (`deinit`) — callers frequently
-    /// hand the bytes off to a `Source` that outlives the `Entry`.
+    /// Dropping an `Entry` frees `Contents::Owned` bytes and never closes `fd`.
     pub struct Entry {
         pub contents: Contents,
         pub fd: Fd,
@@ -2125,13 +2123,6 @@ pub mod cache {
         #[inline]
         pub fn contents(&self) -> &[u8] {
             self.contents.as_slice()
-        }
-
-        /// NOT `Drop` — callers free
-        /// explicitly (and frequently hand `contents` off to a `Source` that
-        /// outlives the `Entry`).
-        pub fn deinit(&mut self) {
-            self.contents = Contents::Empty;
         }
 
         /// Closes the entry's cached fd (if open) and marks it invalid;

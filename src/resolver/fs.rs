@@ -970,15 +970,8 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             let read_count = file.read_all(buf)?;
             if read_count + 1 < buf.len() {
                 // Own the buffer; the returned `Cow::Owned` frees it on the
-                // caller's drop. The trailing
-                // NUL sentinel is not part of `contents`.
-                // Allocate exact (no zero-fill): `extend_from_slice` + `push`
-                // initialize all `read_count + 1` bytes, then `truncate` drops
-                // the sentinel from the logical length.
-                let mut allocation: Vec<u8> = Vec::with_capacity(read_count + 1);
-                allocation.extend_from_slice(&buf[..read_count]);
-                allocation.push(0);
-                allocation.truncate(read_count);
+                // caller's drop. No spare byte: `into_boxed_slice()` does not reallocate.
+                let mut allocation: Vec<u8> = buf[..read_count].to_vec();
 
                 if let Some(bom) = BOM::detect(&allocation) {
                     debug!("Convert {} BOM", bom.tag_name());
@@ -1005,8 +998,9 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         // Allocate UNINITIALIZED (no zero-fill):
         // `extend_from_slice` writes the prefix, `read_all` writes
         // the tail, then `set_len` exposes only the initialized `..total`.
+        // No spare byte for a NUL: the asset `OutputFile` keeps this buffer as a `Box<[u8]>`, and a shrink can copy it.
         let cap = size.max(initial_read.len());
-        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
+        let mut buf: Vec<u8> = Vec::with_capacity(cap);
         buf.extend_from_slice(initial_read);
 
         if size == 0 {
@@ -1015,10 +1009,8 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             });
         }
 
-        let tail_len = cap + 1 - initial_read.len();
+        let tail_len = cap - initial_read.len();
         let tail = &mut buf.spare_capacity_mut()[..tail_len];
-        // stick a zero at the end
-        tail[tail_len - 1].write(0);
         // SAFETY: `read_all` only writes into the slice (never reads uninitialized
         // bytes); `MaybeUninit<u8>` and `u8` have identical layout, so handing
         // the spare-capacity tail as `&mut [u8]` to a write-only sink is sound.
@@ -1027,7 +1019,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         })?;
         let total = read_count + initial_read.len();
         debug!("read({}, {}) = {}", file.handle(), size, read_count);
-        // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
+        // SAFETY: capacity ≥ `cap` ≥ `total`; bytes `..initial_read.len()`
         // were written by `extend_from_slice` and `initial_read.len()..total` by
         // `read_all` above.
         unsafe { buf.set_len(total) };

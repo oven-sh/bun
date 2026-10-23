@@ -680,25 +680,6 @@ describe("bundler", async () => {
     const script = (name: string) =>
       `#!/usr/bin/env bun\nexport default "${name}";\nif (!Bun.isMainThread) postMessage("${name}");\n`;
 
-    // macOS and Windows read files on the IO pool by default.
-    test("a copied asset keeps its byte order mark when the IO pool reads it", async () => {
-      using dir = tempDir("loader-copy-bom-io-pool", {
-        "entry.ts": assetEntry,
-        ...Object.fromEntries(assets.map(asset => [`${asset.name}${asset.ext}`, asset.bytes])),
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "./entry.ts", "--outdir", "out", "--target", "bun"],
-        env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(emittedSummaries(join(String(dir), "out"))).toEqual(sourceSummaries);
-      expect(exitCode).toBe(0);
-    });
-
     // The executable holds the bytes of an asset. A text import, and an asset that is loaded as a module, are text.
     itBundled("bun/compile-embeds-byte-order-mark", {
       compile: true,
@@ -832,6 +813,25 @@ describe("bundler", async () => {
         ...emptyAfterMark,
       },
       run: { stdout: JSON.stringify({ utf8: textValues, utf16le: textValues, markOnly: "", markOneByte: "" }) },
+    });
+
+    // macOS and Windows read files on the IO pool by default.
+    test.concurrent("a copied asset keeps its byte order mark when the IO pool reads it", async () => {
+      using dir = tempDir("loader-copy-bom-io-pool", {
+        "entry.ts": assetEntry,
+        ...Object.fromEntries(assets.map(asset => [`${asset.name}${asset.ext}`, asset.bytes])),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./entry.ts", "--outdir", "out", "--target", "bun"],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(emittedSummaries(join(String(dir), "out"))).toEqual(sourceSummaries);
+      expect(exitCode).toBe(0);
     });
 
     for (const [encoding, encode] of Object.entries(encoders)) {

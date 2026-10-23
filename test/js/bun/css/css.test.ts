@@ -7992,6 +7992,17 @@ describe("css tests", () => {
     minify_test(".foo { color: red; all: unset } .foo { margin: 0 }", ".foo{all:unset;margin:0}");
     minify_test(".foo { margin: 0 } .foo { all: unset }", ".foo{all:unset}");
     cssTest(".foo { font: 12px serif; all: initial }", ".foo {\n  all: initial;\n}\n");
+    // `color` and `text-shadow` overwrite their first declaration in place when
+    // they repeat, so a repeat after `all` must not land in front of it.
+    minify_test(".foo { color: red; all: unset; color: blue }", ".foo{all:unset;color:#00f}");
+    minify_test(
+      ".foo { text-shadow: 1px 1px red; all: unset; text-shadow: 2px 2px blue }",
+      ".foo{all:unset;text-shadow:2px 2px #00f}",
+    );
+    minify_test(
+      ".foo { color: red !important; all: unset !important; color: blue !important }",
+      ".foo{all:unset!important;color:#00f!important}",
+    );
     // An unknown property is reset like any other.
     minify_test(".foo { unknown: 1; all: unset }", ".foo{all:unset}");
     // `all` with a value only known at runtime still overrides what precedes it.

@@ -149,6 +149,37 @@ describe("css", () => {
     },
   });
 
+  // A timeline range name in a keyframe selector (`entry 0%`) is a keyword.
+  // Only the `@keyframes` name is scoped.
+  itBundled("css-module/KeyframesTimelineRangeSelectorNotScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.box);
+      `,
+      "/styles.module.css": `
+        .box { animation: reveal linear both; animation-timeline: view(); }
+        @keyframes reveal { entry 0% { opacity: 0 } exit 100% { opacity: 1 } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const keyframes = css.match(/@keyframes\s+(reveal_[A-Za-z0-9_-]+)\s*\{/);
+      expect(keyframes, "@keyframes reveal should be scoped").not.toBeNull();
+      expect(css).toContain(`@keyframes ${keyframes![1]} {
+  entry 0% {
+    opacity: 0;
+  }
+
+  exit 100% {
+    opacity: 1;
+  }
+}`);
+    },
+  });
+
   // The parser dedupes repeated class/id names through a borrowed lookup
   // (`add_symbol_for_name`); many references to the same names must all map
   // to a single hashed symbol each.

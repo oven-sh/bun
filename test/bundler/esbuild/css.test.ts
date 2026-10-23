@@ -2315,4 +2315,105 @@ c {
       "/across-files-url.css",
     ],
   });
+
+  // `<timeline-range-name> <percentage>` keyframe selectors:
+  // https://drafts.csswg.org/scroll-animations-1/#named-range-keyframes
+  for (const backend of ["cli", "api"] as const) {
+    const files = {
+      "/entry.css": /* css */ `
+        @keyframes reveal { entry 0% { opacity: 0 } entry 100% { opacity: 1 } }
+        @keyframes mixed { from { opacity: 0 } cover 50% { opacity: .5 } to { opacity: 1 } }
+        @keyframes plain { from { opacity: 0 } 50% { opacity: .5 } to { opacity: 1 } }
+      `,
+    };
+    itBundled(`css/KeyframesTimelineRangeSelectors_${backend}`, {
+      backend,
+      files,
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.css").toBe(`/* entry.css */
+@keyframes reveal {
+  entry 0% {
+    opacity: 0;
+  }
+
+  entry 100% {
+    opacity: 1;
+  }
+}
+
+@keyframes mixed {
+  from {
+    opacity: 0;
+  }
+
+  cover 50% {
+    opacity: .5;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes plain {
+  from {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: .5;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+`);
+      },
+    });
+    itBundled(`css/KeyframesTimelineRangeSelectorsMinified_${backend}`, {
+      backend,
+      files,
+      minifyWhitespace: true,
+      minifySyntax: true,
+      outdir: "/out",
+      onAfterBundle(api) {
+        api
+          .expectFile("/out/entry.css")
+          .toBe(
+            "@keyframes reveal{entry 0%{opacity:0}entry 100%{opacity:1}}" +
+              "@keyframes mixed{0%{opacity:0}cover 50%{opacity:.5}to{opacity:1}}" +
+              "@keyframes plain{0%{opacity:0}50%{opacity:.5}to{opacity:1}}\n",
+          );
+      },
+    });
+  }
+
+  // The body of a range block is parsed like the body of any other keyframe, so its url() is bundled too.
+  itBundled("css/KeyframesTimelineRangeSelectorURL", {
+    files: {
+      "/entry.css": /* css */ `
+        @keyframes test {
+          from { background: url(./example.png) }
+          entry 50% { background: url(./example.png) }
+        }
+      `,
+      "/example.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* entry.css */
+@keyframes test {
+  from {
+    background: url("data:image/png;base64,iVBORw0KGgo=");
+  }
+
+  entry 50% {
+    background: url("data:image/png;base64,iVBORw0KGgo=");
+  }
+}
+`);
+    },
+  });
 });

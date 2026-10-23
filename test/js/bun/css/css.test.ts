@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7199,6 +7200,163 @@ describe("css tests", () => {
     minify_test(".foo { animation: inherit }", ".foo{animation:inherit}");
     minify_test(".foo { animation: unset }", ".foo{animation:unset}");
     minify_test(".foo { animation-name: initial }", ".foo{animation-name:initial}");
+  });
+
+  describe("keyframes", () => {
+    // https://drafts.csswg.org/scroll-animations-1/#named-range-keyframes
+    // <keyframe-selector> = from | to | <percentage [0,100]> | <timeline-range-name> <percentage>
+    minify_test(
+      `
+      @keyframes test {
+        entry 0% {
+          background: blue
+        }
+        exit 100% {
+          background: green
+        }
+      }
+    `,
+      "@keyframes test{entry 0%{background:#00f}exit 100%{background:green}}",
+    );
+
+    for (const name of ["cover", "contain", "entry", "exit", "entry-crossing", "exit-crossing", "scroll"]) {
+      minify_test(`@keyframes test { ${name} 25% { opacity: 0 } }`, `@keyframes test{${name} 25%{opacity:0}}`);
+    }
+
+    // The range name is ASCII case-insensitive and serializes in lower case.
+    minify_test(
+      "@keyframes test { ENTRY 25% { opacity: 0 } Exit-Crossing 75% { opacity: 1 } }",
+      "@keyframes test{entry 25%{opacity:0}exit-crossing 75%{opacity:1}}",
+    );
+
+    // The `from` -> `0%` and `100%` -> `to` rewrites apply to plain selectors only.
+    minify_test(
+      "@keyframes test { entry 100% { opacity: 0 } exit 0% { opacity: 1 } }",
+      "@keyframes test{entry 100%{opacity:0}exit 0%{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes test { from, entry 0% { opacity: 0 } 100%, exit 100% { opacity: 1 } }",
+      "@keyframes test{0%,entry 0%{opacity:0}to,exit 100%{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes test { contain 0%, 50% { opacity: 0 } to { opacity: 1 } }",
+      "@keyframes test{contain 0%,50%{opacity:0}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes test { entry-crossing 10%, exit-crossing 90% { opacity: 0 } }",
+      "@keyframes test{entry-crossing 10%,exit-crossing 90%{opacity:0}}",
+    );
+
+    // The percentage of a range is not limited to 0%..100%.
+    minify_test("@keyframes test { entry 150% { opacity: 0 } }", "@keyframes test{entry 150%{opacity:0}}");
+    minify_test("@keyframes test { entry -10% { opacity: 0 } }", "@keyframes test{entry -10%{opacity:0}}");
+    minify_test("@keyframes test { entry 50.5% { opacity: 0 } }", "@keyframes test{entry 50.5%{opacity:0}}");
+    minify_test("@keyframes test { entry +50% { opacity: 0 } }", "@keyframes test{entry 50%{opacity:0}}");
+    // calc() folds as it does in a plain percentage selector.
+    minify_test("@keyframes test { entry calc(10% + 5%) { opacity: 0 } }", "@keyframes test{entry 15%{opacity:0}}");
+
+    // A comment or a newline separates the name from the percentage as well as a space does.
+    minify_test("@keyframes test { entry/**/0% { opacity: 0 } }", "@keyframes test{entry 0%{opacity:0}}");
+    minify_test("@keyframes test { entry\n0% { opacity: 0 } }", "@keyframes test{entry 0%{opacity:0}}");
+
+    minify_test("@-webkit-keyframes test { exit 0% { opacity: 0 } }", "@-webkit-keyframes test{exit 0%{opacity:0}}");
+    minify_test(
+      "@media (min-width: 100px) { @keyframes test { cover 50% { opacity: 0 } } }",
+      "@media (width>=100px){@keyframes test{cover 50%{opacity:0}}}",
+    );
+
+    // The valid rows of WPT css/css-animations/parsing/keyframe-selectors.html at 32c412f351,
+    // in the rule that file uses: `@keyframes --foo { <selector> {} }`.
+    for (const [selector, printed] of [
+      ["0%", "0%"],
+      ["10%", "10%"],
+      ["100%", "to"],
+      ["from", "0%"],
+      ["to", "to"],
+      ["entry 10%", "entry 10%"],
+      ["exit 60%", "exit 60%"],
+      ["calc(10%)", "10%"],
+      ["entry calc(10%)", "entry 10%"],
+      ["exit calc(60%)", "exit 60%"],
+    ]) {
+      minify_test(`@keyframes --foo { ${selector} {} }`, `@keyframes --foo{${printed}{}}`);
+    }
+    // Valid in that file too. The percentage does not fold at build time, so the block is dropped.
+    for (const selector of ["calc(10% * sibling-index())", "calc(10% * sign(1em - 1px))"]) {
+      test.todo(`@keyframes --foo { ${selector} {} }`, () => {
+        expect(cssInternals.minifyTest(`@keyframes --foo { ${selector} {} }`, "")).not.toBe("@keyframes --foo{}");
+      });
+    }
+
+    // The range arm accepts the grammar and no more. Today the `@keyframes` loop drops a block
+    // whose selector does not parse, as lightningcss and Chrome do. The `exit 100%` block shows
+    // that the rest of the rule stays.
+    for (const selector of [
+      "entry to",
+      "entry from",
+      "from 50%",
+      "bogus 50%",
+      "entry",
+      "entry 0",
+      "entry 50 %",
+      "entry 0% 50%",
+      "50% entry",
+      "entry 0%, bogus 50%",
+      '"entry" 0%',
+    ]) {
+      minify_test(
+        `@keyframes test { ${selector} { opacity: 0 } exit 100% { opacity: 1 } }`,
+        "@keyframes test{exit 100%{opacity:1}}",
+      );
+    }
+
+    test("pretty output keeps every block and the space in a range selector", () => {
+      const source = [
+        "@keyframes reveal { entry 0% { opacity: 0 } entry 100% { opacity: 1 } }",
+        "@keyframes mixed { from, exit-crossing 0% { opacity: 0 } cover 50% { opacity: .5 } to { opacity: 1 } }",
+        "@keyframes plain { from { opacity: 0 } 50% { opacity: .5 } to { opacity: 1 } }",
+      ].join("\n");
+      const expected = indoc`
+        @keyframes reveal {
+          entry 0% {
+            opacity: 0;
+          }
+
+          entry 100% {
+            opacity: 1;
+          }
+        }
+
+        @keyframes mixed {
+          from, exit-crossing 0% {
+            opacity: 0;
+          }
+
+          cover 50% {
+            opacity: .5;
+          }
+
+          to {
+            opacity: 1;
+          }
+        }
+
+        @keyframes plain {
+          from {
+            opacity: 0;
+          }
+
+          50% {
+            opacity: .5;
+          }
+
+          to {
+            opacity: 1;
+          }
+        }
+      `;
+      expect(cssInternals._test(source, "")).toBe(expected + "\n");
+    });
   });
 
   describe("transform", () => {

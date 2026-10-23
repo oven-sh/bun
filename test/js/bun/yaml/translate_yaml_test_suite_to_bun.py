@@ -435,13 +435,17 @@ try {{
         if os.path.exists(temp_js):
             os.remove(temp_js)
 
-# The bun whose YAML.parse supplies the message that each error test asserts. Set by --bun.
-bun_executable = 'bun'
+# The bun whose YAML.parse supplies the message that each error test asserts: the debug build of this
+# checkout (`bun bd`), so that the messages come from the parser under test. --bun names another one.
+DEFAULT_BUN = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', 'build', 'debug', 'bun-debug'))
+bun_executable = DEFAULT_BUN
 
 def get_bun_syntax_error_message(yaml_content):
     """Ask Bun's parser for the message of the SyntaxError it throws for this input.
 
     Returns None when Bun does not throw a SyntaxError. The error test for that input then fails until Bun does.
+    Exits when the bun cannot be asked. The caller skips a test whose generation raises, and an error test
+    must not leave the output that way.
     """
     js_code = f'''
 const input = {format_js_string(yaml_content)};
@@ -463,8 +467,14 @@ console.log(JSON.stringify(message));
         result = subprocess.run([bun_executable, temp_js], capture_output=True, text=True, timeout=60,
                                 env={**os.environ, 'BUN_DEBUG_QUIET_LOGS': '1'})
         if result.returncode != 0:
-            raise RuntimeError(f"{bun_executable} exited with {result.returncode}: {result.stderr}")
-        return json.loads(result.stdout.strip().splitlines()[-1])
+            raise RuntimeError(f"exit code {result.returncode}: {result.stderr}")
+        lines = result.stdout.strip().splitlines()
+        if not lines:
+            raise RuntimeError("it printed nothing")
+        return json.loads(lines[-1])
+    except Exception as e:
+        sys.exit(f"Error: could not get the YAML.parse error message from {bun_executable}: {e}\n"
+                 "Build the debug build (bun bd), or pass --bun.")
     finally:
         os.remove(temp_js)
 
@@ -950,9 +960,9 @@ def main():
                         help='Also generate a companion test file using js-yaml for validation')
     parser.add_argument('--with-yaml', action='store_true',
                         help='Also generate a companion test file using yaml package for validation')
-    parser.add_argument('--bun', default='bun',
+    parser.add_argument('--bun', default=DEFAULT_BUN,
                         help='bun executable whose YAML.parse supplies the message that each error test asserts '
-                             '(use the build under test, e.g. build/debug/bun-debug)')
+                             '(default: the debug build of this checkout, build/debug/bun-debug)')
     args = parser.parse_args()
 
     global bun_executable

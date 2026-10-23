@@ -714,9 +714,7 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "through a Request": res =>
           new Response(new Request("http://example.com/", { method: "POST", body: res.body }).body, res),
       };
-      expect(await proxied(late, shapes)).toEqual(
-        expected(shapes, { encoding: null, upstream: "1", body: "plain" }),
-      );
+      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
     });
 
     test("is dropped from both branches of tee()", async () => {
@@ -725,9 +723,7 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "second": res => new Response(res.body!.tee()[1], res),
         "tee of a branch": res => new Response(res.body!.tee()[0].tee()[1], res),
       };
-      expect(await proxied(late, shapes)).toEqual(
-        expected(shapes, { encoding: null, upstream: "1", body: "plain" }),
-      );
+      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
     });
 
     test("is dropped from a Response that wraps the decoded Blob", async () => {
@@ -736,9 +732,7 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "blob().stream()": async res => new Response((await res.blob()).stream(), res),
         "blob().slice()": async res => new Response((await res.blob()).slice(), res),
       };
-      expect(await proxied(late, shapes)).toEqual(
-        expected(shapes, { encoding: null, upstream: "1", body: "plain" }),
-      );
+      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
     });
 
     // What comes out of a transform is the program's own bytes, and only the program knows their encoding.
@@ -748,7 +742,9 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         "CompressionStream, upstream headers": res =>
           new Response(res.body!.pipeThrough(new CompressionStream("gzip")), res),
         "CompressionStream, own header": res =>
-          new Response(res.body!.pipeThrough(new CompressionStream("gzip")), { headers: { "content-encoding": "gzip" } }),
+          new Response(res.body!.pipeThrough(new CompressionStream("gzip")), {
+            headers: { "content-encoding": "gzip" },
+          }),
       };
       using proxy = Bun.serve({
         port: 0,

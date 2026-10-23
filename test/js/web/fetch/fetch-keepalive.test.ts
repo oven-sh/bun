@@ -982,8 +982,16 @@ function eachRequest(socket: Socket, onRequest: () => void) {
 
 const chunkedOk = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n";
 test.concurrent.each([
-  ["a 204 with Transfer-Encoding: chunked", "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\n\r\n"],
-  ["a 304 with Transfer-Encoding: chunked", "HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\n\r\n"],
+  [
+    "a 204 with Transfer-Encoding: chunked",
+    "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\n\r\n",
+    "0\r\n\r\n",
+  ],
+  [
+    "a 304 with Transfer-Encoding: chunked",
+    "HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n",
+    "0\r\n\r\n",
+  ],
   ["a chunked body", chunkedOk, "0\r\n\r\n"],
   ["a chunked body", chunkedOk, "\r\n"],
 ])("%s whose origin sends %j once the next request is out: the next response is read", async (_, first, late) => {

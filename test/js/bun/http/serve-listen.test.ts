@@ -396,7 +396,10 @@ describe("Bun.serve() throws the error of the call that failed", () => {
     const missing = join(String(dir), "missing", "a.sock");
     const tooLong = join(String(dir), Buffer.alloc(200, "a").toString() + ".sock");
     const rows = [
-      [{ hostname: "127.0.0.1", port: occupant.port }, { code: "EADDRINUSE", address: "127.0.0.1", port: occupant.port }],
+      [
+        { hostname: "127.0.0.1", port: occupant.port },
+        { code: "EADDRINUSE", address: "127.0.0.1", port: occupant.port },
+      ],
       [{ unix: missing }, { code: "ENOENT", address: missing, path: missing }],
       [{ unix: tooLong }, { code: "ENAMETOOLONG", address: tooLong, path: tooLong }],
     ] as const;

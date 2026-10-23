@@ -134,21 +134,18 @@ for (let i = 0; i < ITERS; i++) {
 console.log(JSON.stringify({ iters: ITERS, settled }));
 `;
 
-test.skipIf(!isASAN)(
-  "abort racing a TLS Connection: close response does not reach a freed socket",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", connectionCloseFixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+test.skipIf(!isASAN)("abort racing a TLS Connection: close response does not reach a freed socket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", connectionCloseFixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ summary: stdout.trim(), stderr, exitCode }).toEqual({
-      summary: JSON.stringify({ iters: 250, settled: 250 }),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  },
-);
+  expect({ summary: stdout.trim(), stderr, exitCode }).toEqual({
+    summary: JSON.stringify({ iters: 250, settled: 250 }),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});

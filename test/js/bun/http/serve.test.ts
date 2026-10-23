@@ -3034,9 +3034,12 @@ describe("a reader gives the same result whether or not the request body has arr
     "a clone, before the body": result,
   });
 
-  it.each(["image/png", "application/octet-stream", "multipart/form-data; boundary=x"])("blob().type is %s", async type => {
-    expect(await readEachWay(type, "0123456789", async req => (await req.blob()).type)).toEqual(eachWay(type));
-  });
+  it.each(["image/png", "application/octet-stream", "multipart/form-data; boundary=x"])(
+    "blob().type is %s",
+    async type => {
+      expect(await readEachWay(type, "0123456789", async req => (await req.blob()).type)).toEqual(eachWay(type));
+    },
+  );
 
   it("blob().type is the Content-Type the handler set on the request", async () => {
     const read = async (req: Request) => {
@@ -7001,7 +7004,11 @@ describe("requests pipelined in one read", () => {
       }
       client.end();
       const [hadError] = await closed;
-      expect({ status: reply.slice(0, 12), errors, hadError }).toEqual({ status: "HTTP/1.1 400", errors: [], hadError: false });
+      expect({ status: reply.slice(0, 12), errors, hadError }).toEqual({
+        status: "HTTP/1.1 400",
+        errors: [],
+        hadError: false,
+      });
     });
   });
 });

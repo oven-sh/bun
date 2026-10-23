@@ -2260,9 +2260,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
         results: Object.fromEntries(Object.keys(rows).map(row => [row, "400 "])),
         calls: [],
       });
-      expect(
-        await h3Exchange(server.port!, requestHeaders("/echo", { host: "localhost", "x-probe": "a\tb" })),
-      ).toBe("200 GET https://localhost/echo");
+      expect(await h3Exchange(server.port!, requestHeaders("/echo", { host: "localhost", "x-probe": "a\tb" }))).toBe(
+        "200 GET https://localhost/echo",
+      );
     });
 
     test("answers 400 to a malformed request line", async () => {
@@ -2309,12 +2309,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
       },
     });
 
-    const authorities = [
-      "example.com/other",
-      "example.com#frag",
-      "example.com\\other:8080",
-      "[::1]:3000?q",
-    ];
+    const authorities = ["example.com/other", "example.com#frag", "example.com\\other:8080", "[::1]:3000?q"];
     const results: Record<string, string> = {};
     for (const authority of authorities) {
       results[authority] = await h3Exchange(server.port!, { ...requestHeaders("/index"), ":authority": authority });

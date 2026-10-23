@@ -306,7 +306,12 @@ for (const { body, fn } of bodyTypes) {
           header: (await fn(stream(), png).blob()).type,
           "header, clone()": (await fn(stream(), png).clone().blob()).type,
           "tee() of another body": (await fn(fn(new Uint8Array(3)).body!.tee()[0]).blob()).type,
-        }).toEqual({ "no header": "", header: "image/png", "header, clone()": "image/png", "tee() of another body": "" });
+        }).toEqual({
+          "no header": "",
+          header: "image/png",
+          "header, clone()": "image/png",
+          "tee() of another body": "",
+        });
       });
 
       test("text() after the body getter returns a string body's bytes", async () => {

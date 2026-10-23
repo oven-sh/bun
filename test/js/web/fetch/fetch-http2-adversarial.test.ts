@@ -904,13 +904,21 @@ describe.concurrent("malformed HTTP/2 frames end the connection", () => {
   const ok = (id: number) => frame(1, 5, id, hpackStatus200);
 
   test.each<[string, Buffer | undefined, (id: number) => Buffer, string]>([
-    ["HEADERS with the PRIORITY flag and 3 bytes", undefined, id => frame(1, 0x25, id, Buffer.alloc(3)), "HTTP2FrameSizeError"],
+    [
+      "HEADERS with the PRIORITY flag and 3 bytes",
+      undefined,
+      id => frame(1, 0x25, id, Buffer.alloc(3)),
+      "HTTP2FrameSizeError",
+    ],
     ["SETTINGS_ENABLE_PUSH = 2", setting(2, 2), ok, "HTTP2ProtocolError"],
     ["SETTINGS_ENABLE_CONNECT_PROTOCOL = 2", setting(8, 2), ok, "HTTP2ProtocolError"],
   ])("%s", async (_, settingsPayload, answer, code) => {
-    await withAdversarialServer({ settingsPayload, onStream: (socket, id) => void socket.write(answer(id)) }, async url => {
-      expect(await outcome(url)).toBe(code);
-    });
+    await withAdversarialServer(
+      { settingsPayload, onStream: (socket, id) => void socket.write(answer(id)) },
+      async url => {
+        expect(await outcome(url)).toBe(code);
+      },
+    );
   });
 
   test("padding longer than its DATA frame, on a stream that has closed", async () => {
@@ -988,9 +996,12 @@ describe.concurrent("a response that ends before its head is complete rejects", 
       ["a 100 with END_STREAM", id => [frame(1, 5, id, hpackStatus100)], "HTTP2ProtocolError"],
       ["a 100, then END_STREAM", id => [frame(1, 4, id, hpackStatus100), frame(0, 1, id)], "HTTP2ProtocolError"],
     ])("HTTP/2: %s", async (_, frames, code) => {
-      await withAdversarialServer({ onStream: (socket, id) => void socket.write(Buffer.concat(frames(id))) }, async url => {
-        expect(await outcome(fetch(url, { ...init, protocol: "http2", tls: { ca: tls.cert } }))).toBe(code);
-      });
+      await withAdversarialServer(
+        { onStream: (socket, id) => void socket.write(Buffer.concat(frames(id))) },
+        async url => {
+          expect(await outcome(fetch(url, { ...init, protocol: "http2", tls: { ca: tls.cert } }))).toBe(code);
+        },
+      );
     });
 
     // lsquic, the only HTTP/3 peer there is here, can't send DATA or a FIN before HEADERS.

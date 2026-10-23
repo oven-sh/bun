@@ -1046,16 +1046,19 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expect(exitCode).toBe(0);
     });
 
-    test.each(["content-length", "chunked"] as Framing[])("%s: a held body gives its connection back", async framing => {
-      await using server = await serveWhole(framing, "with the head");
-      const held = await fetch(server.url);
-      const next = await fetch(server.url);
-      expect({
-        next: md5(await next.bytes()),
-        held: md5(await held.bytes()),
-        connections: server.connections(),
-      }).toEqual({ next: digest, held: digest, connections: 1 });
-    });
+    test.each(["content-length", "chunked"] as Framing[])(
+      "%s: a held body gives its connection back",
+      async framing => {
+        await using server = await serveWhole(framing, "with the head");
+        const held = await fetch(server.url);
+        const next = await fetch(server.url);
+        expect({
+          next: md5(await next.bytes()),
+          held: md5(await held.bytes()),
+          connections: server.connections(),
+        }).toEqual({ next: digest, held: digest, connections: 1 });
+      },
+    );
 
     test.each(consumers)("%s takes a held body after the origin closed the connection", async (_, consume) => {
       await using server = await serveWhole("content-length", "with the head");

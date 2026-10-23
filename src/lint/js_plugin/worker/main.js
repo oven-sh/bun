@@ -498,6 +498,107 @@ const SourceCode = native.sourceCode(native.TokenStore, [
   oxlintScopeManager,
 ]);
 let sourceCode = new SourceCode();
+
+// `new sourceCode.constructor(text, ast)`: ESLint's `SourceCode` for code that a rule has parsed by itself, as eslint-plugin-sonarjs does
+// with the text of a comment. It knows the text, the lines, and the tokens and comments of `ast`.
+function parsedSourceCode(textOrConfig, astIfNoConfig) {
+  const config = typeof textOrConfig === "string" ? { text: textOrConfig, ast: astIfNoConfig } : textOrConfig;
+  const { ast } = config;
+  if (!ast) throw new TypeError(`Unexpected empty AST. (${ast})`);
+  if (!ast.tokens) throw new TypeError("AST is missing the tokens array.");
+  if (!ast.comments) throw new TypeError("AST is missing the comments array.");
+  if (!ast.loc) throw new TypeError("AST is missing location information.");
+  if (!ast.range) throw new TypeError("AST is missing range information");
+  const { tokens, comments } = ast;
+  const all = [...tokens, ...comments].sort((a, b) => a.range[0] - b.range[0]);
+  const isComment = token => token.type === "Line" || token.type === "Block" || token.type === "Shebang";
+  // -1: no limit.
+  const within = (list, start, end) => list.filter(it => it.range[0] >= start && (end === -1 || it.range[1] <= end));
+  // In the order of the search. `limit`: "skip" or "count", which is what a number means.
+  function search(start, end, options, isBackward, limit) {
+    let [includeComments, filter, number] = [false, null, undefined];
+    if (typeof options === "number") number = options;
+    else if (typeof options === "function") filter = options;
+    else if (options)
+      [includeComments, filter, number] = [!!options.includeComments, options.filter || null, options[limit]];
+    let found = within(includeComments ? all : tokens, start, end);
+    if (isBackward) found.reverse();
+    if (filter) found = found.filter(filter);
+    if (limit === "skip") return found.slice(number | 0);
+    return typeof number === "number" ? found.slice(0, number | 0) : found;
+  }
+  const one = (start, end, options, isBackward) => search(start, end, options, isBackward, "skip")[0] ?? null;
+  const first = (start, end, options) => search(start, end, options, false, "count");
+  const last = (start, end, options) => search(start, end, options, true, "count").reverse();
+  function padded(start, end, before, after) {
+    const isCount = value => value === undefined || typeof value === "number";
+    if (!isCount(before) || !isCount(after)) return first(start, end, before);
+    const from = tokens.findIndex(it => it.range[0] >= start);
+    const count = within(tokens, start, end).length;
+    return from === -1 ? [] : tokens.slice(Math.max(0, from - (before | 0)), from + count + (after | 0));
+  }
+  function adjacentComments(found) {
+    const end = found.findIndex(it => !isComment(it));
+    return end === -1 ? found : found.slice(0, end);
+  }
+  const hasBOM = config.text.charCodeAt(0) === 0xfeff;
+  const text = hasBOM ? config.text.slice(1) : config.text;
+  const lines = SourceCode.splitLines(text);
+  const lineStartIndices = [0];
+  for (const match of text.matchAll(/\r\n|[\r\n\u2028\u2029]/gu)) lineStartIndices.push(match.index + match[0].length);
+  return Object.freeze({
+    isESTree: ast.type === "Program",
+    hasBOM,
+    text,
+    ast,
+    parserServices: config.parserServices || {},
+    scopeManager: config.scopeManager || null,
+    visitorKeys: config.visitorKeys || sourceCode.visitorKeys,
+    tokensAndComments: all,
+    lines: Object.freeze(lines),
+    lineStartIndices,
+    getText: (node, before, after) =>
+      node ? text.slice(Math.max(node.range[0] - (before || 0), 0), node.range[1] + (after || 0)) : text,
+    getLines: () => lines,
+    getAllComments: () => comments,
+    getLoc: node => node.loc,
+    getRange: node => node.range,
+    getTokenByRangeStart(offset, options) {
+      const token = within(options?.includeComments ? all : tokens, offset, -1)[0];
+      return token?.range[0] === offset ? token : null;
+    },
+    getFirstToken: (node, options) => one(node.range[0], node.range[1], options, false),
+    getLastToken: (node, options) => one(node.range[0], node.range[1], options, true),
+    getTokenBefore: (node, options) => one(-1, node.range[0], options, true),
+    getTokenAfter: (node, options) => one(node.range[1], -1, options, false),
+    getFirstTokenBetween: (left, right, options) => one(left.range[1], right.range[0], options, false),
+    getLastTokenBetween: (left, right, options) => one(left.range[1], right.range[0], options, true),
+    getTokenOrCommentBefore: (node, skip) => one(-1, node.range[0], { includeComments: true, skip }, true),
+    getTokenOrCommentAfter: (node, skip) => one(node.range[1], -1, { includeComments: true, skip }, false),
+    getFirstTokens: (node, options) => first(node.range[0], node.range[1], options),
+    getLastTokens: (node, options) => last(node.range[0], node.range[1], options),
+    getTokensBefore: (node, options) => last(-1, node.range[0], options),
+    getTokensAfter: (node, options) => first(node.range[1], -1, options),
+    getFirstTokensBetween: (left, right, options) => first(left.range[1], right.range[0], options),
+    getLastTokensBetween: (left, right, options) => last(left.range[1], right.range[0], options),
+    getTokens: (node, before, after) => padded(node.range[0], node.range[1], before, after),
+    getTokensBetween: (left, right, padding) => padded(left.range[1], right.range[0], padding, padding),
+    commentsExistBetween: (left, right) => within(comments, left.range[1], right.range[0]).length > 0,
+    getCommentsBefore: node => adjacentComments(within(all, -1, node.range[0]).reverse()).reverse(),
+    getCommentsAfter: node => adjacentComments(within(all, node.range[1], -1)),
+    getCommentsInside: node => within(comments, node.range[0], node.range[1]),
+  });
+}
+
+{
+  const constructor = function (textOrConfig, ast) {
+    return textOrConfig === undefined ? new SourceCode() : parsedSourceCode(textOrConfig, ast);
+  };
+  Object.defineProperties(constructor, Object.getOwnPropertyDescriptors(SourceCode));
+  Object.setPrototypeOf(constructor, native.TokenStore);
+  Object.defineProperty(SourceCode.prototype, "constructor", { value: constructor });
+}
+
 let filename = "";
 // The file on the disk, if `filename` is that of a block which a processor has found in it.
 let physicalFilename = "";

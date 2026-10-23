@@ -251,6 +251,95 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // eslint-plugin-sonarjs parses the text of a comment and asks for its tokens that way. The answers are those of ESLint 9.39.5.
+  test("new sourceCode.constructor(text, ast) is about the code that the rule has parsed", async () => {
+    const plugin = `
+      const token = (type, value, start) => ({ type, value, range: [start, start + value.length], loc: {} });
+      export default {
+        meta: { name: "api" },
+        rules: {
+          dump: {
+            create(context) {
+              return {
+                Program(node) {
+                  const text = "a(b); // c\\nd";
+                  const tokens = [
+                    token("Identifier", "a", 0),
+                    token("Punctuator", "(", 1),
+                    token("Identifier", "b", 2),
+                    token("Punctuator", ")", 3),
+                    token("Punctuator", ";", 4),
+                    token("Identifier", "d", 11),
+                  ];
+                  const comments = [{ type: "Line", value: " c", range: [6, 10], loc: {} }];
+                  const [first, second] = [{ type: "ExpressionStatement", range: [0, 5] }, { type: "ExpressionStatement", range: [11, 12] }];
+                  const ast = { type: "Program", body: [first, second], tokens, comments, range: [0, 12], loc: {} };
+                  const SourceCode = context.sourceCode.constructor;
+                  const parsed = new SourceCode(text, ast);
+                  const values = found => found.map(it => it.value);
+                  const isSemicolon = it => it.value === ";";
+                  let error;
+                  try {
+                    new SourceCode(text, { type: "Program" });
+                  } catch (thrown) {
+                    error = thrown.message;
+                  }
+                  context.report({
+                    node,
+                    message: JSON.stringify({
+                      name: SourceCode.name,
+                      isInstance: context.sourceCode instanceof SourceCode,
+                      split: SourceCode.splitLines("a\\nb"),
+                      own: new SourceCode().text,
+                      text: parsed.text,
+                      lines: parsed.lines,
+                      isSameAst: parsed.ast === ast,
+                      semicolons: [parsed.getLastToken(first, isSemicolon)?.value, parsed.getLastToken(second, isSemicolon)],
+                      firstText: parsed.getText(first),
+                      tokens: values(parsed.getTokens(first)),
+                      lastTwo: values(parsed.getLastTokens(first, 2)),
+                      after: [parsed.getTokenAfter(first).value, parsed.getTokenAfter(first, { includeComments: true }).value],
+                      before: values(parsed.getCommentsBefore(second)),
+                      between: parsed.commentsExistBetween(first, second),
+                      all: values(parsed.tokensAndComments),
+                      error,
+                    }),
+                  });
+                },
+              };
+            },
+          },
+        },
+      };`;
+    const { raw } = await lint(
+      {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "api/dump": "error" } }),
+        "plugin.mjs": plugin,
+        "a.js": "linted(1, 2, 3)\n",
+      },
+      ["-f", "json"],
+    );
+    const [{ message }] = JSON.parse(raw).diagnostics;
+    expect(JSON.parse(message)).toEqual({
+      name: "SourceCode",
+      isInstance: true,
+      split: ["a", "b"],
+      own: "linted(1, 2, 3)\n",
+      text: "a(b); // c\nd",
+      lines: ["a(b); // c", "d"],
+      isSameAst: true,
+      semicolons: [";", null],
+      firstText: "a(b);",
+      tokens: ["a", "(", "b", ")", ";"],
+      lastTwo: [")", ";"],
+      after: ["d", " c"],
+      before: [" c"],
+      between: true,
+      all: ["a", "(", "b", ")", ";", " c", "d"],
+      error: "AST is missing the tokens array.",
+    });
+  });
+
   test(
     "provides tokens, comments, scopes and locations",
     async () => {

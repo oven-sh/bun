@@ -1,5 +1,4 @@
-//! `node:http` native binding — the server's options, and the `ws` package's native server
-//! transport: `upgradeSocketToWebSocket` / `sendWebSocketFrame`.
+//! `node:http`'s native binding: the server's options, and the `ws` package's server transport.
 
 use bun_jsc::bindgen::{Callable, JsBytes, JsHeap, JsLocal, JsScope};
 use bun_jsc::{JSValue, JsResult};

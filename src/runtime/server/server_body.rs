@@ -1098,6 +1098,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 }
 
+fn request_ip(config: &ServerConfig, cx: &mut JsScope<'_>, request: &Request) -> JsResult<JSValue> {
+    if config.address.is_unix() {
+        return Ok(JSValue::NULL);
+    }
+    let Some(info) = request.request_context.get_remote_socket_info() else {
+        return Ok(JSValue::NULL);
+    };
+    crate::socket::socket_address::SocketAddress::create_dto(
+        cx.global(),
+        &info.ip,
+        u16::try_from(info.port).expect("int cast"),
+        info.is_ipv6,
+    )
+}
+
 fn set_request_timeout<'a>(
     heap: &JsHeap<'a>,
     request: JsLocal<'a>,
@@ -1227,18 +1242,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn request_ip(&self, cx: &mut JsScope<'_>, request: &Request) -> JsResult<JSValue> {
-        if self.config.get().address.is_unix() {
-            return Ok(JSValue::NULL);
-        }
-        let Some(info) = request.request_context.get_remote_socket_info() else {
-            return Ok(JSValue::NULL);
-        };
-        crate::socket::socket_address::SocketAddress::create_dto(
-            cx.global(),
-            &info.ip,
-            u16::try_from(info.port).expect("int cast"),
-            info.is_ipv6,
-        )
+        request_ip(self.config.get(), cx, request)
     }
 
     pub(crate) fn timeout<'a>(

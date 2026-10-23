@@ -3503,9 +3503,9 @@ bitflags::bitflags! {
         const SENDING_QUEUE        = 1 << 17;
         /// node:net's `fdIsWriteOnly`: `do_connect` gives the descriptor to an `FdPipe`, not to uSockets.
         const WRITE_ONLY_FD        = 1 << 18;
-        /// The `ws` package's WebSocket on this connection has closed, and the kernel had taken everything it queued.
         /// TCP_NODELAY is known to be on, so asking for it again costs no syscall. node:net asks for each connection of an http.Server, and the accept has set it.
         const NO_DELAY = 1 << 30;
+        /// The `ws` package's WebSocket on this connection has closed, and the kernel had taken everything it queued.
         const CLOSED_WITH_ALL_DATA_SENT = 1 << 31;
     }
 }

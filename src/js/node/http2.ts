@@ -5034,8 +5034,7 @@ class ClientHttp2Session extends Http2Session {
   #reservedStreamsCount: number = 0;
   #maxOriginSetSize: number = 128;
   #strictFieldWhitespaceValidation: boolean = true;
-  // Requests that wait for the socket to connect, or for a slot under the peer's SETTINGS_MAX_CONCURRENT_STREAMS. Like node's, they have no id yet.
-  // A Set keeps the order the requests were made in and lets a destroyed one leave in O(1).
+  // Requests without an id yet, like node's: they wait, in order, for the socket to connect or for a slot under the peer's SETTINGS_MAX_CONCURRENT_STREAMS.
   #pendingRequests: Set<ClientHttp2Stream> | null = null;
 
   static #Handlers = {

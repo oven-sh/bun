@@ -748,9 +748,10 @@ fn fetch_impl(
         .option(global_this, jsc::CommonString::FetchOptionKeepalive, |v| {
             Ok(flag(v))
         })?
-        .map_or(session.is_some_and(|c| !c.keep_alive()), |keepalive| {
-            !keepalive
-        });
+        .map_or_else(
+            || session.is_some_and(|c| !c.keep_alive()),
+            |keepalive| !keepalive,
+        );
 
     // verbose: boolean | "curl" | undefined;
     if let Some(level) =

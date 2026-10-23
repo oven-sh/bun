@@ -657,7 +657,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return;
         }
         // SAFETY: FFI handle valid while resp is Some
-        resp.on_aborted(|this, resp| Self::on_abort(this, resp), self.as_ctx_ptr());
+        resp.on_aborted(Self::on_abort, self.as_ctx_ptr());
     }
 
     pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
@@ -1175,7 +1175,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
     pub(crate) fn render_missing(&self) {
         if let Some(resp) = self.resp.get() {
-            resp.run_corked_with_type(|ctx| Self::render_missing_corked(ctx), self.as_ctx_ptr());
+            resp.run_corked_with_type(Self::render_missing_corked, self.as_ctx_ptr());
         }
     }
 
@@ -1273,7 +1273,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         if let Some(resp) = self.resp.get() {
             // SAFETY: FFI handle
             resp.on_writable(
-                |this, off, resp| Self::on_writable_complete_response_buffer(this, off, resp),
+                Self::on_writable_complete_response_buffer,
                 self.as_ctx_ptr(),
             );
         }
@@ -1797,10 +1797,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            resp.on_writable(
-                |this, off, resp| Self::on_writable_bytes(this, off, resp),
-                self.as_ctx_ptr(),
-            );
+            resp.on_writable(Self::on_writable_bytes, self.as_ctx_ptr());
             true
         }
     }
@@ -1829,7 +1826,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
             resp.on_writable(
-                |this, off, resp| Self::on_writable_complete_response_buffer(this, off, resp),
+                Self::on_writable_complete_response_buffer,
                 self.as_ctx_ptr(),
             );
         }
@@ -2289,10 +2286,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             this.render_metadata();
         }
 
-        resp.on_writable(
-            |this, off, resp| Self::on_writable_response_stream(this, off, resp),
-            this.as_ctx_ptr(),
-        );
+        resp.on_writable(Self::on_writable_response_stream, this.as_ctx_ptr());
 
         // We are already corked!
         let assignment_result: JSValue = ResponseStreamJSSink::<SSL_ENABLED>::assign_to_stream(
@@ -3376,8 +3370,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 // `do_render_with_body_locked`.
                 this.ref_();
                 this.flags.set_has_marked_pending(true);
-                lock.on_receive_value =
-                    Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
+                lock.on_receive_value = Some(Self::do_render_with_body_locked);
                 lock.task = Some(NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap());
 
                 return;
@@ -3417,10 +3410,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             uws::WriteResult::Backpressure(n) => {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                resp.on_writable(
-                    |this, off, resp| Self::on_writable_byte_stream(this, off, resp),
-                    this.as_ctx_ptr(),
-                );
+                resp.on_writable(Self::on_writable_byte_stream, this.as_ctx_ptr());
                 WebCore::streams::Writable::Backpressure(n as BlobSizeType)
             }
         }
@@ -3495,10 +3485,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.get().fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp.get() {
-                resp.run_corked_with_type(
-                    |ctx| Self::do_render_blob_corked(ctx),
-                    self.as_ctx_ptr(),
-                );
+                resp.run_corked_with_type(Self::do_render_blob_corked, self.as_ctx_ptr());
             }
         } else {
             Self::do_render_blob_corked(self.as_ctx_ptr());
@@ -3998,10 +3985,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
                 self.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                resp.on_writable(
-                    |this, off, resp| Self::on_writable_bytes(this, off, resp),
-                    self.as_ctx_ptr(),
-                );
+                resp.on_writable(Self::on_writable_bytes, self.as_ctx_ptr());
                 return;
             }
         }

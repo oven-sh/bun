@@ -1453,7 +1453,6 @@ enum HttpParserError {
 // 'clientError' listener (or the default handler) decides what to write back
 // and when to destroy the connection.
 function onServerClientError(listenerGeneration, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
-  const self = this as Server;
   const nodeSocket = (socket as any).duplex;
 
   let err;
@@ -1702,7 +1701,8 @@ function noopOnError() {}
 function connectionListenerInternal(server, socket) {
   socket.server = server;
 
-  if (server.timeout && typeof socket.setTimeout === "function") socket.setTimeout(server.timeout);
+  const { timeout } = server;
+  if (timeout && typeof socket.setTimeout === "function") socket.setTimeout(timeout);
   socket.on("timeout", socketOnTimeout);
 
   const parser = parsers.alloc();
@@ -1716,8 +1716,9 @@ function connectionListenerInternal(server, socket) {
   socket.parser = parser;
 
   // Propagate headers limit from server instance to parser
-  if (typeof server.maxHeadersCount === "number") {
-    parser.maxHeaderPairs = server.maxHeadersCount << 1;
+  const { maxHeadersCount } = server;
+  if (typeof maxHeadersCount === "number") {
+    parser.maxHeaderPairs = maxHeadersCount << 1;
   }
 
   const state: any = {
@@ -1810,12 +1811,16 @@ function socketOnEnd(server, socket, parser, state) {
     socketOnError.$call(socket, ret);
   } else if (!server.httpAllowHalfOpen) {
     socket.end();
-  } else if (state.outgoing.length) {
-    state.outgoing[state.outgoing.length - 1]._last = true;
-  } else if (socket._httpMessage) {
-    socket._httpMessage._last = true;
   } else {
-    socket.end();
+    const { outgoing } = state;
+    const { length } = outgoing;
+    if (length) {
+      outgoing[length - 1]._last = true;
+    } else {
+      const { _httpMessage } = socket;
+      if (_httpMessage) _httpMessage._last = true;
+      else socket.end();
+    }
   }
 }
 
@@ -1895,12 +1900,12 @@ class UpgradeStream extends Duplex {
 }
 
 function onParserExecuteCommon(server, socket, parser, state, ret, d) {
+  const req = parser.incoming;
   if (ret instanceof Error) {
     prepareError(ret, parser, d);
     socketOnError.$call(socket, ret);
-  } else if (parser.incoming?.upgrade) {
+  } else if (req?.upgrade) {
     // Upgrade or CONNECT
-    const req = parser.incoming;
     const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
 
     let upgradeStream;
@@ -1942,13 +1947,13 @@ function onParserExecuteCommon(server, socket, parser, state, ret, d) {
       // Got upgrade or CONNECT method, but have no handler.
       socket.destroy();
     }
-  } else if (parser.incoming && parser.incoming.method === "PRI") {
+  } else if (req && req.method === "PRI") {
     socket.destroy();
   }
 
-  if (socket._paused && socket.parser) {
+  if (socket._paused) {
     // onIncoming paused the socket, we should pause the parser as well
-    socket.parser.pause();
+    socket.parser?.pause();
   }
 }
 
@@ -2011,8 +2016,10 @@ function sendNextResponse(socket, state) {
   // Node assigns a destroyed response too, and the connection hangs until requestTimeout. Nothing can fill its slot, so close.
   if (m === undefined) return;
   if (m[kDispatchThrew] && !m.finished) m.destroy();
-  if (m.destroyed) typeof socket.destroySoon === "function" ? socket.destroySoon() : socket.destroy();
-  else if (m.handedOff === undefined) giveSocket(m, socket);
+  if (m.destroyed) {
+    if (typeof socket.destroySoon === "function") socket.destroySoon();
+    else socket.destroy();
+  } else if (m.handedOff === undefined) giveSocket(m, socket);
   // The turn of a 'connect' that came behind responses. It got the rest of its read as `head`, and the socket got every later read.
   else if (socket[kHandle].startRawResponse(m.handedOff, false) && socket[kHandle].leaveHttp(true))
     socket[kHandle] = undefined;

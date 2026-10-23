@@ -3345,7 +3345,8 @@ class WebSocketServer extends EventEmitter {
     cb: UpgradeCallback,
   ): ServerSocket | void {
     // While the body of the request is incomplete, node:http gives 'upgrade' a wrapper that hides what arrives. The WebSocket takes the connection itself.
-    if (wrapsNativeConnection(req.socket, socket)) socket = req.socket;
+    const requestSocket = req.socket;
+    if (wrapsNativeConnection(requestSocket, socket)) socket = requestSocket;
 
     // Destroy the socket if the client has already sent a FIN packet.
     if (!socket.readable || !socket.writable) return socket.destroy();

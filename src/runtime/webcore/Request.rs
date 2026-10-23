@@ -1102,7 +1102,7 @@ impl Request {
 
         let req = Self::from_members(
             href,
-            method.unwrap_or(Method::GET.into()),
+            method.unwrap_or_else(|| Method::GET.into()),
             headers,
             signal.flatten(),
             body,

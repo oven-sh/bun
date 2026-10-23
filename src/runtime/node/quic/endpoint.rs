@@ -1453,7 +1453,7 @@ impl QuicEndpoint {
             e.is_server == is_server && e.is_http == is_http && e.settings == settings
         };
         if let Some(engine) = self.engines.get().iter().find(same) {
-            return Ok(engine.clone());
+            return Ok(Rc::clone(engine));
         }
         // SAFETY: `vtable` outlives the engines (held in this struct);
         // `settings` is copied by lsquic before this returns.
@@ -1475,7 +1475,7 @@ impl QuicEndpoint {
             is_http,
             settings,
         });
-        self.engines.with_mut(|v| v.push(engine.clone()));
+        self.engines.with_mut(|v| v.push(Rc::clone(&engine)));
         Ok(engine)
     }
 
@@ -1680,7 +1680,7 @@ impl QuicEndpoint {
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
             this_value.to_js(),
-            Some(engine.clone()),
+            Some(Rc::clone(&engine)),
         )?;
         let resume_blob: Vec<u8> = if config.enable_early_data {
             session_ticket

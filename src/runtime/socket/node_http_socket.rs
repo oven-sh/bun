@@ -177,43 +177,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(s) = self.socket_for_web_socket(server_handlers) else {
             return Ok(None);
         };
-        let Some(handler) = server.ws_package_handler() else {
+        // SAFETY: `s` is open and its ext holds only this socket's pointer.
+        let adopted =
+            unsafe { adopt_into_web_socket(SSL, s, self.as_ctx_ptr().cast(), server, upgrade) };
+        let Some(ws) = adopted else {
             return Ok(None);
         };
-        let Some(context) = server.ws_package_context(
-            upgrade.max_payload_length,
-            upgrade.auto_pong,
-            upgrade.skip_utf8_validation,
-            upgrade.deflate_params.is_some(),
-        ) else {
-            return Ok(None);
-        };
-        let ws = ServerWebSocket::init_for_ws_package(handler.get(), upgrade.websocket);
-        // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
-        let ws_ref = unsafe { &*ws };
-        // The server doesn't count the connection until the WebSocket opens, so this keeps a stopped server from draining.
-        server.on_pending_request();
-        // SAFETY: `s` is open and its ext holds only this socket's pointer, which the WebSocket keeps as its socket data.
-        let adopted = unsafe {
-            Bun__NodeHTTPSocket__adoptIntoWebSocket(
-                SSL,
-                s,
-                context.as_ptr().cast(),
-                ws.cast(),
-                upgrade.handshake.as_ptr(),
-                upgrade.handshake.len(),
-                upgrade
-                    .deflate_params
-                    .as_ref()
-                    .map_or(core::ptr::null(), core::ptr::from_ref),
-                self.as_ctx_ptr().cast(),
-            )
-        };
-        server.on_request_complete();
-        if adopted.is_null() {
-            ws_ref.discard_unopened();
-            return Ok(None);
-        }
         self.bytes_written
             .set(self.bytes_written.get() + upgrade.handshake.len() as u64);
         // The server holds the event loop for its WebSockets.
@@ -222,8 +191,52 @@ impl<const SSL: bool> NewSocket<SSL> {
             self.update_flags(|f| f.remove(SocketFlags::IS_PAUSED));
             self.socket.get().resume_stream();
         }
-        Ok(ws_ref.js_value())
+        Ok(ws.js_value())
     }
+}
+
+/// SAFETY: `s` is open and its ext holds only `handle`, which the WebSocket keeps as its socket data. `None` with nothing written.
+unsafe fn adopt_into_web_socket<'a>(
+    ssl: bool,
+    s: *mut us_socket_t,
+    handle: *mut c_void,
+    server: AnyServer,
+    upgrade: &WebSocketUpgrade<'_>,
+) -> Option<&'a ServerWebSocket> {
+    let handler = server.ws_package_handler()?;
+    let context = server.ws_package_context(
+        upgrade.max_payload_length,
+        upgrade.auto_pong,
+        upgrade.skip_utf8_validation,
+        upgrade.deflate_params.is_some(),
+    )?;
+    let ws = ServerWebSocket::init_for_ws_package(handler.get(), upgrade.websocket);
+    // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
+    let ws_ref = unsafe { &*ws };
+    // The server doesn't count the connection until the WebSocket opens, so this keeps a stopped server from draining.
+    server.on_pending_request();
+    // SAFETY: the caller's contract.
+    let adopted = unsafe {
+        Bun__NodeHTTPSocket__adoptIntoWebSocket(
+            ssl,
+            s,
+            context.as_ptr().cast(),
+            ws.cast(),
+            upgrade.handshake.as_ptr(),
+            upgrade.handshake.len(),
+            upgrade
+                .deflate_params
+                .as_ref()
+                .map_or(core::ptr::null(), core::ptr::from_ref),
+            handle,
+        )
+    };
+    server.on_request_complete();
+    if adopted.is_null() {
+        ws_ref.discard_unopened();
+        return None;
+    }
+    Some(ws_ref)
 }
 
 /// Runs `$body` with `$this: ThisPtr<NewSocket<SSL>>` for a handle that `Bun__NodeHTTPSocket__create` returned.

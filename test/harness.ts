@@ -13,7 +13,7 @@ import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join, relative as pathRelative, sep } from "path";
+import { dirname, isAbsolute, join, relative, sep } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -1122,23 +1122,20 @@ export function ospath(path: string) {
 }
 
 /**
- * Checks `node_modules` against a lockfile from `parseLockfile()`, for a project at `root` that `bun install`
- * installed in full (no `--production`, `--omit` or `--filter`).
+ * Checks `node_modules` against a lockfile from `parseLockfile()`, for a project that `bun install` installed in
+ * full (no `--production`, `--omit` or `--filter`), with either linker.
  *
- * Follows the dependencies from the root package. Each one is looked up the way Node does it, in the nearest
- * `node_modules/<name>` at or above the folder of its dependent, and has to be the package that the lockfile
- * resolves it to: an npm package by the name and version in its package.json, a workspace package by its folder.
- * Any other package (folder, link, tarball, git) only has to be there.
+ * Follows the dependencies from the root package as Node does: a dependency is the nearest `node_modules/<name>`
+ * at or above the folder of its dependent. That folder has to hold the package the lockfile resolves it to: an npm
+ * package by name and version, a workspace package by its folder. Any other package only has to be there.
  *
- * A dependency is not held to the lockfile where an install is not:
- * - A package for another os or cpu is not installed, and an optional dependency can be missing.
- * - A bundled dependency comes in the tarball of its dependent.
- * - A peer dependency is the copy that its dependent loads, which can be another version than the lockfile has.
+ * An install does not follow the lockfile for a package for another os or cpu, for an optional or bundled
+ * dependency, and for the copy that a peer dependency loads. Those are not compared.
  */
 export function toMatchNodeModulesAt(lockfile: any, root: string) {
   root = fs.realpathSync(root);
   const problems: string[] = [];
-  const where = (path: string) => pathRelative(root, path).replaceAll("\\", "/") || ".";
+  const where = (path: string) => relative(root, path).replaceAll("\\", "/") || ".";
   const memberFolder = (pkg: any) => join(root, pkg.resolution.value.slice("workspace:".length));
   const runsHere = (pkg: any) =>
     (!pkg.os || pkg.os.includes(process.platform)) && (!pkg.arch || pkg.arch.includes(process.arch));
@@ -1156,12 +1153,14 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
   function mismatch(pkg: any, folder: string): string | undefined {
     switch (pkg.resolution.tag) {
       case "npm": {
-        let found: { name?: unknown; version?: unknown } = {};
+        let manifest: { name?: unknown; version?: unknown };
         try {
-          found = JSON.parse(fs.readFileSync(join(folder, "package.json"), "utf8"));
-        } catch {}
-        if (found.name === pkg.name && found.version === pkg.resolution.value) return;
-        return `is ${found.name}@${found.version}`;
+          manifest = JSON.parse(fs.readFileSync(join(folder, "package.json"), "utf8"));
+        } catch {
+          return "has no package.json that can be read";
+        }
+        if (manifest.name === pkg.name && manifest.version === pkg.resolution.value) return;
+        return `is ${manifest.name}@${manifest.version}`;
       }
       case "workspace": {
         const member = memberFolder(pkg);
@@ -1197,11 +1196,13 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
 
       const found = lookup(dep.name, folder);
       const wrong = found === undefined ? `there is no node_modules/${dep.name}` : mismatch(target, found);
-      if (wrong === undefined) {
-        visit(target, found!);
+      if (found !== undefined && wrong === undefined) {
+        visit(target, found);
       } else if (!dep.behavior.optional && !(dep.behavior.peer && found !== undefined)) {
+        const dependent = folder === root ? "the root package" : where(folder);
+        const locked = `${target.name}@${target.resolution.value}`;
         problems.push(
-          `${where(folder)} depends on ${dep.name}@${dep.literal} (${target.name}@${target.resolution.value}), ` +
+          `${dependent} depends on ${dep.name}@${dep.literal} (lockfile: ${locked}), ` +
             `but ${found === undefined ? wrong : `${where(found)} ${wrong}`}`,
         );
       }

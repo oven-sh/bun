@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { runBunInstall, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
-import { installEnv, TestRegistry } from "registry";
+import { installEnv, TestRegistry, type BunfigOptions } from "registry";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
@@ -12,10 +12,10 @@ const registry = new TestRegistry();
 beforeAll(() => registry.start());
 afterAll(() => registry.stop());
 
-/** Installs a project with the hoisted linker and returns its folder. */
-async function install(files: Record<string, object>) {
+/** Installs a project and returns its folder. */
+async function install(files: Record<string, object>, bunfigOpts: BunfigOptions = { linker: "hoisted" }) {
   const { packageDir } = await registry.createTestDir({
-    bunfigOpts: { linker: "hoisted" },
+    bunfigOpts,
     files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
   });
   await runBunInstall(installEnv(packageDir), packageDir);
@@ -34,9 +34,11 @@ function problems(dir: string, lockfile = parseLockfile(dir)): string[] {
   }
 }
 
+/** Writes a new file: the installed one can be a hardlink of the copy in the cache. */
 function editJson(path: string, edit: (json: any) => void) {
   const json = JSON.parse(readFileSync(path, "utf8"));
   edit(json);
+  rmSync(path);
   writeFileSync(path, JSON.stringify(json));
 }
 
@@ -57,14 +59,16 @@ describe.concurrent("toMatchNodeModulesAt", () => {
     lockfile.packages.find((pkg: any) => pkg.name === "one-fixed-dep").resolution.value = "1.0.1";
     expect(lockfile).not.toMatchNodeModulesAt(dir);
     expect(problems(dir, lockfile)).toEqual([
-      ". depends on one-fixed-dep@1.0.0 (one-fixed-dep@1.0.1), but node_modules/one-fixed-dep is one-fixed-dep@1.0.0",
+      "the root package depends on one-fixed-dep@1.0.0 (lockfile: one-fixed-dep@1.0.1), " +
+        "but node_modules/one-fixed-dep is one-fixed-dep@1.0.0",
     ]);
 
     // A package on disk is another version than the one the lockfile resolves.
     const aliased = join(nodeModules, "aliased", "package.json");
     editJson(aliased, json => (json.version = "1.0.2"));
     expect(problems(dir)).toEqual([
-      ". depends on aliased@npm:a-dep@1.0.1 (a-dep@1.0.1), but node_modules/aliased is a-dep@1.0.2",
+      "the root package depends on aliased@npm:a-dep@1.0.1 (lockfile: a-dep@1.0.1), " +
+        "but node_modules/aliased is a-dep@1.0.2",
     ]);
     editJson(aliased, json => (json.version = "1.0.1"));
     expect(problems(dir)).toEqual([]);
@@ -72,14 +76,33 @@ describe.concurrent("toMatchNodeModulesAt", () => {
     // Without its nested copy, one-fixed-dep loads the root's no-deps.
     rmSync(join(nodeModules, "one-fixed-dep", "node_modules"), { recursive: true });
     expect(problems(dir)).toEqual([
-      "node_modules/one-fixed-dep depends on no-deps@1.0.0 (no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
+      "node_modules/one-fixed-dep depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), " +
+        "but node_modules/no-deps is no-deps@2.0.0",
     ]);
 
     rmSync(nodeModules, { recursive: true });
     expect(problems(dir).sort()).toEqual([
-      ". depends on aliased@npm:a-dep@1.0.1 (a-dep@1.0.1), but there is no node_modules/aliased",
-      ". depends on no-deps@2.0.0 (no-deps@2.0.0), but there is no node_modules/no-deps",
-      ". depends on one-fixed-dep@1.0.0 (one-fixed-dep@1.0.0), but there is no node_modules/one-fixed-dep",
+      "the root package depends on aliased@npm:a-dep@1.0.1 (lockfile: a-dep@1.0.1), " +
+        "but there is no node_modules/aliased",
+      "the root package depends on no-deps@2.0.0 (lockfile: no-deps@2.0.0), but there is no node_modules/no-deps",
+      "the root package depends on one-fixed-dep@1.0.0 (lockfile: one-fixed-dep@1.0.0), " +
+        "but there is no node_modules/one-fixed-dep",
+    ]);
+  });
+
+  test("follows the links of an isolated install", async () => {
+    const dir = await install(
+      { "package.json": { name: "foo", dependencies: { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0" } } },
+      { linker: "isolated", globalStore: false },
+    );
+    expect(problems(dir)).toEqual([]);
+
+    // one-fixed-dep loads its no-deps@1.0.0 from the store.
+    const store = join(dir, "node_modules", ".bun");
+    editJson(join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json"), json => (json.version = "1.0.1"));
+    expect(problems(dir)).toEqual([
+      "node_modules/.bun/one-fixed-dep@1.0.0/node_modules/one-fixed-dep depends on no-deps@1.0.0 " +
+        "(lockfile: no-deps@1.0.0), but node_modules/.bun/no-deps@1.0.0/node_modules/no-deps is no-deps@1.0.1",
     ]);
   });
 
@@ -103,18 +126,18 @@ describe.concurrent("toMatchNodeModulesAt", () => {
 
     rmSync(join(dir, "packages", "a", "node_modules"), { recursive: true });
     expect(problems(dir)).toEqual([
-      "packages/a depends on no-deps@1.0.0 (no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
+      "packages/a depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
     ]);
 
     // A copy of the workspace package is not the workspace package.
-    rmSync(join(dir, "node_modules", "b"), { recursive: true });
+    rmSync(join(dir, "node_modules", "b"), { recursive: true, force: true });
     mkdirSync(join(dir, "node_modules", "b"));
     writeFileSync(join(dir, "node_modules", "b", "package.json"), JSON.stringify({ name: "b" }));
     rmSync(join(dir, "node_modules", "a-dep"), { recursive: true });
     expect(problems(dir).sort()).toEqual([
-      "packages/a depends on b@workspace:* (b@workspace:packages/b), but node_modules/b is not packages/b",
-      "packages/a depends on no-deps@1.0.0 (no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
-      "packages/b depends on a-dep@1.0.1 (a-dep@1.0.1), but there is no node_modules/a-dep",
+      "packages/a depends on b@workspace:* (lockfile: b@workspace:packages/b), but node_modules/b is not packages/b",
+      "packages/a depends on no-deps@1.0.0 (lockfile: no-deps@1.0.0), but node_modules/no-deps is no-deps@2.0.0",
+      "packages/b depends on a-dep@1.0.1 (lockfile: a-dep@1.0.1), but there is no node_modules/a-dep",
     ]);
   });
 
@@ -156,8 +179,9 @@ describe.concurrent("toMatchNodeModulesAt", () => {
     // A peer dependency still needs a copy to load.
     rmSync(join(nodeModules, "no-deps"), { recursive: true });
     expect(problems(dir, lockfile).sort()).toEqual([
-      ". depends on no-deps@2.0.0 (no-deps@2.0.0), but there is no node_modules/no-deps",
-      "node_modules/peer-deps-fixed depends on no-deps@^1.0.0 (no-deps@2.0.0), but there is no node_modules/no-deps",
+      "node_modules/peer-deps-fixed depends on no-deps@^1.0.0 (lockfile: no-deps@2.0.0), " +
+        "but there is no node_modules/no-deps",
+      "the root package depends on no-deps@2.0.0 (lockfile: no-deps@2.0.0), but there is no node_modules/no-deps",
     ]);
   });
 });

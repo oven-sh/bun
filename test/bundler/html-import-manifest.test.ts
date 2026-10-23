@@ -1241,6 +1241,49 @@ console.log("✓ Both import types work correctly");
     expect(exitCode).toBe(0);
   });
 
+  // The define table of the page is built deeper in the stack than the table of the server. A
+  // nested value that the server still parses can be too deep there, and then the build fails.
+  test("html-import/browser-chunk-define-too-deep-for-the-page-fails-the-build", async () => {
+    using dir = tempDir("html-import-deep-define", {
+      "plain.js": `console.log("no page");`,
+      "server.js": `import page from "./client.html"; console.log(page);`,
+      "client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+      "client.js": `console.log("page");`,
+      "build.js": `
+        const build = async (entry, depth) => {
+          const DEEP = "[".repeat(depth) + "1" + "]".repeat(depth);
+          const result = await Bun.build({ entrypoints: [entry], target: "bun", define: { DEEP }, throw: false });
+          return result.success ? "ok" : result.logs.map(log => log.message).join("\\n");
+        };
+        // The deepest value that a build without a page accepts.
+        let low = 1;
+        let high = 1 << 14;
+        while (low < high) {
+          const middle = (low + high + 1) >> 1;
+          if ((await build("./plain.js", middle)) === "ok") low = middle;
+          else high = middle - 1;
+        }
+        console.log(await build("./server.js", low));
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    // Where the stack of the bundler is not what limits the depth, the page builds.
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringMatching(
+        /^(ok|JSON document is too deeply nested\nFailed to bundle an HTML file for the browser: StackOverflow)\n$/,
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // `bun build --compile --target=browser page.html` has a transpiler for bun, and its page is a
   // browser build too.
   test("html-import/standalone-html-gets-the-polyfill-of-a-node-builtin", async () => {

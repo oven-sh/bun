@@ -2381,8 +2381,9 @@ ${fails}\ntest("exits", async () => { process.exit(0); await new Promise(() => {
         let stderr = "";
         let isSent = false;
         const read = async (stream: ReadableStream<Uint8Array>, add: (chunk: string) => void) => {
-          for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
-            add(chunk);
+          const decoder = new TextDecoder();
+          for await (const chunk of stream) {
+            add(decoder.decode(chunk, { stream: true }));
             if (!isSent && isReady(stdout, stderr)) {
               isSent = true;
               proc.kill("SIGTERM");

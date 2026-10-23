@@ -300,7 +300,6 @@ declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
 declare function $requireNativeModule(id: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
-declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(
   name: string,
   from: string,

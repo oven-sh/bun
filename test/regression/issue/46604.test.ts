@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { isIPv6 as hasIPv6 } from "harness";
+import dgram from "node:dgram";
 import { once } from "node:events";
 import { connect, createServer, Socket } from "node:net";
 
@@ -22,10 +23,12 @@ describe.concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
       await using server = createServer(socket => socket.on("error", () => {}));
       await once(server.listen(0, host), "listening");
       const client = connect({ host, port: (server.address() as any).port, localAddress: host, localPort: 0 });
-      client.on("error", () => {});
-      const result = await run(client);
-      client.destroy();
-      return result;
+      const failed = new Promise<never>((_, reject) => client.once("error", reject));
+      try {
+        return await Promise.race([run(client), failed]);
+      } finally {
+        client.destroy();
+      }
     }
 
     it.each(["destroy", "resetAndDestroy"] as const)("%s() inside 'connect', then listen", async release => {
@@ -52,7 +55,7 @@ describe.concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
     });
 
     it("server.close() inside 'connection', then listen", async () => {
-      const { promise, resolve } = Promise.withResolvers<string>();
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
       const server = createServer(socket => {
         socket.on("error", () => {});
         socket.destroy();
@@ -62,9 +65,31 @@ describe.concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
       });
       await once(server.listen(0, host), "listening");
       const client = connect({ host, port: (server.address() as any).port });
-      client.on("error", () => {});
+      client.once("error", reject);
+      try {
+        expect(await promise).toBe("bound");
+      } finally {
+        client.destroy();
+      }
+    });
+
+    it("dgram close() inside 'message', then bind", async () => {
+      const type = host.includes(":") ? "udp6" : "udp4";
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const socket = dgram.createSocket(type);
+      socket.once("error", reject);
+      socket.once("message", () => {
+        const port = socket.address().port;
+        socket.close();
+        const probe = dgram.createSocket(type);
+        probe.once("error", (error: any) => resolve(error.code));
+        probe.bind(port, host, () => probe.close(() => resolve("bound")));
+      });
+      await once(socket.bind(0, host), "listening");
+      const sender = dgram.createSocket(type);
+      sender.once("error", reject);
+      sender.send("x", socket.address().port, host, error => (error ? reject(error) : sender.close()));
       expect(await promise).toBe("bound");
-      client.destroy();
     });
   },
 );

@@ -47,6 +47,15 @@ static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *
   return us_internal_socket_follow_adopted((struct us_socket_t *)wp);
 }
 
+/* Polls on this backend are sockets (listening, connecting, connected) or UDP
+ * sockets. Timers and asyncs are libuv handles of their own. */
+static struct us_loop_t *us_internal_poll_loop(struct us_poll_t *p) {
+  if (us_internal_poll_type(p) == POLL_TYPE_UDP) {
+    return ((struct us_udp_socket_t *)p)->loop;
+  }
+  return ((struct us_socket_t *)p)->group->loop;
+}
+
 /* uv_poll_t->data always points to the us_poll_t, even after us_poll_resize.
  * libuv doesn't call poll_cb after us_poll_stop, and a stopped poll is never
  * re-armed. */
@@ -124,12 +133,20 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
     return;
   }
   /* A handler may close this socket (us_poll_stop: uv_close, then closesocket)
-   * and then run the loop again (a promise wait). That inner run can finish the
-   * handle's close. The blocks stay allocated until the outermost tick
-   * (tick_depth, released / uv_closed), and libuv's frame under this one does
-   * not queue the endgame a second time (win-poll-no-reendgame-after-close).
-   * So nothing here reads the poll after the dispatch. */
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, error, eof, events);
+   * and then run the loop again (a promise wait, or an addon's uv_run). That
+   * inner run can finish the handle's close, but it must not free the blocks:
+   * libuv's frame under this one still reads the handle, and the dispatch
+   * still reads the socket. tick_depth is raised here, not only in
+   * us_loop_run / us_loop_pump, so us_internal_loop_post frees closed sockets
+   * only once every dispatch frame has returned, whoever runs the loop. The
+   * frame under this one does not queue the endgame a second time
+   * (win-poll-no-reendgame-after-close), so nothing here reads the poll after
+   * the dispatch. */
+  struct us_poll_t *wp = (struct us_poll_t *)p->data;
+  struct us_loop_t *loop = us_internal_poll_loop(wp);
+  loop->data.tick_depth++;
+  us_internal_dispatch_ready_poll(wp, error, eof, events);
+  loop->data.tick_depth--;
 }
 
 static void prepare_cb(uv_prepare_t *p) {

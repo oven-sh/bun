@@ -5199,6 +5199,38 @@ describe.concurrent("what a JavaScript plugin sees with an oxlint config", () =>
     timeout,
   );
 
+  // From oxlint 1.87.0 and ESLint 10.12.0. `regexp/sort-flags` reads `regex.flags`.
+  test.each([
+    [".oxlintrc.json", ["gi /a/ig /a/gi", "dgimsuy /b/yusmigd /b/dgimsuy", "dv /c/vd /c/dv", " /d/ /d/"]],
+    ["eslint.config.mjs", ["ig /a/ig /a/gi", "yusmigd /b/yusmigd /b/dgimsuy", "vd /c/vd /c/dv", " /d/ /d/"]],
+  ])(
+    "the flags of a regular expression are sorted as in oxlint, and as written with an ESLint config: %s",
+    async (config, expected) => {
+      const configs: Record<string, string> = {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/flags": "error" } }),
+        "eslint.config.mjs": `import demo from "./plugin.mjs";
+          export default [{ files: ["a.*"], plugins: { demo }, rules: { "demo/flags": "error" } }];`,
+      };
+      const files = {
+        [config]: configs[config],
+        "plugin.mjs": `const create = context => ({
+            Literal: node => context.report({ node, message: [node.regex.flags, node.raw, node.value].join(" ") }),
+          });
+          export default { meta: { name: "demo" }, rules: { flags: { create } } };`,
+        "a.js": "a(/a/ig, /b/yusmigd, /c/vd, /d/);\n",
+        "a.ts": "a(/a/ig, /b/yusmigd, /c/vd, /d/);\n",
+      };
+      const { stdout } = await lint(files, ["-f", "unix", "a.js", "a.ts"]);
+      const said = (name: string) =>
+        stdout
+          .split("\n")
+          .filter(line => line.includes(name))
+          .map(line => line.replace(/^.*?:\d+:\d+: | \[.*$/g, ""));
+      expect({ js: said("a.js"), ts: said("a.ts") }).toEqual({ js: expected, ts: expected });
+    },
+    timeout,
+  );
+
   // In a JavaScript file the TypeScript-only fields are always empty, so they aren't created for each node, and an
   // empty list is only created when it's read. A plugin must not be able to tell. The expected output is what the same
   // plugin reports under oxlint 1.87.

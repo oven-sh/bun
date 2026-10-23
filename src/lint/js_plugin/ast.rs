@@ -191,6 +191,7 @@ pub(super) struct Writer<'a, 's> {
     text: &'a [u8],
     dialect: Dialect,
     shortens_nodes: bool,
+    is_oxlint: bool,
     offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
@@ -391,6 +392,12 @@ impl<'a> Writer<'a, '_> {
                 self.tree.lists.push(digits);
                 word(Tag::BigInt, self.tree.lists.len() - 1)
             }
+            // oxlint keeps which flags there are, and writes them in the order of the alphabet.
+            Value::Object(Object::Regex { pattern, flags }) if self.is_oxlint => {
+                let mut sorted = flags.to_vec();
+                sorted.sort_unstable();
+                self.pair(Tag::RegExpParts, Some(pattern), &sorted, span)
+            }
             Value::Object(Object::Regex { pattern, flags }) => {
                 self.pair(Tag::RegExpParts, Some(pattern), flags, span)
             }
@@ -542,6 +549,7 @@ pub(super) fn walk<'a, 's>(
         text: file.text(),
         dialect: Dialect::of(file),
         shortens_nodes: shortens_nodes(file),
+        is_oxlint: file.language().is_oxlint,
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],

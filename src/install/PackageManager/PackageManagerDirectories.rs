@@ -1370,6 +1370,14 @@ pub fn save_lockfile(
     }
 
     if cfg!(debug_assertions) {
+        if save_format == LockfileFormat::Text
+            && wrote
+            && let Some(unused @ 1..) = bun_install::lockfile::unused_text_lockfile_entries(this)
+        {
+            Output::panic(format_args!(
+                "bun.lock has {unused} unused entries after saving"
+            ));
+        }
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
                 if !Lockfile::eql(

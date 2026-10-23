@@ -13,7 +13,8 @@ use crate::helpers;
 use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::root;
 use crate::types::{
-    self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
+    self, Align, BlockType, FencedCode, JsResult, Renderer, RendererImpl, SpanDetail, SpanType,
+    TextType,
 };
 
 pub struct Theme<'a> {
@@ -98,7 +99,6 @@ impl RendererImpl for ImageUrlCollector {
 
 struct AnsiRenderer<'a> {
     pub(crate) out: OutputBuffer,
-    src_text: &'a [u8],
     theme: Theme<'a>,
     /// Stack of active block contexts (li/quote) for indentation.
     block_stack: Vec<BlockContext>,
@@ -129,10 +129,6 @@ struct AnsiRenderer<'a> {
     soft_break: Option<SoftBreak>,
     /// True when we're collecting a code block body (fenced or indented).
     in_code_block: bool,
-    /// Language extracted from the fenced code block info string.
-    code_lang: &'a [u8],
-    /// Whether the current code block is fenced (not indented).
-    code_fenced: bool,
     /// Buffer of the current code block body, flushed on leaveBlock(.code).
     code_buf: Vec<u8>,
     /// Heading level currently being rendered (0 = none).
@@ -264,13 +260,12 @@ impl InlineStyle {
 }
 
 impl<'a> AnsiRenderer<'a> {
-    pub(crate) fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
+    pub(crate) fn init(input_len: usize, theme: Theme<'a>) -> AnsiRenderer<'a> {
         let mut r = AnsiRenderer {
             out: OutputBuffer {
                 list: Vec::new(),
                 oom: false,
             },
-            src_text,
             theme,
             block_stack: Vec::new(),
             quote_depth: 0,
@@ -284,8 +279,6 @@ impl<'a> AnsiRenderer<'a> {
             col: 0,
             soft_break: None,
             in_code_block: false,
-            code_lang: b"",
-            code_fenced: false,
             code_buf: Vec::new(),
             heading_level: 0,
             heading_buf: Vec::new(),
@@ -301,7 +294,7 @@ impl<'a> AnsiRenderer<'a> {
         // The output is usually ~1.5x the input; this is only a throughput
         // hint, so on failure fall back to the incremental `try_reserve`s in
         // `write` instead of aborting.
-        let _ = r.out.list.try_reserve(src_text.len() + src_text.len() / 2);
+        let _ = r.out.list.try_reserve(input_len + input_len / 2);
         r
     }
 
@@ -313,7 +306,7 @@ impl<'a> AnsiRenderer<'a> {
     // Block rendering
     // ========================================
 
-    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => {
@@ -439,13 +432,7 @@ impl<'a> AnsiRenderer<'a> {
             BlockType::Code => {
                 self.ensure_blank_line();
                 self.in_code_block = true;
-                self.code_fenced = (flags & types::BLOCK_FENCED_CODE) != 0;
                 self.code_buf.clear();
-                if self.code_fenced {
-                    self.code_lang = extract_language(self.src_text, data);
-                } else {
-                    self.code_lang = b"";
-                }
             }
             BlockType::Html => {
                 self.ensure_newline();
@@ -502,11 +489,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.flush_heading();
                 self.heading_level = 0;
             }
-            BlockType::Code => {
-                self.flush_code_block();
-                self.in_code_block = false;
-                self.code_lang = b"";
-            }
+            BlockType::Code => self.leave_code(b""),
             BlockType::Html => {
                 self.ensure_newline();
             }
@@ -1431,7 +1414,12 @@ impl<'a> AnsiRenderer<'a> {
     // Code block flush with syntax highlighting
     // ========================================
 
-    fn flush_code_block(&mut self) {
+    fn leave_code(&mut self, language: &[u8]) {
+        self.flush_code_block(language);
+        self.in_code_block = false;
+    }
+
+    fn flush_code_block(&mut self, language: &[u8]) {
         // Take ownership of code_buf so self.write_indent() etc.
         // don't alias it.
         let src = core::mem::take(&mut self.code_buf);
@@ -1469,8 +1457,8 @@ impl<'a> AnsiRenderer<'a> {
         }
         self.write_indent();
         let mut badge_scratch: Vec<u8> = Vec::new();
-        let badge: &[u8] = if !self.code_lang.is_empty() {
-            sanitize_source_text(self.code_lang, &mut badge_scratch)
+        let badge: &[u8] = if !language.is_empty() {
+            sanitize_source_text(language, &mut badge_scratch)
         } else {
             b""
         };
@@ -1499,7 +1487,7 @@ impl<'a> AnsiRenderer<'a> {
         self.last_was_newline = true;
 
         // Highlight body for JS/TS/JSX/TSX; otherwise print as-is.
-        let is_js = is_js_lang(self.code_lang);
+        let is_js = is_js_lang(language);
         let mut line_start: usize = 0;
         let mut i: usize = 0;
         while i <= body.len() {
@@ -2441,21 +2429,6 @@ fn is_js_lang(lang: &[u8]) -> bool {
     false
 }
 
-fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
-    let mut lang_end: u32 = info_beg;
-    while (lang_end as usize) < src_text.len() {
-        let c = src_text[lang_end as usize];
-        if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
-            break;
-        }
-        lang_end += 1;
-    }
-    if lang_end > info_beg {
-        return &src_text[info_beg as usize..lang_end as usize];
-    }
-    b""
-}
-
 /// Build the final href string with autolink prefixes (mailto:, http://).
 /// Caller owns the returned memory.
 fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
@@ -2809,12 +2782,16 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
 }
 
 impl RendererImpl for AnsiRenderer<'_> {
-    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
-        AnsiRenderer::enter_block(self, block_type, data, flags);
+    fn enter_block(&mut self, block_type: BlockType, data: u32, _flags: u32) -> JsResult<()> {
+        AnsiRenderer::enter_block(self, block_type, data);
         Ok(())
     }
     fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
         AnsiRenderer::leave_block(self, block_type, data);
+        Ok(())
+    }
+    fn leave_fenced_code(&mut self, code: FencedCode<'_>) -> JsResult<()> {
+        self.leave_code(code.language());
         Ok(())
     }
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
@@ -2842,7 +2819,7 @@ pub fn render_to_ansi<'a>(
     // an input the parser cannot address has to be rejected before it is
     // allocated for, not only when `Parser::init` sees it.
     crate::parser::input_size(text)?;
-    let mut renderer = AnsiRenderer::init(text, theme);
+    let mut renderer = AnsiRenderer::init(text.len(), theme);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}
         Err(ParserError::JSError) => return Ok(None),

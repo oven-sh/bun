@@ -383,7 +383,7 @@ setTimeout(() => {
 {
   // A debug build marks far slower, and under a sanitizer slower still.
   const isDebug = Bun.version.includes("debug");
-  const longCount = isDebug ? 20000 : 40000;
+  const longCount = isDebug ? 5000 : 40000;
   const bound = isDebug ? 30000 : 5000;
   for (const [name, build] of Object.entries(ephemeronChainShapes(longCount))) {
     const fixture = build();

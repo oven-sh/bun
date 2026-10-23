@@ -133,6 +133,24 @@ console.log(https.Server === Mine, Object.getPrototypeOf(Object.getPrototypeOf(s
   expect(exitCode).toBe(0);
 });
 
+test("the ESM named import of https.Server is the linked class", async () => {
+  // The export is an accessor that the module loader reads on the first binding.
+  using dir = tempDir("https-server-esm", {
+    "index.mjs": `
+import { Server, createServer } from "node:https";
+import https from "node:https";
+import tls from "node:tls";
+class Mine extends Server {}
+const mine = new Mine();
+console.log(Server === https.Server, mine instanceof tls.Server, createServer() instanceof Server, Object.getPrototypeOf(Server) === tls.Server);
+`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "index.mjs"], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" }); // prettier-ignore
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "true true true true\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 // A wrapper of http.Server.prototype.emit must not be reachable through https.Server.prototype: a library that wraps
 // both (OpenTelemetry through shimmer) unwraps what it finds there first, and that removed the http wrapper.
 // https://github.com/oven-sh/bun/issues/46567

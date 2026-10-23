@@ -35,6 +35,21 @@ function asyncIterator({ next: nextFunction, return: returnFunction }: TimerAsyn
   return result;
 }
 
+// As SafePromisePrototypeFinally() in Node's lib/timers/promises.js: an abort rejects the caller 6 ticks later.
+function removeAbortListenerWhenSettled(promise: Promise<unknown>, signal: AbortSignal, onCancel: () => void) {
+  return promise.$then(
+    value => {
+      signal.removeEventListener("abort", onCancel);
+      return value;
+    },
+    error => {
+      signal.removeEventListener("abort", onCancel);
+      // The 4 ticks that finally() and then() take in Node's wrapper. JSC's finally() takes fewer.
+      return Promise.$resolve().$then(() => Promise.$reject(error));
+    },
+  );
+}
+
 function setTimeout(after = 1, value?, options: TimerOptions = {}) {
   const arguments_ = [].concat(value ?? []);
   try {
@@ -80,9 +95,7 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
     }
   });
-  return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
-    : returnValue;
+  return typeof onCancel !== "undefined" ? removeAbortListenerWhenSettled(returnValue, signal!, onCancel) : returnValue;
 }
 
 function setImmediate(value?, options: TimerOptions = {}) {
@@ -119,9 +132,7 @@ function setImmediate(value?, options: TimerOptions = {}) {
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
     }
   });
-  return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
-    : returnValue;
+  return typeof onCancel !== "undefined" ? removeAbortListenerWhenSettled(returnValue, signal!, onCancel) : returnValue;
 }
 
 function setInterval(after = 1, value?, options: TimerOptions = {}) {
@@ -204,24 +215,23 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
 
     return asyncIterator({
       next: function () {
-        return new Promise<void>((resolve, reject) => {
-          if (!signal?.aborted) {
-            if (notYielded === 0) {
-              callback = resolve;
-            } else {
-              resolve();
-            }
-          } else if (notYielded === 0) {
-            reject($makeAbortError(undefined, { cause: signal.reason }));
+        if (notYielded === 0 && signal?.aborted) {
+          // The signal aborted while no next() waited: tick 1, as in Node.
+          return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
+        }
+        return new Promise<void>(resolve => {
+          if (notYielded === 0) {
+            callback = resolve;
           } else {
             resolve();
           }
-        }).then(() => {
+        }).$then(() => {
           if (notYielded > 0) {
             notYielded = notYielded - 1;
             return { done: false, value: value };
           } else if (signal?.aborted) {
-            throw $makeAbortError(undefined, { cause: signal.reason });
+            // The abort woke this next(). A rejected promise, not a throw: 4 ticks after the abort, as in Node.
+            return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
           }
           return { done: true };
         });

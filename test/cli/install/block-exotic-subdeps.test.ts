@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { installEnv } from "registry";
 
 /**
  * Tests for `install.blockExoticSubdeps` — a supply-chain hardening flag
@@ -13,16 +14,9 @@ import { pathToFileURL } from "node:url";
  * https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
  */
 
-// Each test spawns `bun install` in its own tempDir. Point the install cache
-// at a per-test subdir so concurrent tests don't race on the shared cache
-// and so leftover state from unrelated runs can't affect resolution.
 // A local-tarball parent's resolution prints with the platform path separator.
 function tarballParent(name: string): string {
   return isWindows ? `${name}@.\\${name}.tgz` : `${name}@./${name}.tgz`;
-}
-
-function envForDir(dir: string): NodeJS.Dict<string> {
-  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
 }
 
 type PackageJson = { name: string; version: string; [key: string]: unknown };
@@ -69,7 +63,7 @@ async function install(dir: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install", ...args],
     cwd: dir,
-    env: envForDir(dir),
+    env: installEnv(dir),
     stdout: "pipe",
     stderr: "pipe",
   });

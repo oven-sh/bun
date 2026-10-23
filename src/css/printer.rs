@@ -342,10 +342,7 @@ impl<'a> Printer<'a> {
             // stripped by the resolver to find the file; re-append it to the
             // rewritten reference so the fragment still addresses the element.
             let suffix: &[u8] = if record.kind == bun_ast::ImportKind::Url {
-                match bun_core::strings::index_of_any(record.original_path, b"?#") {
-                    Some(i) => &record.original_path[i..],
-                    None => b"",
-                }
+                record.removed_url_suffix()
             } else {
                 b""
             };

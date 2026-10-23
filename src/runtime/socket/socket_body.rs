@@ -2894,12 +2894,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let label: &'static str = if IS_END { "Socket.end" } else { "Socket.write" };
 
         // `buffer` Drop frees.
-        if buffer.in_memory_view().is_none() {
+        let Some(data) = buffer.in_memory_view() else {
             let _ = global.throw(format_args!(
                 "{label} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
             ));
             return WriteResult::Fail;
-        }
+        };
 
         let byte_offset: usize = 'brk: {
             if offset_value.is_undefined() {
@@ -2927,7 +2927,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let byte_length: usize = 'brk: {
             if length_value.is_undefined() {
-                break 'brk buffer.slice().len();
+                break 'brk data.len();
             }
             if !length_value.is_any_int() {
                 let _ = global.throw_invalid_argument_type(label, "byteLength", "integer");
@@ -2951,7 +2951,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             usize::try_from(l).expect("int cast")
         };
 
-        let mut bytes = buffer.slice();
+        let mut bytes = data;
 
         if byte_offset > bytes.len() {
             let _ = global.throw_range_error(

@@ -308,6 +308,7 @@ pub(crate) fn shell_cmd_from_js(
 const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
 
 /// No command reads an S3 object at once, and a redirect does not stream one.
+#[cold]
 fn throw_s3_redirect(global: &JSGlobalObject) -> jsc::JsError {
     global.throw(format_args!(
         "An S3-backed Blob is not supported as a shell redirect yet. Buffer it first, e.g. `< ${{await blob.bytes()}}`, or use Bun.spawn({{ stdin: blob.stream() }})"

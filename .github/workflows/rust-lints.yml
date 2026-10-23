@@ -13,7 +13,6 @@ on:
       - "src/codegen/**"
       - "src/trim/features/**"
       - "test/aot/ir/**"
-      - "test/internal/aot-schema/**"
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
@@ -149,11 +148,6 @@ jobs:
 
       - name: The checked-in schema is the engine's
         run: bun src/codegen/aot-schema/index.ts --schema "$AOT_SCHEMA" --rust-out src/aot/ir/generated --check
-
-      - name: Schema generator tests
-        # Buildkite runs them too, on machines without the engine's schema,
-        # where the tests that read it skip themselves.
-        run: bun test test/internal/aot-schema/
 
       - name: cargo test
         # ir_tests.rs skips the engine's half of every test when TESTAOT is

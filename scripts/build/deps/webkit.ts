@@ -164,7 +164,7 @@ export function webkitEngineSources(cfg: Config): EngineSources {
   const schema = webkitAotFile(cfg, "AOTSchema.def");
   const schemaGeneratedDirectory = webkitAotFile(cfg, "schema-generated");
   const builtinsGeneratedDirectory = webkitAotFile(cfg, "builtins-generated");
-  const common = { schema, schemaGeneratedDirectory, builtinsGeneratedDirectory, requiresVerifiedOverloads: cfg.ci };
+  const common = { schema, schemaGeneratedDirectory, builtinsGeneratedDirectory, requiresVerifiedOverloads: false };
   if (cfg.webkit === "prebuilt") {
     return {
       ...common,

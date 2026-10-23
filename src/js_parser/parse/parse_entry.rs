@@ -91,6 +91,42 @@ impl<'a> ParsedOnly<'_, 'a> {
             .get(import_record_index as usize)
             .map_or(&[], |record| record.path.text)
     }
+    pub fn module_syntax(&self) -> ModuleSyntax {
+        ModuleSyntax {
+            import_meta: self.p.has_import_meta,
+            top_level_await: self.p.top_level_await_keyword.len > 0,
+        }
+    }
+}
+
+/// Module record flags found while parsing.
+#[derive(Clone, Copy, Default)]
+pub struct ModuleSyntax {
+    pub import_meta: bool,
+    pub top_level_await: bool,
+}
+
+/// Runs `Parser::parse_only` on JavaScript text that isn't one of the build's files. Returns `None`
+/// on a parse error.
+pub fn parse_only_text<R>(
+    text: &[u8],
+    top_level_await: bool,
+    jsc_builtin_syntax: bool,
+    f: impl FnOnce(&ParsedOnly<'_, '_>) -> R,
+) -> Option<R> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
+    let mut options = Options::init(Default::default(), bun_ast::Loader::Js);
+    options.features.no_macros = true;
+    options.features.top_level_await = top_level_await;
+    options.jsc_builtin_syntax = jsc_builtin_syntax;
+    options.suppress_warnings_about_weird_code = true;
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    parser.parse_only(f).ok()
 }
 
 pub struct Parser<'a> {
@@ -113,6 +149,9 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
+    /// Keeps every directive in the AST, in its original position and with its original text.
+    /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
+    pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
@@ -170,6 +209,7 @@ impl<'a> Default for Options<'a> {
             ts: false,
             keep_names: true,
             ignore_dce_annotations: false,
+            keep_directives: false,
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
@@ -221,6 +261,7 @@ impl<'a> Options<'a> {
             ts: self.ts,
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
+            keep_directives: self.keep_directives,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
@@ -248,6 +289,7 @@ impl<'a> Options<'a> {
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
+                code_coverage: f.code_coverage,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
@@ -328,6 +370,7 @@ impl<'a> Options<'a> {
             jsx,
             keep_names: true,
             ignore_dce_annotations: false,
+            keep_directives: false,
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
@@ -454,7 +497,7 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
-        // What the parser only logs is an error all the same: the statements are its best guess.
+        // What the parser only logs is still an error: the statements are its best guess.
         if p.log().errors > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
@@ -1157,11 +1200,11 @@ impl<'a> Parser<'a> {
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
+                        if should_move && appended {
                             // `Part` isn't `Copy`; pop+push instead of last+truncate.
-                            before.push(parts.pop().expect("unreachable"));
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SExportDefault(value) => {
@@ -1170,10 +1213,10 @@ impl<'a> Parser<'a> {
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
-                            before.push(parts.pop().expect("unreachable"));
+                        if should_move && appended {
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SEnum(_) => {
@@ -2123,6 +2166,7 @@ impl<'a> Parser<'a> {
                     B::Object {
                         properties,
                         is_single_line: false,
+                        close_brace_loc: bun_ast::Loc::EMPTY,
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -2418,13 +2462,6 @@ impl<'a> Parser<'a> {
                     },
                 ],
             )?;
-        }
-
-        // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        if !p.response_ref.is_null()
-            && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
-        {
-            p.generate_import_stmt_for_bake_response(&mut before)?;
         }
 
         if !before.is_empty() || !after.is_empty() {

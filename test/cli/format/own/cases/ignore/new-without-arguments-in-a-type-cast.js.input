@@ -1,0 +1,3 @@
+/** @type {Foo} */ (new Foo // prettier-ignore
+).bar;
+/** @type {Foo} */ (new Foo /* prettier-ignore */).bar;

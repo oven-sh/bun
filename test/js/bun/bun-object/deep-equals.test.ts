@@ -1,4 +1,6 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import assert from "node:assert";
+import util from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -145,6 +147,132 @@ describe("Bun.deepEquals strict mode", () => {
   // against Object.prototype.
   it.failing("distinguishes a null-prototype object from an object literal", () => {
     expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
+  });
+});
+
+// The native comparison visits a pair of one internal type once. So each of these pairs must get its answer in both argument orders from that one visit.
+describe("pairs of one internal type that are unequal in both argument orders", () => {
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const passes = (assertion: () => void) => {
+    try {
+      assertion();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const entryPoints: [string, (a: unknown, b: unknown) => boolean][] = [
+    ["Bun.deepEquals", (a, b) => deepEquals(a, b)],
+    ["Bun.deepEquals strict", (a, b) => deepEquals(a, b, true)],
+    ["Bun.deepEquals strict, skipPrototype", (a, b) => deepEquals(a, b, true, true)],
+    // The negated matcher passes for an unequal pair, so it prints no diff of the two values.
+    ["expect().toEqual", (a, b) => !passes(() => expect(a).not.toEqual(b))],
+    ["expect().toStrictEqual", (a, b) => !passes(() => expect(a).not.toStrictEqual(b))],
+    ["util.isDeepStrictEqual", (a, b) => util.isDeepStrictEqual(a, b)],
+    ["util.isDeepStrictEqual, skipPrototype", (a, b) => util.isDeepStrictEqual(a, b, true as any)],
+  ];
+  const pairs: [string, () => unknown, () => unknown][] = [
+    [
+      "URLSearchParams with a repeated name",
+      () => new URLSearchParams("a=1&a=1"),
+      () => new URLSearchParams("a=1&a=2"),
+    ],
+    [
+      "Headers with a repeated name",
+      () =>
+        new Headers([
+          ["set-cookie", "a"],
+          ["set-cookie", "a"],
+        ]),
+      () =>
+        new Headers([
+          ["set-cookie", "a"],
+          ["x", "1"],
+        ]),
+    ],
+    ["Reflect and a boxed Symbol", () => Reflect, () => Object(Symbol.iterator)],
+    ["Math and a boxed BigInt", () => Math, () => Object(1n)],
+    ["boxed BigInts with different values", () => Object(1n), () => Object(2n)],
+    [
+      "the main global and a vm global that holds its enumerable properties",
+      () => globalThis,
+      () => vm.runInContext("this", vm.createContext({ ...globalThis })),
+    ],
+  ];
+  describe.each(entryPoints)("%s", (_, equal) => {
+    it.each(pairs)("%s", (_, a, b) => {
+      expect([equal(a(), b()), equal(b(), a())]).toEqual([false, false]);
+    });
+  });
+});
+
+// Each row reads a leaf getter under 10 nested collections. A second comparison of a level doubles the count.
+describe("reads a value under nested Sets and Maps once per side", () => {
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  let reads = 0;
+  const nested = (wrap: (value: unknown) => unknown) => {
+    let value: unknown = {
+      get value() {
+        reads++;
+        return 1;
+      },
+    };
+    for (let depth = 0; depth < 10; depth++) value = wrap(value);
+    return value;
+  };
+  const sharedKey = { id: 1 };
+  class Tagged extends Map {
+    tag = 1;
+  }
+  const wraps: [string, (value: unknown) => unknown][] = [
+    ["a string key", value => new Map([["k", value]])],
+    ["one object member of a Set", value => new Set([value])],
+    ["one object key that only one side holds", value => new Map([[{ id: 1 }, value]])],
+    ["an object key that both sides hold", value => new Map([[sharedKey, value]])],
+    ["a subclass with a field", value => new Tagged([["k", value]])],
+    ["an own string property", value => Object.assign(new Map([["k", value]]), { x: 1 })],
+    ["a Set member beside a number", value => new Set([value, 1])],
+  ];
+  it.each([
+    ["Bun.deepEquals", (a: unknown, b: unknown) => deepEquals(a, b)],
+    ["Bun.deepEquals strict", (a: unknown, b: unknown) => deepEquals(a, b, true)],
+    ["Bun.deepEquals strict, skipPrototype", (a: unknown, b: unknown) => deepEquals(a, b, true, true)],
+    ["expect().toEqual", (a: unknown, b: unknown) => expect(a).toEqual(b)],
+    ["expect().toStrictEqual", (a: unknown, b: unknown) => expect(a).toStrictEqual(b)],
+    ["assert.deepEqual", (a: unknown, b: unknown) => assert.deepEqual(a, b)],
+  ])("%s", (_, compare) => {
+    const wrong: string[] = [];
+    for (const [name, wrap] of wraps) {
+      const a = nested(wrap);
+      const b = nested(wrap);
+      reads = 0;
+      compare(a, b);
+      if (reads !== 2) wrong.push(`${name}: ${reads} reads`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+// A pair of one internal type is compared once, and not once per argument order. The boxed String comparison calls a
+// user `toString` before the own properties are compared, so the calls count the comparisons.
+describe("a boxed String with an own property is converted once per side", () => {
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  it.each([
+    ["Bun.deepEquals strict", (a: unknown, b: unknown) => deepEquals(a, b, true)],
+    ["Bun.deepEquals strict, skipPrototype", (a: unknown, b: unknown) => deepEquals(a, b, true, true)],
+    ["expect().toStrictEqual", (a: unknown, b: unknown) => expect(a).toStrictEqual(b)],
+    // node reads the string of both operands and does not call `toString`.
+    ["util.isDeepStrictEqual", (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b)],
+    ["util.isDeepStrictEqual, skipPrototype", (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b, true as any)],
+  ])("%s", (_, compare) => {
+    let calls = 0;
+    const toString = function () {
+      calls++;
+      return "a";
+    };
+    const boxed = () => Object.assign(new String("a"), { toString });
+    compare(boxed(), boxed());
+    expect(calls).toBe(2);
   });
 });
 

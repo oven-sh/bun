@@ -1046,10 +1046,15 @@ JSArray* createPair(JSGlobalObject* globalObject, JSValue value)
     return pair;
 }
 
-bool checkText(JSGlobalObject* globalObject, ThrowScope& scope, FixKind kind, JSValue text)
+// ESLint 10 refuses a text that isn't a string. Earlier versions add it to a string when they merge or apply the fix.
+bool checkText(JSGlobalObject* globalObject, ThrowScope& scope, FixKind kind, JSValue& text)
 {
     if (kind == FixKind::Remove || text.isString()) [[likely]]
         return true;
+    if (LintHost::from(globalObject)->isBeforeESLint10()) {
+        text = text.toString(globalObject);
+        return !scope.exception();
+    }
     throwTypeError(globalObject, scope, "'text' must be a string"_s);
     return false;
 }

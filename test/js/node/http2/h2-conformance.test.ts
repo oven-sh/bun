@@ -422,6 +422,11 @@ describe("a stream that the server finishes before respond() (RFC 9113 §8.1)", 
     ["end()", stream => stream.end(), []],
     ["end(), close(code)", stream => (stream.end(), stream.close(NGHTTP2_INTERNAL_ERROR)), ["RST_STREAM 2"]],
     ["end(), respond()", stream => (stream.end(), stream.respond({ ":status": 201 })), ["HEADERS with END_STREAM"]],
+    [
+      "end(), respond() on 'finish'",
+      stream => (stream.once("finish", () => stream.respond({ ":status": 201 })), stream.end()),
+      ["HEADERS with END_STREAM"],
+    ],
   ])("%s sends no DATA frame ahead of the HEADERS frame", async (_, finish, expected) => {
     const server = http2.createServer();
     const { promise: finished, resolve } = Promise.withResolvers<void>();

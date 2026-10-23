@@ -2073,6 +2073,8 @@ enum StreamState {
   // second rstStream() with an error code would write the frame again.
   ResetScheduled = 1 << 9, // 1000000000 = 512
   EndedByClose = 1 << 10, // 10000000000 = 1024
+  // The server ended the stream before respond(), which then puts END_STREAM on the HEADERS frame.
+  EndedBeforeHeaders = 1 << 11, // 100000000000 = 2048
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2736,12 +2738,17 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       const native = session[bunHTTP2Native];
       if (native) {
         if (this instanceof ServerHttp2Stream && !this.headersSent) {
-          // Ended before respond(): an empty DATA frame would go out with no HEADERS frame before
-          // it, and the peer would answer with a connection error. respond() forces endStream for
-          // these streams, so END_STREAM rides on the HEADERS frame and the streamEnd(7) dispatch
-          // completes this callback through markWritableDone. close() completes it too, and sends
-          // only RST_STREAM.
-          this[bunHTTP2StreamFinal] = callback;
+          // An empty DATA frame would go out with no HEADERS frame before it, and the peer would
+          // answer with a connection error. Like node, send nothing and emit 'finish'.
+          this[bunHTTP2StreamStatus] = status | StreamState.EndedBeforeHeaders;
+          if (this._readableState.destroyed) {
+            // Called from _destroy(). Its markStreamClosed() completes this once the writable is
+            // marked destroyed again, so there's no 'finish'.
+            this[bunHTTP2StreamFinal] = callback;
+            return;
+          }
+          this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+          callback();
           return;
         }
         if ((status & StreamState.EndedByClose) !== 0) {
@@ -3693,7 +3700,7 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest === true ||
-      this[bunHTTP2StreamFinal] !== null
+      (this[bunHTTP2StreamStatus] & StreamState.EndedBeforeHeaders) !== 0
     ) {
       // When endStream is true the HEADERS frame itself carries END_STREAM
       // and the stream moves to HALF_CLOSED_LOCAL inside native request().

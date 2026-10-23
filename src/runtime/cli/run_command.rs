@@ -1566,8 +1566,9 @@ impl Run<'_> {
             }
         };
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
-        match loaded {
-            None => {}
+        // A fatal error during the entry's top-level await: its wait returned with the promise pending.
+        let entry_cut_short = match loaded {
+            None => false,
             Some(Ok(promise)) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
@@ -1605,14 +1606,18 @@ impl Run<'_> {
                     dump_build_error(vm);
                     log_clear_msgs(vm);
                 }
+
+                promise.status() == PromiseStatus::Pending && vm.has_fatal_error()
             }
             Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
-        }
+        };
 
         // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
+        // The tick would resume a top-level await that a fatal error cut short.
         if vm.standalone_module_graph.is_none()
+            && !entry_cut_short
             && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
@@ -1663,6 +1668,8 @@ impl Run<'_> {
                         .unwrap_or(JSValue::UNDEFINED);
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {
+                            // No turn that would resume the top-level await a fatal error cut short.
+                            PromiseStatus::Pending if entry_cut_short => break 'brk result,
                             PromiseStatus::Pending => {
                                 result.then2(
                                     vm.global(),

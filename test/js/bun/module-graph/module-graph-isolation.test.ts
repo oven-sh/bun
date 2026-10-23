@@ -1106,6 +1106,8 @@ const dir = String(
       graph.dispose();
       await hostTurn();
       const text = app.response.text();
+      // An unhandled rejection ends the run, so the host handles the one it expects.
+      text.catch(() => {});
       await hostTurn();
       // Graphs disposed while their script awaits a body.
       for (let i = 0; i < 20; i++) {

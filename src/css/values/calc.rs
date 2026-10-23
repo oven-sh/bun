@@ -602,30 +602,33 @@ impl<V: CalcValue> Calc<V> {
         input: &mut css::Parser,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        // A leading numeral keeps one written divisor apart until it meets a math function:
-        // `6 / 7 * min(..)`.
-        let mut leading = match node {
-            Calc::Number(number) if ends_with_numeral(input.slice_to(leading_end)) => {
-                Some((number, 1.0))
-            }
+        // A leading number and one divisor of it, each with the end of its token. They stay
+        // apart until they meet a math function: `6 / 7 * min(..)`.
+        let mut leading_number = match node {
+            Calc::Number(number) => Some((number, leading_end)),
             _ => None,
         };
+        let mut leading_divisor = None;
         loop {
             let rhs = Self::parse_value(input, parse_ident)?;
-            let written = ends_with_numeral(input.slice_to(input.position()));
+            let rhs_end = input.position();
             if operator == b'*' as u32 {
                 // At least one of the operands must be a number.
                 if let Calc::Number(n) = rhs {
-                    leading = None;
-                    node = node.scale(if written {
-                        Scale::Times(n)
-                    } else {
-                        Scale::By(n)
-                    });
+                    leading_number = None;
+                    node = node.scale_by_token(Scale::Times(n), input.slice_to(rhs_end));
                 } else if let Calc::Number(val) = node {
-                    node = match leading.take() {
-                        Some((number, divisor)) if rhs.keeps_function() => {
-                            rhs.scale(Scale::Times(number)).scale(Scale::Over(divisor))
+                    let is_numeral =
+                        |(_, end): (f32, usize)| ends_with_numeral(input.slice_to(end));
+                    node = match leading_number.take() {
+                        Some(number)
+                            if rhs.keeps_function()
+                                && is_numeral(number)
+                                && leading_divisor.is_none_or(is_numeral) =>
+                        {
+                            let (divisor, _) = leading_divisor.unwrap_or((1.0, 0));
+                            rhs.scale(Scale::Times(number.0))
+                                .scale(Scale::Over(divisor))
                         }
                         _ => rhs.mul_f32(val),
                     };
@@ -635,17 +638,11 @@ impl<V: CalcValue> Calc<V> {
             } else {
                 match rhs {
                     Calc::Number(val) if val != 0.0 => {
-                        leading = match leading {
-                            Some((number, divisor)) if written && divisor == 1.0 => {
-                                Some((number, val))
-                            }
-                            _ => None,
-                        };
-                        node = node.scale(if written {
-                            Scale::Over(val)
-                        } else {
-                            Scale::By(1.0 / val)
-                        });
+                        if leading_divisor.is_some() {
+                            leading_number = None;
+                        }
+                        leading_divisor = Some((val, rhs_end));
+                        node = node.scale_by_token(Scale::Over(val), input.slice_to(rhs_end));
                     }
                     _ => return Err(input.new_custom_error(css::ParserError::invalid_value)),
                 }
@@ -660,6 +657,15 @@ impl<V: CalcValue> Calc<V> {
                 }
             };
         }
+    }
+
+    /// Scales by the number that ends `input`. Only an expression that keeps a math function
+    /// reads whether that number is a numeral.
+    fn scale_by_token(self, scale: Scale, input: &[u8]) -> Self {
+        if !self.keeps_function() || !ends_with_numeral(input) {
+            return self.mul_f32(scale.factor());
+        }
+        self.scale(scale)
     }
 
     #[inline(never)]

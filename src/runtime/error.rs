@@ -116,10 +116,6 @@ pub enum Error {
     InvalidHeaderName,
     #[error("FormatError")]
     FormatError,
-    #[error("ReadError")]
-    ReadError,
-    #[error("OpenError")]
-    OpenError,
     #[error("UnexpectedPendingResolution")]
     UnexpectedPendingResolution,
     #[error("AsyncModule")]
@@ -396,8 +392,6 @@ impl Error {
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",
-            Self::ReadError => "ReadError",
-            Self::OpenError => "OpenError",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",

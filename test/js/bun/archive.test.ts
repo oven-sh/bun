@@ -1,8 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
-import { join } from "path";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join, relative } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
@@ -12,7 +24,7 @@ function ustarHeader(
   name: string | Buffer,
   size: number,
   typeflag: string = "0",
-  fields: { mode?: Uint8Array; mtime?: Uint8Array } = {},
+  fields: { mode?: Uint8Array; mtime?: Uint8Array; linkname?: string } = {},
 ): Buffer {
   const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
   if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
@@ -27,6 +39,7 @@ function ustarHeader(
   if (fields.mtime) h.set(fields.mtime.subarray(0, 12), 136);
   h.write("        ", 148);
   h.write(typeflag, 156);
+  if (fields.linkname) h.write(fields.linkname, 157);
   h.write("ustar\0", 257);
   h.write("00", 263);
   let sum = 0;
@@ -2265,6 +2278,257 @@ describe("Bun.Archive", () => {
       const count = await archive.extract(String(dir), { glob: "**/*.ts" });
 
       expect(count).toBe(0);
+    });
+
+    describe("an entry that the file system refuses", () => {
+      type Options = { glob: string | readonly string[] };
+      type Outcome = { settled: string; files: string[] };
+
+      // What the call settled with, and what the destination holds afterwards.
+      async function extractInto(dest: string, tar: Uint8Array, options?: Options): Promise<Outcome> {
+        const settled = await new Bun.Archive(tar).extract(dest, options).then(
+          count => `resolved ${count}`,
+          (error: NodeJS.ErrnoException) =>
+            error.code
+              ? `rejected ${error.code} ${error.syscall} ${relative(dest, error.path!).replaceAll("\\", "/")}`
+              : `rejected ${error.message}`,
+        );
+        const files = readdirSync(dest, { recursive: true }).map(name => String(name).replaceAll("\\", "/"));
+        return { settled, files: files.sort() };
+      }
+
+      const tarOf = (...entries: Buffer[]) => new Uint8Array(Buffer.concat([...entries, Buffer.alloc(1024)]));
+      const file = (name: string) => ustarEntry(name, Buffer.from(name));
+      const directory = (name: string) => ustarHeader(name, 0, "5");
+      const symlink = (name: string, linkname: string) => ustarHeader(name, 0, "2", { linkname });
+
+      const nestedThenTopLevel = tarOf(file("d/a.txt"), file("b.txt"));
+
+      // Makes `path` read-only, and returns what undoes it.
+      const readOnly = (path: string, mode: number) => {
+        const before = statSync(path).mode;
+        chmodSync(path, mode);
+        return () => chmodSync(path, before);
+      };
+
+      type Prepare = (dest: string) => void | (() => void);
+
+      // `plain` is extract(dir), and `glob` is extract(dir, { glob: "**" }). Each gets its own destination.
+      async function bothCallForms(tar: Uint8Array, prepare: Prepare) {
+        const outcome: Record<string, Outcome> = {};
+        for (const [form, options] of [
+          ["plain", undefined],
+          ["glob", { glob: "**" }],
+        ] as const) {
+          using dir = tempDir("archive-refused-entry", {});
+          const restore = prepare(String(dir));
+          try {
+            outcome[form] = await extractInto(String(dir), tar, options);
+          } finally {
+            restore?.();
+          }
+        }
+        return outcome;
+      }
+
+      // With a glob the rejection is the error of the system call that was refused.
+      const fileRows: {
+        name: string;
+        skip?: boolean;
+        tar: Uint8Array;
+        prepare: Prepare;
+        plain: Outcome;
+        glob: Outcome;
+      }[] = [
+        {
+          name: "a file holds the name of the directory of an entry",
+          tar: nestedThenTopLevel,
+          prepare: dest => writeFileSync(join(dest, "d"), "in the way"),
+          plain: { settled: "rejected ReadError", files: ["d"] },
+          glob: { settled: `rejected ${isWindows ? "ENOENT" : "ENOTDIR"} open d/a.txt`, files: ["d"] },
+        },
+        {
+          name: "a directory holds the name of a file entry",
+          tar: nestedThenTopLevel,
+          prepare: dest => mkdirSync(join(dest, "b.txt")),
+          plain: { settled: "rejected ReadError", files: ["b.txt", "d", "d/a.txt"] },
+          glob: {
+            settled: `rejected ${isWindows ? "EEXIST" : "EISDIR"} open b.txt`,
+            files: ["b.txt", "d", "d/a.txt"],
+          },
+        },
+        {
+          name: "a read-only file holds the name of a file entry",
+          // Root can write a file of any mode.
+          skip: isRoot,
+          tar: nestedThenTopLevel,
+          prepare: dest => {
+            writeFileSync(join(dest, "b.txt"), "in the way");
+            return readOnly(join(dest, "b.txt"), 0o444);
+          },
+          plain: { settled: "rejected ReadError", files: ["b.txt", "d", "d/a.txt"] },
+          glob: {
+            settled: `rejected ${isWindows ? "EPERM" : "EACCES"} open b.txt`,
+            files: ["b.txt", "d", "d/a.txt"],
+          },
+        },
+        {
+          name: "a dangling symlink holds the name of the directory of an entry",
+          // A symlink needs a privilege on Windows.
+          skip: isWindows,
+          tar: nestedThenTopLevel,
+          prepare: dest => symlinkSync("missing", join(dest, "d")),
+          plain: { settled: "rejected ReadError", files: ["d"] },
+          glob: { settled: "rejected ENOENT open d/a.txt", files: ["d"] },
+        },
+        {
+          name: "a dangling symlink holds the name of a directory above an entry",
+          skip: isWindows,
+          tar: tarOf(file("s/sub/a.txt"), file("z.txt")),
+          prepare: dest => symlinkSync("missing", join(dest, "s")),
+          plain: { settled: "rejected ReadError", files: ["s"] },
+          glob: { settled: "rejected ENOENT mkdir s/sub", files: ["s"] },
+        },
+        {
+          name: "the destination is read-only, and the entry is in a directory",
+          // Root ignores the mode of a directory, and Windows has no such mode.
+          skip: isWindows || isRoot,
+          tar: tarOf(file("d/a.txt")),
+          prepare: dest => readOnly(dest, 0o555),
+          plain: { settled: "rejected ReadError", files: [] },
+          glob: { settled: "rejected EACCES mkdir d", files: [] },
+        },
+        {
+          name: "the destination is read-only, and the entry is at the top level",
+          skip: isWindows || isRoot,
+          tar: tarOf(file("b.txt")),
+          prepare: dest => readOnly(dest, 0o555),
+          plain: { settled: "rejected ReadError", files: [] },
+          glob: { settled: "rejected EACCES open b.txt", files: [] },
+        },
+      ];
+
+      for (const row of fileRows) {
+        test.concurrent.skipIf(!!row.skip)(`a file entry rejects in both call forms when ${row.name}`, async () => {
+          expect(await bothCallForms(row.tar, row.prepare)).toEqual({ plain: row.plain, glob: row.glob });
+        });
+      }
+
+      // extract(dir) resolves for these on POSIX: it counts a directory entry that it cannot make.
+      const directoryRows: { name: string; skip?: boolean; tar: Uint8Array; prepare: Prepare; glob: Outcome }[] = [
+        {
+          name: "a file holds its name",
+          tar: tarOf(directory("x/")),
+          prepare: dest => writeFileSync(join(dest, "x"), "in the way"),
+          glob: { settled: "rejected EEXIST mkdir x", files: ["x"] },
+        },
+        {
+          name: "a file holds the name of its parent",
+          tar: tarOf(directory("x/y/")),
+          prepare: dest => writeFileSync(join(dest, "x"), "in the way"),
+          glob: {
+            settled: isWindows ? expect.stringMatching(/^rejected E\w+ mkdir x/) : "rejected ENOTDIR mkdir x/y",
+            files: ["x"],
+          },
+        },
+        {
+          name: "a dangling symlink holds the name of its parent",
+          skip: isWindows,
+          tar: tarOf(directory("x/y/")),
+          prepare: dest => symlinkSync("missing", join(dest, "x")),
+          glob: { settled: "rejected ENOENT mkdir x/y", files: ["x"] },
+        },
+        {
+          name: "the destination is read-only",
+          skip: isWindows || isRoot,
+          tar: tarOf(directory("x/")),
+          prepare: dest => readOnly(dest, 0o555),
+          glob: { settled: "rejected EACCES mkdir x", files: [] },
+        },
+      ];
+
+      for (const row of directoryRows) {
+        test.concurrent.skipIf(!!row.skip)(`a directory entry rejects with a glob when ${row.name}`, async () => {
+          using dir = tempDir("archive-refused-directory", {});
+          const restore = row.prepare(String(dir));
+          try {
+            expect(await extractInto(String(dir), row.tar, { glob: "**" })).toEqual(row.glob);
+          } finally {
+            restore?.();
+          }
+        });
+      }
+
+      test.concurrent.each([{ glob: ["**"] }, { glob: ["!other/**"] }])(
+        "every spelling of the glob rejects: %j",
+        async options => {
+          using dir = tempDir("archive-refused-spelling", { "d": "in the way" });
+          expect(await extractInto(String(dir), nestedThenTopLevel, options)).toEqual(fileRows[0].glob);
+        },
+      );
+
+      test.concurrent("resolves when the glob leaves the refused entry out", async () => {
+        using dir = tempDir("archive-refused-entry-filtered-out", { "d": "in the way" });
+        expect(await extractInto(String(dir), nestedThenTopLevel, { glob: ["**", "!d/**"] })).toEqual({
+          settled: "resolved 1",
+          files: ["b.txt", "d"],
+        });
+      });
+
+      test.concurrent("a directory entry below directories that the archive does not list is made", async () => {
+        using dir = tempDir("archive-directory-entry-below-missing", {});
+        expect(await extractInto(String(dir), tarOf(directory("a/b/c/")), { glob: "**" })).toEqual({
+          settled: "resolved 1",
+          files: ["a", "a/b", "a/b/c"],
+        });
+      });
+
+      test.concurrent("a second extract with a glob writes every entry again", async () => {
+        using dir = tempDir("archive-glob-second-extract", {});
+        // The mode of each member is 0444: no write bit.
+        const readOnlyMember = (name: string, data: string) =>
+          Buffer.concat([
+            ustarHeader(name, data.length, "0", { mode: Buffer.from("0000444\0") }),
+            Buffer.from(data.padEnd(512, "\0")),
+          ]);
+        const membersThen = (data: string) =>
+          tarOf(directory("d/"), readOnlyMember("d/r.txt", "overwritten"), readOnlyMember("d/r.txt", data));
+
+        const written = join(String(dir), "d/r.txt");
+
+        expect(await extractInto(String(dir), membersThen("first"), { glob: "**" })).toEqual({
+          settled: "resolved 3",
+          files: ["d", "d/r.txt"],
+        });
+        expect(readFileSync(written, "utf8")).toBe("first");
+        // Root can open a file that has no write bit, so the mode is the proof for every user.
+        expect(statSync(written).mode & 0o200).toBe(0o200);
+
+        expect(await extractInto(String(dir), membersThen("second"), { glob: "**" })).toEqual({
+          settled: "resolved 3",
+          files: ["d", "d/r.txt"],
+        });
+        expect(readFileSync(written, "utf8")).toBe("second");
+      });
+
+      // Not changed: a symlink entry that cannot be made is skipped. extract(dir) counts it, a glob does not.
+      test.concurrent.skipIf(isWindows)("a symlink entry whose name is taken does not fail the call", async () => {
+        const tar = tarOf(file("b.txt"), symlink("l", "b.txt"));
+        expect(await bothCallForms(tar, dest => writeFileSync(join(dest, "l"), "in the way"))).toEqual({
+          plain: { settled: "resolved 2", files: ["b.txt", "l"] },
+          glob: { settled: "resolved 1", files: ["b.txt", "l"] },
+        });
+      });
+
+      // extract(dir) makes symlinks last, so the entry below `s` becomes a file in a directory `s`.
+      // With a glob the symlink is made in archive order, and the entry below it cannot be written.
+      test.concurrent.skipIf(isWindows)("an entry below a dangling symlink of the same archive", async () => {
+        const tar = tarOf(symlink("s", "missing"), file("s/x.txt"));
+        expect(await bothCallForms(tar, () => {})).toEqual({
+          plain: { settled: "resolved 2", files: ["s", "s/x.txt"] },
+          glob: { settled: "rejected ENOENT open s/x.txt", files: ["s"] },
+        });
+      });
     });
   });
 

@@ -429,17 +429,27 @@ impl BunxCommand {
             let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
             let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
             let bin_in_dir = |name: &[u8]| package_bin(name, &[dir_name, b"/", name].concat());
-            let mut first: Option<PackageBin> = None;
+            // First by name: readdir order differs per file system. npx refuses to choose here.
+            let mut first: Option<Box<[u8]>> = None;
             while let Ok(Some(current)) = iterator.next() {
-                if current.kind == bun_sys::EntryKind::File && !current.name.slice().is_empty() {
-                    if current.name.slice_u8() == preferred {
+                let name = current.name.slice_u8();
+                if current.kind == bun_sys::EntryKind::File && !name.is_empty() {
+                    if name == preferred {
                         return Ok(bin_in_dir(preferred));
                     }
-                    first.get_or_insert_with(|| bin_in_dir(current.name.slice_u8()));
+                    // `.DS_Store` in a linked package would otherwise be first.
+                    if name[0] != b'.'
+                        && first
+                            .as_deref()
+                            .is_none_or(|first| strings::order(name, first).is_lt())
+                    {
+                        first = Some(name.into());
+                    }
                 }
             }
-            if let Some(bin) = first {
-                return Ok(bin);
+            if let Some(name) = first {
+                let file = [dir_name, b"/", &*name].concat().into_boxed_slice();
+                return Ok(PackageBin { name, file });
             }
         }
 

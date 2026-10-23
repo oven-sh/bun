@@ -667,6 +667,34 @@ module.exports = { scope };
     }
   });
 
+  // The base types of an interface that two files declare have an error in each file. The task of the second file leaves
+  // the error in the first file to that file's task, which is done later here, because the file is long.
+  test("reports the errors of one query in two files, whichever file's task is done first", async () => {
+    const names = Array.from({ length: 4 }, (_, i) => `C${i}`);
+    using dir = project({
+      "s.ts":
+        names.map(name => `export interface ${name} { a: 1 }\n`).join("") +
+        `declare module "./n" {\n${names.map(name => `  interface ${name} extends ${name} {}\n`).join("")}}\n` +
+        Array.from({ length: 600 }, (_, i) => `export const x${i} = [1, 2].map(v => ({ v, i: ${i} })).length;\n`).join(
+          "",
+        ),
+      "n.ts":
+        `import type { ${names.map(name => `${name} as _${name}`).join(", ")} } from "./s";\nexport * from "./s";\n` +
+        `declare module "./n" {\n${names.map(name => `  interface ${name} extends _${name} {}\n`).join("")}}\n`,
+    });
+    const expected = ["n.ts", "s.ts"].flatMap((file, at) =>
+      names.map(
+        (name, i) =>
+          `${file}(${i + [4, 6][at]},13): error TS2310: Type '${name}' recursively references itself as a base type.`,
+      ),
+    );
+    const threads = [1, 2, 2, 3, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(expected.join("\n"));
+      expect(exitCode).toBe(1);
+    }
+  });
+
   // `a.ts`, `b.ts` and `c.ts` import each other, and the type of `routes` depends on itself. What tsc reports depends
   // on where it enters that cycle. Here that's `0first.ts`, which doesn't import those files. It gets there through a
   // declaration that a file outside the import cycle makes visible everywhere.

@@ -288,7 +288,7 @@ pub(super) struct Sink<'s> {
     by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
     /// The queries under which a task has reported, each with the `Task::number` of the first task that did. Any thread
     /// can add to it, so it's on the regular heap too.
-    owners: Guarded<FxHashMap<Query, u64>>,
+    owners: Guarded<FxHashMap<(Query, FileId), u64>>,
 }
 
 impl<'s> Sink<'s> {
@@ -363,7 +363,9 @@ impl super::Program<'_> {
     pub(super) fn publish_reported(&self, task: u64, reported: Logged) {
         let mut owners = self.sink.owners.lock();
         for (owner, diagnostic) in reported {
-            if owner.is_some_and(|q| *owners.entry(q).or_insert(task) != task) {
+            // Per file: a task for a later file leaves the diagnostics in an earlier one to that file's task.
+            let file = diagnostic.file;
+            if owner.is_some_and(|q| *owners.entry((q, file)).or_insert(task) != task) {
                 continue;
             }
             self.push_diagnostic(diagnostic);

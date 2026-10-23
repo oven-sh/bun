@@ -5071,6 +5071,271 @@ describe("the newest run of a Statement owns its cursor", () => {
   });
 });
 
+// A read of the values runs script: a getter, a Proxy trap, an accessor in a list. That script can start a run of the
+// same Statement and leave it on a row. sqlite3_clear_bindings() frees the copies of the text and blob values, which
+// such a run still reads.
+describe("a bind that fails keeps the values of a run of the same Statement", () => {
+  const outOfRange = new RangeError("BigInt value '1180591620717411303424' is out of range");
+  const NAMED = "SELECT $p AS p, $s || x AS s, x FROM t";
+  const NUMBERED = "SELECT ?1 AS p, ?2 || x AS s, x FROM t";
+  const innerRow = x => ({ p: "inner", s: "inner" + x, x: BigInt(x) });
+
+  function open() {
+    const db = new Database(":memory:", { safeIntegers: true });
+    db.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1), (2), (3)");
+    return db;
+  }
+
+  // "other" has the length of "inner" and of "outer": it takes the allocation that a clear of the values would free.
+  function bindOther(db) {
+    expect(db.query("SELECT $v AS v").get({ $v: "other" })).toEqual({ v: "other" });
+  }
+
+  it.each([
+    ["get()", (q, values) => q.get(values)],
+    ["all()", (q, values) => q.all(values)],
+    ["values()", (q, values) => q.values(values)],
+    ["raw()", (q, values) => q.raw(values)],
+    ["run()", (q, values) => q.run(values)],
+    ["iterate()", (q, values) => q.iterate(values).next()],
+  ])("%s: a getter leaves an iterator on a row, then a value throws", (_, use) => {
+    using db = open();
+    const q = db.query(NAMED);
+    let iterator;
+    let firstRow;
+    const values = {
+      get $p() {
+        iterator = q.iterate({ $p: "inner", $s: "inner" });
+        firstRow = iterator.next().value;
+        return 2n ** 70n;
+      },
+      $s: "outer",
+    };
+
+    expect(() => use(q, values)).toThrow(outOfRange);
+    bindOther(db);
+    expect(firstRow).toEqual(innerRow(1));
+    expect([...iterator]).toEqual([innerRow(2), innerRow(3)]);
+  });
+
+  // The other reads that run script. `start` leaves an iterator on its first row.
+  it.each([
+    [
+      "an accessor in a list",
+      NUMBERED,
+      ["inner", "inner"],
+      start =>
+        Object.defineProperty([, "outer"], 0, {
+          get() {
+            start();
+            return 2n ** 70n;
+          },
+        }),
+    ],
+    [
+      "a getter of a key that is an index",
+      NUMBERED,
+      ["inner", "inner"],
+      start => ({
+        get 0() {
+          start();
+          return 2n ** 70n;
+        },
+        1: "outer",
+      }),
+    ],
+    [
+      "a trap of a Proxy",
+      NAMED,
+      [{ $p: "inner", $s: "inner" }],
+      start =>
+        new Proxy(
+          { $p: 2n ** 70n, $s: "outer" },
+          {
+            get(target, key) {
+              if (key === "$p") start();
+              return target[key];
+            },
+          },
+        ),
+    ],
+  ])("%s leaves an iterator on a row, then a value throws", (_, sql, innerValues, makeValues) => {
+    using db = open();
+    const q = db.query(sql);
+    let iterator;
+    let firstRow;
+    const values = makeValues(() => {
+      iterator = q.iterate(...innerValues);
+      firstRow = iterator.next().value;
+    });
+
+    expect(() => q.get(values)).toThrow(outOfRange);
+    bindOther(db);
+    expect(firstRow).toEqual(innerRow(1));
+    expect([...iterator]).toEqual([innerRow(2), innerRow(3)]);
+  });
+
+  it.each([
+    ["iterate()", q => q.iterate()],
+    ["Symbol.iterator", q => q[Symbol.iterator]()],
+  ])("%s without values in a getter keeps the values that were bound before it", (_, iterate) => {
+    using db = open();
+    const q = db.query("SELECT $s || x AS s, $p AS p, x FROM t");
+    const row = x => ({ s: "outer" + x, p: null, x: BigInt(x) });
+    let iterator;
+    let firstRow;
+    const values = {
+      $s: "outer",
+      get $p() {
+        // Binds nothing and clears nothing: this run has the values of the call that is binding.
+        iterator = iterate(q);
+        firstRow = iterator.next().value;
+        return 2n ** 70n;
+      },
+    };
+
+    expect(() => q.get(values)).toThrow(outOfRange);
+    bindOther(db);
+    expect(firstRow).toEqual(row(1));
+    expect([...iterator]).toEqual([row(2), row(3)]);
+  });
+
+  // Statement#native takes the array of arguments as it is, so an accessor at index 0 runs script before the binder
+  // knows what was passed. The public methods pass a fresh array.
+  describe("Statement#native with an accessor at index 0 of the arguments", () => {
+    it("that leaves an iterator on a row: its values are not bound, and the iterator keeps its own", () => {
+      using db = open();
+      const q = db.query(NAMED);
+      let iterator;
+      const args = Object.defineProperty([], 0, {
+        get() {
+          iterator = q.iterate({ $p: "inner", $s: "inner" });
+          iterator.next();
+          return { $p: "outer", $s: "outer" };
+        },
+      });
+
+      // SQLite refuses a bind on a statement that is on a row.
+      expect(() => q.native.get(args)).toThrow(
+        expect.objectContaining({ code: "SQLITE_MISUSE", message: "bad parameter or other API misuse" }),
+      );
+      bindOther(db);
+      expect([...iterator]).toEqual([innerRow(2), innerRow(3)]);
+    });
+
+    it("that leaves an iterator on a row and nothing to bind: the call reads the next row of that run", () => {
+      using db = open();
+      const q = db.query(NAMED);
+      const args = Object.defineProperty([], 0, {
+        get() {
+          q.iterate({ $p: "inner", $s: "inner" }).next();
+          return [];
+        },
+      });
+
+      expect(q.native.get(args)).toEqual(innerRow(2));
+    });
+
+    it("that throws: the values of the last call are cleared", () => {
+      using db = open();
+      const q = db.query("SELECT $a AS a, $b AS b");
+      const args = Object.defineProperty([], 0, {
+        get() {
+          throw new Error("from the accessor");
+        },
+      });
+
+      expect(q.get({ $a: 1, $b: 2 })).toEqual({ a: 1n, b: 2n });
+      expect(() => q.native.get(args)).toThrow(new Error("from the accessor"));
+      expect(q.get()).toEqual({ a: null, b: null });
+    });
+  });
+
+  describe("a call without values after a value that threw has the values that were bound before it", () => {
+    it("in a list", () => {
+      using db = open();
+      const q = db.query("SELECT ?1 AS a, ?2 AS b, ?3 AS c");
+
+      expect(q.get(1, 2, 3)).toEqual({ a: 1n, b: 2n, c: 3n });
+      expect(() => q.get(7, 2n ** 70n, 9)).toThrow(outOfRange);
+      expect(q.get()).toEqual({ a: 7n, b: null, c: null });
+      // An unsupported value leaves the same.
+      expect(q.get(1, 2, 3)).toEqual({ a: 1n, b: 2n, c: 3n });
+      expect(() => q.get(8, Symbol(), 9)).toThrow(
+        new TypeError("Binding expected string, TypedArray, boolean, number, bigint or null"),
+      );
+      expect(q.get()).toEqual({ a: 8n, b: null, c: null });
+    });
+
+    it("in an object, where before is the order of the parameters and not of the keys", () => {
+      using db = open();
+      const q = db.query("SELECT $a AS a, $b AS b, $c AS c");
+      const row = { a: 7n, b: null, c: null };
+
+      expect(q.get({ $a: 1, $b: 2, $c: 3 })).toEqual({ a: 1n, b: 2n, c: 3n });
+      expect(() => q.get({ $c: 9, $b: 2n ** 70n, $a: 7 })).toThrow(outOfRange);
+      expect([q.get(), q.all(), q.values()]).toEqual([row, [row], [[7n, null, null]]]);
+    });
+
+    it("and run() writes them", () => {
+      using db = open();
+      db.exec("CREATE TABLE w (a, b, c)");
+      const insert = db.query("INSERT INTO w VALUES (?1, ?2, ?3)");
+
+      insert.run("first", "b of first", "c of first");
+      expect(() => insert.run("second", 2n ** 70n, "c of second")).toThrow(outOfRange);
+      insert.run();
+      expect(db.query("SELECT * FROM w").all()).toEqual([
+        { a: "first", b: "b of first", c: "c of first" },
+        { a: "second", b: null, c: null },
+      ]);
+    });
+  });
+
+  // In a child: SQLite itself reads the bytes of the freed copy, and a build with ASAN stops there. 5000 bytes is past
+  // SQLite's lookaside of 1200 bytes, so the copy is an allocation of its own.
+  it("an iterator reads the whole text of its own run", async () => {
+    const src = `
+      const { Database } = require("bun:sqlite");
+      const A = Buffer.alloc(5000, "A").toString();
+      const B = Buffer.alloc(5000, "B").toString();
+      const db = new Database(":memory:", { safeIntegers: true });
+      db.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1), (2), (3)");
+      const q = db.query("SELECT $p AS p, $s || x AS s, x FROM t");
+      let iterator;
+      try {
+        q.get({
+          get $p() {
+            iterator = q.iterate({ $p: "inner", $s: A });
+            iterator.next();
+            return 2n ** 70n;
+          },
+          $s: "outer",
+        });
+      } catch (e) {
+        console.log(e.message);
+      }
+      db.query("SELECT $v AS v").get({ $v: B });
+      for (const row of iterator) console.log(String(row.x), row.p, row.s.length, row.s === A + row.x);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      // symbolize=0: the report of a build with ASAN comes at once.
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+      stdout: ["BigInt value '1180591620717411303424' is out of range", "2 inner 5001 true", "3 inner 5001 true", ""],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("Statement#get", () => {
   it("does not read the rows after the first", () => {
     using db = new Database(":memory:");

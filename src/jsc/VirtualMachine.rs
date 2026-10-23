@@ -424,8 +424,7 @@ pub struct VirtualMachine {
     /// made under an earlier count is the finished file's, and is dropped.
     pub test_isolation_generation: u32,
     pub test_isolation_state: TestIsolationState,
-    /// The cached cwd no longer names the real one (a `chdir` moved past what
-    /// it could record). Cleared by the next successful `getcwd`.
+    /// Cached cwd no longer names the real one; cleared by the next successful `getcwd`.
     cwd_cache_stale: bool,
 }
 
@@ -5955,9 +5954,7 @@ impl VirtualMachine {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
-            // chdir succeeded, so the cwd moved even though getcwd cannot name
-            // it (ENOENT: unlinked, ERANGE: past PATH_MAX). Node ignores the
-            // lookup failure, so track the move logically rather than throw.
+            // chdir already moved the cwd; Node ignores the failed getcwd, so do not roll back.
             bun_sys::Result::Err(_) => {
                 // A stale cache is not a base to join onto.
                 if cache_stale {
@@ -5974,8 +5971,7 @@ impl VirtualMachine {
                         buf[..n].copy_from_slice(resolved);
                         n
                     }
-                    // Does not fit in PATH_MAX either: keep the old cwd and
-                    // stop trusting it until getcwd succeeds.
+                    // Keep the old cwd and stop trusting it until getcwd succeeds.
                     None => {
                         self.cwd_cache_stale = true;
                         return Ok(());

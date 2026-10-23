@@ -2069,7 +2069,7 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
 );
 
 // Windows reads a regular file with one uv_fs_read at a time on libuv's thread pool. process.resourceUsage().fsRead
-// counts those reads there. Shared by the two fixtures below.
+// counts those reads there. Shared by the fixtures below.
 const countFileReads = /* ts */ `
 import { open } from "node:fs/promises";
 
@@ -2097,37 +2097,49 @@ export async function settled(idleFd: number) {
 }
 `;
 
-test.skipIf(!isWindows)("aborted Response(Bun.file) does not run the read it has queued", async () => {
-  using dir = tempDir("serve-file-abort-queued-read", {
+// The fixture has one pool thread (UV_THREADPOOL_SIZE=1) and parks it in a read of the empty stdin pipe. The first
+// read of the response is then still in the queue of the pool when the client leaves. "started" frees the pool before
+// the server closes the reader, so that this read is already running.
+async function abortWithReadInPool(mode: "queued" | "started") {
+  using dir = tempDir("serve-file-abort-read-" + mode, {
     "probe.txt": "probe",
     "count-file-reads.ts": countFileReads,
     "fixture.ts": /* ts */ `
-import { closeSync, ftruncateSync, openSync, read } from "node:fs";
+import { closeSync, ftruncateSync, openSync, read, writeSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { lowestFreeFd, reads, settled } from "./count-file-reads.ts";
 
+const started = process.argv[2] === "started";
 const file = openSync("body.bin", "w");
 ftruncateSync(file, 16 * 1024 * 1024);
 closeSync(file);
 
-const aborted = Promise.withResolvers<void>();
+let queued = true;
+const aborted = Promise.withResolvers<{ atAbort: number; queuedAtAbort: boolean; startedAtAbort: boolean }>();
 using server = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
-  async fetch(req) {
-    const { pathname } = new URL(req.url);
-    if (pathname === "/aborted") {
-      await aborted.promise;
-      return new Response("ok");
+  fetch(req) {
+    if (req.url.endsWith("/leave")) {
+      // This listener runs before the server lets go of the reader.
+      req.signal.addEventListener("abort", () => {
+        const atAbort = reads();
+        const queuedAtAbort = queued;
+        if (started) {
+          // The test closes stdin now, and the pool thread takes the read of the response.
+          writeSync(1, "close stdin\\n");
+          const deadline = performance.now() + 2000;
+          while (reads() === atAbort && performance.now() < deadline);
+        }
+        aborted.resolve({ atAbort, queuedAtAbort, startedAtAbort: reads() > atAbort });
+      });
     }
-    if (pathname === "/leave") req.signal.addEventListener("abort", () => aborted.resolve());
     return new Response(Bun.file("body.bin"));
   },
 });
-console.log(server.port);
 
 const idleFd = await lowestFreeFd();
-let before = reads();
+const before = reads();
 const full = await fetch(server.url + "full").then(res => res.arrayBuffer());
 await settled(idleFd);
 const fullReads = reads() - before;
@@ -2138,10 +2150,8 @@ const client = await Bun.connect({
   port: server.port,
   socket: { data: () => head.resolve(), close: () => head.resolve(), error: () => head.resolve() },
 });
-// The pool has one thread (UV_THREADPOOL_SIZE=1). This read of the empty stdin pipe keeps it busy until the test
-// closes stdin. Until then every later job stays queued: the open below, then the first read of the response.
-const busy = new Promise(resolve => read(0, Buffer.alloc(1), 0, 1, null, resolve));
-let queued = true;
+// Until the test closes stdin, every later job stays queued: the open below, then the first read of the response.
+const parked = new Promise(resolve => read(0, Buffer.alloc(1), 0, 1, null, resolve));
 const opened = open("probe.txt", "r").then(handle => {
   queued = false;
   return handle.close();
@@ -2149,20 +2159,23 @@ const opened = open("probe.txt", "r").then(handle => {
 client.write("GET /leave HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
 await head.promise;
 client.terminate();
-await aborted.promise;
-const queuedAtAbort = queued;
-before = reads();
-await busy;
+const { atAbort, ...state } = await aborted.promise;
+if (!started) {
+  // One turn of the event loop later the server has closed the reader.
+  await new Promise(resolve => setImmediate(resolve));
+  writeSync(1, "close stdin\\n");
+}
+await parked;
 await opened;
 const released = await settled(idleFd);
 console.log(
-  JSON.stringify({ fullBytes: full.byteLength, fullReads, queuedAtAbort, released, readsAfterAbort: reads() - before }),
+  JSON.stringify({ fullBytes: full.byteLength, fullReads, ...state, released, readsAfterAbort: reads() - atAbort }),
 );
 `,
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
+    cmd: [bunExe(), "fixture.ts", mode],
     env: { ...bunEnv, UV_THREADPOOL_SIZE: "1" },
     cwd: String(dir),
     stdin: "pipe",
@@ -2172,69 +2185,75 @@ console.log(
   const stderr = proc.stderr.text();
   const decoder = new TextDecoder();
   let stdout = "";
-  let stdinClosed: Promise<unknown> | undefined;
+  let stdinOpen = true;
   for await (const chunk of proc.stdout) {
     stdout += decoder.decode(chunk, { stream: true });
-    // The fixture prints its port first. It answers /aborted when its server knows that the client left.
-    if (!stdinClosed && stdout.includes("\n")) {
-      stdinClosed = fetch(`http://127.0.0.1:${parseInt(stdout)}/aborted`)
-        .then(res => res.text())
-        .catch(() => {})
-        .then(() => proc.stdin.end());
+    if (stdinOpen && stdout.includes("close stdin\n")) {
+      stdinOpen = false;
+      proc.stdin.end();
     }
   }
-  await stdinClosed;
 
   expect(await stderr).toBe("");
-  const { fullReads, readsAfterAbort, ...result } = JSON.parse(stdout.trim().split("\n").at(-1)!);
-  expect(result).toEqual({ fullBytes: 16 * 1024 * 1024, queuedAtAbort: true, released: true });
+  const { fullReads, ...result } = JSON.parse(stdout.trim().split("\n").at(-1)!);
   // A read takes 64 KiB, so the whole file is 256 reads.
   expect(fullReads).toBeGreaterThanOrEqual(64);
-  expect(readsAfterAbort).toBeLessThan(8);
   expect(await proc.exited).toBe(0);
+  return result;
+}
+
+test.skipIf(!isWindows)("aborted Response(Bun.file) does not run the read it has queued", async () => {
+  expect(await abortWithReadInPool("queued")).toEqual({
+    fullBytes: 16 * 1024 * 1024,
+    queuedAtAbort: true,
+    startedAtAbort: false,
+    released: true,
+    readsAfterAbort: 0,
+  });
 });
 
-test.skipIf(!isWindows)("aborted Response(Bun.file) stops reading its file mid-body", async () => {
-  using dir = tempDir("serve-file-abort-mid-body", {
-    "probe.txt": "probe",
-    "small.bin": Buffer.alloc(300_000, "abcdefghijklmnopqrstuvwxyz"),
-    "count-file-reads.ts": countFileReads,
-    "fixture.ts": /* ts */ `
+test.skipIf(!isWindows)("aborted Response(Bun.file) stops after the read that is running", async () => {
+  expect(await abortWithReadInPool("started")).toEqual({
+    fullBytes: 16 * 1024 * 1024,
+    queuedAtAbort: true,
+    startedAtAbort: true,
+    released: true,
+    readsAfterAbort: 1,
+  });
+});
+
+// server.stop(true) aborts the response from the data callback of the client. The server is not in a callback of its
+// own then, and the client takes every chunk, so a read of the file is in flight.
+test.skipIf(!isWindows)(
+  "Response(Bun.file) stops reading its file when server.stop(true) aborts it mid-body",
+  async () => {
+    using dir = tempDir("serve-file-stop-mid-body", {
+      "probe.txt": "probe",
+      "small.bin": Buffer.alloc(300_000, "abcdefghijklmnopqrstuvwxyz"),
+      "count-file-reads.ts": countFileReads,
+      "fixture.ts": /* ts */ `
 import { closeSync, ftruncateSync, openSync, readFileSync } from "node:fs";
 import { lowestFreeFd, reads, settled } from "./count-file-reads.ts";
 
-// 4096 reads of 64 KiB.
-const file = openSync("big.bin", "w");
-ftruncateSync(file, 256 * 1024 * 1024);
+const file = openSync("body.bin", "w");
+ftruncateSync(file, 16 * 1024 * 1024);
 closeSync(file);
 
-using server = Bun.serve({
-  port: 0,
-  hostname: "127.0.0.1",
-  routes: { "/route": new Response(Bun.file("big.bin")) },
-  fetch: req => new Response(Bun.file(req.url.endsWith("/small") ? "small.bin" : "big.bin")),
-});
+const serve = () =>
+  Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: { "/route": new Response(Bun.file("body.bin")) },
+    fetch: req => new Response(Bun.file(req.url.endsWith("/small") ? "small.bin" : "body.bin")),
+  });
+const idleFd = await lowestFreeFd();
 
-// The pool has one thread (UV_THREADPOOL_SIZE=1). These jobs keep it busy, so that a read of the response waits in
-// the queue of the pool, or has just started, when the client leaves.
-function occupyPool(jobs: number) {
-  let stop = false;
-  const stopped = Promise.all(
-    Array.from({ length: jobs }, async () => {
-      while (!stop) await lowestFreeFd();
-    }),
-  );
-  return () => {
-    stop = true;
-    return stopped;
-  };
-}
-
-// Requests path, takes more than the given number of bytes of the response and resets the connection.
-// Resolves with the read count at that moment.
-async function leaveAfter(path: string, bytes: number) {
-  const left = Promise.withResolvers<number>();
+// A client takes 1 MB of the body. Then the server stops.
+async function stopMidBody(path: string) {
+  const server = serve();
+  const stopped = Promise.withResolvers<{ pendingAtStop: number; atStop: number }>();
   let received = 0;
+  let stopping = false;
   await Bun.connect({
     hostname: "127.0.0.1",
     port: server.port,
@@ -2242,56 +2261,61 @@ async function leaveAfter(path: string, bytes: number) {
       open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"),
       data(socket, chunk) {
         received += chunk.length;
-        if (received <= bytes) return;
-        left.resolve(reads());
-        socket.terminate();
+        if (stopping || received <= 1_000_000) return;
+        stopping = true;
+        const pendingAtStop = server.pendingRequests;
+        const atStop = reads();
+        server.stop(true);
+        stopped.resolve({ pendingAtStop, atStop });
       },
-      close: () => left.reject(new Error("the server closed the connection after " + received + " bytes")),
-      error: (socket, error) => left.reject(error),
+      close: () => stopped.reject(new Error("the server closed the connection after " + received + " bytes")),
+      error: (socket, error) => stopped.reject(error),
     },
   });
-  return left.promise;
+  const { pendingAtStop, atStop } = await stopped.promise;
+  const released = await settled(idleFd);
+  return { path, pendingAtStop, pending: server.pendingRequests, released, readsAfterStop: reads() - atStop };
 }
 
-const idleFd = await lowestFreeFd();
-const readsAfterLeave: number[] = [];
-let released = true;
-for (let i = 0; i < 24 && released; i++) {
-  const freePool = occupyPool(2 << (i % 4));
-  const atLeave = await leaveAfter(i % 2 ? "/route" : "/handler", [0, 100_000, 1_000_000][i % 3]);
-  await freePool();
-  released = await settled(idleFd);
-  readsAfterLeave.push(reads() - atLeave);
-  // This response read the rest of the file. The next ones would only take more time to say the same.
-  if (readsAfterLeave[i] >= 1024) break;
-}
+const rounds = [];
+for (const path of ["/handler", "/route", "/handler", "/route"]) rounds.push(await stopMidBody(path));
+using server = serve();
 const small = await fetch(server.url + "small").then(res => res.bytes());
-console.log(
-  JSON.stringify({ released, readsAfterLeave, intact: Buffer.from(small).equals(readFileSync("small.bin")) }),
-);
+console.log(JSON.stringify({ rounds, intact: Buffer.from(small).equals(readFileSync("small.bin")) }));
 `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    env: { ...bunEnv, UV_THREADPOOL_SIZE: "1" },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const { readsAfterLeave, ...result } = JSON.parse(stdout);
-  // A response that does not stop reads the other 255 MiB, which is about 4000 reads.
-  expect(readsAfterLeave.filter((count: number) => count >= 32)).toEqual([]);
-  expect(readsAfterLeave).toHaveLength(24);
-  expect(result).toEqual({ released: true, intact: true });
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    const { rounds, intact } = JSON.parse(stdout);
+    // A response that does not stop reads the other 15 MiB, which is about 240 reads.
+    expect(
+      rounds.map((round: { readsAfterStop: number }) => round.readsAfterStop).filter((count: number) => count >= 8),
+    ).toEqual([]);
+    expect({ intact, rounds }).toEqual({
+      intact: true,
+      rounds: ["/handler", "/route", "/handler", "/route"].map(path => ({
+        path,
+        pendingAtStop: 1,
+        pending: 0,
+        released: true,
+        readsAfterStop: expect.any(Number),
+      })),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // A pipe has no end until its writer closes it. A response that nobody receives must not take its bytes.
-test.skipIf(!isWindows)("the next response can read stdin after an aborted Response(Bun.stdin)", async () => {
+test("the next response can read stdin after an aborted Response(Bun.stdin)", async () => {
   using dir = tempDir("serve-stdin-abort", {
     "fixture.ts": /* ts */ `
 const aborted = Promise.withResolvers<void>();

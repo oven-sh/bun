@@ -607,6 +607,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         if self.stale_files.bit_length > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
+        } else {
+            // Not `ensure_stale_bit_capacity`: `insert_empty` and `insert_css_file_on_server` read the bits its step fills.
+            self.stale_files
+                .resize(file_index.get() as usize + 1, false)?;
         }
 
         *ctx.get_cached_index(SIDE, index) =

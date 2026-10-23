@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -689,5 +689,129 @@ devTest("dev.write resolves only after the new module body has run", {
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+// The stale bitset of an incremental graph grows in steps of 512 files. In the
+// tests below the first bundle adds files past the end of the set, and something
+// else in that bundle grows the set. The bundled modules must not be bundled again.
+const modulesPastOneBitsetStep = Array.from({ length: 600 }, (_, i) => `m${i}`);
+const moduleFilesPastOneBitsetStep = Object.fromEntries(
+  modulesPastOneBitsetStep.map(name => [`modules/${name}.ts`, `export const ${name} = "${name}";`]),
+);
+const importModulesPastOneBitsetStep = (from: string) =>
+  modulesPastOneBitsetStep.map(name => `import "${from}/modules/${name}";`).join("\n");
+// `onLoad` runs once for each file the dev server parses, and not for a file it has cached.
+const countModuleLoads = `
+  export default [
+    {
+      name: "count-module-loads",
+      setup(build) {
+        build.onLoad({ filter: /[\\\\/]modules[\\\\/]m\\d+\\.ts$/ }, args => {
+          const loads = (globalThis.moduleLoads ??= { client: 0, server: 0 });
+          loads[args.side]++;
+        });
+      },
+    },
+  ];
+`;
+devTest("hot update sends only the changed module in a page with a stylesheet and over 512 modules", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["style.css"],
+      scripts: ["root.ts"],
+    }),
+    // The stylesheet grows the bitset of the client graph, and so does "child.css" in the second pass of the bundle.
+    "style.css": `
+      @import "./child.css";
+      body { color: red; }
+    `,
+    "child.css": `
+      p { color: blue; }
+    `,
+    // "root.ts" does not accept updates, so a hot update that carries one of the modules it imports reloads the page.
+    "root.ts": [importModulesPastOneBitsetStep("."), `import "./a";`, `console.log("root");`].join("\n"),
+    "a.ts": [importModulesPastOneBitsetStep("."), `console.log("a1");`, `import.meta.hot.accept();`].join("\n"),
+    ...moduleFilesPastOneBitsetStep,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("a1", "root");
+
+    // Only "a.ts" changed and it accepts itself. The client exits if the page reloads.
+    await dev.write(
+      "a.ts",
+      [importModulesPastOneBitsetStep("."), `console.log("a2");`, `import.meta.hot.accept();`].join("\n"),
+    );
+    await c.expectMessage("a2");
+
+    // A hot update is one call that takes the modules it carries, keyed by id.
+    let modulesInHotUpdate: string[] = [];
+    new Function("self", await c.getMostRecentHmrChunk())({
+      [Symbol.for("bun:hmr")]: (modules: Record<string, unknown>) => (modulesInHotUpdate = Object.keys(modules)),
+    });
+    expect(modulesInHotUpdate).toEqual(["a.ts"]);
+  },
+});
+devTest("repairing a failed import does not parse the unchanged modules of a route again (over 512 modules)", {
+  framework: minimalFramework,
+  pluginFile: countModuleLoads,
+  files: {
+    "routes/index.ts": [
+      importModulesPastOneBitsetStep(".."),
+      `import { marker } from "../a";`,
+      `export default function (req, meta) {`,
+      `  return Response.json({ marker, loads: globalThis.moduleLoads });`,
+      `}`,
+    ].join("\n"),
+    // The failed import is recorded after the modules are bundled. It grows the bitset of the server graph.
+    "a.ts": [importModulesPastOneBitsetStep("."), `import "./missing";`, `export const marker = "a1";`].join("\n"),
+    ...moduleFilesPastOneBitsetStep,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+
+    await dev.write("a.ts", [importModulesPastOneBitsetStep("."), `export const marker = "a2";`].join("\n"));
+    await dev.fetch("/").equals({ marker: "a2", loads: { client: 0, server: modulesPastOneBitsetStep.length } });
+  },
+});
+// The bitset of the client graph is empty until the first bundle when the framework has no client entry point.
+devTest("editing a client component does not parse its unchanged import again in a route with a stylesheet", {
+  framework: minimalFramework,
+  pluginFile: countModuleLoads,
+  files: {
+    "routes/index.ts": `
+      import "../style.css";
+      import "../Component";
+
+      export default function (req, meta) {
+        return Response.json({ loads: globalThis.moduleLoads });
+      }
+    `,
+    "Component.ts": `
+      "use client";
+      import { m0 } from "./modules/m0";
+      export const marker = "c1" + m0;
+    `,
+    "modules/m0.ts": `
+      export const m0 = "m0";
+    `,
+    "style.css": `
+      body { color: red; }
+    `,
+  },
+  async test(dev) {
+    // The first bundle parses "modules/m0.ts" once for each graph.
+    await dev.fetch("/").equals({ loads: { client: 1, server: 1 } });
+
+    await dev.write(
+      "Component.ts",
+      `
+        "use client";
+        import { m0 } from "./modules/m0";
+        export const marker = "c2" + m0;
+      `,
+    );
+    await dev.fetch("/").equals({ loads: { client: 1, server: 1 } });
   },
 });

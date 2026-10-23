@@ -2885,14 +2885,28 @@ pub mod formatter {
         }
     }
 
+    /// The opening bracket of an array while its named properties print. `Pending`: not written.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum ArrayOpen {
+        /// An object, or an array whose first element wrote the bracket.
+        No,
+        Pending,
+        Inline,
+        Multiline,
+    }
+
     pub(crate) struct PropertyIteratorCtx<'a, 'b, const C: bool> {
         pub(crate) formatter: &'a mut Formatter<'b>,
         pub(crate) writer: &'a mut dyn bun_io::Write,
         pub(crate) i: usize,
         pub(crate) single_line: bool,
         pub(crate) always_newline: bool,
+        pub(crate) array_open: ArrayOpen,
         pub(crate) parent: JSValue,
     }
+
+    // Lives in the frame of every nested `print_object` and `print_array`.
+    const _: () = assert!(core::mem::size_of::<PropertyIteratorCtx<'_, '_, true>>() == 48);
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
         pub(crate) fn handle_first_property(
@@ -2925,6 +2939,34 @@ pub mod formatter {
                 let _ = self.formatter.write_indent(self.writer);
             }
             Ok(())
+        }
+
+        /// Writes the bracket that `print_array` held back for an array with no elements.
+        #[cold]
+        #[inline(never)]
+        fn open_array(&mut self) {
+            let indent = self.formatter.indent;
+            let mut writer = WrappedWriter {
+                ctx: &mut *self.writer,
+                failed: false,
+                estimated_line_length: &mut self.formatter.estimated_line_length,
+            };
+            let was_good_time =
+                self.formatter.always_newline_scope || writer.good_time_for_a_new_line(indent);
+            if !self.single_line && (self.formatter.ordered_properties || was_good_time) {
+                writer.reset_line(indent);
+                writer.write_all(b"[\n");
+                writer.write_indent(indent);
+                writer.add_for_new_line(1);
+                self.array_open = ArrayOpen::Multiline;
+            } else {
+                writer.write_all(b"[ ");
+                writer.add_for_new_line(2);
+                self.array_open = ArrayOpen::Inline;
+            }
+            if writer.failed {
+                self.formatter.failed = true;
+            }
         }
 
         /// Prints `key:` (with quoting/symbol decoration) and the optional
@@ -3055,7 +3097,9 @@ pub mod formatter {
             }
 
             if ctx.i == 0 {
-                if ctx.handle_first_property(global_this, ctx.parent).is_err() {
+                if ctx.array_open == ArrayOpen::Pending {
+                    ctx.open_array();
+                } else if ctx.handle_first_property(global_this, ctx.parent).is_err() {
                     return None;
                 }
             }
@@ -4197,8 +4241,12 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            let len = value.get_length(self.global_this)?;
-            if len != 0 && self.depth > self.max_depth {
+            // `named`: no elements, and an enumerable named property to print.
+            let (len, named) = match value.array_length_and_named_keys() {
+                Some((len, named)) => (u64::from(len), named),
+                None => (value.get_length(self.global_this)?, false),
+            };
+            if (len != 0 || named) && self.depth > self.max_depth {
                 return self.print_depth_exceeded_marker::<C>(writer_, "Array");
             }
             // Cache once: `disable_inspect_custom` does not change inside this
@@ -4219,7 +4267,7 @@ pub mod formatter {
             // TODO: DerivedArray does not get passed along in JSType, and it's
             // not clear why.
 
-            if len == 0 {
+            if len == 0 && !named {
                 writer.write_all(b"[]");
                 writer.add_for_new_line(2);
                 return Ok(());
@@ -4241,6 +4289,10 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
+                    if len == 0 {
+                        // `open_array` writes the bracket with the first property.
+                        break 'first;
+                    }
                     let element = value.get_direct_index(self.global_this, 0)?;
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
@@ -4277,7 +4329,7 @@ pub mod formatter {
                     }
                 }
 
-                let mut i: u32 = 1;
+                let mut i = u32::from(len != 0);
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
@@ -4420,7 +4472,9 @@ pub mod formatter {
                     // Hoist field reads before `formatter: self` reborrows the
                     // whole `*self` (struct-literal field order is not eval
                     // order in the borrow checker's eyes once `self` is moved).
-                    let always_newline = !self.single_line
+                    // `open_array` reads the line length of an empty array: do not reset it.
+                    let always_newline = len != 0
+                        && !self.single_line
                         && (self.always_newline_scope || self.good_time_for_a_new_line());
                     let single_line = self.single_line;
                     let global_this = self.global_this;
@@ -4429,6 +4483,11 @@ pub mod formatter {
                         writer: writer_,
                         always_newline,
                         single_line,
+                        array_open: if len == 0 {
+                            ArrayOpen::Pending
+                        } else {
+                            ArrayOpen::No
+                        },
                         parent: value,
                         i: i as usize,
                     };
@@ -4437,6 +4496,7 @@ pub mod formatter {
                         (&raw mut iter).cast::<c_void>(),
                         PropertyIteratorCtx::<C>::for_each,
                     )?;
+                    let array_open = iter.array_open;
                     if self.failed {
                         return Ok(());
                     }
@@ -4445,6 +4505,18 @@ pub mod formatter {
                         failed: false,
                         estimated_line_length: &mut self.estimated_line_length,
                     };
+                    match array_open {
+                        // No property printed.
+                        ArrayOpen::Pending => {
+                            writer.write_all(b"[]");
+                            if writer.failed {
+                                self.failed = true;
+                            }
+                            return Ok(());
+                        }
+                        ArrayOpen::Multiline => was_good_time = true,
+                        ArrayOpen::Inline | ArrayOpen::No => {}
+                    }
                 }
             }
 
@@ -5339,6 +5411,7 @@ pub mod formatter {
                 writer: writer_,
                 always_newline,
                 single_line,
+                array_open: ArrayOpen::No,
                 parent: value,
                 i: 0,
             };

@@ -2509,6 +2509,16 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
+    /// For an `Array`: its length, and whether it is empty and has an enumerable named property.
+    pub(crate) fn array_length_and_named_keys(self) -> Option<(u32, bool)> {
+        unsafe extern "C" {
+            safe fn Bun__JSArray__lengthAndNamedKeys(this: JSValue) -> u64;
+        }
+        match Bun__JSArray__lengthAndNamedKeys(self) {
+            u64::MAX => None,
+            bits => Some((bits as u32, bits >> 32 != 0)),
+        }
+    }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {

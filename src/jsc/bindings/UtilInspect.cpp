@@ -68,6 +68,34 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
+// The length, plus bit 32 when the array is empty and has an enumerable named key. UINT64_MAX: not an ArrayType cell.
+extern "C" uint64_t Bun__JSArray__lengthAndNamedKeys(JSC::EncodedJSValue encodedValue)
+{
+    static constexpr uint64_t namedKeys = 1ULL << 32;
+
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isCell() || value.asCell()->type() != ArrayType)
+        return std::numeric_limits<uint64_t>::max();
+
+    JSArray* array = uncheckedDowncast<JSArray>(value.asCell());
+    uint64_t length = array->length();
+    Structure* structure = array->structure();
+    if (length || (!structure->outOfLineSize() && !structure->inlineSize()))
+        return length;
+
+    VM& vm = array->vm();
+    bool found = false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName())
+            return true;
+        if (entry.key() == vm.propertyNames->constructor.impl()) // the property walk never prints it
+            return true;
+        found = true;
+        return false;
+    });
+    return found ? namedKeys : 0;
+}
+
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by
 // util.inspect and the REPL completer: own keys minus array indices, without materializing
 // a name (or descriptor) per element the way Object.getOwnPropertyNames() on an array would.

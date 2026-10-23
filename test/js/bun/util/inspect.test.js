@@ -1112,6 +1112,233 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/22569
+describe("Bun.inspect array with no elements and non-indexed properties", () => {
+  const keyed = (keys = { total: 7001 }) => Object.assign([], keys);
+  const withOneElement = keys => Object.assign([1], keys);
+  const pastTheDepthLimit = value => Bun.inspect({ x: value }, { depth: 0 });
+
+  it("prints the properties", () => {
+    class Rows extends Array {}
+    const emptied = Object.assign([1, 2], { total: 7001 });
+    emptied.length = 0;
+    const circular = [];
+    circular.self = circular;
+
+    expect({
+      oneKey: Bun.inspect(keyed()),
+      twoKeys: Bun.inspect(keyed({ count: 7001, command: "S7002" })),
+      symbolKey: Bun.inspect(keyed({ [Symbol("s")]: 1 })),
+      subclass: Bun.inspect(Object.assign(new Rows(), { total: 7001 })),
+      emptied: Bun.inspect(emptied),
+      frozen: Bun.inspect(Object.freeze(keyed())),
+      proxy: Bun.inspect(new Proxy(keyed(), {})),
+      circular: Bun.inspect(circular),
+      inObject: Bun.inspect({ rows: keyed() }),
+      inArray: Bun.inspect([keyed(), [], keyed()]),
+      mapValue: Bun.inspect(new Map([["rows", keyed()]])),
+      setElement: Bun.inspect(new Set([keyed()])),
+    }).toEqual({
+      oneKey: "[ total: 7001 ]",
+      twoKeys: '[ count: 7001, command: "S7002" ]',
+      symbolKey: "[ [Symbol(s)]: 1 ]",
+      subclass: "[ total: 7001 ]",
+      emptied: "[ total: 7001 ]",
+      frozen: "[ total: 7001 ]",
+      proxy: "[ total: 7001 ]",
+      circular: "[ self: [Circular] ]",
+      inObject: "{\n  rows: [ total: 7001 ],\n}",
+      inArray: "[\n  [ total: 7001 ], [], [ total: 7001 ]\n]",
+      mapValue: 'Map(1) {\n  "rows": [ total: 7001 ],\n}',
+      setElement: "Set(1) {\n  [ total: 7001 ],\n}",
+    });
+  });
+
+  it("does not call a getter", () => {
+    let calls = 0;
+    const array = Object.defineProperty([], "lazy", { get: () => ++calls, enumerable: true });
+    expect(Bun.inspect(array)).toBe("[ lazy: [Getter] ]");
+    expect(calls).toBe(0);
+  });
+
+  it("throws what the inspect.custom of a property value throws", () => {
+    const thrower = {
+      [Bun.inspect.custom]() {
+        throw new Error("boom");
+      },
+    };
+    expect(() => Bun.inspect(keyed({ x: thrower }))).toThrow(new Error("boom"));
+  });
+
+  it("uses the format of an array that has elements", () => {
+    const meta = { meta: { a: 1 } };
+    const twoKeys = { b: 2, total: 7001 };
+    const longKey = Buffer.alloc(90, "k").toString();
+    const manyKeys = Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`key${i}`, i]));
+
+    expect({
+      objectValue: Bun.inspect(keyed(meta)),
+      objectValueWithOneElement: Bun.inspect(withOneElement(meta)),
+      sorted: Bun.inspect(keyed(twoKeys), { sorted: true }),
+      sortedWithOneElement: Bun.inspect(withOneElement(twoKeys), { sorted: true }),
+      colors: Bun.inspect(keyed(), { colors: true }),
+      colorsWithOneElement: Bun.inspect(withOneElement({ total: 7001 }), { colors: true }),
+      afterColumn80: Bun.inspect({ [longKey]: keyed() }),
+      afterColumn80WithOneElement: Bun.inspect({ [longKey]: withOneElement({ total: 7001 }) }),
+      propertiesPassColumn80: Bun.inspect(keyed(manyKeys)),
+    }).toEqual({
+      objectValue: "[ meta: {\n    a: 1,\n  } ]",
+      objectValueWithOneElement: "[ 1, meta: {\n    a: 1,\n  } ]",
+      sorted: "[\n  b: 2, total: 7001\n]",
+      sortedWithOneElement: "[\n  1, b: 2, total: 7001\n]",
+      colors: "[ \x1b[0mtotal\x1b[2m:\x1b[0m \x1b[0m\x1b[33m7001\x1b[0m ]",
+      colorsWithOneElement:
+        "[ \x1b[0m\x1b[33m1\x1b[0m\x1b[0m\x1b[2m,\x1b[0m \x1b[0mtotal\x1b[2m:\x1b[0m \x1b[0m\x1b[33m7001\x1b[0m ]",
+      afterColumn80: `{\n  ${longKey}: [\n    total: 7001\n  ],\n}`,
+      afterColumn80WithOneElement: `{\n  ${longKey}: [\n    1, total: 7001\n  ],\n}`,
+      propertiesPassColumn80:
+        "[ key0: 0, key1: 1, key2: 2, key3: 3, key4: 4, key5: 5, key6: 6, key7: 7, key8: 8, key9: 9,\n" +
+        "  key10: 10, key11: 11, key12: 12, key13: 13, key14: 14, key15: 15, key16: 16, key17: 17,\n" +
+        "  key18: 18, key19: 19, key20: 20, key21: 21, key22: 22, key23: 23 ]",
+    });
+  });
+
+  it("stays on one line in a single-line format", () => {
+    const meta = { meta: { a: 1 } };
+    const twoKeys = { b: 2, total: 7001 };
+    const longKey = Buffer.alloc(90, "k").toString();
+
+    expect({
+      compact: Bun.inspect(keyed(meta), { compact: true }),
+      compactWithOneElement: Bun.inspect(withOneElement(meta), { compact: true }),
+      compactSorted: Bun.inspect(keyed(twoKeys), { compact: true, sorted: true }),
+      compactSortedWithOneElement: Bun.inspect(withOneElement(twoKeys), { compact: true, sorted: true }),
+      compactAfterColumn80: Bun.inspect({ [longKey]: keyed() }, { compact: true }),
+      tableCell: Bun.inspect.table([{ a: keyed(twoKeys) }], { sorted: true }),
+    }).toEqual({
+      compact: "[ meta: { a: 1 } ]",
+      compactWithOneElement: "[ 1, meta: { a: 1 } ]",
+      compactSorted: "[ b: 2, total: 7001 ]",
+      compactSortedWithOneElement: "[ 1, b: 2, total: 7001 ]",
+      compactAfterColumn80: `{ ${longKey}: [ total: 7001 ] }`,
+      tableCell:
+        "┌───┬───────────────────────┐\n" +
+        "│   │ a                     │\n" +
+        "├───┼───────────────────────┤\n" +
+        "│ 0 │ [ b: 2, total: 7001 ] │\n" +
+        "└───┴───────────────────────┘\n",
+    });
+  });
+
+  it("stops at the depth limit like an array that has elements", () => {
+    const meta = { meta: { a: 1 } };
+
+    expect({
+      nested: Bun.inspect({ keyed: keyed(), one: [1], plain: [] }, { depth: 0 }),
+      objectValue: Bun.inspect(keyed(meta), { depth: 0 }),
+      objectValueWithOneElement: Bun.inspect(withOneElement(meta), { depth: 0 }),
+    }).toEqual({
+      nested: "{\n  keyed: [Array ...],\n  one: [Array ...],\n  plain: [],\n}",
+      objectValue: "[ meta: [Object ...] ]",
+      objectValueWithOneElement: "[ 1, meta: [Object ...] ]",
+    });
+  });
+
+  it("prints [] when no property prints", () => {
+    const deleted = keyed();
+    delete deleted.total;
+    // The shape of a postgres.js result: every property is non-enumerable.
+    class Result extends Array {
+      constructor() {
+        super();
+        Object.defineProperties(this, {
+          count: { value: null, writable: true },
+          state: { value: { pid: 1 }, writable: true },
+          command: { value: null, writable: true },
+        });
+      }
+      static get [Symbol.species]() {
+        return Array;
+      }
+    }
+    class WithPrivateField extends Array {
+      #secret = 1;
+    }
+
+    expect({
+      plain: Bun.inspect([]),
+      deleted: Bun.inspect(deleted),
+      nonEnumerable: Bun.inspect(Object.defineProperty([], "hidden", { value: 1 })),
+      result: Bun.inspect(new Result()),
+      privateField: Bun.inspect(new WithPrivateField()),
+      arrayPrototype: Bun.inspect(Array.prototype),
+      args: Bun.inspect(
+        (function () {
+          return arguments;
+        })(),
+      ),
+      constructorKey: Bun.inspect(keyed({ constructor: 5 })),
+      // The property walk hides a key whose text is `constructor`, so the
+      // bracket that was held back is never written.
+      constructorSymbol: Bun.inspect(keyed({ [Symbol("constructor")]: 1 })),
+      constructorKeyAndTotal: Bun.inspect(keyed({ constructor: 5, total: 7001 })),
+    }).toEqual({
+      plain: "[]",
+      deleted: "[]",
+      nonEnumerable: "[]",
+      result: "[]",
+      privateField: "[]",
+      arrayPrototype: "[]",
+      args: "[]",
+      constructorKey: "[]",
+      constructorSymbol: "[]",
+      constructorKeyAndTotal: "[ total: 7001 ]",
+    });
+
+    expect({
+      nonEnumerable: pastTheDepthLimit(Object.defineProperty([], "hidden", { value: 1 })),
+      privateField: pastTheDepthLimit(new WithPrivateField()),
+      constructorKey: pastTheDepthLimit(keyed({ constructor: 5 })),
+    }).toEqual({
+      nonEnumerable: "{\n  x: [],\n}",
+      privateField: "{\n  x: [],\n}",
+      constructorKey: "{\n  x: [],\n}",
+    });
+  });
+
+  it("keeps the line breaks around arrays that have elements", () => {
+    const emptyArrays = count => Array.from({ length: count }, () => []);
+
+    expect({
+      longLine: Bun.inspect([1, Buffer.alloc(100, "x").toString()]),
+      emptyArrays: Bun.inspect(emptyArrays(21)),
+      emptyArraysAndKey: Bun.inspect([...emptyArrays(21), keyed()]),
+    }).toEqual({
+      longLine: `[ 1, "${Buffer.alloc(100, "x").toString()}" ]`,
+      emptyArrays: "[\n  [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],\n  []\n]",
+      emptyArraysAndKey:
+        "[\n  [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],\n  [], [ total: 7001 ]\n]",
+    });
+  });
+
+  it("prints the properties in a matcher message and not in a snapshot", () => {
+    let message;
+    try {
+      expect(keyed()).toBeNull();
+    } catch (error) {
+      message = Bun.stripANSI(error.message);
+    }
+    expect(message).toBe("expect(received).toBeNull()\n\nReceived: [ total: 7001 ]\n");
+
+    expect(keyed()).toMatchInlineSnapshot(`[]`);
+    expect({ rows: keyed() }).toMatchInlineSnapshot(`
+      {
+        "rows": [],
+      }
+    `);
+  });
+});
+
 describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
   it("Map respects max_depth", () => {
     let m = new Map([["leaf", 1]]);

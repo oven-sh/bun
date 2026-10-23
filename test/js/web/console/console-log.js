@@ -270,3 +270,32 @@ console.log("Hello %%i %i", 5, 6);
 
 // doesn't go out of bounds when printing
 console.log("%%d", 1);
+
+// Test array with extra properties
+{
+  // empty array with extra property
+  const emptyArrayWithItem = [];
+  emptyArrayWithItem["field_1"] = "field_1";
+  console.log(emptyArrayWithItem);
+
+  // Non-empty array with extra property
+  const nonEmptyArrayWithItem = [1, 2, 3];
+  nonEmptyArrayWithItem["field_1"] = "field_1";
+  console.log(nonEmptyArrayWithItem);
+
+  // empty array
+  const emptyArray = [];
+  console.log(emptyArray);
+
+  // Multiple properties on empty array
+  const emptyArrayWithItems = [];
+  emptyArrayWithItems.field1 = "field_1";
+  emptyArrayWithItems.field2 = 2;
+  console.log(emptyArrayWithItems);
+
+  // Multiple properties on non empty array
+  const nonEmptyArrayWithItems = [1, 2, 3];
+  nonEmptyArrayWithItems.field1 = "field_1";
+  nonEmptyArrayWithItems.field2 = 2;
+  console.log(nonEmptyArrayWithItems);
+}

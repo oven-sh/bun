@@ -68,6 +68,14 @@ pub struct Summary {
     /// Set by the hoisted linker only. A copy of `tree::Builder::places`.
     pub(crate) places: Vec<(u64, PackageID)>,
 
+    /// Set by the isolated linker only. True if this install created `node_modules/.bun`, so it
+    /// holds no entry of an earlier install.
+    pub(crate) fresh_store: bool,
+
+    /// Set by the isolated linker only. True if the project's `node_modules` is a symlink. An
+    /// install never removes from the folder behind it.
+    pub(crate) linked_node_modules: bool,
+
     pub(crate) offline_misses: OfflineMisses,
 }
 

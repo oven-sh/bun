@@ -2245,7 +2245,6 @@ pub(crate) fn install_isolated_packages(
                 PackageInstall::supported_method() as u8
             ),
             is_new_bun_modules,
-            linked,
             staging_lock: Default::default(),
             global_store_path: global_store_path
                 .as_deref()
@@ -2253,8 +2252,11 @@ pub(crate) fn install_isolated_packages(
             global_store_tmp_suffix: fast_random(),
             summary: crate::package_install::Summary {
                 old_modules,
+                fresh_store: is_new_bun_modules,
+                linked_node_modules: linked.is_some(),
                 ..Default::default()
             },
+            linked,
             task_queue: Default::default(),
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),

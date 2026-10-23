@@ -1933,6 +1933,27 @@ fn links_package(
     link.st_ino == target.st_ino && link.st_dev == target.st_dev
 }
 
+/// Removes the entries of `node_modules/.bun` that no install of the saved lockfile links to. The
+/// isolated linker names an entry after the package and its peers, so a re-resolved dependency or
+/// a new naming rule leaves the entry of the old name behind.
+///
+/// The caller only calls this after an install that created an entry in an existing store. The
+/// wanted set has every dependency type, so `--production` and `--omit` keep the entries of a
+/// full install.
+pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager) {
+    let mut plan = Plan::default();
+    // The root `node_modules` is checked because the store is inside it.
+    drop(open_workspace_folder(ROOT_DIR, &mut plan.linked_folders));
+    let wanted = with_install_features(
+        manager,
+        full_install_features(install_features(manager)),
+        |manager| wanted_packages(manager, None),
+    );
+    let (names, _) = store_entry_names(manager, &wanted);
+    plan_store(&names, &mut plan);
+    remove_planned(plan, Layout::Isolated, manager);
+}
+
 /// The isolated linker only visits the names in the new lockfile, so this removes the symlink of
 /// each dependency that was dropped from a `package.json` or from `packageExtensions`.
 pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: &Lockfile) {
@@ -2509,6 +2530,30 @@ fn public_hoist_matches(manager: &PackageManager, alias: &[u8]) -> bool {
         .is_some_and(|pattern| pattern.is_match(alias))
 }
 
+/// Plans the removal of every store entry whose name is not in `names`, the sorted names from
+/// `store_entry_names`. Returns the names of the planned removals, sorted.
+fn plan_store(names: &[Box<[u8]>], plan: &mut Plan) -> Vec<Box<[u8]>> {
+    let mut removed_store: Vec<Box<[u8]>> = Vec::new();
+    if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
+        let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
+        for (name, kind) in read_entries(&store) {
+            if &*name == b"node_modules" {
+                continue;
+            }
+            plan.checked += 1;
+            if contains(names, &name) {
+                plan_store_entry_leftovers(&store, &name, plan);
+                continue;
+            }
+            plan.remove(store_idx, &name, kind);
+            removed_store.push(name);
+        }
+        plan.retain(store_idx, store);
+    }
+    sort_names(&mut removed_store);
+    removed_store
+}
+
 fn plan_isolated(
     manager: &mut PackageManager,
     workspace_names: &[Box<[u8]>],
@@ -2520,24 +2565,7 @@ fn plan_isolated(
     plan.store = store;
     let manager: &PackageManager = manager;
 
-    let mut removed_store: Vec<Box<[u8]>> = Vec::new();
-    if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
-        let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
-        for (name, kind) in read_entries(&store) {
-            if &*name == b"node_modules" {
-                continue;
-            }
-            plan.checked += 1;
-            if contains(&names, &name) {
-                plan_store_entry_leftovers(&store, &name, plan);
-                continue;
-            }
-            plan.remove(store_idx, &name, kind);
-            removed_store.push(name);
-        }
-        plan.retain(store_idx, store);
-    }
-    sort_names(&mut removed_store);
+    let removed_store = plan_store(&names, plan);
     let store_touched = !removed_store.is_empty();
 
     let lockfile: &Lockfile = &manager.lockfile;

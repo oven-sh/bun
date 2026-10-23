@@ -1086,6 +1086,17 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
+    // `success > 0` means this install created a store entry, so an entry of an earlier install
+    // may have lost its last link. A fresh store holds no earlier entry.
+    if isolated
+        && install_summary.fail == 0
+        && install_summary.success > 0
+        && !install_summary.fresh_store
+        && !install_summary.linked_node_modules
+        && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
+    {
+        crate::prune::remove_unreferenced_store_entries(manager);
+    }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
     // `skipped > 0` means part of an earlier install is still on disk.

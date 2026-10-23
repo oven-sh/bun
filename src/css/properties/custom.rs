@@ -834,6 +834,60 @@ impl TokenList {
         fallbacks
     }
 
+    /// Whether each browser that reads `color()` or `lab()` keeps a declaration with this value at parse time: it holds a `var()`, or is `inherit`, `initial`, `unset` or `revert`.
+    pub(crate) fn is_valid_at_parse_time(&self) -> bool {
+        if let [TokenOrValue::Token(Token::Ident(keyword))] = self.v.as_slice() {
+            return crate::match_ignore_ascii_case! { *keyword, {
+                b"inherit" | b"initial" | b"unset" | b"revert" => true,
+                _ => false,
+            }};
+        }
+        let mut has_var = false;
+        self.is_older_than_color(&mut has_var) && has_var
+    }
+
+    /// Whether the list has no `env()` and no empty `var()` fallback: Safari read `color()` before it read either.
+    fn is_older_than_color(&self, has_var: &mut bool) -> bool {
+        self.v.iter().all(|token_or_value| match token_or_value {
+            TokenOrValue::Var(var) => {
+                *has_var = true;
+                // The name `--` is reserved.
+                var.name.ident.v().len() > 2
+                    && var.fallback.as_ref().is_none_or(|fallback| {
+                        fallback.is_declaration_value() && fallback.is_older_than_color(has_var)
+                    })
+            }
+            TokenOrValue::Env(_) => false,
+            // `VAR()` and `ENV()` are plain functions to the parser.
+            TokenOrValue::Function(f) => crate::match_ignore_ascii_case! { f.name.v(), {
+                b"var" | b"env" => false,
+                _ => f.arguments.is_older_than_color(has_var),
+            }},
+            TokenOrValue::UnresolvedColor(
+                UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+            ) => alpha.is_older_than_color(has_var),
+            TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                light.is_older_than_color(has_var) && dark.is_older_than_color(has_var)
+            }
+            _ => true,
+        })
+    }
+
+    /// Whether the list is a `<declaration-value>`: it has a token that is not whitespace, and no `;` or `!`.
+    fn is_declaration_value(&self) -> bool {
+        let mut empty = true;
+        for token_or_value in &self.v {
+            match token_or_value {
+                TokenOrValue::Token(Token::Semicolon) => return false,
+                TokenOrValue::Token(Token::Delim(delim)) if *delim == u32::from(b'!') => {
+                    return false;
+                }
+                _ => empty &= token_or_value.is_whitespace(),
+            }
+        }
+        !empty
+    }
+
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 

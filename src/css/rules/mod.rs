@@ -806,6 +806,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         });
     }
 
+    let retracted = context.handler_context.retracted;
     context.handler_context.reset();
 
     // If the rule has nested rules, and we have extra rules to insert such as for logical properties,
@@ -892,6 +893,13 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
     if let Some(nested) = nested_rule {
         rules.push(CssRule::Style(nested));
+    }
+
+    // The `@supports` rules of the dropped copies kept the next rule apart: merged into this one, its `all` and unparsed declarations move to the front (#42042, #42101).
+    if retracted && matches!(rules.last(), Some(CssRule::Style(_))) {
+        flush_pending_style_merge(rules, style_rules, merge_state, context);
+        merge_state.last_compat = None;
+        rules.push(CssRule::Ignored);
     }
 
     Ok(())

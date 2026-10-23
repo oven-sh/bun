@@ -55,6 +55,9 @@ impl FallbackHandler {
                         *$self_field = Some(dest.len());
                         dest.push(Property::$Variant(val));
                     } else if let Some(index) = *$self_field {
+                        if !context.supports.is_empty() {
+                            context.retract_conditional(property.property_id());
+                        }
                         dest[index] = Property::$Variant(val);
                     } else {
                         // val dropped — Drop handles cleanup

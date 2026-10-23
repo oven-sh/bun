@@ -2,6 +2,7 @@ use crate::css_parser as css;
 
 use css::css_rules::media::MediaRule;
 
+use css::css_properties::PropertyId;
 use css::css_properties::custom::UnparsedProperty;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
@@ -15,6 +16,14 @@ pub struct SupportsEntry {
 }
 
 // No explicit deinit — all fields own their storage and drop automatically.
+
+/// A property that has a copy in `PropertyHandlerContext::supports`, per importance.
+struct Copied {
+    property_id: PropertyId,
+    important: bool,
+    /// The value of `staged` before the first of those copies.
+    since: u32,
+}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DeclarationContext {
@@ -30,6 +39,11 @@ pub struct PropertyHandlerContext<'a> {
     pub(crate) targets: css::targets::Targets,
     pub(crate) is_important: bool,
     pub(crate) supports: Vec<SupportsEntry>,
+    copied: Vec<Copied>,
+    /// The count of declarations of the rule in hand that staged a copy in `supports`.
+    staged: u32,
+    /// Whether a later declaration dropped a copy from `supports` in the rule in hand.
+    pub(crate) retracted: bool,
     pub(crate) ltr: Vec<css::Property>,
     pub(crate) rtl: Vec<css::Property>,
     pub(crate) dark: Vec<css::Property>,
@@ -48,6 +62,9 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: *targets,
             is_important: false,
             supports: Vec::new(),
+            copied: Vec::new(),
+            staged: 0,
+            retracted: false,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -62,6 +79,9 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: self.targets,
             is_important: false,
             supports: Vec::new(),
+            copied: Vec::new(),
+            staged: 0,
+            retracted: false,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -127,6 +147,10 @@ impl<'a> PropertyHandlerContext<'a> {
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
+            // An entry that lost each copy stays in place, so that the order of the rules does not change.
+            if entry.declarations.is_empty() && entry.important_declarations.is_empty() {
+                continue;
+            }
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
@@ -260,6 +284,9 @@ impl<'a> PropertyHandlerContext<'a> {
         // Per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
         self.supports.clear();
+        self.copied.clear();
+        self.staged = 0;
+        self.retracted = false;
         self.ltr.clear();
         self.rtl.clear();
         self.dark.clear();
@@ -318,9 +345,13 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
+        if !self.supports.is_empty() {
+            self.retract_replaced(unparsed);
+        }
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
         // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
+        let mut staged = false;
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
             self.add_conditional_property(
                 condition_and_fallback.0,
@@ -330,6 +361,69 @@ impl<'a> PropertyHandlerContext<'a> {
                     value: condition_and_fallback.1,
                 }),
             );
+            staged = true;
         }
+        if staged && self.context == DeclarationContext::StyleRule {
+            if self.copied_at(unparsed.property_id).is_none() {
+                self.copied.push(Copied {
+                    property_id: unparsed.property_id,
+                    important: self.is_important,
+                    since: self.staged,
+                });
+            }
+            self.staged += 1;
+        }
+    }
+
+    fn copied_at(&self, property_id: PropertyId) -> Option<usize> {
+        self.copied.iter().position(|copied| {
+            copied.property_id == property_id && copied.important == self.is_important
+        })
+    }
+
+    /// Drops the staged copies that `unparsed` replaces in each browser that reads one. Runs before `unparsed` stages its own copies.
+    #[cold]
+    #[inline(never)]
+    fn retract_replaced(&mut self, unparsed: &UnparsedProperty) {
+        if let Some(at) = self.copied_at(unparsed.property_id)
+            && unparsed.value.is_valid_at_parse_time()
+        {
+            self.retract_at(at);
+        }
+    }
+
+    /// Drops the staged copies of `property_id` that have the importance in hand.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn retract_conditional(&mut self, property_id: PropertyId) {
+        // The handlers also run over a merged rule, with no context, while the copies of the next rule are staged.
+        if self.context == DeclarationContext::StyleRule
+            && let Some(at) = self.copied_at(property_id)
+        {
+            self.retract_at(at);
+        }
+    }
+
+    fn retract_at(&mut self, at: usize) {
+        // Departs from lightningcss on purpose: it prints these copies behind the rule, where they beat a later declaration that wins in the source.
+        let Copied {
+            property_id,
+            important,
+            since,
+        } = self.copied.swap_remove(at);
+        // A declaration adds at most one copy to a list, so the copies to drop are among the last `recent` of each list.
+        let recent = (self.staged - since) as usize;
+        for entry in &mut self.supports {
+            let copies = if important {
+                &mut entry.important_declarations
+            } else {
+                &mut entry.declarations
+            };
+            let from = copies.len().saturating_sub(recent);
+            copies
+                .extract_if(from.., |copy| copy.property_id() == property_id)
+                .for_each(drop);
+        }
+        self.retracted = true;
     }
 }

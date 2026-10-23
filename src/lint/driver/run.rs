@@ -1541,7 +1541,8 @@ impl Run<'_> {
             help: (context.reads_help && context.help_on_demand).then_some(with_help),
             cwd: &environment.cwd,
             color,
-            links: color && to_terminal,
+            to_terminal,
+            escapes: format.escapes(to_terminal),
             width: match to_terminal {
                 true => (bun_core::output::File::from(bun_core::Fd::stdout()).winsize())
                     .map_or(0, |size| usize::from(size.col)),

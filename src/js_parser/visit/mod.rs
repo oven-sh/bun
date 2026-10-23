@@ -1606,6 +1606,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
                                     .kind
                                     == SymbolKind::HoistedFunction
+                                && p.lowers_block_level_function(data.func.name.unwrap().ref_)
                             {
                                 break 'list_getter &mut before;
                             }

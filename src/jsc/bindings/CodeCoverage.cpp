@@ -45,3 +45,13 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
     blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset);
     return true;
 }
+
+extern "C" void CodeCoverage__withBranches(
+    JSC::VM* vm,
+    JSC::SourceID sourceID,
+    void* ctx,
+    void (*branchCallback)(void* ctx, const JSC::BranchRange* branches, size_t len))
+{
+    auto branches = vm->controlFlowProfiler()->getBranchesForSourceID(sourceID);
+    branchCallback(ctx, branches.span().data(), branches.size());
+}

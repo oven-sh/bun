@@ -1357,7 +1357,7 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
-    /// Marks the braces of object literals and the branches in the source map, see `MarkKind`.
+    /// Marks the braces of object literals in the source map, see `mark_object_brace`.
     pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,
@@ -1584,7 +1584,6 @@ pub enum ExprFlag {
     HasNonOptionalChainParent,
     ExprResultIsUnused,
     IsFollowedByOf,
-    IsAssignTarget,
 }
 
 pub(crate) type ExprFlagSet = enumset::EnumSet<ExprFlag>;
@@ -1606,6 +1605,10 @@ impl ExprFlag {
     pub(crate) fn expr_result_is_unused() -> ExprFlagSet {
         ExprFlag::ExprResultIsUnused.into()
     }
+    #[inline]
+    pub(crate) fn is_followed_by_of() -> ExprFlagSet {
+        ExprFlag::IsFollowedByOf.into()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1622,7 +1625,6 @@ enum ClauseItemAs {
 // ───────────────────────────────────────────────────────────────────────────
 pub(crate) mod __gated_printer {
     use super::*;
-    use SourceMap::internal_source_map::MarkKind;
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
     use js_ast::Symbol;
@@ -1642,19 +1644,6 @@ pub(crate) mod __gated_printer {
     #[inline(always)]
     pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
-    }
-    /// Whether `stmts` end in a `break`, `continue`, `return` or `throw`, also inside a last block.
-    fn ends_in_jump(stmts: &[Stmt]) -> bool {
-        match stmts.last().map(|stmt| &stmt.data) {
-            Some(
-                StmtData::SBreak(_)
-                | StmtData::SContinue(_)
-                | StmtData::SReturn(_)
-                | StmtData::SThrow(_),
-            ) => true,
-            Some(StmtData::SBlock(block)) => ends_in_jump(slice_of(block.stmts)),
-            _ => false,
-        }
     }
     /// `EnumSet<T>` field-style mutation helper.
     #[inline(always)]
@@ -1699,11 +1688,6 @@ pub(crate) mod __gated_printer {
 
         pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
-        pub(crate) decision_count: u32,
-        /// The decision that the labelled statement about to be printed is a branch of, else 0.
-        pub(crate) decision_of_label: u32,
-        pub(crate) is_inside_case_value: bool,
-
         pub(crate) stack_check: bun_core::StackCheck,
         pub(crate) stack_overflowed: bool,
 
@@ -1737,8 +1721,6 @@ pub(crate) mod __gated_printer {
         pub(crate) entry: &'static OpInfo,
         pub(crate) wrap: bool,
         pub(crate) right_level: Level,
-        /// From `mark_decision` if the right side is a branch, else 0.
-        pub(crate) decision: u32,
     }
 
     // No `Default` impl: every construction
@@ -1798,10 +1780,6 @@ pub(crate) mod __gated_printer {
             if v.wrap {
                 self.print(b"(");
                 v.flags.insert(ExprFlag::ForbidIn);
-            }
-
-            if self.code_coverage() {
-                self.mark_binary(v);
             }
 
             v.left_level = e_level.sub(1);
@@ -1874,10 +1852,6 @@ pub(crate) mod __gated_printer {
                 v.left_flags.insert(ExprFlag::ExprResultIsUnused);
             }
 
-            if self.code_coverage() && e.op == Op::Code::BinAssign {
-                v.left_flags.insert(ExprFlag::IsAssignTarget);
-            }
-
             true
         }
 
@@ -1912,7 +1886,6 @@ pub(crate) mod __gated_printer {
                 flags.insert(ExprFlag::ForbidIn);
             }
 
-            self.mark_branch(v.decision, e.right.loc);
             self.print_expr(e.right, v.right_level, flags);
 
             if v.wrap {
@@ -2474,177 +2447,12 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
-        /// Marks go in the `InternalSourceMap`, which only an `ASCII_ONLY` print builds.
-        #[inline(always)]
-        fn code_coverage(&self) -> bool {
-            GENERATE_SOURCE_MAP && ASCII_ONLY && self.options.code_coverage
-        }
-
         #[inline]
-        fn mark_object_brace(&mut self, loc: bun_ast::Loc) {
-            if !self.code_coverage() {
+        pub(crate) fn mark_object_brace(&mut self) {
+            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
                 return;
             }
-            self.source_map_builder
-                .mark(MarkKind::ObjectBrace, 0, loc, self.writer.slice());
-        }
-
-        /// Starts a decision at `loc`, which is about to be printed.
-        #[inline]
-        fn mark_decision(
-            &mut self,
-            kind: MarkKind,
-            loc: bun_ast::Loc,
-            branches: &[bun_ast::Loc],
-        ) -> u32 {
-            if !self.code_coverage() {
-                return 0;
-            }
-            self.mark_decision_at_offset(self.writer.written(), kind, loc, branches)
-        }
-
-        /// Starts a decision at the last byte printed, a whole character in `ASCII_ONLY` output.
-        #[inline]
-        fn mark_decision_at_last_byte(
-            &mut self,
-            decision_loc: bun_ast::Loc,
-            branch_loc: bun_ast::Loc,
-        ) -> u32 {
-            if !self.code_coverage() {
-                return 0;
-            }
-            let last_byte = self.writer.written() - 1;
-            self.mark_decision_at_offset(
-                last_byte,
-                MarkKind::DecisionWithImplicitBranch,
-                decision_loc,
-                &[branch_loc],
-            )
-        }
-
-        /// Returns 0, which `mark_branch` ignores, if a branch is not after `loc`: generated code.
-        #[inline(never)]
-        fn mark_decision_at_offset(
-            &mut self,
-            offset: i32,
-            kind: MarkKind,
-            loc: bun_ast::Loc,
-            branches: &[bun_ast::Loc],
-        ) -> u32 {
-            // After an overflow nothing is printed, and `mark` cannot go back before the last mark.
-            if self.stack_overflowed {
-                return 0;
-            }
-            // JSC counts the value of a `case` with its clause, not each time it is compared.
-            if self.is_inside_case_value {
-                return 0;
-            }
-            if loc.is_empty() || branches.iter().any(|branch| branch.start <= loc.start) {
-                return 0;
-            }
-            self.decision_count += 1;
-            self.source_map_builder.mark(
-                kind,
-                self.decision_count,
-                loc,
-                &self.writer.slice()[..offset as usize],
-            );
-            self.decision_count
-        }
-
-        /// What is about to be printed is a branch of `decision`. `loc` is in it.
-        #[inline]
-        fn mark_branch(&mut self, decision: u32, loc: bun_ast::Loc) {
-            self.mark_branch_of_kind(MarkKind::Branch, decision, loc);
-        }
-
-        #[inline]
-        fn mark_branch_of_kind(&mut self, kind: MarkKind, decision: u32, loc: bun_ast::Loc) {
-            if !self.code_coverage() || decision == 0 {
-                return;
-            }
-            self.source_map_builder
-                .mark(kind, decision, loc, self.writer.slice());
-        }
-
-        /// `stmt` is about to be printed and is a branch of `decision`.
-        #[inline]
-        fn mark_branch_stmt(&mut self, decision: u32, stmt: &Stmt) {
-            if decision == 0 {
-                return;
-            }
-            // JSC starts the block of `x: f()` at `f`, so the mark goes after the labels.
-            if matches!(stmt.data, StmtData::SLabel(_)) {
-                self.decision_of_label = decision;
-            } else {
-                self.mark_branch(decision, stmt.loc);
-            }
-        }
-
-        fn mark_binary(&mut self, v: &mut BinaryExpressionVisitor<'a>) {
-            let e = v.e;
-            let right_is_a_branch = match e.op {
-                Op::Code::BinLogicalAnd
-                | Op::Code::BinLogicalOr
-                | Op::Code::BinNullishCoalescing
-                | Op::Code::BinLogicalAndAssign
-                | Op::Code::BinLogicalOrAssign
-                | Op::Code::BinNullishCoalescingAssign => true,
-                // A default value: `[a = 1] = list`.
-                Op::Code::BinAssign => v.flags.contains(ExprFlag::IsAssignTarget),
-                _ => false,
-            };
-            if right_is_a_branch {
-                v.decision = self.mark_decision(
-                    MarkKind::DecisionWithImplicitBranch,
-                    e.left.loc,
-                    &[e.right.loc],
-                );
-            }
-        }
-
-        /// Called between printing `target` and `?.`. `rest` is a position after the `?.`.
-        #[inline]
-        fn mark_optional_chain(&mut self, target: Expr, rest: bun_ast::Loc) {
-            if !self.code_coverage() {
-                return;
-            }
-            // The start of `target` also ran when a `?.` in it stopped the chain.
-            let end_of_target = match &target.data {
-                ExprData::EDot(e) => e.name_loc,
-                ExprData::ECall(e) if e.close_paren_loc.start > target.loc.start => {
-                    e.close_paren_loc
-                }
-                ExprData::EIndex(e) => e.index.loc,
-                _ => target.loc,
-            };
-            let decision = self.mark_decision_at_last_byte(end_of_target, rest);
-            self.mark_branch(decision, rest);
-        }
-
-        #[inline]
-        fn mark_switch(&mut self, loc: bun_ast::Loc, cases: &[js_ast::Case]) -> u32 {
-            if !self.code_coverage() {
-                return 0;
-            }
-            let Some((last, others)) = cases.split_last() else {
-                return 0;
-            };
-            // JSC has one count for a clause, whether it matched or the one above fell through.
-            let has_implicit_branch = last.value.is_some()
-                && others.iter().all(|case| {
-                    case.value.is_some()
-                        && (case.body.is_empty() || ends_in_jump(slice_of(case.body)))
-                });
-            self.mark_decision(
-                if has_implicit_branch {
-                    MarkKind::DecisionWithImplicitBranch
-                } else {
-                    MarkKind::Decision
-                },
-                loc,
-                &[cases[0].loc],
-            )
+            self.source_map_builder.mark_object_brace();
         }
 
         #[inline]
@@ -2706,7 +2514,8 @@ pub(crate) mod __gated_printer {
                 self.print_binding(arg.binding, TopLevelAndIsExport::default());
 
                 if let Some(default) = &arg.default {
-                    self.print_initializer(*default, Some(arg.binding.loc));
+                    self.print_whitespacer(ws!(b" = "));
+                    self.print_expr(*default, Level::Comma, ExprFlag::none());
                 }
             }
 
@@ -2716,8 +2525,6 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_func(&mut self, func: &G::Fn) {
-            // JSC compiles a function on its own, so in one it counts as it does anywhere else.
-            let was_inside_case_value = core::mem::replace(&mut self.is_inside_case_value, false);
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
@@ -2726,7 +2533,6 @@ pub(crate) mod __gated_printer {
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
-            self.is_inside_case_value = was_inside_case_value;
         }
 
         pub(crate) fn print_class(&mut self, class: &G::Class) {
@@ -2756,7 +2562,7 @@ pub(crate) mod __gated_printer {
                     continue;
                 }
 
-                self.print_property(item, ExprFlag::none());
+                self.print_property(item);
 
                 if item.value.is_none() {
                     self.print_semicolon_after_statement();
@@ -3486,7 +3292,7 @@ pub(crate) mod __gated_printer {
                 ExprData::ESpread(e) => {
                     self.add_source_mapping(expr.loc);
                     self.print(b"...");
-                    self.print_expr(e.value, Level::Comma, flags & ExprFlag::IsAssignTarget);
+                    self.print_expr(e.value, Level::Comma, ExprFlag::none());
                 }
                 ExprData::ENewTarget(_) => {
                     self.print_space_before_identifier();
@@ -3729,7 +3535,6 @@ pub(crate) mod __gated_printer {
                     }
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
-                        self.mark_optional_chain(e.target, e.close_paren_loc);
                         self.print(b"?.");
                     }
                     self.print(b"(");
@@ -3904,10 +3709,6 @@ pub(crate) mod __gated_printer {
 
                     self.print_expr(e.target, Level::Postfix, flags);
 
-                    if is_optional_chain {
-                        self.mark_optional_chain(e.target, e.name_loc);
-                    }
-
                     if lexer::is_identifier(&e.name) {
                         if is_optional_chain {
                             self.print(b"?.");
@@ -3969,14 +3770,13 @@ pub(crate) mod __gated_printer {
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
 
-                    // The index target is not directly followed by `of`, and is not assigned to.
-                    flags -= ExprFlag::IsFollowedByOf | ExprFlag::IsAssignTarget;
+                    // The index target is not directly followed by `of`.
+                    flags.remove(ExprFlag::IsFollowedByOf);
                     self.print_expr(e.target, Level::Postfix, flags);
 
                     let is_optional_chain_start =
                         e.optional_chain == Some(js_ast::OptionalChain::Start);
                     if is_optional_chain_start {
-                        self.mark_optional_chain(e.target, e.index.loc);
                         self.print(b"?.");
                     }
 
@@ -4006,19 +3806,15 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                         flags.remove(ExprFlag::ForbidIn);
                     }
-                    let decision =
-                        self.mark_decision(MarkKind::Decision, e.test.loc, &[e.yes.loc, e.no.loc]);
                     self.print_expr(e.test, Level::Conditional, flags);
                     self.print_space();
                     self.print(b"?");
                     self.print_space();
-                    self.mark_branch(decision, e.yes.loc);
                     self.print_expr(e.yes, Level::Yield, ExprFlag::none());
                     self.print_space();
                     self.print(b":");
                     self.print_space();
                     flags.insert(ExprFlag::ForbidIn);
-                    self.mark_branch(decision, e.no.loc);
                     self.print_expr(e.no, Level::Yield, flags);
                     if wrap {
                         self.print(b")");
@@ -4038,8 +3834,6 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                     }
 
-                    let was_inside_case_value =
-                        core::mem::replace(&mut self.is_inside_case_value, false);
                     self.print_fn_args(
                         if e.is_async { None } else { Some(expr.loc) },
                         &e.args,
@@ -4062,7 +3856,6 @@ pub(crate) mod __gated_printer {
                     if !was_printed {
                         self.print_block(e.body.loc, slice_of(e.body.stmts), None);
                     }
-                    self.is_inside_case_value = was_inside_case_value;
 
                     if wrap {
                         self.print(b")");
@@ -4138,7 +3931,7 @@ pub(crate) mod __gated_printer {
                                 self.print_newline();
                                 self.print_indent();
                             }
-                            self.print_expr(*item, Level::Comma, flags & ExprFlag::IsAssignTarget);
+                            self.print_expr(*item, Level::Comma, ExprFlag::none());
 
                             if i == items.len() - 1 && matches!(item.data, ExprData::EMissing(_)) {
                                 // Make sure there's a comma after trailing missing items
@@ -4171,7 +3964,7 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
-                    self.mark_object_brace(expr.loc);
+                    self.mark_object_brace();
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
@@ -4185,7 +3978,7 @@ pub(crate) mod __gated_printer {
                             self.print_newline();
                             self.print_indent();
                         }
-                        self.print_property(&props[0], flags & ExprFlag::IsAssignTarget);
+                        self.print_property(&props[0]);
 
                         if props.len() > 1 {
                             for property in &props[1..] {
@@ -4196,7 +3989,7 @@ pub(crate) mod __gated_printer {
                                     self.print_newline();
                                     self.print_indent();
                                 }
-                                self.print_property(property, flags & ExprFlag::IsAssignTarget);
+                                self.print_property(property);
                             }
                         }
 
@@ -4210,7 +4003,7 @@ pub(crate) mod __gated_printer {
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
-                        self.mark_object_brace(e.close_brace_loc);
+                        self.mark_object_brace();
                     }
                     self.print(b"}");
                     if wrap {
@@ -4697,7 +4490,6 @@ pub(crate) mod __gated_printer {
                         entry: Op::TABLE.get_ptr_const(e.op),
                         wrap: false,
                         right_level: Level::Lowest,
-                        decision: 0,
                     };
 
                     // Use a single stack to reduce allocation overhead
@@ -4734,7 +4526,6 @@ pub(crate) mod __gated_printer {
                             entry: Op::TABLE.get_ptr_const(lb.op), // overwritten in checkAndPrepare
                             wrap: false,
                             right_level: Level::Lowest,
-                            decision: 0,
                         };
                         self.binary_expression_stack.push(v);
                         v = next;
@@ -5065,11 +4856,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_property(&mut self, item_in: &G::Property, value_flags: ExprFlagSet) {
-            let target_loc = match item_in.value {
-                Some(value) if value_flags.contains(ExprFlag::IsAssignTarget) => Some(value.loc),
-                _ => None,
-            };
+        pub(crate) fn print_property(&mut self, item_in: &G::Property) {
             // `G::Property` isn't `Copy`, so take a borrow and shallow-copy the
             // mutable bits we may rewrite (key + flags).
             let mut item = G::Property {
@@ -5216,11 +5003,11 @@ pub(crate) mod __gated_printer {
                     }
                     self.print(b":");
                     self.print_space();
-                    self.print_expr(*val, Level::Comma, value_flags);
+                    self.print_expr(*val, Level::Comma, ExprFlag::none());
                 }
 
                 if let Some(initial) = &item.initializer {
-                    self.print_initializer(*initial, target_loc);
+                    self.print_initializer(*initial);
                 }
                 return;
             }
@@ -5252,7 +5039,7 @@ pub(crate) mod __gated_printer {
                                 ExprData::EIdentifier(e) => {
                                     if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                         if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial, target_loc);
+                                            self.print_initializer(*initial);
                                         }
                                         if allow_shorthand {
                                             return;
@@ -5269,7 +5056,7 @@ pub(crate) mod __gated_printer {
                                             && key_str.slice8() == self.name_for_symbol(e.ref_)
                                         {
                                             if let Some(initial) = &item.initializer {
-                                                self.print_initializer(*initial, target_loc);
+                                                self.print_initializer(*initial);
                                             }
                                             if allow_shorthand {
                                                 return;
@@ -5297,7 +5084,7 @@ pub(crate) mod __gated_printer {
                                         )
                                     {
                                         if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial, target_loc);
+                                            self.print_initializer(*initial);
                                         }
                                         return;
                                     }
@@ -5312,7 +5099,7 @@ pub(crate) mod __gated_printer {
                                             )
                                         {
                                             if let Some(initial) = &item.initializer {
-                                                self.print_initializer(*initial, target_loc);
+                                                self.print_initializer(*initial);
                                             }
                                             return;
                                         }
@@ -5361,7 +5148,7 @@ pub(crate) mod __gated_printer {
                 }
                 self.print(b":");
                 self.print_space();
-                self.print_expr(*val, Level::Comma, value_flags);
+                self.print_expr(*val, Level::Comma, ExprFlagSet::empty());
             }
 
             if IS_JSON {
@@ -5369,22 +5156,14 @@ pub(crate) mod __gated_printer {
             }
 
             if let Some(initial) = &item.initializer {
-                self.print_initializer(*initial, target_loc);
+                self.print_initializer(*initial);
             }
         }
 
-        /// `target_loc`: what `initial` is the default of. `None` for a class field.
-        pub(crate) fn print_initializer(
-            &mut self,
-            initial: Expr,
-            target_loc: Option<bun_ast::Loc>,
-        ) {
-            let decision = match target_loc {
-                Some(target_loc) => self.mark_decision_at_last_byte(target_loc, initial.loc),
-                None => 0,
-            };
-            self.print_whitespacer(ws!(b" = "));
-            self.mark_branch(decision, initial.loc);
+        pub(crate) fn print_initializer(&mut self, initial: Expr) {
+            self.print_space();
+            self.print(b"=");
+            self.print_space();
             self.print_expr(initial, Level::Comma, ExprFlag::none());
         }
 
@@ -5438,10 +5217,7 @@ pub(crate) mod __gated_printer {
                             }
 
                             self.print_binding(item.binding, tlm);
-                            self.maybe_print_default_binding_value(
-                                item.binding,
-                                item.default_value,
-                            );
+                            self.maybe_print_default_binding_value(item);
 
                             // Make sure there's a comma after trailing missing items
                             if is_last && matches!(item.binding.data, BindingData::BMissing(_)) {
@@ -5512,10 +5288,7 @@ pub(crate) mod __gated_printer {
                                     self.print_space();
 
                                     self.print_binding(property.value, tlm);
-                                    self.maybe_print_default_binding_value(
-                                        property.value,
-                                        property.default_value,
-                                    );
+                                    self.maybe_print_default_binding_value(property);
                                     continue;
                                 }
 
@@ -5548,8 +5321,7 @@ pub(crate) mod __gated_printer {
                                                             }
                                                         }
                                                         self.maybe_print_default_binding_value(
-                                                            property.value,
-                                                            property.default_value,
+                                                            property,
                                                         );
                                                         continue;
                                                     }
@@ -5584,8 +5356,7 @@ pub(crate) mod __gated_printer {
                                                         }
                                                     }
                                                     self.maybe_print_default_binding_value(
-                                                        property.value,
-                                                        property.default_value,
+                                                        property,
                                                     );
                                                     continue;
                                                 }
@@ -5612,10 +5383,7 @@ pub(crate) mod __gated_printer {
                             }
 
                             self.print_binding(property.value, tlm);
-                            self.maybe_print_default_binding_value(
-                                property.value,
-                                property.default_value,
-                            );
+                            self.maybe_print_default_binding_value(property);
                         }
 
                         if !b.is_single_line {
@@ -5631,13 +5399,15 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn maybe_print_default_binding_value(
+        pub(crate) fn maybe_print_default_binding_value<P: HasDefaultValue>(
             &mut self,
-            binding: Binding,
-            default_value: Option<Expr>,
+            property: &P,
         ) {
-            if let Some(default) = default_value {
-                self.print_initializer(default, Some(binding.loc));
+            if let Some(default) = property.default_value() {
+                self.print_space();
+                self.print(b"=");
+                self.print_space();
+                self.print_expr(default, Level::Comma, ExprFlag::none());
             }
         }
 
@@ -6115,10 +5885,7 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    let decision =
-                        self.mark_decision(MarkKind::DoWhile, stmt.loc, &[s.body.loc, s.test.loc]);
                     self.print(b"do");
-                    self.mark_branch_stmt(decision, &s.body);
                     match s.body.data {
                         StmtData::SBlock(block) => {
                             self.print_space();
@@ -6142,7 +5909,6 @@ pub(crate) mod __gated_printer {
                     self.print(b"while");
                     self.print_space();
                     self.print(b"(");
-                    self.mark_branch(decision, s.test.loc);
                     self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
                     self.print_semicolon_after_statement();
@@ -6151,25 +5917,22 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    let decision = self.mark_decision(MarkKind::Decision, stmt.loc, &[s.body.loc]);
                     self.print(b"for");
                     self.print_space();
                     self.print(b"(");
-                    self.print_for_loop_init(s.init, ExprFlag::IsAssignTarget.into());
+                    self.print_for_loop_init(s.init, ExprFlag::none());
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"in");
                     self.print_space();
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SForOf(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    let decision = self.mark_decision(MarkKind::Decision, stmt.loc, &[s.body.loc]);
                     self.print(b"for");
                     if s.is_await {
                         self.print(b" await");
@@ -6177,17 +5940,13 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print(b"(");
                     self.for_of_init_start = self.writer.written();
-                    self.print_for_loop_init(
-                        s.init,
-                        ExprFlag::IsFollowedByOf | ExprFlag::IsAssignTarget,
-                    );
+                    self.print_for_loop_init(s.init, ExprFlag::is_followed_by_of());
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"of");
                     self.print_space();
                     self.print_expr(s.value, Level::Comma, ExprFlag::none());
                     self.print(b")");
-                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SWhile(s) => {
@@ -6197,14 +5956,8 @@ pub(crate) mod __gated_printer {
                     self.print(b"while");
                     self.print_space();
                     self.print(b"(");
-                    let decision = self.mark_decision(
-                        MarkKind::DecisionWithImplicitBranch,
-                        s.test.loc,
-                        &[s.body.loc],
-                    );
                     self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SWith(s) => {
@@ -6226,22 +5979,12 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print_symbol(s.name.ref_);
                     self.print(b":");
-                    let decision = core::mem::take(&mut self.decision_of_label);
-                    self.mark_branch_stmt(decision, &s.stmt);
                     self.print_body(s.stmt);
                 }
                 StmtData::STry(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    let decision = match &s.catch {
-                        Some(catch) => self.mark_decision(
-                            MarkKind::DecisionWithImplicitBranch,
-                            stmt.loc,
-                            &[catch.loc],
-                        ),
-                        None => 0,
-                    };
                     self.print(b"try");
                     self.print_space();
                     self.print_block(s.body_loc, slice_of(s.body), None);
@@ -6249,7 +5992,6 @@ pub(crate) mod __gated_printer {
                     if let Some(catch) = &s.catch {
                         self.print_space();
                         self.add_source_mapping(catch.loc);
-                        self.mark_branch(decision, catch.loc);
                         self.print(b"catch");
                         if let Some(binding) = &catch.binding {
                             self.print_space();
@@ -6285,13 +6027,7 @@ pub(crate) mod __gated_printer {
 
                     self.print(b";");
 
-                    let mut decision = 0;
                     if let Some(test) = &s.test {
-                        decision = self.mark_decision(
-                            MarkKind::DecisionWithImplicitBranch,
-                            test.loc,
-                            &[s.body.loc],
-                        );
                         self.print_expr(*test, Level::Lowest, ExprFlag::none());
                     }
 
@@ -6303,15 +6039,12 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b")");
-                    self.mark_branch_stmt(decision, &s.body);
                     self.print_body(s.body);
                 }
                 StmtData::SSwitch(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    let cases = slice_of(s.cases);
-                    let decision = self.mark_switch(stmt.loc, cases);
                     self.print(b"switch");
                     self.print_space();
                     self.print(b"(");
@@ -6322,27 +6055,15 @@ pub(crate) mod __gated_printer {
                     self.print_newline();
                     self.indent();
 
-                    for c in cases.iter() {
+                    for c in slice_of(s.cases).iter() {
                         self.print_semicolon_if_needed();
                         self.print_indent();
                         self.add_source_mapping(c.loc);
-                        self.mark_branch_of_kind(
-                            if c.body.is_empty() {
-                                MarkKind::EmptyCase
-                            } else {
-                                MarkKind::Branch
-                            },
-                            decision,
-                            c.loc,
-                        );
 
                         if let Some(val) = &c.value {
                             self.print(b"case");
                             self.print_space();
-                            let was_inside_case_value =
-                                core::mem::replace(&mut self.is_inside_case_value, true);
                             self.print_expr(*val, Level::LogicalAnd, ExprFlag::none());
-                            self.is_inside_case_value = was_inside_case_value;
                         } else {
                             self.print(b"default");
                         }
@@ -6864,16 +6585,11 @@ pub(crate) mod __gated_printer {
 
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
-            let decision = match &s.no {
-                Some(no) => self.mark_decision(MarkKind::Decision, loc, &[s.yes.loc, no.loc]),
-                None => self.mark_decision(MarkKind::DecisionWithImplicitBranch, loc, &[s.yes.loc]),
-            };
             self.print(b"if");
             self.print_space();
             self.print(b"(");
             self.print_expr(s.test, Level::Lowest, ExprFlag::none());
             self.print(b")");
-            self.mark_branch_stmt(decision, &s.yes);
 
             match &s.yes.data {
                 StmtData::SBlock(block) => {
@@ -6926,7 +6642,6 @@ pub(crate) mod __gated_printer {
                 self.print_space_before_identifier();
                 self.add_source_mapping(s.else_loc.to_nullable().unwrap_or(no_block.loc));
                 self.print(b"else");
-                self.mark_branch_stmt(decision, no_block);
 
                 match &no_block.data {
                     StmtData::SBlock(block) => {
@@ -7334,9 +7049,6 @@ pub(crate) mod __gated_printer {
                 source_map_builder,
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
-                decision_count: 0,
-                decision_of_label: 0,
-                is_inside_case_value: false,
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,
@@ -7544,6 +7256,23 @@ impl PrintArg for &[u8] {
 impl<const N: usize> PrintArg for &[u8; N] {
     fn print_into<W: WriterTrait>(self, w: &mut W) {
         w.print_slice(self);
+    }
+}
+
+/// Trait covering `B::ArrayItem` / `B::Property` for `maybe_print_default_binding_value`.
+pub trait HasDefaultValue {
+    fn default_value(&self) -> Option<js_ast::Expr>;
+}
+impl HasDefaultValue for js_ast::b::Property {
+    #[inline]
+    fn default_value(&self) -> Option<js_ast::Expr> {
+        self.default_value
+    }
+}
+impl HasDefaultValue for js_ast::ArrayBinding {
+    #[inline]
+    fn default_value(&self) -> Option<js_ast::Expr> {
+        self.default_value
     }
 }
 

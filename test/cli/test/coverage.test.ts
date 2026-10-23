@@ -1241,7 +1241,7 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
 describe("branches", () => {
   // After `//` are the branches of each decision that starts on the line, in the order of the
   // decisions, and how often each was taken. The last of `[1,2]` is the branch without code of its own,
-  // except for `if` with `else`, `?:`, and a `switch` with `default` or a fall through.
+  // except for `if` with `else`, `?:`, and a `switch` with `default`.
   // `for`-`in` and `for`-`of` have one branch, the body.
   // Laid out as the printer prints it, so that the lines are the same with coverageIgnoreSourcemaps.
   const lib = `const Kind = { A: 1 };
@@ -1276,7 +1276,7 @@ export function decisions(v, o, list) {
   r = v && o; // [2,1]
   r = v || o; // [1,2]
   r = o ?? v; // [1,2]
-  r = v && o || list; // [1,2] [2,1]
+  r = v && o || list; // [2,1] [1,2]
   r = o?.a; // [2,1]
   r = o?.a?.b; // [2,1] [1,1]
   r = o?.a?.b.c(v && 1); // [2,1] [1,1] [1,0]
@@ -1372,7 +1372,7 @@ export function switches(v, o) {
     }
     case 3:
   }
-  switch (v) { // [1,2]
+  switch (v) { // [1,1,2]
     case 1:
       Kind.last = v;
     case 2:
@@ -1387,9 +1387,9 @@ export function switches(v, o) {
   switch (v) { // [1,0,0,0,0,0,3]
     case Kind.A:
       return;
-    case o && o.a:
+    case o && o.a: // [2,1]
       break;
-    case o?.a:
+    case o?.a: // [2,1]
       break;
     case [o].find(x => x && x.b): // [2,1]
       break;
@@ -1397,7 +1397,7 @@ export function switches(v, o) {
       return o || 1; // [1,2]
     })():
       break;
-    case (o ??= {}):
+    case (o ??= {}): // [1,2]
   }
 }
 
@@ -1487,10 +1487,11 @@ export function never(v) {
       `,
     );
     expect(decisionsOf(record)).toEqual([
-      [2 + above, [1, 1]],
       [3 + above, [1, 1]],
+      [4 + above, [1, 1]],
     ]);
-    expect(record).toContain(`DA:${2 + above},2\n`);
+    expect(record).toContain(`\nDA:${3 + above},`);
+    expect(record).toContain(`\nDA:${4 + above},`);
     expect(exitCode).toBe(0);
   });
 

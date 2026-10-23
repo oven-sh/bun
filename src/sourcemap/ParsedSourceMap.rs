@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::fmt;
 
 use crate::Ordinal;
-use crate::internal_source_map::Mark;
+use crate::internal_source_map::ObjectBrace;
 
 use crate::mapping;
 use crate::vlq::VLQ;
@@ -265,10 +265,10 @@ impl ParsedSourceMap {
         }
     }
 
-    /// What the printer marked, if it was asked to.
-    pub fn for_each_mark(&self, each: impl FnMut(Mark)) {
+    /// The mappings of the braces of object literals, if the printer marked them.
+    pub fn for_each_object_brace(&self, each: impl FnMut(ObjectBrace)) {
         if let Some(ism) = &self.internal {
-            ism.for_each_mark(each);
+            ism.for_each_object_brace(each);
         }
     }
 

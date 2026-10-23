@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-strum.workspace = true
 bun_opaque.workspace = true
 bstr.workspace = true
 smallvec = { workspace = true, features = ["const_generics", "union"] }

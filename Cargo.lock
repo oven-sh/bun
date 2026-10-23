@@ -1740,7 +1740,6 @@ dependencies = [
  "bun_sys",
  "bun_zstd",
  "smallvec",
- "strum",
  "thiserror",
 ]
 

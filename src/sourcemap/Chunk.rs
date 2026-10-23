@@ -4,11 +4,8 @@ use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
 
 use crate::{
-    InternalSourceMap, LineColumnOffset, LineOffsetTable, Ordinal, SourceMapState,
-    append_mapping_to_buffer, internal_source_map,
-    internal_source_map::{Mark, MarkKind},
-    line_offset_table,
-    line_offset_table::LineOffsetTableColumns as _,
+    InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
+    internal_source_map, line_offset_table, line_offset_table::LineOffsetTableColumns as _,
 };
 
 #[derive(Clone)]
@@ -619,35 +616,26 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.has_prev_state = true;
     }
 
-    /// Marks the end of `output` as the generated position of `loc`. Adds no mapping.
-    #[inline(never)]
-    pub fn mark(&mut self, kind: MarkKind, decision: u32, loc: Loc, output: &[u8]) {
-        // exclude generated code from source
-        if loc.start == Loc::EMPTY.start {
-            return;
-        }
-        let Some(original) = self.original_position(loc) else {
-            return;
-        };
-        self.update_generated_line_and_column(output);
-        // VLQ has nowhere to keep a mark.
+    /// VLQ has nowhere to keep a mark.
+    pub fn mark_object_brace(&mut self) {
         if let Some(internal) = &mut self.source_map.ctx.internal {
-            let generated = LineColumnOffset {
-                lines: Ordinal::from_zero_based(self.prev_state.generated_line),
-                columns: Ordinal::from_zero_based(self.generated_column.max(0)),
-            };
-            internal.append_mark(Mark {
-                generated,
-                original,
-                kind: kind as u32,
-                decision,
-            });
+            internal.mark_object_brace(&self.prev_state);
         }
     }
 
-    /// `None`: there is no line offset table.
-    #[inline(always)]
-    fn original_position(&mut self, loc: Loc) -> Option<LineColumnOffset> {
+    #[inline(never)]
+    pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
+        if
+        // don't insert mappings for same location twice
+        self.prev_loc.eql(loc) ||
+            // exclude generated code from source
+            loc.start == Loc::EMPTY.start
+        {
+            return;
+        }
+
+        self.prev_loc = loc;
+
         if let LineOffsetTables::Deferred {
             contents,
             approximate_line_count,
@@ -672,7 +660,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         // import foo from "./foo.png";
         //
         if list_len == 0 {
-            return None;
+            return;
         }
 
         if self.line_offset_table_byte_offset_list.len() != list_len {
@@ -712,29 +700,6 @@ impl NewBuilder<'_, VLQSourceMap> {
             }
         }
 
-        Some(LineColumnOffset {
-            lines: Ordinal::from_zero_based(original_line.max(0)),
-            columns: Ordinal::from_zero_based(original_column.max(0)),
-        })
-    }
-
-    #[inline(never)]
-    pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
-        if
-        // don't insert mappings for same location twice
-        self.prev_loc.eql(loc) ||
-            // exclude generated code from source
-            loc.start == Loc::EMPTY.start
-        {
-            return;
-        }
-
-        self.prev_loc = loc;
-
-        let Some(original) = self.original_position(loc) else {
-            return;
-        };
-
         self.update_generated_line_and_column(output);
 
         // If this line doesn't start with a mapping and we're about to add a mapping
@@ -757,8 +722,8 @@ impl NewBuilder<'_, VLQSourceMap> {
             generated_line: self.prev_state.generated_line,
             generated_column: self.generated_column.max(0),
             source_index: self.prev_state.source_index,
-            original_line: original.lines.zero_based(),
-            original_column: original.columns.zero_based(),
+            original_line: original_line.max(0),
+            original_column: original_column.max(0),
         });
 
         // This line now has a mapping on it, so don't insert another one

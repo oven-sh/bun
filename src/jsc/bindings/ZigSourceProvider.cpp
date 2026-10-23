@@ -16,6 +16,7 @@
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
+#include <JavaScriptCore/ControlFlowProfiler.h>
 #include "BunBuiltinNames.h"
 
 namespace Zig {
@@ -41,7 +42,7 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
+extern "C" bool ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
 extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
 void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
@@ -134,7 +135,9 @@ Ref<SourceProvider> SourceProvider::create(
         BunString providerURL = Bun::toString(provider->sourceURL());
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();
         BunString providerSource = Bun::toString(providerSourceString);
-        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled);
+        // JSC does not know the branches of a function until it is called.
+        if (ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled))
+            globalObject->vm().controlFlowProfiler()->generateBytecodeEagerly(provider->asID());
     }
 
     if (provider->m_alreadyBundled) {

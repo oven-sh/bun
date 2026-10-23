@@ -428,6 +428,30 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect(client.events).toEqual(["error", "close(hadError=true)"]);
   });
 
+  // The TLS layer's send of records it held races the poll for a reset, so both report it alike. Any other failed send is the write's.
+  test.each([
+    ["ECONNRESET", "at the writable event", ["error read ECONNRESET", "write callback write ECANCELED", "close true"]],
+    ["EPIPE", "at the writable event", ["write callback write EPIPE", "error write EPIPE", "close true"]],
+    ["ECONNRESET", "in write()", ["write callback write ECONNRESET", "error write ECONNRESET", "close true"]],
+  ] as const)("send → %s for ciphertext %s", async (errno, when, expected) => {
+    using p = await connectedTLSPair();
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    p.client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
+    p.client.on("close", hadError => {
+      events.push(`close ${hadError}`);
+      closed.resolve();
+    });
+    const failing = { syscall: "send", action: "errno", errno, repeat: -1, fd: fdOf(p.client) } as const;
+    fault.set(when === "in write()" ? failing : { syscall: "send", action: "short", bytes: 10, fd: fdOf(p.client) });
+    p.client.write("hello", (err?: NodeJS.ErrnoException | null) => {
+      events.push(`write callback ${err?.syscall} ${err?.code}`);
+    });
+    fault.set(failing);
+    await closed.promise;
+    expect(events).toEqual([...expected]);
+  });
+
   test("send → EPIPE past the FIN of the peer holds the loop until the write has failed", async () => {
     await using ending = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true }, socket => {
       socket.on("error", () => {}).end();

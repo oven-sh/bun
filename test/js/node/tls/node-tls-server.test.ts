@@ -1,7 +1,7 @@
 import cluster from "cluster";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tls as cert1, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import http from "http";
 import http2 from "http2";
 import https from "https";
@@ -5769,6 +5769,43 @@ describe("a send that the kernel rejects", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Whichever of the poll and the send meets the reset. Other kernels answer a send to a peer that reset with EPIPE.
+  it.skipIf(!isLinux)(
+    "for the reset of a peer that stops reading is a failed read, and the write is canceled",
+    async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const chunk = Buffer.alloc(64 * 1024, "q");
+      await using server: Server = createServer(COMMON_CERT, socket => {
+        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.syscall} ${err.code}`));
+        socket.on("close", hadError => {
+          events.push(`close ${hadError}`);
+          closed.resolve();
+        });
+        let failed = false;
+        function onWritten(err?: NodeJS.ErrnoException | null) {
+          if (!err || failed) return;
+          failed = true;
+          events.push(`write callback ${err.syscall} ${err.code}`);
+        }
+        (function pump() {
+          if (socket.destroyed) return;
+          if (socket.write(chunk, onWritten)) setImmediate(pump);
+          else socket.once("drain", pump);
+        })();
+      });
+      let received = 0;
+      const client = connect(await listening(server));
+      client.on("error", () => {});
+      client.on("data", data => {
+        received += data.length;
+        if (received > 300_000) client.destroy();
+      });
+      await closed.promise;
+      expect(events).toEqual(["error read ECONNRESET", "write callback write ECANCELED", "close true"]);
+    },
+  );
+
   it.each([true, false])("in the handshake is a 'tlsClientError' (allowHalfOpen: %p)", async allowHalfOpen => {
     const clientHello = Promise.withResolvers<Buffer>();
     await using recorder = net.createServer(socket => socket.on("error", () => {}).once("data", clientHello.resolve));
@@ -5793,6 +5830,34 @@ describe("a send that the kernel rejects", () => {
     await new Promise(resolve => server.close(resolve));
   });
 });
+
+it.skipIf(isWindows)(
+  "a TLSSocket over a half-open unix socket whose peer is gone stays open like that socket",
+  async () => {
+    using dir = tempDir("tls-over-half-open", {});
+    const path = join(String(dir), "socket");
+    const accepted = Promise.withResolvers<net.Socket>();
+    await using server = net.createServer({ allowHalfOpen: true }, socket => accepted.resolve(socket));
+    server.listen(path);
+    await once(server, "listening");
+    const client = net.connect(path);
+    const [raw] = await Promise.all([accepted.promise, once(client, "connect")]);
+    const ended = once(raw, "end");
+    raw.resume();
+    client.destroy();
+    await ended;
+    // The descriptor closes behind the 'end'.
+    for (let turn = 0; turn < 3; turn++) await new Promise(setImmediate);
+
+    const events: string[] = [];
+    raw.on("error", err => events.push(`raw error ${err.message}`)).on("close", () => events.push("raw close"));
+    const wrapped = new TLSSocket(raw, { isServer: true, ...COMMON_CERT });
+    wrapped.on("error", err => events.push(`error ${err.message}`)).on("close", () => events.push("close"));
+    for (let turn = 0; turn < 5; turn++) await new Promise(setImmediate);
+    expect(events).toEqual([]);
+    wrapped.destroy();
+  },
+);
 
 describe("reads each option the way Node does", () => {
   const keys = (file: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", file));

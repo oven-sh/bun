@@ -2239,12 +2239,13 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (
   const socket = connection._handle;
   if (
     !socket ||
+    (connection[kclosed] && connection.allowHalfOpen) ||
     !(connection instanceof Socket) ||
     connection.encrypted ||
     isNamedPipeSocket(socket) ||
     hasUnflushedWrites(connection)
   ) {
-    // No adoptable fd (generic Duplex, named pipe, never dialed), TLS over TLS (the fd belongs to the
+    // No adoptable fd (generic Duplex, named pipe, never dialed, closed under a half-open socket), TLS over TLS (the fd belongs to the
     // outer SSL layer), or pending plain writes that must flush first.
     attachTLSEngine(this, connection, options);
   } else if (connection.connecting) {

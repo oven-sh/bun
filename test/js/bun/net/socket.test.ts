@@ -7608,11 +7608,12 @@ describe.concurrent("end(data) larger than the send buffer", () => {
   );
 
   // Windows takes a first send of any size whole, so nothing is queued there.
-  it.skipIf(isWindows)(
+  it.skipIf(isWindows || !socketFaultInjection.available())(
     "end(data) on the raw half of an upgradeTLS() pair leaves the TLS half's tail alone",
     async () => {
       const size = 12 << 20;
       let received = 0;
+      let rawSent = -1;
       const closed = Promise.withResolvers<void>();
       using server = Bun.listen({
         hostname: "127.0.0.1",
@@ -7627,13 +7628,15 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           data() {},
           handshake(socket) {
             socket.end(Buffer.alloc(size));
-            // The kernel's buffer is full, so it takes none of this.
-            raw.end("zz");
+            // The kernel may have room again by now, and two raw bytes in the middle of a record would end the connection.
+            socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", fd: (socket as any).fd });
+            rawSent = raw.end("zz");
+            socketFaultInjection.clear();
           },
         },
       });
       await closed.promise;
-      expect(received).toBe(size);
+      expect({ rawSent, received }).toEqual({ rawSent: 0, received: size });
     },
   );
 

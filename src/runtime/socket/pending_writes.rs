@@ -17,6 +17,8 @@ pub(crate) enum Completion {
     Owed,
     /// The bytes are lost. The error waits for the close, behind what the peer sent.
     Failed(SystemErrno),
+    /// The TLS layer's send of records it held met the peer's reset ahead of the poll. The close reports what the poll's would: a failed read, and a canceled write.
+    Reset,
 }
 
 impl PendingWrites {
@@ -79,11 +81,27 @@ impl PendingWrites {
         }
     }
 
+    #[inline]
+    pub(crate) fn is_lost(&self) -> bool {
+        matches!(self.completion, Completion::Failed(_) | Completion::Reset)
+    }
+
     /// Frees the bytes, which no send can deliver any more. The first failure is the one reported.
     pub(crate) fn fail(&mut self, errno: SystemErrno) {
         self.clear();
-        if !matches!(self.completion, Completion::Failed(_)) {
+        if !self.is_lost() {
             self.completion = Completion::Failed(errno);
+        }
+    }
+
+    /// `fail()` for a send that the TLS layer made by itself, of records it held.
+    pub(crate) fn fail_held_records(&mut self, errno: SystemErrno) {
+        self.clear();
+        if !self.is_lost() {
+            self.completion = match errno {
+                SystemErrno::ECONNRESET => Completion::Reset,
+                _ => Completion::Failed(errno),
+            };
         }
     }
 

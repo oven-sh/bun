@@ -929,33 +929,32 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// A send failed for good. The transport reads on and closes by itself, and the write ends with that close.
-    fn fail_queued_writes(&self, send_error: c_int) {
+    fn fail_queued_writes(
+        &self,
+        send_error: c_int,
+        record: fn(&mut PendingWrites, sys::SystemErrno),
+    ) {
         // The TLS layer has done this itself if a send is what failed.
         if !SSL {
             self.socket.get().reject_send(send_error);
         }
         self.buffered_data_for_node_net
-            .with_mut(|b| b.fail(send_errno(send_error)));
+            .with_mut(|b| record(b, send_errno(send_error)));
         self.fail_write_of_stopped_reader();
     }
 
-    /// A reader that stopped may be waiting for this very write, while the transport waits for it to read.
+    /// The transport stays open for a reader. A socket that doesn't read would wait for ever, maybe for this very write, so it closes a turn later.
     fn fail_write_of_stopped_reader(&self) {
-        if self.failed_write_of_stopped_reader().is_some()
+        if self.lost_write_of_stopped_reader()
             && let Some(handlers) = self.handlers.get()
-            && !handlers.on_write_complete().is_empty()
         {
             self.complete_write_later(handlers, None);
         }
     }
 
-    fn failed_write_of_stopped_reader(&self) -> Option<c_int> {
-        match self.buffered_data_for_node_net.get().completion() {
-            Completion::Failed(errno) if self.flags.get().contains(Flags::IS_PAUSED) => {
-                Some(uv_status(errno))
-            }
-            _ => None,
-        }
+    fn lost_write_of_stopped_reader(&self) -> bool {
+        self.flags.get().contains(Flags::IS_PAUSED)
+            && self.buffered_data_for_node_net.get().is_lost()
     }
 
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
@@ -980,7 +979,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let send_error = this.socket.get().rejected_send_error();
         if send_error != 0 {
             if this.buffered_data_for_node_net.get().is_pending() {
-                this.fail_queued_writes(send_error);
+                this.fail_queued_writes(send_error, PendingWrites::fail_held_records);
             }
             return Ok(());
         }
@@ -1359,7 +1358,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.buffered_data_for_node_net.with_mut(|b| b.clear());
         let status = match self.buffered_data_for_node_net.get().completion() {
             Completion::None => return,
-            Completion::Owed => sys::SystemErrno::ECANCELED,
+            Completion::Owed | Completion::Reset => sys::SystemErrno::ECANCELED,
             Completion::Failed(errno) => errno,
         };
         if let Some(handlers) = self.handlers.get()
@@ -1377,7 +1376,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         if send_error != 0 && self.buffered_data_for_node_net.get().is_pending() {
             self.buffered_data_for_node_net
-                .with_mut(|b| b.fail(send_errno(send_error)));
+                .with_mut(|b| b.fail_held_records(send_errno(send_error)));
         }
         let Completion::Failed(errno) = self.buffered_data_for_node_net.get().completion() else {
             return None;
@@ -2193,6 +2192,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             0
         };
         let failed_write = this.take_failed_write(send_error);
+        let reset = this.buffered_data_for_node_net.get().completion() == Completion::Reset;
         this.discard_queued_writes();
         // Declared first so it drops last: ticks drain ahead of the teardown.
         let _cleanup = CloseTeardown {
@@ -2262,6 +2262,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // onStreamRead, which only sees errors that came from uv_read_cb).
         let error = match failed_write {
             Some(errno) => Some(sys::Error::new(errno, sys::Tag::write)),
+            None if reset => Some(sys::Error::new(
+                sys::SystemErrno::ECONNRESET,
+                sys::Tag::read,
+            )),
             None if err > 2 => Some(read_error_from_close_code(err)),
             None => None,
         };
@@ -2573,7 +2577,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn send_queue(&self) -> c_int {
         let (sent, fatal_errno) = self.send_queued(|bytes| self.send(bytes));
         if fatal_errno != 0 {
-            self.fail_queued_writes(fatal_errno);
+            self.fail_queued_writes(fatal_errno, PendingWrites::fail);
             return fatal_errno;
         }
         self.buffered_data_for_node_net
@@ -2625,7 +2629,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 return Ok(JSValue::js_number_from_int32(status));
             }
             // A TLS write never fails in the same call, as in Node.
-            self.fail_queued_writes(send_error);
+            self.fail_queued_writes(send_error, PendingWrites::fail);
             return Ok(JSValue::FALSE);
         }
         if usize::try_from(wrote.max(0)).expect("int cast") == total
@@ -3034,7 +3038,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             WriteResult::Fail => return Err(jsc::JsError::Thrown),
             WriteResult::Success { wrote, total } => {
                 if wrote < -1 {
-                    self.fail_queued_writes(c_int::try_from(-wrote).expect("int cast"));
+                    self.fail_queued_writes(
+                        c_int::try_from(-wrote).expect("int cast"),
+                        PendingWrites::fail,
+                    );
                 } else if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = self.internal_flush();
                 } else {
@@ -3383,31 +3390,24 @@ enum WriteResult {
     Success { wrote: isize, total: usize },
 }
 
-/// A `writeComplete` call that has to come from the event loop.
+/// The end of a write that has to come from the event loop.
 pub(crate) struct DeferredWriteCompletion<const SSL: bool> {
     socket: RefPtr<NewSocket<SSL>>,
     /// A closed socket holds its wrapper weakly.
     this_value: jsc::Strong,
     handlers: Rc<Handlers>,
-    /// `None`: the failed send's, if the reader is still stopped. Otherwise the close delivers it.
+    /// `None`: close the socket if its reads are still stopped. `on_close` reports the failed write.
     status: Option<c_int>,
 }
 
 impl<const SSL: bool> DeferredWriteCompletion<SSL> {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
-        let Some(status) = self
-            .status
-            .or_else(|| self.socket.failed_write_of_stopped_reader())
-        else {
-            return;
-        };
-        if self.status.is_none() {
-            self.socket
-                .buffered_data_for_node_net
-                .with_mut(|b| b.take());
+        if let Some(status) = self.status {
+            NewSocket::<SSL>::call_write_complete(&self.handlers, self.this_value.get(), status);
+        } else if self.socket.lost_write_of_stopped_reader() {
+            self.socket.socket.get().close(uws::CloseCode::Failure);
         }
-        NewSocket::<SSL>::call_write_complete(&self.handlers, self.this_value.get(), status);
     }
 }
 

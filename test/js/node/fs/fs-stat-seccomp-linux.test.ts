@@ -559,8 +559,14 @@ describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () =
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, signalCode: proc.signalCode }).toEqual({ stdout: "", signalCode: "SIGSYS" });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // An ASAN build prints one warning line at startup.
+    const unexpected = stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"));
+    expect({ stdout, stderr: unexpected, signalCode: proc.signalCode }).toEqual({
+      stdout: "",
+      stderr: [],
+      signalCode: "SIGSYS",
+    });
   });
 
   // The kernel drops a default-action signal that is sent to PID 1 of a pid namespace, which is what

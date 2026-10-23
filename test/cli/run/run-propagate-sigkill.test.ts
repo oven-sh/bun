@@ -134,10 +134,13 @@ describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // An ASAN build prints one warning line at startup.
+    const unexpected = stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"));
 
-    expect({ stdout, signalCode: proc.signalCode, exitCode }).toEqual({
+    expect({ stdout, stderr: unexpected, signalCode: proc.signalCode, exitCode }).toEqual({
       stdout: "",
+      stderr: [],
       signalCode: null,
       exitCode: 128 + constants.signals.SIGSYS,
     });

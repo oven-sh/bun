@@ -11,6 +11,7 @@ use bun_install::lockfile::{
     package::scripts::{List as ScriptsList, PrintFormat},
     tree,
 };
+use bun_install::package_installer::link_dependency_bins;
 use bun_install::package_manager_real::{
     PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, package_json_write_back,
     update_lockfile_if_needed,
@@ -60,6 +61,8 @@ enum Action {
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
+    /// The tree of `with_install_tree` that places the package. `None` in the isolated store.
+    tree_id: Option<tree::Id>,
     /// Scripts run deepest first, like during an install.
     depth: usize,
     scripts_list: ScriptsList,
@@ -152,6 +155,7 @@ impl Blocked {
             blocked.push(Blocked {
                 dep_id: folder.dep_id,
                 package_id: folder.pkg_id,
+                tree_id: None,
                 depth: folder.depth,
                 scripts_list,
                 in_global_store: !is_link
@@ -201,6 +205,7 @@ impl Blocked {
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
+                        tree_id: Some(node_modules.tree_id),
                         depth: node_modules.depth,
                         scripts_list,
                         in_global_store: false,
@@ -510,6 +515,34 @@ impl TrustCommand {
                 Global::crash();
             }
         };
+
+        let placed: Vec<(tree::Id, DependencyID)> = (blocked.iter())
+            .filter(|info| info.action == Action::Run)
+            .filter_map(|info| Some((info.tree_id?, info.dep_id)))
+            .collect();
+        let failed = if placed.is_empty() {
+            None
+        } else {
+            // SAFETY: `pm_raw` singleton; `lockfile` is borrowed again below.
+            bun_install::prune::with_install_tree(unsafe { &mut *pm_raw }, |pm| {
+                (placed.iter()).find_map(|&(tree_id, dep_id)| {
+                    Some((dep_id, link_dependency_bins(pm, tree_id, dep_id).err()?))
+                })
+            })?
+        };
+        // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow until the scripts have run.
+        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
+        if let Some((dep_id, err)) = failed {
+            let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize].name;
+            Output::err(
+                err,
+                "failed to link bins for the scripts of <b>{}<r>",
+                (bstr::BStr::new(
+                    alias.slice(lockfile.buffers.string_bytes.as_slice()),
+                ),),
+            );
+            Global::crash();
+        }
 
         let mut scripts_node: Progress::Node;
         let show_progress = log_level.show_progress();

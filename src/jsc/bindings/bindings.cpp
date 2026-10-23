@@ -1842,8 +1842,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 auto urlSearchParams1 = dynamicDowncast<JSURLSearchParams>(c1);
                 auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
                 if (urlSearchParams1 && urlSearchParams2) {
-                    // An ordered list of (name, value) tuples in which names may repeat, so it is
-                    // compared positionally (as jest's iterableEquality does), not by get(name).
+                    // Names may repeat and order is observable, so compare positionally like jest does.
                     if (urlSearchParams1->wrapped().pairs() != urlSearchParams2->wrapped().pairs()) {
                         return false;
                     }

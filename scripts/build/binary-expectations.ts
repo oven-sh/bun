@@ -124,6 +124,14 @@ export interface BinaryExpectations {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
     dllCharacteristics: string[];
     subsystem: string;
+    /** SizeOfStackReserve, bytes: the main thread's stack, and the default for a thread created without a size. */
+    stackReserve: number;
+    /**
+     * SizeOfStackCommit, bytes. Every thread that passes no commit size of its own is charged this much of the
+     * system commit limit when it starts, and does not start when it cannot be charged (flags.ts
+     * WINDOWS_STACK_COMMIT). One page: anything more is paid by every thread of every bun process.
+     */
+    stackCommit: number;
   };
   macho?: {
     /** MH_* flags that must be present. */
@@ -357,6 +365,9 @@ export function shimExpectations(): BinaryExpectations {
     pe: {
       dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
       subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",
+      // The linker's defaults: the shim passes no /STACK.
+      stackReserve: 0x100000,
+      stackCommit: 0x1000,
     },
   };
 }
@@ -543,6 +554,9 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         pe: {
           dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
           subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",
+          // Literals, not flags.ts's constants: an edit to those has to fail this check.
+          stackReserve: 0x1200000,
+          stackCommit: 0x1000,
         },
       };
   }

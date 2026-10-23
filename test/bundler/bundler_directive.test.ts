@@ -394,6 +394,137 @@ describe("bundler", () => {
     run: { stdout: "b side effect\n2" },
   });
 
+  // Every statement of this ES module moves out of its wrapper, so the parser
+  // gives the file no wrapper symbol. The linker must not make a wrapper body
+  // only to hold the prologue.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`directive/WrappedESMFileWithoutWrapperBody/${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const bind = require("./bind.js").default;
+          console.log(typeof bind, bind(function (a) { return a + 1 })(1));
+        `,
+        "/bind.js": /* js */ `
+          "use strict";
+          "use other";
+          export default function bind(fn) { return function wrap() { return fn.apply(undefined, arguments) } }
+        `,
+      },
+      format,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain("__esm(");
+      },
+      run: { stdout: "function 2" },
+    });
+  }
+
+  // A transform that adds a statement to a function body puts it after the
+  // prologue. A directive that follows another statement is no directive.
+  itBundled("directive/TypeScriptConstructorKeepsThePrologueFirst", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export class A {
+          constructor(public x: number, private y = 2) {
+            "use other";
+            console.log(this.x);
+          }
+        }
+        export class B extends Object {
+          constructor(public x: number) {
+            "use other";
+            super();
+          }
+        }
+      `,
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('constructor(x, y = 2) {\n    "use other";\n    this.x = x;\n    this.y = y;');
+      expect(out).toContain('constructor(x) {\n    "use other";\n    super();\n    this.x = x;');
+    },
+  });
+
+  itBundled("directive/LoweredClassFieldsKeepThePrologueFirst", {
+    files: {
+      "/entry.ts": /* ts */ `
+        function dec(...args: any[]): any {}
+        export class C {
+          x = 1;
+          @dec y = 2;
+          constructor() {
+            "use other";
+            console.log(this.x);
+          }
+        }
+      `,
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: { useDefineForClassFields: false, experimentalDecorators: true },
+      }),
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('constructor() {\n    "use other";\n    this.x = 1;\n    this.y = 2;');
+    },
+  });
+
+  itBundled("directive/StandardDecoratorsKeepThePrologueFirst", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(value, context) {}
+        // The temporaries of a decorated class expression are declared in the function around it.
+        export function make() {
+          "use other";
+          return @dec class K { @dec m() {} };
+        }
+        // The initializers of decorated fields run at the start of a constructor without super().
+        export class D {
+          @dec f = 2;
+          constructor() {
+            "use other";
+            console.log(1);
+          }
+        }
+        // The receiver of a lowered private call is captured in a temporary of the function.
+        export class Q {
+          @dec #m() { return 1 }
+          static call(get) {
+            "use other";
+            return get().#m();
+          }
+        }
+      `,
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/function make\(\) \{\n  "use other";\n  var /);
+      expect(out).toMatch(/constructor\(\) \{\n    "use other";\n    __runInitializers/);
+      expect(out).toMatch(/\(get\) \{\n    "use other";\n    var _obj/);
+    },
+  });
+
+  itBundled("directive/ReactFastRefreshKeepsThePrologueFirst", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Outer() {
+          "use other";
+          const [a] = useState(0);
+          const Inner = () => { "use inner"; const [b] = useState(1); return b };
+          return a + Inner();
+        }
+      `,
+    },
+    reactFastRefresh: true,
+    external: ["react", "react-refresh/runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/function Outer\(\) \{\n  "use other";\n  _s\(\);/);
+      expect(out).toMatch(/\(\) => \{\n    "use inner";\n    _s2\(\);/);
+    },
+  });
+
   itBundled("directive/TargetBunCJSEntry", {
     files: {
       "/entry.js": /* js */ `

@@ -5424,6 +5424,35 @@ class A {
     );
   });
 
+  it("does not turn a string that is not a directive into one", () => {
+    // Without dead-code elimination an unused string statement is kept. Printed as a
+    // string at the head of a function body it would be a directive.
+    const source = `
+      function paren() { ("use strict"); return typeof this }
+      function semicolon() { ;"use strict"; return typeof this }
+      function template() { \`use strict\`; return typeof this }
+      function folded() { "use " + "strict"; return typeof this }
+      function inBlock() { { "use strict" } return typeof this }
+      function inIf() { if (1) "use strict"; return typeof this }
+      function real() { "use strict"; return typeof this }
+      return [paren(), semicolon(), template(), folded(), inBlock(), inIf(), real()].join(" ");
+    `;
+    for (const options of [
+      {},
+      { minify: { syntax: true } },
+      { deadCodeElimination: false },
+      { deadCodeElimination: false, minify: { syntax: true } },
+      { deadCodeElimination: false, minifyWhitespace: true, minify: { syntax: true, whitespace: true } },
+    ]) {
+      const output = new Bun.Transpiler(options).transformSync(`(function () {${source}})`);
+      // Indirect eval: the function is sloppy, like the CommonJS file it stands for.
+      expect({ options, result: (0, eval)(output)() }).toEqual({
+        options,
+        result: "object object object object object object undefined",
+      });
+    }
+  });
+
   it("can parse 'a<b>' as typescript", () => {
     ts.expectPrinted("a<b>", "a");
     expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`a<b>`)).toBe(`a;\n`);

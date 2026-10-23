@@ -958,6 +958,29 @@ describe("bundler", () => {
     },
   });
 
+  // The memo cache is declared after the directives of the component. A
+  // directive that follows another statement is no directive.
+  itBundled("react-compiler/DirectivesStayAheadOfTheMemoCache", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Component(props) {
+          "use memo";
+          "use strict";
+          const x = [props.a];
+          return <div>{x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(
+        /function Component\(props\) \{\n  "use memo";\n  "use strict";\n  let \$ = _c\(\d+\);/,
+      );
+    },
+  });
+
   // What is caught is declared before the `try`, so it is a candidate for a dependency of a scope around the `try` or in it.
   // There its name is not bound. It is only left out because it is not reactive.
   itBundled("react-compiler/WhatIsCaughtIsNoDependencyOutsideTheHandler", {

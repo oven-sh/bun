@@ -2497,6 +2497,9 @@ pub(crate) mod __gated_printer {
             loc: bun_ast::Loc,
             branches: &[bun_ast::Loc],
         ) -> u32 {
+            if !self.code_coverage() {
+                return 0;
+            }
             self.mark_decision_at_offset(self.writer.written(), kind, loc, branches)
         }
 
@@ -2507,6 +2510,9 @@ pub(crate) mod __gated_printer {
             decision_loc: bun_ast::Loc,
             branch_loc: bun_ast::Loc,
         ) -> u32 {
+            if !self.code_coverage() {
+                return 0;
+            }
             let last_byte = self.writer.written() - 1;
             self.mark_decision_at_offset(
                 last_byte,
@@ -2517,7 +2523,7 @@ pub(crate) mod __gated_printer {
         }
 
         /// Returns 0, which `mark_branch` ignores, if a branch is not after `loc`: generated code.
-        #[inline]
+        #[inline(never)]
         fn mark_decision_at_offset(
             &mut self,
             offset: i32,
@@ -2526,7 +2532,7 @@ pub(crate) mod __gated_printer {
             branches: &[bun_ast::Loc],
         ) -> u32 {
             // After an overflow nothing is printed, and `mark` cannot go back before the last mark.
-            if !self.code_coverage() || self.stack_overflowed {
+            if self.stack_overflowed {
                 return 0;
             }
             // JSC counts the value of a `case` with its clause, not each time it is compared.
@@ -2564,6 +2570,9 @@ pub(crate) mod __gated_printer {
         /// `stmt` is about to be printed and is a branch of `decision`.
         #[inline]
         fn mark_branch_stmt(&mut self, decision: u32, stmt: &Stmt) {
+            if decision == 0 {
+                return;
+            }
             // JSC starts the block of `x: f()` at `f`, so the mark goes after the labels.
             if matches!(stmt.data, StmtData::SLabel(_)) {
                 self.decision_of_label = decision;

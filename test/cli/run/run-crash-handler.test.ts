@@ -27,7 +27,7 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-23"));
 
-// The allocation the `allocError` test hook requests (`js_alloc_error` in
+// The allocation the `allocError` test hook requests (`alloc_error` in
 // src/runtime/api/crash_handler_jsc.rs). The crash report prints it.
 const allocErrorSize = 2n ** 62n;
 

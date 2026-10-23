@@ -5352,7 +5352,7 @@ impl<'a> Resolver<'a> {
         r
     }
 
-    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.rs
+    // node_module_paths / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.rs
     // (exported to C++ only)
 
     // NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so

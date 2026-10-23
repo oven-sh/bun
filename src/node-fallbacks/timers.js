@@ -6,4 +6,17 @@ export const setImmediate = globalThis.setImmediate;
 export const clearInterval = globalThis.clearInterval;
 export const clearImmediate = globalThis.clearImmediate;
 export const _unrefActive = () => {};
-export * as promises from "node:timers/promises";
+import * as promises from "node:timers/promises";
+
+export { promises };
+
+export default {
+  _unrefActive,
+  clearImmediate,
+  clearInterval,
+  clearTimeout,
+  promises,
+  setImmediate,
+  setInterval,
+  setTimeout,
+};

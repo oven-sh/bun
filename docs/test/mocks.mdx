@@ -292,7 +292,7 @@ test("mock.module", async () => {
 });
 ```
 
-Modules that already imported `./module` keep their live bindings, so they see the new values of the exports they imported. A live binding cannot gain an export that `./module` did not have. If the factory returns such an export, Bun replaces `./module` in the module cache with a module that has the new exports and re-exports the others from the loaded module. Modules imported after that call see every export of the factory. Modules imported before it keep their bindings, and a later `mock.module()` call for the same path updates both.
+Modules that already imported `./module` keep their live bindings, so they see the new values of the exports they imported. A live binding cannot gain an export that `./module` did not have. If the factory returns such an export, Bun replaces `./module` in the module cache with a module that has the new exports and re-exports the others from the loaded module. A module that imports `./module` after that call sees every export of the factory. Modules imported before it keep their bindings, and a later `mock.module()` call for the same path updates both. A module that re-exports `./module` and was imported before the call still has the old export set.
 
 When the factory returns a promise that is still pending, Bun updates the already-imported module once the promise settles. In that case `mock.module()` returns a promise that resolves after the update, and otherwise it returns `undefined`. `await mock.module(...)` inside a test or hook covers both. At the top level of a test file, Bun waits for pending module mocks before it runs the file's tests.
 

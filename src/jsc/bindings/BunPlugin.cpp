@@ -570,6 +570,13 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     return loaded;
 }
 
+static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
+{
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
+    return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
 // Re-exports the old names rather than copying them: linked importers bind into the loaded record, and a later mock.module() must still write those bindings.
 static void replaceOutgrownESModule(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* loadedNamespace, const Vector<JSC::Identifier, 4>& newNames, const MarkedArgumentBuffer& newValues, const String& specifier)
 {
@@ -622,20 +629,25 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
         }
         Vector<JSC::Identifier, 4> newNames;
         MarkedArgumentBuffer newValues;
+        bool outgrown = false;
         for (size_t i = 0; i < names.size(); ++i) {
             bool overridden = moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
             RETURN_IF_EXCEPTION(scope, );
+            if (overridden)
+                continue;
+            newNames.append(names[i]);
+            newValues.append(values.at(i));
             // A source-text module never exports `__esModule`: its namespace serves it from the prototype.
-            if (!overridden && names[i] != vm.propertyNames->__esModule) {
-                newNames.append(names[i]);
-                newValues.append(values.at(i));
-            }
+            if (names[i] != vm.propertyNames->__esModule)
+                outgrown = true;
         }
         if (newValues.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
-        if (!newNames.isEmpty()) {
+        // A record still evaluating (top-level await) or one whose evaluation threw keeps its entry: a
+        // replacement would hand later importers its uninitialized bindings without waiting for it.
+        if (outgrown && isModuleEvaluated(moduleNamespaceObject->moduleRecord())) {
             replaceOutgrownESModule(globalObject, moduleNamespaceObject, newNames, newValues, specifier);
             RETURN_IF_EXCEPTION(scope, );
         }

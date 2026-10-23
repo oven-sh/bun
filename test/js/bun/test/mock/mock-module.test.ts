@@ -379,9 +379,83 @@ test("mock.module() that adds a default export to a module without one serves it
   const path = join(String(dir), "named.ts");
   await import(path);
 
-  mock.module(path, () => ({ n: 2, default: "mock default" }));
+  mock.module(path, () => ({ n: 2, default: "mock default", __esModule: true }));
   const mocked = await import(path);
-  expect({ n: mocked.n, default: mocked.default }).toEqual({ n: 2, default: "mock default" });
+  expect({ n: mocked.n, default: mocked.default, __esModule: mocked.__esModule }).toEqual({
+    n: 2,
+    default: "mock default",
+    __esModule: true,
+  });
+});
+
+test("mock.module() that adds an export to a loaded barrel re-exports its star and named exports", async () => {
+  using dir = tempDir("mock-module-barrel-adds-export", {
+    "inner.ts": `export const a = "inner a";\nexport const s = "inner s";`,
+    "barrel.ts": `export { a } from "./inner";\nexport * from "./inner";\nexport const own = "own";`,
+    "uses.ts": `import { a, s, own, extra } from "./barrel";\nexport const read = () => ({ a, s, own, extra });`,
+  });
+  const path = join(String(dir), "barrel.ts");
+  const inner = await import(join(String(dir), "inner.ts"));
+  const barrel = await import(path);
+
+  mock.module(path, () => ({ a: "mock a", extra: "mock extra" }));
+  expect([inner.a, barrel.a]).toEqual(["mock a", "mock a"]);
+  const after = await import(path);
+  expect(Object.keys(after).sort()).toEqual(["a", "extra", "own", "s"]);
+  const { read } = await import(join(String(dir), "uses.ts"));
+  expect(read()).toEqual({ a: "mock a", s: "inner s", own: "own", extra: "mock extra" });
+
+  mock.module(path, () => ({ a: "mock a2", s: "mock s2", own: "own2" }));
+  expect(read()).toEqual({ a: "mock a2", s: "mock s2", own: "own2", extra: "mock extra" });
+  expect([inner.a, inner.s, barrel.a, barrel.s, barrel.own]).toEqual([
+    "mock a2",
+    "mock s2",
+    "mock a2",
+    "mock s2",
+    "own2",
+  ]);
+});
+
+test("mock.module() that adds an export to a CommonJS module loaded with import() keeps its other exports", async () => {
+  using dir = tempDir("mock-module-cjs-adds-export", {
+    "lib.cjs": `exports.a = "real a";\nexports.c = "real c";`,
+  });
+  const path = join(String(dir), "lib.cjs");
+  const ns = await import(path);
+
+  mock.module(path, () => ({ a: "mock a", b: "mock b" }));
+  expect({ a: ns.a, c: ns.c }).toEqual({ a: "mock a", c: "real c" });
+  const after = await import(path);
+  expect({ a: after.a, b: after.b, c: after.c }).toEqual({ a: "mock a", b: "mock b", c: "real c" });
+  expect(require(path)).toEqual({ a: "mock a", b: "mock b" });
+
+  mock.module(path, () => ({ a: "mock a2" }));
+  expect([ns.a, after.a, after.b]).toEqual(["mock a2", "mock a2", "mock b"]);
+});
+
+test("mock.module() of a module still awaiting top-level await keeps its entry for later importers", async () => {
+  using dir = tempDir("mock-module-tla-in-flight", {
+    "lib.ts": `export const a = "real a";\nglobalThis.__tlaStarted.resolve();\nawait globalThis.__tlaGate.promise;\nexport const c = "real c";`,
+    "uses-c.ts": `import { c } from "./lib";\nexport const value = c;`,
+  });
+  const path = join(String(dir), "lib.ts");
+  const started = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  (globalThis as any).__tlaStarted = started;
+  (globalThis as any).__tlaGate = gate;
+  try {
+    const inFlight = import(path);
+    await started.promise;
+    mock.module(path, () => ({ a: "mock a", extra: "mock extra" }));
+    const later = import(join(String(dir), "uses-c.ts"));
+    gate.resolve();
+    const ns = await inFlight;
+    expect({ a: ns.a, c: ns.c }).toEqual({ a: "mock a", c: "real c" });
+    expect((await later).value).toBe("real c");
+  } finally {
+    delete (globalThis as any).__tlaStarted;
+    delete (globalThis as any).__tlaGate;
+  }
 });
 
 test("a pending factory that adds an export serves it to the next import() once it settles", async () => {

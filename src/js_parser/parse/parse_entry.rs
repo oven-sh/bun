@@ -1593,12 +1593,18 @@ impl<'a> Parser<'a> {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
                                 .use_count_estimate += export_refs_len as u32;
                             p.deoptimize_commonjs_named_exports();
-                        } else if p.symbols.as_slice()[p.module_ref.inner_index() as usize]
-                            .use_count_estimate
-                            > p.module_exports_rewrite_count
-                        {
+                        } else {
+                            let module_uses = p.symbols.as_slice()
+                                [p.module_ref.inner_index() as usize]
+                                .use_count_estimate;
                             // `module.constructor` and other uses of `module` need the wrapper.
-                            p.deoptimize_commonjs_named_exports();
+                            // So does `module.exports` after `exports = ...`: it prints as written.
+                            if module_uses > p.module_exports_rewrite_count
+                                || (p.commonjs_module_exports_assigned_deoptimized
+                                    && module_uses > 0)
+                            {
+                                p.deoptimize_commonjs_named_exports();
+                            }
                         }
                     }
                 }

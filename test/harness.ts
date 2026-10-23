@@ -1173,11 +1173,12 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
     }
   }
 
-  const visited = new Set([root]);
+  // Each folder that is known to hold a package, with the id of that package.
+  const visited = new Map<string, number>([[root, 0]]);
   const queue: [pkg: any, folder: string][] = [[lockfile.packages[0], root]];
   function visit(pkg: any, folder: string) {
     if (visited.has(folder)) return;
-    visited.add(folder);
+    visited.set(folder, pkg.id);
     queue.push([pkg, folder]);
   }
 
@@ -1195,6 +1196,7 @@ export function toMatchNodeModulesAt(lockfile: any, root: string) {
       }
 
       const found = lookup(dep.name, folder);
+      if (found !== undefined && visited.get(found) === target.id) continue;
       const wrong = found === undefined ? `there is no node_modules/${dep.name}` : mismatch(target, found);
       if (found !== undefined && wrong === undefined) {
         visit(target, found);

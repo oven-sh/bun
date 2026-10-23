@@ -48,7 +48,11 @@ async function run(cmd: string[], cwd: string, given: { stdin?: string; env?: Re
 
 const withoutAmounts = (ran: Ran): Ran => {
   const plain = (text: string) =>
-    text.replaceAll("\r\n", "\n").replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|MB|GB)\b/g, "<amount>");
+    text
+      .replaceAll("\r\n", "\n")
+      .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|MB|GB)\b/g, "<amount>")
+      // A time is padded to a width.
+      .replace(/^ +(?=\[<amount>\])/gm, "");
   return { ...ran, stdout: plain(ran.stdout), stderr: plain(ran.stderr) };
 };
 

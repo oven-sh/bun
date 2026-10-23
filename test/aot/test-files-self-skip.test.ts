@@ -61,6 +61,7 @@ const needNoCompiler = [
   "cli/aot-compile-executable-path.test.ts",
   "cli/aot-unknown-flags.test.ts",
   "cli/hand-over-to-bun-aot.test.ts",
+  "cli/hand-over-to-the-real-bun-aot.test.ts",
   "cli/test/test-aot-mocks-and-lazy-constants.test.ts",
   "internal/build-hardened-flags.test.ts",
   "internal/builtins-manifest.test.ts",

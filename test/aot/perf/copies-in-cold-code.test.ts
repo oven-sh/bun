@@ -10,8 +10,10 @@ import { built, spawned, withoutDebugInformation } from "../run-programs";
 import { beforeAll, describe, test } from "../supported";
 
 const root = join(import.meta.dir, "copies-in-cold-code");
+// ARM64 compares with memory by a load and a compare, and the stub copies 16 bytes by two loads and two stores: the first loop takes 164 instructions there and 130 on x86-64.
+const isArm64 = process.arch === "arm64";
 const rows: [loop: string, baseline: string, allowance: number, iterations: number][] = [
-  ["a copy where the type is written", "no copy", 150, 400_000],
+  ["a copy where the type is written", "no copy", isArm64 ? 190 : 150, 400_000],
   ["a copy of anything", "no copy", 345, 400_000],
   ["a copy into another type", "no copy into another type", 800, 400_000],
   ["a copy of a kind never met", "no copy of a kind never met", 3_700, 8_000],

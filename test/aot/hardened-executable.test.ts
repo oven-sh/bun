@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { readElfFile, stackMayBeRead, stackMayBeWritten, type ElfFile } from "./elf-file";
 import { isHardened } from "./hardened";
@@ -67,14 +67,19 @@ describe.skipIf(!isLinux)("every executable", () => {
     });
   }, 120_000);
 
-  test("names no folder to look for libraries in and needs system libraries only", async () => {
-    await withCompiledProgram(file => {
-      for (const each of [runtime!, file]) {
-        expect(each.librarySearchPaths).toEqual([]);
-        expect(each.neededLibraries.filter(name => !systemLibrary.test(name))).toEqual([]);
-      }
-    });
-  }, 120_000);
+  // AddressSanitizer needs libraries of its own.
+  test.skipIf(isASAN)(
+    "names no folder to look for libraries in and needs system libraries only",
+    async () => {
+      await withCompiledProgram(file => {
+        for (const each of [runtime!, file]) {
+          expect(each.librarySearchPaths).toEqual([]);
+          expect(each.neededLibraries.filter(name => !systemLibrary.test(name))).toEqual([]);
+        }
+      });
+    },
+    120_000,
+  );
 });
 
 describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", () => {

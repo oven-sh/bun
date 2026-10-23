@@ -1,0 +1,1 @@
+The pinned engine does not have the fix yet: the program stops with the EvalError of a call that the compiler could not tell reaches eval() or the Function constructor (aot/valueflow/AOTValueFlowRulesHeapLookups.cpp, readEvaluators()).

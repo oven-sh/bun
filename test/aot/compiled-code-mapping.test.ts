@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
@@ -376,7 +376,8 @@ const withoutProc = [
 const canUnmountProc =
   isLinux && Bun.spawnSync({ cmd: [...withoutProc, "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
-test.skipIf(!canUnmountProc)(
+// AddressSanitizer warns on stderr where it cannot read /proc.
+test.skipIf(!canUnmountProc || isASAN)(
   "runs without /proc",
   async () => {
     using dir = tempDir("aot-code-mapping-no-proc", {

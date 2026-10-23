@@ -84,16 +84,8 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     if (!registeredListener)
         return false;
 
-    if (options.signal) {
-        uint32_t algorithmIdentifier = options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
-            if (weakThis && listener)
-                Ref { *weakThis }->removeEventListener(eventType, *listener, capture);
-        });
-        // Remember which abort algorithm belongs to this listener so that
-        // removeEventListener / once:true / removeAllEventListeners can
-        // drop it from the signal via RegisteredEventListener::markAsRemoved().
-        registeredListener->setAbortSignal(WeakPtr { *options.signal }, algorithmIdentifier);
-    }
+    if (options.signal)
+        registeredListener->removeOnAbort(*options.signal, *this, eventType);
 
     // if (listenerCreatedFromScript)
     //     InspectorInstrumentation::didAddEventListener(*this, eventType, listener.get(), options.capture);

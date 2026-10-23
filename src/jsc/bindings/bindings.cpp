@@ -4538,6 +4538,17 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     return JSValue::encode(slotValue);
 }
 
+// Like Jest's getPath, a path that continues past null or undefined is "not found", not a TypeError.
+static JSValue getPathStep(VM& vm, JSGlobalObject* globalObject, JSValue base, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (base.isUndefinedOrNull())
+        return {};
+    auto* object = base.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, object->getIfPropertyExists(globalObject, name));
+}
+
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
@@ -4552,11 +4563,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         uint32_t length = pathString.length();
 
         if (length == 0) {
-            auto* valueObject = value.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue prop = valueObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
-            RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(prop);
+            RELEASE_AND_RETURN(scope, JSValue::encode(getPathStep(vm, globalObject, value, vm.propertyNames->emptyIdentifier)));
         }
 
         // Jest doesn't check for valid dot/bracket notation. It will skip all "[" and "]", and search for
@@ -4569,9 +4576,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
         // if "." is the only character, it will search for an empty string twice.
         if (pathString.codeUnitAt(0) == '.') {
-            auto* currPropObject = currProp.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
+            currProp = getPathStep(vm, globalObject, currProp, vm.propertyNames->emptyIdentifier);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4585,11 +4590,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 if (i == length) {
 
                     if (ic == '.') {
-                        auto* currPropObject = currProp.toObject(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        return JSValue::encode(currProp);
+                        RELEASE_AND_RETURN(scope, JSValue::encode(getPathStep(vm, globalObject, currProp, vm.propertyNames->emptyIdentifier)));
                     }
 
                     // nothing found.
@@ -4603,9 +4604,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 char16_t previous = ic;
                 ic = pathString.codeUnitAt(i);
                 if (previous == '.' && ic == '.') {
-                    auto* currPropObject = currProp.toObject(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
+                    currProp = getPathStep(vm, globalObject, currProp, vm.propertyNames->emptyIdentifier);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (currProp.isEmpty()) {
                         return JSValue::encode(currProp);
@@ -4626,11 +4625,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             }
 
             String propNameStr = pathString.substring(i, j - i);
-            PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
-
-            auto* currPropObject = currProp.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            currProp = currPropObject->getIfPropertyExists(globalObject, propName);
+            // An Identifier, not a PropertyName: PropertyName does not own its key.
+            Identifier propName = Identifier::fromString(vm, propNameStr);
+            currProp = getPathStep(vm, globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4657,12 +4654,10 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
             JSString* propNameString = item.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
+            Identifier propName = propNameString->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto* currPropObject = currProp.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            currProp = currPropObject->getIfPropertyExists(globalObject, propName);
+            currProp = getPathStep(vm, globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return false;

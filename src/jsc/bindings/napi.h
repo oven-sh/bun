@@ -367,9 +367,7 @@ public:
         m_pendingRefFinalizers.remove(ref);
     }
 
-    // Node's env->reflist: every live NapiRef of this env, so the env can drop
-    // their roots when its realm ends (RefTracker::FinalizeAll). Index-based so
-    // link and unlink are O(1) without a hash; the NapiRef keeps its slot.
+    // Node's env->reflist: every live NapiRef of this env. The NapiRef keeps its slot.
     uint32_t linkRef(Zig::NapiRef* ref)
     {
         m_refs.append(ref);
@@ -377,13 +375,8 @@ public:
     }
     void unlinkRef(uint32_t slot);
 
-    // `bun test --isolate` swapped this env's realm out: release every strong
-    // root the env still holds into it. Node resets the refs' persistent handles
-    // only when it deletes the env. Bun keeps the env (late finalizers and
-    // in-flight work still reach it), so this runs no addon code and the
-    // finalizers still run from GC. While async work of this env is on the
-    // thread pool nothing is released, since its execute() may still use what a
-    // ref pins. The next swap walks this env again.
+    // `bun test --isolate` swapped this env's realm out: drop every strong root into it.
+    // Deferred to the next swap while this env's async work is on the thread pool.
     void releaseRealmRoots();
 
     /// Will abort the process if a duplicate entry would be added.
@@ -909,12 +902,8 @@ public:
         }
     }
 
-    // The realm this ref points into is finished: drop the strong root and keep the count. Like
-    // Node's Reference after its persistent handle is reset, ref() and unref() then report 0 and
-    // never root again. Only a count above zero roots anything, so a weak ref is left alone (the
-    // addon can still pin its value while that value is alive). A registered symbol belongs to the
-    // VM's symbol registry, not to the realm. The weak handle stays, so the finalizer (or the
-    // self-delete of a wrap ref) still runs when GC collects the value.
+    // Drop the strong root into a finished realm. Like Node's Reference with a reset persistent
+    // handle: ref() and unref() report 0 and never root again, the weak handle and count stay.
     void releaseRealm()
     {
         if (m_released || m_isEternal || refCount == 0) {

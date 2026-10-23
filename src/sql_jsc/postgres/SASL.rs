@@ -301,8 +301,7 @@ impl SASL {
         // BoringSSL's `EVP_DigestInit_ex` never reads its `ENGINE*`
         // argument (see vendor/boringssl/crypto/fipsmodule/digest/digest.cc.inc;
         // the parameter exists only for OpenSSL API compatibility). Passing
-        // null is bit-identical, so the upward hook is intentionally dropped —
-        // same rationale as `s3_signing::credentials::boring_engine`.
+        // null is bit-identical, so the upward hook is intentionally dropped.
         // SAFETY: engine is null (default).
         unsafe { SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut()) };
         hmac(&sha_digest, auth_string).unwrap()

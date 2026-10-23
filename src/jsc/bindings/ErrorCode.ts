@@ -203,7 +203,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_METHOD", Error],
   ["ERR_S3_INVALID_PATH", Error],
-  ["ERR_S3_INVALID_SESSION_TOKEN", Error],
   ["ERR_S3_INVALID_SIGNATURE", Error],
   ["ERR_S3_MISSING_CREDENTIALS", Error],
   ["ERR_SCRIPT_EXECUTION_INTERRUPTED", Error],

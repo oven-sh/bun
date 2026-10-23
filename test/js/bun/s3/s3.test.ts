@@ -1,10 +1,10 @@
-import type { S3File, S3Options } from "bun";
-import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
+import type { S3File, S3FilePresignOptions, S3Options } from "bun";
+import { s3 as defaultS3, file, randomUUIDv7, S3Client } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
-import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
+import { randomUUID } from "crypto";
+import { bunEnv, bunExe, getSecret, isCI, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { SigningClient, spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -1262,21 +1262,16 @@ for (let credentials of allCredentials) {
             }),
           );
         });
-        it("should error when presign with invalid token", async () => {
-          await Promise.all(
-            [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
-              let options = { ...s3Options, bucket: S3Bucket };
-              options.sessionToken = Buffer.alloc(4096, "a").toString();
-
-              try {
-                const s3file = fn(randomUUID(), options);
-                await s3file.presign();
-                expect.unreachable();
-              } catch (e: any) {
-                expect(e?.code).toBe("ERR_S3_INVALID_SESSION_TOKEN");
-              }
-            }),
-          );
+        it("should presign with a session token of 4096 characters", () => {
+          for (const fn of [s3, (path, ...args) => S3(...args).file(path)]) {
+            const options = { ...s3Options, bucket: S3Bucket, sessionToken: Buffer.alloc(4096, "a").toString() };
+            const key = randomUUID();
+            const presigned: string = fn(key, options).presign();
+            // Without a region, Bun signs for `auto` when the endpoint is not one of Amazon S3.
+            expect(presigned).toBe(
+              presignedUrlFromSpec(presigned, { ...options, region: options.region ?? "auto" }, key),
+            );
+          }
         });
       });
 
@@ -2123,36 +2118,200 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+// The presigned URL that the signer of test/packages/s3-server makes from the same inputs.
+// That signer shares no code with Bun: it encodes the path and the query and puts the
+// parameters in order itself. Only the time of the signature comes from the URL under test.
+function presignedUrlFromSpec(presigned: string, client: S3Options, key: string, options: S3FilePresignOptions = {}) {
+  const time = new URL(presigned).searchParams.get("X-Amz-Date")!;
+  const date = new Date(time.replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$/, "$1-$2-$3T$4:$5:$6Z"));
+  const { origin, pathname } = new URL(client.endpoint!);
+  const query: [name: string, value: string][] = [];
+  if (options.acl) query.push(["X-Amz-Acl", options.acl]);
+  if (options.contentDisposition) query.push(["response-content-disposition", options.contentDisposition]);
+  if (options.type) query.push(["response-content-type", options.type]);
+  if (options.requestPayer) query.push(["x-amz-request-payer", "requester"]);
+  if (options.storageClass) query.push(["x-amz-storage-class", options.storageClass]);
+  const signer = new SigningClient({
+    endpoint: origin,
+    accessKeyId: client.accessKeyId!,
+    secretAccessKey: client.secretAccessKey!,
+    sessionToken: client.sessionToken,
+    region: client.region,
+  });
+  return signer.presign(options.method ?? "GET", `${pathname.replace(/\/$/, "")}/${client.bucket}/${key}`, {
+    date,
+    // A presigned URL of Bun is valid for one day when the caller gives no time.
+    expiresIn: options.expiresIn ?? 86400,
+    query,
+  });
+}
+
 describe("presigned url signature", () => {
-  function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
-    const url = new URL(presigned);
-    const params = presigned.split("?")[1].split("&");
-    const signature = params.find(p => p.startsWith("X-Amz-Signature="))!.slice("X-Amz-Signature=".length);
-    const canonicalQuery = params.filter(p => !p.startsWith("X-Amz-Signature=")).join("&");
-    const amzDate = params.find(p => p.startsWith("X-Amz-Date="))!.slice("X-Amz-Date=".length);
-    const day = amzDate.slice(0, 8);
-    const canonicalRequest = [
-      "GET",
-      url.pathname,
-      canonicalQuery,
-      `host:${url.host}\n`,
-      "host",
-      "UNSIGNED-PAYLOAD",
-    ].join("\n");
-    const stringToSign = [
-      "AWS4-HMAC-SHA256",
-      amzDate,
-      `${day}/${credentials.region}/s3/aws4_request`,
-      createHash("sha256").update(canonicalRequest).digest("hex"),
-    ].join("\n");
-    const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
-    const signingKey = hmac(
-      hmac(hmac(hmac("AWS4" + credentials.secretAccessKey, day), credentials.region), "s3"),
-      "aws4_request",
-    );
-    const expected = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
-    return { signature, expected };
-  }
+  const signing = {
+    accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+    secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    bucket: "bucket",
+    region: "us-east-1",
+    endpoint: "https://s3.example.com",
+  };
+  // A client without a session token in its options takes the one of the environment.
+  const envSessionToken = (process.env.S3_SESSION_TOKEN ?? process.env.AWS_SESSION_TOKEN) || undefined;
+  const fill = (length: number, text: string) => Buffer.alloc(length, text).toString();
+  // Base64 text that has `+` and `/` as often as a real session token. Percent-encoding
+  // makes each of them three bytes.
+  const base64Token = (length: number) =>
+    Buffer.from(Array.from({ length }, (_, i) => (i * 37 + 11) & 255))
+      .toString("base64")
+      .slice(0, length);
+  // A download name in the RFC 5987 form. The query of the URL encodes its `%` signs once more.
+  const cjkFilename = `attachment; filename*=UTF-8''${encodeURIComponent(fill(32 * 3, "文"))}.pdf`;
+
+  type Row = { name: string; client?: S3Options; key?: string; presign?: S3FilePresignOptions };
+
+  // Sizes that Amazon S3 accepts. Most rows are a pair: the largest size that the signer
+  // took while it kept its text in arrays of a fixed size, and the next size, which it refused.
+  const sizes: Row[] = [
+    { name: "a session token of 2048 characters", client: { sessionToken: fill(2048, "a") } },
+    { name: "a session token of 2049 characters", client: { sessionToken: fill(2049, "a") } },
+    // The largest session token that AWS STS issues.
+    { name: "a session token of 4096 characters", client: { sessionToken: fill(4096, "a") } },
+    { name: "a base64 session token of 1928 characters", client: { sessionToken: base64Token(1928) } },
+    { name: "a base64 session token of 1932 characters", client: { sessionToken: base64Token(1932) } },
+    { name: "a key of 113 CJK characters", key: fill(113 * 3, "文") },
+    { name: "a key of 114 CJK characters", key: fill(114 * 3, "文") },
+    { name: "a key of 1023 spaces", key: fill(1023, " ") },
+    // The largest key of Amazon S3. macOS refuses a path of 1024 bytes before the signer sees the key.
+    ...(MAX_PATH_BYTES > 1024 ? [{ name: "a key of 1024 bytes", key: fill(341 * 3, "文") + "a" }] : []),
+    { name: "a contentDisposition of 512 characters", presign: { contentDisposition: fill(512, "a") } },
+    { name: "a contentDisposition of 513 characters", presign: { contentDisposition: fill(513, "a") } },
+    {
+      name: "a contentDisposition with a file name of 32 CJK characters",
+      presign: { contentDisposition: cjkFilename },
+    },
+    { name: "a type of 256 characters", presign: { type: fill(256, "a") } },
+    { name: "a type of 257 characters", presign: { type: fill(257, "a") } },
+    { name: "a bucket of 63 characters", client: { bucket: fill(63, "b") } },
+  ];
+
+  // Sizes that only another S3 service can accept, or that no service accepts. The signer
+  // has no rule for them: it signs the request, and the service answers. The signer puts a
+  // region of 133 characters or more on the heap.
+  const otherSizes: Row[] = [
+    { name: "a session token of 16384 characters", client: { sessionToken: fill(16384, "a") } },
+    { name: "a contentDisposition of 4200 characters", presign: { contentDisposition: fill(4200, "a") } },
+    { name: "a bucket of 64 characters", client: { bucket: fill(64, "b") } },
+    {
+      name: "an endpoint path, a bucket and a key of 1200 bytes together",
+      client: { endpoint: `https://s3.example.com/${fill(600, "p")}` },
+      key: fill(600, "k"),
+    },
+    {
+      name: "an endpoint of 2047 bytes",
+      client: { endpoint: `https://s3.example.com/${fill(2047 - "s3.example.com/".length, "p")}` },
+    },
+    { name: "an accessKeyId of 3867 characters", client: { accessKeyId: fill(3867, "A") } },
+    { name: "an accessKeyId of 3868 characters", client: { accessKeyId: fill(3868, "A") } },
+    { name: "a secretAccessKey of 4092 characters", client: { secretAccessKey: fill(4092, "s") } },
+    { name: "a secretAccessKey of 4093 characters", client: { secretAccessKey: fill(4093, "t") } },
+    { name: "a region of 132 characters", client: { region: fill(132, "r") } },
+    { name: "a region of 133 characters", client: { region: fill(133, "r") } },
+    { name: "a region of 3856 characters", client: { region: fill(3856, "r") } },
+    { name: "a region of 3857 characters", client: { region: fill(3857, "r") } },
+  ];
+
+  // One row for each optional parameter of the query, and one row with all of them.
+  const parameters: Row[] = [
+    { name: "acl", presign: { acl: "public-read" } },
+    { name: "storageClass", presign: { storageClass: "GLACIER" } },
+    { name: "requestPayer", presign: { requestPayer: true } },
+    { name: "contentDisposition", presign: { contentDisposition: 'attachment; filename="report 1.pdf"' } },
+    { name: "type", presign: { type: "application/json; charset=utf-8" } },
+    { name: "sessionToken", client: { sessionToken: base64Token(64) } },
+    { name: "expiresIn", presign: { expiresIn: 60 } },
+    {
+      name: "all of the parameters and the method PUT",
+      client: { sessionToken: base64Token(64) },
+      key: "folder/some key.txt",
+      presign: {
+        method: "PUT",
+        expiresIn: 60,
+        acl: "public-read",
+        storageClass: "STANDARD_IA",
+        requestPayer: true,
+        contentDisposition: "inline",
+        type: "text/plain",
+      },
+    },
+  ];
+
+  it.each([...sizes, ...otherSizes, ...parameters].map(row => [row.name, row] as [string, Row]))(
+    "signs %s",
+    (_, row) => {
+      const credentials = { sessionToken: envSessionToken, ...signing, ...row.client };
+      const key = row.key ?? "key.txt";
+      const presigned = new S3Client(credentials).presign(key, row.presign);
+      expect(presigned).toBe(presignedUrlFromSpec(presigned, credentials, key, row.presign));
+    },
+  );
+
+  // `new Response(s3File)` is a redirect to a presigned URL that is valid for 15 minutes.
+  it.each([...sizes, ...otherSizes].filter(row => !row.presign).map(row => [row.name, row] as [string, Row]))(
+    "redirects a Response to a presigned URL for %s",
+    (_, row) => {
+      const credentials = { sessionToken: envSessionToken, ...signing, ...row.client };
+      const key = row.key ?? "key.txt";
+      const response = new Response(new S3Client(credentials).file(key));
+      const location = response.headers.get("location")!;
+      expect(location).toBe(presignedUrlFromSpec(location, credentials, key, { expiresIn: 900 }));
+      expect(response.status).toBe(302);
+    },
+  );
+
+  // A JavaScript string is always text, so only a credential from the environment can have
+  // such a byte. The signer takes it as text too, and both sources sign in the same way.
+  it("signs with U+FFFD for a byte of a secretAccessKey in .env that is not UTF-8", async () => {
+    using dir = tempDir("s3-env-secret", {
+      ".env": Buffer.concat([
+        Buffer.from(
+          [
+            `S3_ACCESS_KEY_ID=${signing.accessKeyId}`,
+            `S3_BUCKET=${signing.bucket}`,
+            `S3_REGION=${signing.region}`,
+            `S3_ENDPOINT=${signing.endpoint}`,
+            "S3_SECRET_ACCESS_KEY=caf",
+          ].join("\n"),
+        ),
+        Buffer.from([0xe9, 0x0a]),
+      ]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(Bun.s3.presign("key.txt"))`],
+      // A variable of the process wins over `.env`, so the child gets none of the names that Bun reads.
+      env: {
+        ...bunEnv,
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
+        S3_SESSION_TOKEN: undefined,
+        S3_REGION: undefined,
+        S3_ENDPOINT: undefined,
+        S3_BUCKET: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+        AWS_SESSION_TOKEN: undefined,
+        AWS_REGION: undefined,
+        AWS_ENDPOINT: undefined,
+        AWS_BUCKET: undefined,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const presigned = stdout.trim();
+    expect(stderr).toBe("");
+    expect(presigned).toBe(presignedUrlFromSpec(presigned, { ...signing, secretAccessKey: "caf\uFFFD" }, "key.txt"));
+    expect(exitCode).toBe(0);
+  });
 
   it("derives the signing key from each credential's own region and secret", () => {
     const commonOptions = {
@@ -2165,8 +2324,9 @@ describe("presigned url signature", () => {
     for (const credentials of [credentialsA, credentialsB, credentialsA, credentialsB]) {
       const client = new Bun.S3Client(credentials);
       const presigned = client.presign("credentials-test");
-      const { signature, expected } = verifyPresignedUrl(presigned, credentials);
-      expect(signature).toBe(expected);
+      expect(presigned).toBe(
+        presignedUrlFromSpec(presigned, { sessionToken: envSessionToken, ...credentials }, "credentials-test"),
+      );
     }
   });
 });

@@ -207,15 +207,190 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.enable")).toThrow("not connected");
     });
 
-    test("post() with callback calls callback with error if not connected", async () => {
-      const { promise, resolve, reject } = Promise.withResolvers<Error>();
-      session.post("Profiler.enable", err => {
-        if (err) resolve(err);
-        else reject(new Error("Expected error"));
-      });
-      const error = await promise;
-      expect(error.message).toContain("not connected");
+    test("post() with callback throws synchronously if not connected", async () => {
+      let called = false;
+      expect(() => session.post("HeapProfiler.collectGarbage", () => (called = true))).toThrow(
+        expect.objectContaining({ code: "ERR_INSPECTOR_NOT_CONNECTED", message: "Session is not connected" }),
+      );
+      await Promise.resolve();
+      expect(called).toBe(false);
     });
+  });
+
+  describe("HeapProfiler", () => {
+    test("enable and disable complete synchronously and return undefined", () => {
+      const session = new inspector.Session();
+      session.connect();
+      try {
+        for (const method of [
+          "HeapProfiler.disable",
+          "HeapProfiler.enable",
+          "HeapProfiler.enable",
+          "HeapProfiler.disable",
+        ]) {
+          const replies: unknown[] = [];
+          expect(session.post(method, (error, result) => replies.push([error, result]))).toBeUndefined();
+          expect(replies).toEqual([[null, {}]]);
+          expect(session.post(method)).toBeUndefined();
+        }
+      } finally {
+        session.disconnect();
+      }
+    });
+
+    test("disconnect settles pending collections once and reconnect isolates the new session", async () => {
+      const session = new inspector.Session();
+      session.connect();
+      const replies: unknown[] = [];
+      try {
+        const pending = Array.from(
+          { length: 2 },
+          () =>
+            new Promise<void>(resolve => {
+              session.post("HeapProfiler.collectGarbage", function (error, result) {
+                replies.push([error?.code, error?.message, result, arguments.length]);
+                resolve();
+              });
+            }),
+        );
+        session.disconnect();
+        expect(replies).toEqual([]);
+        session.connect();
+        await new Promise<void>((resolve, reject) => {
+          session.post("HeapProfiler.collectGarbage", (error, result) => {
+            if (error) return reject(error);
+            replies.push([error, result]);
+            resolve();
+          });
+        });
+        await Promise.all(pending);
+        expect(replies).toEqual([
+          ["ERR_INSPECTOR_CLOSED", "Session was closed", undefined, 1],
+          ["ERR_INSPECTOR_CLOSED", "Session was closed", undefined, 1],
+          [null, {}],
+        ]);
+      } finally {
+        session.disconnect();
+      }
+    });
+
+    test.concurrent("a disconnected collection callback throws through nextTick", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const assert = require("node:assert/strict");
+          const { Session } = require("node:inspector");
+          const session = new Session();
+          const failure = new Error("closed callback");
+          process.once("uncaughtException", error => {
+            assert.equal(error, failure);
+            console.log("uncaught callback");
+          });
+          session.connect();
+          session.post("HeapProfiler.collectGarbage", function(error) {
+            assert.equal(arguments.length, 1);
+            assert.equal(error.code, "ERR_INSPECTOR_CLOSED");
+            throw failure;
+          });
+          session.disconnect();
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaught callback\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent("a main-thread connection in a worker does not collect the worker heap", async () => {
+      const workerSource = `
+        const assert = require("node:assert/strict");
+        (async () => {
+          for (const promises of [false, true]) {
+            const { Session } = require(promises ? "node:inspector/promises" : "node:inspector");
+            const session = new Session();
+            const collect = () => promises ? session.post("HeapProfiler.collectGarbage") : new Promise((resolve, reject) => {
+              session.post("HeapProfiler.collectGarbage", (error, result) => error ? reject(error) : resolve(result));
+            });
+            session.connectToMainThread();
+            await assert.rejects(collect, {
+              code: "ERR_INSPECTOR_COMMAND",
+              message: "Inspector error -32601: 'HeapProfiler.collectGarbage' wasn't found",
+            });
+            session.disconnect();
+            session.connect();
+            assert.deepEqual(await collect(), {});
+            session.disconnect();
+          }
+          console.log("local-only");
+        })().catch(error => { console.error(error); process.exitCode = 1; });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { Worker } = require("node:worker_threads");
+          new Worker(${JSON.stringify(workerSource)}, { eval: true })
+            .on("error", error => { console.error(error); process.exitCode = 1; })
+            .on("exit", code => { process.exitCode = code; });
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "local-only\n", stderr: "", exitCode: 0 });
+    });
+
+    for (const worker of [false, true]) {
+      test.concurrent(
+        `collectGarbage reclaims unreachable objects after the posting job (${worker ? "worker" : "main"})`,
+        async () => {
+          const fixture = `
+          const assert = require("node:assert/strict");
+          const { Session } = require("node:inspector");
+          const { Session: PromiseSession } = require("node:inspector/promises");
+          const session = new Session();
+          const promised = new PromiseSession();
+          session.connect(); promised.connect();
+          try {
+            const strong = { alive: true };
+            const alive = new WeakRef(strong);
+            const dead = new WeakRef({ released: true });
+            let jobFinished = false;
+            const collected = new Promise((resolve, reject) => {
+              assert.equal(session.post("HeapProfiler.collectGarbage", (error, result) => {
+                try {
+                  assert.equal(error, null);
+                  assert.deepEqual(result, {});
+                  assert.equal(jobFinished, true);
+                  assert.equal(dead.deref(), undefined);
+                  assert.equal(alive.deref(), strong);
+                  resolve();
+                } catch (error) { reject(error); }
+              }), undefined);
+            });
+            queueMicrotask(() => { jobFinished = true; });
+            await collected;
+            assert.deepEqual(await promised.post("HeapProfiler.collectGarbage"), {});
+            assert.equal(session.post("HeapProfiler.collectGarbage"), undefined);
+            console.log("collected");
+          } finally { session.disconnect(); promised.disconnect(); }
+        `;
+          const source = worker
+            ? `const { Worker } = require("node:worker_threads"); new Worker(${JSON.stringify(`(async () => { ${fixture} })().catch(error => { console.error(error); process.exitCode = 1; });`)}, { eval: true }).on("error", error => { console.error(error); process.exitCode = 1; }).on("exit", code => { process.exitCode = code; });`
+            : `(async () => { ${fixture} })().catch(error => { console.error(error); process.exitCode = 1; });`;
+          await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "collected\n", stderr: "", exitCode: 0 });
+        },
+      );
+    }
   });
 
   describe("Profiler", () => {

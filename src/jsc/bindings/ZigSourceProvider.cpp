@@ -56,6 +56,7 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
+extern "C" bool BunTest__shouldReportCodeCoverage(const BunString* sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 
@@ -136,7 +137,7 @@ Ref<SourceProvider> SourceProvider::create(
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();
         BunString providerSource = Bun::toString(providerSourceString);
         // JSC does not know the branches of a function until it is called.
-        if (ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled))
+        if (ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled) && BunTest__shouldReportCodeCoverage(&providerURL))
             globalObject->vm().controlFlowProfiler()->generateBytecodeEagerly(provider->asID());
     }
 

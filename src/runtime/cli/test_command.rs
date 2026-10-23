@@ -37,6 +37,12 @@ mod coverage {
         bun_core::order(a.source_url.slice(), b.source_url.slice())
     }
 
+    pub(super) fn prepare(ignore_patterns: &[Box<[u8]>]) -> Vec<bun_glob::Prepared<&[u8]>> {
+        (ignore_patterns.iter())
+            .map(|it| bun_glob::Prepared::new(&**it))
+            .collect()
+    }
+
     pub(super) fn is_ignored(
         ignore_patterns: &[bun_glob::Prepared<&[u8]>],
         relative_dir: &[u8],
@@ -1490,11 +1496,7 @@ impl CommandLineReporter {
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
         let relative_dir = FileSystem::get().top_level_dir();
-        let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
-            .ignore_patterns
-            .iter()
-            .map(|it| bun_glob::Prepared::new(&**it)))
-        .collect();
+        let ignore_patterns = coverage::prepare(&opts.ignore_patterns);
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
             if !coverage::is_ignored(&ignore_patterns, relative_dir, entry.source_url.slice()) {
@@ -1769,6 +1771,17 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     }
 
     true
+}
+
+/// Whether `coveragePathIgnorePatterns` leaves the file in the report.
+#[unsafe(no_mangle)]
+extern "C" fn BunTest__shouldReportCodeCoverage(source_url: &bun_core::String) -> bool {
+    let Some(runner) = jest::Jest::runner() else {
+        return true;
+    };
+    let ignore_patterns = coverage::prepare(&runner.test_options.coverage.ignore_patterns);
+    let relative_dir = FileSystem::get().top_level_dir();
+    !coverage::is_ignored(&ignore_patterns, relative_dir, source_url.to_utf8().slice())
 }
 
 pub(crate) struct TestCommand;

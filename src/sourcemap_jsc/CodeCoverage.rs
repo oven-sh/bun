@@ -159,8 +159,8 @@ impl<'a> Report<'a> {
         if generator.loads > 1 {
             fold(&mut generator.blocks);
             fold(&mut generator.function_blocks);
+            fold_branches(&mut generator.branches);
         }
-        fold_branches(&mut generator.branches);
 
         Some(bun_core::handle_oom(
             byte_range_mapping.generate_report_from_blocks(
@@ -954,7 +954,7 @@ impl ByteRangeMapping {
         counted
     }
 
-    /// The line of the first thing in it. `None` if the file does not have it.
+    /// The line in the file of the first code in the decision. `None` for one the transpiler added.
     fn line_of_decision(
         &self,
         (start, end): (c_int, c_int),
@@ -966,9 +966,9 @@ impl ByteRangeMapping {
         };
         let first = mappings.partition_point(|&(offset, _)| offset < start);
         let last = mappings
-            .partition_point(|&(offset, _)| offset < end)
+            .partition_point(|&(offset, _)| offset <= end)
             .checked_sub(1)?;
-        // What the transpiler adds has the position of what it adds it for, so often no mapping.
+        // Code the transpiler adds has the position of the code it adds it for, so often no mapping.
         if last < first {
             return None;
         }
@@ -977,6 +977,7 @@ impl ByteRangeMapping {
         } else {
             first.checked_sub(1)
         };
+        // Or its mappings do not go forward in the file.
         if let Some(at_or_before) = at_or_before
             && at_or_before != last
             && mappings[last].1 <= mappings[at_or_before].1
@@ -1024,6 +1025,7 @@ impl ByteRangeMapping {
         source_hash: u64,
         source_id: i32,
         source_url: Utf8Bytes<'static>,
+        already_bundled: bool,
     ) -> ByteRangeMapping {
         let (line_starts, executable_units) = if source.is_utf16() {
             scan(source.utf16().iter().copied())
@@ -1033,7 +1035,7 @@ impl ByteRangeMapping {
         ByteRangeMapping {
             executable_units,
             line_starts,
-            already_bundled: false,
+            already_bundled,
             source_ids: vec![source_id],
             source_hash,
             source_url,
@@ -1041,8 +1043,8 @@ impl ByteRangeMapping {
     }
 
     /// `scan` sets no brace. Those of an object literal are code, and the printer marks them.
-    fn set_object_braces_executable(&mut self, text: &[u8], already_bundled: bool) {
-        if already_bundled {
+    fn set_object_braces_executable(&mut self, text: &[u8]) {
+        if self.already_bundled {
             // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
             if let Some(blob) = print_for_coverage(self.source_url.slice(), text) {
                 InternalSourceMap {
@@ -1260,9 +1262,13 @@ extern "C" fn ByteRangeMapping__generate(
         return false;
     }
 
-    let mut new_value =
-        ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
-    new_value.already_bundled = already_bundled;
+    let mut new_value = ByteRangeMapping::compute(
+        source_contents_str,
+        source_hash,
+        source_id,
+        source_url,
+        already_bundled,
+    );
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
     let code_coverage = bun_jsc::VirtualMachine::VirtualMachine::get()
         .as_mut()
@@ -1270,7 +1276,7 @@ extern "C" fn ByteRangeMapping__generate(
         .options
         .code_coverage;
     if code_coverage {
-        new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
+        new_value.set_object_braces_executable(source_contents.slice());
     }
     map.insert(hash, new_value);
     code_coverage

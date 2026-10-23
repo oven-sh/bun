@@ -357,7 +357,7 @@ Wherever the code can go one of several ways, each way is a branch, whether or n
 | `for`...`in`, `for`...`of`                                    | The body runs                                                 |
 | `try`...`catch`                                               | An error is caught, no error is caught                        |
 
-A `for`...`in` or `for`...`of` loop has one branch. Nothing counts how often it ran out of items rather than ended with `break`.
+A `for`...`in` or `for`...`of` loop has one branch. Bun does not count how often the loop runs out of items.
 
 In a `switch`, a `case` counts when it matches, not when the `case` before it falls through to it.
 

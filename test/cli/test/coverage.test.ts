@@ -1552,6 +1552,34 @@ export function inlined(v, o, t = M) { // [3,0]
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a function that is called before its module runs does not hide the others", async () => {
+    using dir = tempDir("cov-branches-cycle", {
+      "lib.ts": `import "./early.ts";
+export function hoisted(v: unknown) { return v ? 1 : 2; }
+export function never(v: unknown) { return v && 3; }
+`,
+      "early.ts": `import { hoisted } from "./lib.ts"; hoisted(1);`,
+      "lib.test.ts": `
+        import { test } from "bun:test";
+        import "./lib.ts";
+        test("lib", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    expect(decisionsOf(recordOf(String(dir), "lib.ts"))).toEqual([
+      [2, [1, 0]],
+      [3, [0, 0]],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("code that the transpiler generates adds no branches", async () => {
     using dir = tempDir("cov-branches-ts", {
       "lib.tsx": `enum Color { Red, Green = "g" }

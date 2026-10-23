@@ -313,6 +313,32 @@ test("a pending factory promise that rejects rejects the promise mock.module ret
   ).toThrow(error);
 });
 
+test("require() of a mocked module takes a factory promise that is settled and does not wait for one that is pending", async () => {
+  mock.module("mock-module-require-fulfilled", async () => ({ value: "mocked" }));
+  expect(require("mock-module-require-fulfilled").value).toBe("mocked");
+
+  const error = new Error("factory failed");
+  mock.module("mock-module-require-rejected", async () => {
+    throw error;
+  });
+  let thrown: unknown;
+  try {
+    require("mock-module-require-rejected");
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBe(error);
+
+  const factory = Promise.withResolvers<object>();
+  mock.module("mock-module-require-pending", () => factory.promise);
+  expect(() => require("mock-module-require-pending")).toThrow(
+    'require() async module "mock-module-require-pending" is unsupported. use "await import()" instead.',
+  );
+  // Not reported as an unhandled rejection: this test would fail.
+  factory.reject(new Error("factory failed after require() threw"));
+  await new Promise(resolve => setImmediate(resolve));
+});
+
 test("a pending factory whose exports throw while being read rejects the returned promise and unregisters the mock", async () => {
   using dir = tempDir("mock-module-pending-getter-throws", {
     "a.ts": `export function a() { return "real-a"; }`,

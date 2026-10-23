@@ -407,12 +407,22 @@ fn end_vm(frees: bool) {
 }
 
 /// Startup state that all VMs share.
-#[derive(Default)]
 struct Start {
     initialize: std::sync::Once,
     /// Set if the run won't have more than a few VMs. Stays unset if a VM starts before the files are known.
     is_for_few: AtomicBool,
     memory: std::sync::OnceLock<usize>,
+}
+
+// `Once` implements `Default` only from Rust 1.100.
+impl Default for Start {
+    fn default() -> Self {
+        Self {
+            initialize: std::sync::Once::new(),
+            is_for_few: AtomicBool::default(),
+            memory: std::sync::OnceLock::new(),
+        }
+    }
 }
 
 impl Start {

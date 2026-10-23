@@ -315,7 +315,7 @@ impl DevServer {
         &mut self,
         err: &crate::Error,
         graph: bake::Graph,
-        abs_path: &[u8],
+        key: ModuleKey<'_>,
         log: &Log,
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
@@ -325,7 +325,7 @@ impl DevServer {
             "handleParseTaskFailure({}, .{}, {}, {} messages)",
             err.name(),
             <&'static str>::from(graph),
-            bun_core::fmt::quote(abs_path),
+            bun_core::fmt::quote(key.path()),
             log.msgs.len(),
         );
 
@@ -334,33 +334,33 @@ impl DevServer {
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.on_file_deleted(abs_path, bv2)?
+                    self.server_graph.on_file_deleted(key, bv2)?
                 }
                 bake::Graph::Client => {
-                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    self.client_graph.on_file_deleted(key, bv2)?;
                     // The html file of a route has no importer.
                     if let Some(file) = self
                         .client_graph
                         .bundled_files
-                        .get(abs_path)
+                        .get(key)
                         .filter(|file| file.html_route_bundle_index.is_some())
                     {
                         // `failed` is cleared by the next successful bundle.
                         watch_for_route_file = !file.failed;
                         self.client_graph.insert_failure(
-                            incremental_graph::InsertFailureKey::AbsPath(abs_path, graph),
+                            incremental_graph::InsertFailureKey::AbsPath(key, graph),
                             log,
                         )?;
                     }
                 }
             }
         } else {
-            let key = incremental_graph::InsertFailureKey::AbsPath(abs_path, graph);
+            let failure_key = incremental_graph::InsertFailureKey::AbsPath(key, graph);
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.insert_failure(key, log)?
+                    self.server_graph.insert_failure(failure_key, log)?
                 }
-                bake::Graph::Client => self.client_graph.insert_failure(key, log)?,
+                bake::Graph::Client => self.client_graph.insert_failure(failure_key, log)?,
             }
         }
         // `track_resolution_failure` takes the graph lock itself.
@@ -369,8 +369,8 @@ impl DevServer {
         if watch_for_route_file {
             // Bundles the route again once its html file exists, like a failed import.
             self.directory_watchers.track_resolution_failure(
-                abs_path,
-                paths::basename(abs_path),
+                key,
+                paths::basename(key.path()),
                 bake::Graph::Client,
                 Loader::Html,
             )?;
@@ -381,7 +381,7 @@ impl DevServer {
     /// Return a log to write resolution failures into.
     pub(crate) fn get_log_for_resolution_failures(
         &mut self,
-        abs_path: &[u8],
+        key: ModuleKey<'_>,
         graph: bake::Graph,
     ) -> crate::Result<&mut Log> {
         debug_assert!(self.current_bundle.is_some());
@@ -389,10 +389,10 @@ impl DevServer {
         let _g = self.graph_safety_lock.guard();
 
         let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
-            let idx = self.client_graph.insert_stale(abs_path, graph)?;
+            let idx = self.client_graph.insert_stale(key, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
         } else {
-            let idx = self.server_graph.insert_stale(abs_path, graph)?;
+            let idx = self.server_graph.insert_stale(key, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
         };
         let current_bundle = self

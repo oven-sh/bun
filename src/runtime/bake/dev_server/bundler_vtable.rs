@@ -9,8 +9,9 @@ use super::*;
 bun_bundler::link_impl_DevServerHandle! {
     Bake for DevServer => |this| {
         barrel_needed_exports() => &raw mut (*this).barrel_needed_exports,
-        log_for_resolution_failures(abs_path, graph) => {
-            match (*this).get_log_for_resolution_failures(abs_path, graph) {
+        log_for_resolution_failures_raw(abs_path, key_loader, graph) => {
+            let key = ModuleKey::new(abs_path, key_loader);
+            match (*this).get_log_for_resolution_failures(key, graph) {
                 Ok(log) => log,
                 Err(_) => bun_alloc::out_of_memory(),
             }
@@ -22,27 +23,32 @@ bun_bundler::link_impl_DevServerHandle! {
             super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
-        handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
+        handle_parse_task_failure_raw(err, graph, abs_path, key_loader, log, bv2) => {
+            let key = ModuleKey::new(abs_path, key_loader);
             (*this)
-                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, key, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
-        put_or_overwrite_asset(path, contents, content_hash) => {
-            // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
-            // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
-            // bytes as an owned blob (ownership is transferred).
-            let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
+        put_or_overwrite_asset_raw(abs_path, key_loader, contents, content_hash) => {
+            // Re-wrap bytes as an owned blob (ownership is transferred).
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
-            (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
+            (*this)
+                .put_or_overwrite_asset(ModuleKey::new(abs_path, key_loader), blob, content_hash)
+                .map_err(Into::into)
         },
-        track_resolution_failure(import_source, specifier, renderer, loader) => {
+        track_resolution_failure_raw(import_source, key_loader, specifier, renderer, loader) => {
             (*this)
                 .directory_watchers
-                .track_resolution_failure(import_source, specifier, renderer, loader)
+                .track_resolution_failure(
+                    ModuleKey::new(import_source, key_loader),
+                    specifier,
+                    renderer,
+                    loader,
+                )
                 .map_err(Into::into)
         },
-        is_file_cached(abs_path, side) => {
-            (*this).is_file_cached(abs_path, side).map(|e| {
+        is_file_cached_raw(abs_path, key_loader, side) => {
+            (*this).is_file_cached(ModuleKey::new(abs_path, key_loader), side).map(|e| {
                 use bun_bundler::bake_types::CacheKind;
                 bun_bundler::bake_types::CacheEntry {
                     kind: match e.kind {
@@ -54,7 +60,9 @@ bun_bundler::link_impl_DevServerHandle! {
                 }
             })
         },
-        asset_hash(abs_path) => (*this).assets.get_hash(abs_path),
+        asset_hash_raw(abs_path, key_loader) => {
+            (*this).assets.get_hash(ModuleKey::new(abs_path, key_loader))
+        },
         current_bundle_start_data() => {
             (*this)
                 .current_bundle

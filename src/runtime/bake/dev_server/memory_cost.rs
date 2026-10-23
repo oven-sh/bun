@@ -238,7 +238,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     match &dev.testing_batch_events {
         TestingBatchEvents::Disabled => {}
         TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) => {
-            other_bytes += memory_cost_array_hash_map(&batch.entry_points.set);
+            other_bytes += batch.entry_points.set.memory_cost();
         }
         TestingBatchEvents::EnableAfterBundle => {}
     }

@@ -9,9 +9,9 @@ impl DevServer {
         &self,
         extra_client_bits: usize,
     ) -> crate::Result<GraphTraceState> {
-        let server_bits = DynamicBitSet::init_empty(self.server_graph.bundled_files.len())?;
+        let server_bits = DynamicBitSet::init_empty(self.server_graph.bundled_files.count())?;
         let client_bits =
-            DynamicBitSet::init_empty(self.client_graph.bundled_files.len() + extra_client_bits)?;
+            DynamicBitSet::init_empty(self.client_graph.bundled_files.count() + extra_client_bits)?;
         Ok(GraphTraceState {
             server_bits,
             client_bits,
@@ -76,7 +76,8 @@ impl DevServer {
                 // A router whose pages also run in the browser: their client graph copies.
                 let client_pages = self.client_page_files(fw.route_index);
                 for path in client_pages.iter() {
-                    if let Some(index) = self.client_graph.get_file_index(path) {
+                    if let Some(index) = self.client_graph.get_file_index(ModuleKey::of_path(path))
+                    {
                         self.client_graph.trace_imports(index, gts, goal)?;
                     }
                 }

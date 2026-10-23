@@ -36,7 +36,7 @@ use crate::bake;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::timer::{EventLoopTimerState, EventLoopTimerTag};
-use bun_ast::Loader;
+use bun_ast::{Loader, ModuleKey};
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
@@ -221,6 +221,7 @@ impl GraphTraceState {
 pub(crate) mod assets;
 pub(crate) mod incremental_graph;
 pub(crate) mod inspector_agent;
+mod module_table;
 pub(crate) mod packed_map;
 pub(crate) mod route_bundle;
 pub(crate) mod serialized_failure;

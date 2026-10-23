@@ -1,11 +1,13 @@
 //! `DevServer.Assets` — content-addressable store on `/_bun/asset/{hash}.ext`.
 
-use bun_collections::{ArrayHashMap, MapEntry, StringArrayHashMap};
+use bun_ast::ModuleKey;
+use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
 use bun_ptr::RefPtr;
 
 use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};
+use super::module_table::ModuleTable;
 use super::{ASSET_PREFIX, DevServer, FileKind, Magic};
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
@@ -17,9 +19,8 @@ pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
 pub(crate) struct Assets {
-    /// Keys are absolute paths. `StringArrayHashMap` stores owned `Box<[u8]>`
-    /// keys.
-    pub(crate) path_map: StringArrayHashMap<EntryIndex>,
+    /// The asset of each module. Paths are absolute.
+    pub(crate) path_map: ModuleTable<EntryIndex>,
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, tracked by `refs`.
     pub(crate) files: ArrayHashMap<u64, RefPtr<StaticRoute>>,
@@ -34,20 +35,20 @@ pub(crate) struct Assets {
 bun_core::impl_field_parent! { Assets => DevServer.assets; fn owner; fn mut owner_mut; }
 
 impl Assets {
-    pub(crate) fn get_hash(&self, path: &[u8]) -> Option<u64> {
+    pub(crate) fn get_hash(&self, key: ModuleKey<'_>) -> Option<u64> {
         self.path_map
-            .get(path)
+            .get(key)
             .map(|idx| self.files.keys()[idx.get_usize()])
     }
 
     /// When an asset is overwritten, it receives a new URL to get around
     /// browser caching. The old URL is immediately revoked.
     ///
-    /// `abs_path` is not allocated. Ownership of `contents` is transferred to
+    /// `key` is not allocated. Ownership of `contents` is transferred to
     /// this function.
     pub(crate) fn replace_path(
         &mut self,
-        abs_path: &[u8],
+        key: ModuleKey<'_>,
         mut contents: AnyBlob,
         mime_type: &MimeType,
         content_hash: u64,
@@ -62,7 +63,7 @@ impl Assets {
         scoped_log!(
             DevServer,
             "replacePath {} {} - {}/{} ({})",
-            bun_fmt::quote(abs_path),
+            bun_fmt::quote(key.path()),
             content_hash,
             ASSET_PREFIX,
             bstr::BStr::new(&hex_buf[..hex_len]),
@@ -75,7 +76,7 @@ impl Assets {
         // `gop` holds key/value ptrs into `path_map` and cannot stay live
         // across calls that take `&mut self`. Capture `index` /
         // `found_existing` and re-derive the value slot at the end instead.
-        let gop = self.path_map.get_or_put(abs_path)?;
+        let gop = self.path_map.get_or_put(key)?;
         let path_index = gop.index;
         let found_existing = gop.found_existing;
         let existing_entry = if found_existing {
@@ -85,16 +86,13 @@ impl Assets {
         };
 
         if !found_existing {
-            // Locate a stable pointer for the file path.
-            // `StringArrayHashMap` owns its keys as `Box<[u8]>`, and
-            // `get_or_put` already boxed `abs_path` on insert, so no key
-            // reassignment is needed — `insert_empty` is still called for its
-            // side effect of registering the file in `client_graph`.
+            // `get_or_put` already stored the key, so no key reassignment is
+            // needed — `insert_empty` is still called for its side effect of
+            // registering the file in `client_graph` under the same key.
             let owner = self.owner_mut();
             // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
             // not touched through `owner` for the duration of this borrow.
-            let _ =
-                unsafe { &mut (*owner).client_graph }.insert_empty(abs_path, FileKind::Unknown)?;
+            let _ = unsafe { &mut (*owner).client_graph }.insert_empty(key, FileKind::Unknown)?;
         } else {
             let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be
@@ -172,11 +170,11 @@ impl Assets {
         debug_assert_eq!(self.files.count(), self.refs.len());
     }
 
-    pub(crate) fn unref_by_path(&mut self, path: &[u8]) {
-        let Some(entry) = self.path_map.fetch_swap_remove(path) else {
+    pub(crate) fn unref_by_path(&mut self, key: ModuleKey<'_>) {
+        let Some(entry) = self.path_map.swap_remove(key) else {
             return;
         };
-        self.unref_by_index(entry.value, 1);
+        self.unref_by_index(entry, 1);
     }
 
     /// `Assets.reindexIfNeeded`.
@@ -197,8 +195,7 @@ impl Assets {
     /// `Assets.memoryCost`.
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
-        // `StringArrayHashMap` derefs to its inner `ArrayHashMap<Box<[u8]>, V, _>`.
-        cost += memory_cost_array_hash_map(&self.path_map);
+        cost += self.path_map.memory_cost();
         for blob in self.files.values() {
             cost += blob.memory_cost();
         }

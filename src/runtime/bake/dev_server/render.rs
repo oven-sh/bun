@@ -471,7 +471,11 @@ impl DevServer {
                 }
             } else {
                 // Find the in-graph import.
-                let Some(file) = self.client_graph.bundled_files.get(import.path.text) else {
+                let Some(file) = self
+                    .client_graph
+                    .bundled_files
+                    .get(ModuleKey::new(import.path.text, import.key_loader))
+                else {
                     continue;
                 };
                 if !matches!(file.content, incremental_graph::Content::Js(_)) {
@@ -635,7 +639,10 @@ impl DevServer {
         let mut react_fast_refresh_id: &[u8] = b"";
         if let Some(rfr) = &self.framework.react_fast_refresh {
             'brk: {
-                let Some(rfr_index) = self.client_graph.get_file_index(&rfr.import_source) else {
+                let Some(rfr_index) = self
+                    .client_graph
+                    .get_file_index(ModuleKey::of_path(&rfr.import_source))
+                else {
                     break 'brk;
                 };
                 if !self

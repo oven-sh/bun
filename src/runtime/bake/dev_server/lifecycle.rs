@@ -437,7 +437,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // out so the refresh runtime is registered at index 0 in all builds.
         let idx = dev
             .client_graph
-            .insert_stale(&rfr.import_source, bake::Graph::Client)?;
+            .insert_stale(ModuleKey::of_path(&rfr.import_source), bake::Graph::Client)?;
         debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0));
     }
 
@@ -478,7 +478,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
             // SAFETY: `server_graph` is disjoint from `framework`.
             let server_file = unsafe { &mut (*dev_ptr).server_graph }.insert_stale_extra(
-                &fsr.entry_server,
+                ModuleKey::of_path(&fsr.entry_server),
                 bake::Graph::Server,
                 incremental_graph::RouteKind::Route,
             )?;
@@ -506,7 +506,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                     Some(to_opaque_file_id::<{ bake::Side::Client }>(
                         // SAFETY: `client_graph` is disjoint from `framework`.
                         unsafe { &mut (*dev_ptr).client_graph }
-                            .insert_stale(client, bake::Graph::Client)?,
+                            .insert_stale(ModuleKey::of_path(client), bake::Graph::Client)?,
                     ))
                 } else {
                     None

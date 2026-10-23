@@ -8,12 +8,12 @@ impl DevServer {
         entry_points: &mut EntryPointList,
         rbi: route_bundle::Index,
     ) -> crate::Result<()> {
-        let server_file_names = self.server_graph.bundled_files.keys();
-        let client_file_names = self.client_graph.bundled_files.keys();
+        let server_files = &self.server_graph.bundled_files;
+        let client_files = &self.client_graph.bundled_files;
 
         // Build a list of all files that have not yet been bundled.
         // Note: split borrow — `route_bundle_ptr`/`type_ptr` are `&mut self`;
-        // index `route_bundles`/`types` immutably so the SoA key slices above stay live.
+        // index `route_bundles`/`types` immutably so the tables above stay live.
         match &self.route_bundles[rbi.get() as usize].data {
             route_bundle::Data::Framework(bundle) => {
                 let mut route = self.router.route_ptr(bundle.route_index);
@@ -21,56 +21,58 @@ impl DevServer {
                 let (rt_server_file, rt_client_file) =
                     (router_type.server_file, router_type.client_file);
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
-                    server_file_names,
+                    server_files,
                     entry_points,
                     OpaqueFileIdOrOptional::Id(rt_server_file),
                 )?;
                 self.append_opaque_entry_point::<{ bake::Side::Client }>(
-                    client_file_names,
+                    client_files,
                     entry_points,
                     rt_client_file,
                 )?;
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
-                    server_file_names,
+                    server_files,
                     entry_points,
                     route.file_page,
                 )?;
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
-                    server_file_names,
+                    server_files,
                     entry_points,
                     route.file_layout,
                 )?;
                 while let Some(parent_index) = route.parent {
                     route = self.router.route_ptr(parent_index);
                     self.append_opaque_entry_point::<{ bake::Side::Server }>(
-                        server_file_names,
+                        server_files,
                         entry_points,
                         route.file_layout,
                     )?;
                 }
                 // A router whose pages also run in the browser: the same files, in the client graph.
                 for path in self.client_page_files(bundle.route_index).iter() {
-                    let stale = match self.client_graph.get_file_index(path) {
+                    let key = ModuleKey::of_path(path);
+                    let stale = match self.client_graph.get_file_index(key) {
                         Some(index) => self.client_graph.stale_files.is_set(index.get() as usize),
                         None => true,
                     };
                     if stale {
-                        entry_points.append_js(path, bake::Graph::Client)?;
+                        entry_points.append_js(key, bake::Graph::Client)?;
                     }
                 }
             }
             route_bundle::Data::Html(html) => {
-                entry_points.append_html(&html.html_bundle.bundle.path)?;
+                entry_points.append_html(ModuleKey::of_path(&html.html_bundle.bundle.path))?;
             }
         }
 
         if let Some(map) = &self.has_tailwind_plugin_hack {
             for abs_path in map.keys() {
-                let Some(file) = self.client_graph.bundled_files.get(abs_path) else {
+                let key = ModuleKey::of_path(abs_path);
+                let Some(file) = self.client_graph.bundled_files.get(key) else {
                     continue;
                 };
                 if file.kind == FileKind::Css {
-                    entry_points.append_css(abs_path).expect("oom");
+                    entry_points.append_css(key).expect("oom");
                 }
             }
         }
@@ -84,9 +86,13 @@ pub(crate) struct CacheEntry {
 }
 
 impl DevServer {
-    pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
+    pub(crate) fn is_file_cached(
+        &mut self,
+        key: ModuleKey<'_>,
+        side: bake::Graph,
+    ) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
-        if self.barrel_files_with_deferrals.contains_key(path) {
+        if self.barrel_files_with_deferrals.contains_key(key.path()) {
             return None;
         }
 
@@ -95,7 +101,7 @@ impl DevServer {
         macro_rules! check {
             ($g:expr, |$file:ident| $bundled_for_side:expr) => {{
                 let g = $g;
-                let index = g.bundled_files.get_index(path)?;
+                let index = g.bundled_files.get_index(key)?;
                 if g.stale_files.is_set(index) {
                     return None;
                 }
@@ -126,7 +132,7 @@ impl DevServer {
 
     fn append_opaque_entry_point<const SIDE: bake::Side>(
         &self,
-        file_names: &[Box<[u8]>],
+        files: &module_table::ModuleTable<incremental_graph::File>,
         entry_points: &mut EntryPointList,
         optional_id: impl Into<OpaqueFileIdOrOptional>,
     ) -> crate::Result<()> {
@@ -150,7 +156,7 @@ impl DevServer {
                 .is_set(file_index.get() as usize),
         };
         if stale {
-            entry_points.append_js(&file_names[file_index.get() as usize], SIDE.graph())?;
+            entry_points.append_js(files.key_at(file_index.get() as usize), SIDE.graph())?;
         }
         Ok(())
     }
@@ -181,7 +187,7 @@ impl RouteIndexAndRecurseFlag {
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 #[derive(Default)]
 pub(crate) struct EntryPointList {
-    pub(crate) set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
+    pub(crate) set: module_table::ModuleTable<entry_point_list::Flags>,
 }
 
 pub(crate) mod entry_point_list {
@@ -205,9 +211,9 @@ impl EntryPointList {
         EntryPointList::default()
     }
 
-    pub(crate) fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> crate::Result<()> {
+    pub(crate) fn append_js(&mut self, key: ModuleKey<'_>, side: bake::Graph) -> crate::Result<()> {
         self.append(
-            abs_path,
+            key,
             match side {
                 bake::Graph::Server => entry_point_list::Flags::SERVER,
                 bake::Graph::Client => entry_point_list::Flags::CLIENT,
@@ -216,28 +222,28 @@ impl EntryPointList {
         )
     }
 
-    pub(crate) fn append_css(&mut self, abs_path: &[u8]) -> crate::Result<()> {
+    pub(crate) fn append_css(&mut self, key: ModuleKey<'_>) -> crate::Result<()> {
         self.append(
-            abs_path,
+            key,
             entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS,
         )
     }
 
     /// The html file of a route: an import attribute or a bunfig `[loader]` entry may have made it html.
-    pub(crate) fn append_html(&mut self, abs_path: &[u8]) -> crate::Result<()> {
+    pub(crate) fn append_html(&mut self, key: ModuleKey<'_>) -> crate::Result<()> {
         self.append(
-            abs_path,
+            key,
             entry_point_list::Flags::CLIENT | entry_point_list::Flags::HTML,
         )
     }
 
-    /// Deduplictes requests to bundle the same file twice.
+    /// Deduplictes requests to bundle the same module twice.
     pub(crate) fn append(
         &mut self,
-        abs_path: &[u8],
+        key: ModuleKey<'_>,
         flags: entry_point_list::Flags,
     ) -> crate::Result<()> {
-        let gop = self.set.get_or_put(abs_path)?;
+        let gop = self.set.get_or_put(key)?;
         if gop.found_existing {
             *gop.value_ptr |= flags;
         } else {
@@ -250,15 +256,17 @@ impl EntryPointList {
 impl DevServer {
     pub(crate) fn put_or_overwrite_asset(
         &mut self,
-        path: &bun_bundler::bun_fs::Path<'_>,
+        key: ModuleKey<'_>,
         contents: crate::webcore::blob::Any,
         content_hash: u64,
     ) -> crate::Result<()> {
         let _g = self.graph_safety_lock.guard();
         let _ = self.assets.replace_path(
-            path.text,
+            key,
             contents,
-            &MimeType::by_extension(path.name().ext_without_leading_dot()),
+            &MimeType::by_extension(
+                paths::fs::PathName::init(key.path()).ext_without_leading_dot(),
+            ),
             content_hash,
         )?;
         Ok(())
@@ -318,13 +326,8 @@ impl TestingBatch {
 
     pub(crate) fn append(&mut self, entry_points: &EntryPointList) -> crate::Result<()> {
         debug_assert!(!entry_points.set.is_empty());
-        for (k, v) in entry_points
-            .set
-            .keys()
-            .iter()
-            .zip(entry_points.set.values())
-        {
-            self.entry_points.append(k, *v)?;
+        for (key, flags) in entry_points.set.iter() {
+            self.entry_points.append(key, *flags)?;
         }
         Ok(())
     }
@@ -343,7 +346,7 @@ impl DevServer {
 
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {
-            let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());
+            let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.count());
             for key in entry_points.set.keys() {
                 trigger_files.push(BunString::clone_utf8(key));
             }
@@ -443,17 +446,17 @@ impl DevServer {
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
         // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
-        // can name it without depending on `bun_runtime`). Convert by value —
+        // can name it without depending on `bun_runtime`). The keys are borrowed;
         // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
-        let start_data = bv2.start_from_bake_dev_server(&{
-            let mut bt = bundler::bake_types::EntryPointList::empty();
-            for (k, v) in entry_points.set.iter() {
-                bun_core::handle_oom(
-                    bt.set
-                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
-                );
-            }
-            bt
+        let start_data = bv2.start_from_bake_dev_server(&bundler::bake_types::EntryPointList {
+            entries: entry_points
+                .set
+                .iter()
+                .map(|(key, flags)| bundler::bake_types::EntryPoint {
+                    key,
+                    flags: bundler::bake_types::EntryPointFlags(flags.bits()),
+                })
+                .collect(),
         })?;
         drop(entry_points);
         // End the AST scope and move its state into the bundle so the small

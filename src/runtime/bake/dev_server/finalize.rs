@@ -9,6 +9,8 @@ pub(crate) struct HotUpdateContext<'a> {
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
+    /// bundle_v2.Graph.input_files.items(.key_loader)
+    pub key_loaders: &'a [Option<Loader>],
     /// Which files have a server-component boundary.
     pub server_to_client_bitset: DynamicBitSet,
     /// Used to reduce calls to the IncrementalGraph hash table.
@@ -63,6 +65,15 @@ impl<'a> HotUpdateContext<'a> {
         };
 
         &mut self.resolved_index_cache[start..][..len][i.get() as usize]
+    }
+
+    /// The incremental graph key of a module of this bundle.
+    pub(crate) fn module_key(&self, i: impl Into<bun_ast::Index>) -> ModuleKey<'a> {
+        let i = i.into().get() as usize;
+        ModuleKey::new(
+            self.sources[i].path.key_for_incremental_graph(),
+            self.key_loaders[i],
+        )
     }
 }
 
@@ -241,6 +252,7 @@ pub(super) fn finalize_bundle(
     let html_chunks_mut = &mut html_rest[..n_html];
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
+    let input_file_key_loaders = bv2.graph.input_files.items_key_loader();
     let import_records = bv2.graph.ast.items_import_records();
     let targets = bv2.graph.ast.items_target();
     let scbs = bv2.graph.server_component_boundaries.slice();
@@ -274,6 +286,7 @@ pub(super) fn finalize_bundle(
         import_records,
         sources: input_file_sources,
         loaders: input_file_loaders,
+        key_loaders: input_file_key_loaders,
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below
@@ -316,10 +329,7 @@ pub(super) fn finalize_bundle(
                 ),
             }
             let graph = targets[index.get() as usize].bake_graph();
-            let key = incremental_graph::InsertFailureKey::AbsPath(
-                source.path.key_for_incremental_graph(),
-                graph,
-            );
+            let key = incremental_graph::InsertFailureKey::AbsPath(ctx.module_key(index), graph);
             match graph {
                 bake::Graph::Client => dev.client_graph.insert_failure(key, &log)?,
                 bake::Graph::Server | bake::Graph::Ssr => {
@@ -418,7 +428,7 @@ pub(super) fn finalize_bundle(
             );
         }
         if log.errors > 0 {
-            let entry_key = entry_source.path.key_for_incremental_graph();
+            let entry_key = ctx.module_key(index);
             dev.client_graph.insert_failure(
                 incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),
                 &log,
@@ -432,7 +442,7 @@ pub(super) fn finalize_bundle(
             *ctx.get_cached_index(bake::Side::Client, index) =
                 CachedFileIndex::from(Some(file_index));
             dev.client_graph
-                .restore_failed_css_root(file_index, hash(entry_key));
+                .restore_failed_css_root(file_index, hash(entry_key.path()));
             // This lets a server route's trace reach the failed client file.
             if metadata.imported_on_server {
                 dev.server_graph
@@ -471,11 +481,9 @@ pub(super) fn finalize_bundle(
         };
 
         // Create an entry for this file.
-        let key = ctx.sources[index.get() as usize]
-            .path
-            .key_for_incremental_graph();
+        let key = ctx.module_key(index);
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
-        let h = hash(key);
+        let h = hash(key.path());
         // Track css files that look like tailwind files.
         // Note: hoisted before `replace_path` because that consumes
         // `code.buffer`.
@@ -494,9 +502,9 @@ pub(super) fn finalize_bundle(
             if looks_like_tailwind {
                 // Note: `get_or_put` consumes the key by value; on miss the key
                 // already lives in the map so the explicit `*key_ptr =` is redundant.
-                let _ = map.get_or_put(Box::from(key))?;
+                let _ = map.get_or_put(Box::from(key.path()))?;
             } else {
-                let _ = map.swap_remove(&Box::<[u8]>::from(key));
+                let _ = map.swap_remove(&Box::<[u8]>::from(key.path()));
             }
         }
 
@@ -587,7 +595,7 @@ pub(super) fn finalize_bundle(
     } else {
         0
     })?;
-    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
+    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.count())?;
 
     dev.incremental_result.had_adjusted_edges = false;
 
@@ -997,13 +1005,9 @@ pub(super) fn finalize_bundle(
             // Send CSS mutations
             dev.assets.reindex_if_needed()?;
             w_int!(u32, u32::try_from(printed_css_count).expect("int cast"));
-            use bun_bundler::Graph::InputFileColumns as _;
-            let sources = bv2.graph.input_files.items_source();
             for chunk in css_chunks.iter().filter(|c| css_chunk_printed(c)) {
-                let key = sources[chunk.entry_point.source_index() as usize]
-                    .path
-                    .key_for_incremental_graph();
-                let content_hash = hash(key);
+                let key = ctx.module_key(bun_ast::Index::init(chunk.entry_point.source_index()));
+                let content_hash = hash(key.path());
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);

@@ -112,7 +112,7 @@ impl DevServer {
         let index = self
             .server_graph
             .insert_stale_extra(
-                abs_path,
+                ModuleKey::of_path(abs_path),
                 bake::Graph::Server,
                 incremental_graph::RouteKind::Route,
             )

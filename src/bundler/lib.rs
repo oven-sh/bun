@@ -394,14 +394,16 @@ pub use bundle_v2::dispatch;
 // it mutates through, hence `*mut`.
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
+        // The three barrel slots are keyed by path alone: a collision there re-parses a file or keeps an export, it never picks a wrong module.
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
-        fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
+        // A `_raw` slot takes a `ModuleKey` as its path and key loader. `impl DevServerHandle` has the typed wrappers.
+        fn log_for_resolution_failures_raw(abs_path: &[u8], key_loader: Option<bun_ast::Loader>, graph: bake_types::Graph) -> *mut bun_ast::Log;
         fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
-        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
-        fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
-        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
-        fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
-        fn asset_hash(abs_path: &[u8]) -> Option<u64>;
+        fn handle_parse_task_failure_raw(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], key_loader: Option<bun_ast::Loader>, log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
+        fn put_or_overwrite_asset_raw(abs_path: &[u8], key_loader: Option<bun_ast::Loader>, contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
+        fn track_resolution_failure_raw(import_source: &[u8], key_loader: Option<bun_ast::Loader>, specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
+        fn is_file_cached_raw(abs_path: &[u8], key_loader: Option<bun_ast::Loader>, side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
+        fn asset_hash_raw(abs_path: &[u8], key_loader: Option<bun_ast::Loader>) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();
         fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);

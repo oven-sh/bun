@@ -470,18 +470,16 @@ pub mod bv2_impl {
             }
         }
 
-        /// TYPE_ONLY moved down; bundler
-        /// reads `.set` (count/keys/values) in `enqueue_entry_points_dev_server`.
-        #[derive(Default)]
-        pub struct EntryPointList {
-            pub set: bun_collections::StringArrayHashMap<EntryPointFlags>,
+        /// A module the dev server asks for, and the graphs to bundle it for.
+        pub struct EntryPoint<'a> {
+            pub key: bun_ast::ModuleKey<'a>,
+            pub flags: EntryPointFlags,
         }
-        impl EntryPointList {
-            pub fn empty() -> Self {
-                Self {
-                    set: bun_collections::StringArrayHashMap::new(),
-                }
-            }
+
+        /// TYPE_ONLY moved down; bundler
+        /// iterates `.entries` in `enqueue_entry_points_dev_server`.
+        pub struct EntryPointList<'a> {
+            pub entries: Vec<EntryPoint<'a>>,
         }
 
         /// TYPE_ONLY subset of the `Framework` fields
@@ -1115,6 +1113,8 @@ pub mod bv2_impl {
                 pub(crate) original_target: Target,
                 /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
                 pub(crate) loader: Option<Loader>,
+                /// The key loader of a dev server entry point. An import's key loader is in its import record.
+                pub(crate) key_loader: Option<Loader>,
             }
 
             /// Mirrors `JSBundler.Resolve.Value.success` payload.
@@ -1498,21 +1498,83 @@ pub mod bv2_impl {
     // static instances and registers hooks at init. See PORTING.md §Dispatch.
     // ══════════════════════════════════════════════════════════════════════════
     pub mod dispatch {
+        use crate::bake_types::{CacheEntry, Graph};
+        use crate::options::{Loader, ModuleKey};
         pub use crate::{DevServerHandle, DevServerHandleKind};
 
         impl DevServerHandle {
             #[inline]
-            pub(crate) fn put_or_overwrite_asset_erased<P>(
+            pub(crate) fn log_for_resolution_failures(
                 &self,
-                path: &P,
+                key: ModuleKey<'_>,
+                graph: Graph,
+            ) -> *mut bun_ast::Log {
+                self.log_for_resolution_failures_raw(key.path(), key.key_loader(), graph)
+            }
+
+            #[inline]
+            pub(crate) fn handle_parse_task_failure(
+                &self,
+                err: crate::Error,
+                graph: Graph,
+                key: ModuleKey<'_>,
+                log: *const bun_ast::Log,
+                bv2: *mut super::BundleV2<'_>,
+            ) -> crate::Result<()> {
+                self.handle_parse_task_failure_raw(
+                    err,
+                    graph,
+                    key.path(),
+                    key.key_loader(),
+                    log,
+                    bv2,
+                )
+            }
+
+            #[inline]
+            pub(crate) fn put_or_overwrite_asset(
+                &self,
+                key: ModuleKey<'_>,
                 contents: &[u8],
                 content_hash: u64,
             ) -> crate::Result<()> {
-                self.put_or_overwrite_asset(
-                    core::ptr::from_ref::<P>(path).cast::<()>(),
+                self.put_or_overwrite_asset_raw(
+                    key.path(),
+                    key.key_loader(),
                     contents,
                     content_hash,
                 )
+            }
+
+            #[inline]
+            pub(crate) fn track_resolution_failure(
+                &self,
+                importer: ModuleKey<'_>,
+                specifier: &[u8],
+                renderer: Graph,
+                loader: Loader,
+            ) -> crate::Result<()> {
+                self.track_resolution_failure_raw(
+                    importer.path(),
+                    importer.key_loader(),
+                    specifier,
+                    renderer,
+                    loader,
+                )
+            }
+
+            #[inline]
+            pub(crate) fn is_file_cached(
+                &self,
+                key: ModuleKey<'_>,
+                side: Graph,
+            ) -> Option<CacheEntry> {
+                self.is_file_cached_raw(key.path(), key.key_loader(), side)
+            }
+
+            #[inline]
+            pub(crate) fn asset_hash(&self, key: ModuleKey<'_>) -> Option<u64> {
+                self.asset_hash_raw(key.path(), key.key_loader())
             }
         }
 
@@ -2088,17 +2150,38 @@ pub mod bv2_impl {
         /// it is called on. Function must be called on the bundle thread.
         pub fn log_for_resolution_failures(
             &mut self,
-            abs_path: &[u8],
+            key: ModuleKey<'_>,
             bake_graph: bake::Graph,
         ) -> &mut bun_ast::Log {
             if let Some(dev) = self.dev_server_handle() {
                 // CYCLEBREAK GENUINE: DevServer → vtable.
                 // SAFETY: owner is a live *mut DevServer per handle invariant.
-                return unsafe { &mut *dev.log_for_resolution_failures(abs_path, bake_graph) };
+                return unsafe { &mut *dev.log_for_resolution_failures(key, bake_graph) };
             }
             // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
             // outlives `BundleV2`.
             self.transpiler.log_mut()
+        }
+
+        /// The key of the module at `source_index`. `path` is the path of its source.
+        #[inline]
+        fn source_key<'p>(&self, path: &'p [u8], source_index: IndexInt) -> ModuleKey<'p> {
+            ModuleKey::new(
+                path,
+                self.graph.input_files.items_key_loader()[source_index as usize],
+            )
+        }
+
+        /// The key of the module that has the import.
+        fn importer_key<'r>(
+            &self,
+            record: &'r jsc_api::JSBundler::MiniImportRecord,
+        ) -> ModuleKey<'r> {
+            if record.kind == ImportKind::EntryPointBuild {
+                // An entry point has no importer: `source_file` is empty.
+                return ModuleKey::of_path(&record.source_file);
+            }
+            self.source_key(&record.source_file, record.importer_source_index)
         }
     }
 
@@ -2878,7 +2961,7 @@ pub mod bv2_impl {
 
                                 // Tell Bake's Dev Server to wait for the file to be imported.
                                 dev.track_resolution_failure(
-                                    &import_record.source_file,
+                                    self.importer_key(import_record),
                                     &import_record.specifier,
                                     target.bake_graph(),
                                     self.graph.input_files.items_loader()
@@ -2904,7 +2987,7 @@ pub mod bv2_impl {
                         // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
                         let log: &mut bun_ast::Log = unsafe {
                             bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                                &import_record.source_file,
+                                self.importer_key(import_record),
                                 target.bake_graph(),
                             ))
                         };
@@ -3146,23 +3229,19 @@ pub mod bv2_impl {
         /// `loader`: see `requested_file_loader`.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
-            path_slice: &[u8],
+            key: ModuleKey<'_>,
             target: options::Target,
             loader: Option<Loader>,
         ) -> Result<(), Error> {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span the resolver / `&mut self` calls below.
-            if self
-                .path_to_source_index_map(target)
-                .get(ModuleKey::of_path(path_slice))
-                .is_some()
-            {
+            if self.path_to_source_index_map(target).get(key).is_some() {
                 return Ok(());
             }
             let mut result = match self
                 .transpiler_for_target(target)
-                .resolve_entry_point(path_slice)
+                .resolve_entry_point(key.path())
             {
                 Ok(r) => r,
                 Err(_) => return Ok(()),
@@ -3170,7 +3249,7 @@ pub mod bv2_impl {
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-            let loader = self.requested_file_loader(&path, loader);
+            let loader = self.requested_file_loader(&path, loader.or_else(|| key.key_loader()));
 
             path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
@@ -3179,7 +3258,7 @@ pub mod bv2_impl {
             // `pretty`.
             result.path_pair.primary = path;
             self.path_to_source_index_map(target)
-                .put(ModuleKey::of_path(path_slice), source_index.get())
+                .put(key, source_index.get())
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -3194,6 +3273,8 @@ pub mod bv2_impl {
                 side_effects: result.primary_side_effects_data,
                 ..Default::default()
             })?;
+            self.graph
+                .set_key_loader(source_index.get(), key.key_loader());
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(&result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
@@ -3225,6 +3306,7 @@ pub mod bv2_impl {
         }
 
         /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
+        /// For any other module it passes the key loader.
         fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
             loader.unwrap_or_else(|| {
                 path.loader(&self.transpiler.options.loaders)
@@ -3232,12 +3314,14 @@ pub mod bv2_impl {
             })
         }
 
+        /// `key_loader`: the key loader of the entry point's module, `None` outside the dev server.
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
             is_entry_point: bool,
             target: options::Target,
+            key_loader: Option<Loader>,
             loader: Option<Loader>,
         ) -> Result<Option<IndexInt>, Error> {
             let result = &mut *resolve;
@@ -3251,7 +3335,7 @@ pub mod bv2_impl {
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)
-                .get(ModuleKey::of_path(path.text))
+                .get(ModuleKey::new(path.text, key_loader))
                 .is_some()
             {
                 return Ok(None);
@@ -3259,7 +3343,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = self.requested_file_loader(&path, loader);
+            let loader = self.requested_file_loader(&path, loader.or(key_loader));
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -3289,7 +3373,7 @@ pub mod bv2_impl {
                 *p = path;
             }
             self.path_to_source_index_map(target)
-                .put(ModuleKey::of_path(path.text), source_index.get())
+                .put(ModuleKey::new(path.text, key_loader), source_index.get())
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -3305,6 +3389,7 @@ pub mod bv2_impl {
                 side_effects,
                 ..Default::default()
             })?;
+            self.graph.set_key_loader(source_index.get(), key_loader);
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
@@ -3667,7 +3752,7 @@ pub mod bv2_impl {
             for entry_point in data {
                 let entry_point: &[u8] = entry_point.as_ref();
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
-                    entry_point,
+                    ModuleKey::of_path(entry_point),
                     self.transpiler.options.target,
                     None,
                 ) {
@@ -3682,6 +3767,7 @@ pub mod bv2_impl {
                             &mut { file_map_result },
                             true,
                             self.transpiler.options.target,
+                            None,
                             None,
                         )?;
                         continue;
@@ -3708,27 +3794,26 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
+                let _ = self.enqueue_entry_item(&mut resolved, true, target, None, None)?;
             }
             Ok(())
         }
 
         pub(crate) fn enqueue_entry_points_dev_server(
             &mut self,
-            files: &bake_types::EntryPointList,
+            files: &bake_types::EntryPointList<'_>,
             css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             debug_assert!(self.dev_server.is_some());
 
-            let num_entry_points = files.set.count();
+            let num_entry_points = files.entries.len();
             self.graph.entry_points.reserve(num_entry_points);
             self.graph
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
-            debug_assert_eq!(files.set.keys().len(), files.set.values().len());
-            for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
+            for &bake_types::EntryPoint { key, flags } in &files.entries {
                 // Ensure we have the proper conditions set for client-side entrypoints.
                 // SAFETY: hold the transpiler as a `*mut` across the loop body
                 // so it doesn't keep `self` borrowed through the plugin
@@ -3769,7 +3854,7 @@ pub mod bv2_impl {
                 for target_info in &targets_to_check {
                     if target_info.should_dispatch {
                         if self.enqueue_entry_point_on_resolve_plugin_if_needed(
-                            abs_path,
+                            key,
                             target_info.target,
                             target_info.loader,
                         ) {
@@ -3784,7 +3869,8 @@ pub mod bv2_impl {
 
                 // Fall back to normal resolution if no plugins matched
                 // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                let mut resolved = match unsafe { &mut *transpiler }.resolve_entry_point(abs_path) {
+                let mut resolved = match unsafe { &mut *transpiler }.resolve_entry_point(key.path())
+                {
                     Ok(r) => r,
                     Err(err) => {
                         let dev = self.dev_server.expect("unreachable");
@@ -3795,7 +3881,7 @@ pub mod bv2_impl {
                             } else {
                                 bake::Graph::Server
                             },
-                            abs_path,
+                            key,
                             // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
                             unsafe { (*transpiler).log }.cast_const(),
                             std::ptr::from_mut(self),
@@ -3813,6 +3899,7 @@ pub mod bv2_impl {
                             &mut resolved,
                             true,
                             Target::Browser,
+                            key.key_loader(),
                             client_loader,
                         )?
                         else {
@@ -3833,6 +3920,7 @@ pub mod bv2_impl {
                         &mut resolved,
                         true,
                         self.transpiler.options.target,
+                        key.key_loader(),
                         None,
                     )?;
                 }
@@ -3841,6 +3929,7 @@ pub mod bv2_impl {
                         &mut resolved,
                         true,
                         Target::ServerComponentsSsr,
+                        key.key_loader(),
                         None,
                     )?;
                 }
@@ -3868,7 +3957,11 @@ pub mod bv2_impl {
                     bake::Side::Server => self.transpiler.options.target,
                 };
 
-                if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target, None) {
+                if self.enqueue_entry_point_on_resolve_plugin_if_needed(
+                    ModuleKey::of_path(abs_path),
+                    target,
+                    None,
+                ) {
                     continue;
                 }
 
@@ -3879,7 +3972,8 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
+                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None, None)?
+                else {
                     continue;
                 };
             }
@@ -5275,7 +5369,10 @@ pub mod bv2_impl {
                         dev.handle_parse_task_failure(
                             crate::Error::Plugin,
                             load.bake_graph(),
-                            source.path.key_for_incremental_graph(),
+                            this.source_key(
+                                source.path.key_for_incremental_graph(),
+                                load.source_index.get(),
+                            ),
                             &raw const temp_log,
                             this,
                         )
@@ -5372,6 +5469,7 @@ pub mod bv2_impl {
                                 &mut resolved,
                                 true,
                                 target,
+                                resolve.import_record.key_loader,
                                 resolve.import_record.loader,
                             ) else {
                                 return;
@@ -5403,7 +5501,7 @@ pub mod bv2_impl {
                     // `graph.input_files`.
                     let log: &mut bun_ast::Log = unsafe {
                         bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
+                            this.importer_key(&resolve.import_record),
                             resolve.import_record.original_target.bake_graph(),
                         ))
                     };
@@ -5457,26 +5555,29 @@ pub mod bv2_impl {
                     }
                     if !result.external {
                         // An import keeps its `with { type }` whoever resolved it. An entry point has no record.
-                        let key_loader = if resolve.import_record.kind
-                            != ImportKind::EntryPointBuild
-                        {
-                            let path_loader = this.requested_file_loader(&path, None);
-                            let for_dev_server = this.dev_server.is_some();
-                            // Answers run as posted tasks, after the importer's records are on the graph.
-                            let record: &mut ImportRecord =
-                                &mut this.graph.ast.items_import_records_mut()
-                                    [resolve.import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [resolve.import_record.import_record_index as usize];
-                            super::import_record_key_loader(
-                                record,
-                                path_loader,
-                                resolve.import_record.original_target,
-                                for_dev_server,
-                            )
-                        } else {
-                            None
-                        };
+                        let key_loader =
+                            if resolve.import_record.kind != ImportKind::EntryPointBuild {
+                                let path_loader = this.requested_file_loader(&path, None);
+                                let for_dev_server = this.dev_server.is_some();
+                                // Answers run as posted tasks, after the importer's records are on the graph.
+                                let record: &mut ImportRecord =
+                                    &mut this.graph.ast.items_import_records_mut()
+                                        [resolve.import_record.importer_source_index as usize]
+                                        .as_mut_slice()
+                                        [resolve.import_record.import_record_index as usize];
+                                super::import_record_key_loader(
+                                    record,
+                                    path_loader,
+                                    resolve.import_record.original_target,
+                                    for_dev_server,
+                                )
+                            } else {
+                                // An entry point that a plugin resolved to another file is that file's default module.
+                                resolve
+                                    .import_record
+                                    .key_loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier)
+                            };
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
                         // lifetime, blocking the `free_list`/`graph` accesses below.
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
@@ -5515,15 +5616,14 @@ pub mod bv2_impl {
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
                             // An entry point that a plugin resolved to another file keeps that file's loader.
-                            let loader = key_loader.unwrap_or_else(|| {
-                                this.requested_file_loader(
-                                    &path,
-                                    resolve
-                                        .import_record
-                                        .loader
-                                        .filter(|_| path.text == &*resolve.import_record.specifier),
-                                )
-                            });
+                            let loader = this.requested_file_loader(
+                                &path,
+                                resolve
+                                    .import_record
+                                    .loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier)
+                                    .or(key_loader),
+                            );
 
                             this.graph
                                 .input_files
@@ -5602,7 +5702,7 @@ pub mod bv2_impl {
                         }
                     } else if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let log = this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
+                            this.importer_key(&resolve.import_record),
                             resolve.import_record.original_target.bake_graph(),
                         );
                         log.add_error_fmt(
@@ -5672,7 +5772,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Err(err) => {
                     let log = this.log_for_resolution_failures(
-                        &resolve.import_record.source_file,
+                        this.importer_key(&resolve.import_record),
                         resolve.import_record.original_target.bake_graph(),
                     );
                     let kind = err.kind;
@@ -6024,7 +6124,7 @@ pub mod bv2_impl {
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
         pub fn start_from_bake_dev_server(
             &mut self,
-            bake_entry_points: &bake_types::EntryPointList,
+            bake_entry_points: &bake_types::EntryPointList<'_>,
         ) -> Result<DevServerInput, Error> {
             self.unique_key = generate_unique_key();
 
@@ -6090,6 +6190,7 @@ pub mod bv2_impl {
 
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
+                let key_loaders = input_files.items_key_loader();
                 let sources = input_files.items_source();
                 for index in 1..self.graph.ast.len() {
                     // SAFETY: `index < ast.len()`; see note above for column aliasing.
@@ -6129,7 +6230,10 @@ pub mod bv2_impl {
                                     .handle_parse_task_failure(
                                         crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
-                                        sources[index].path.text,
+                                        ModuleKey::new(
+                                            sources[index].path.text,
+                                            key_loaders[index],
+                                        ),
                                         &raw const log,
                                         self,
                                     )
@@ -6341,7 +6445,10 @@ pub mod bv2_impl {
                     .handle_parse_task_failure(
                         crate::Error::InvalidCssImport,
                         bake::Graph::Client,
-                        sources[entry_point.get() as usize].path.text,
+                        self.source_key(
+                            sources[entry_point.get() as usize].path.text,
+                            entry_point.get(),
+                        ),
                         &raw const log,
                         self,
                     )
@@ -6454,6 +6561,7 @@ pub mod bv2_impl {
                             range: import_record.range,
                             original_target,
                             loader: None,
+                            key_loader: None,
                         },
                     );
 
@@ -6468,18 +6576,18 @@ pub mod bv2_impl {
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_point_on_resolve_plugin_if_needed(
             &mut self,
-            entry_point: &[u8],
+            entry_point: ModuleKey<'_>,
             target: options::Target,
             loader: Option<Loader>,
         ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
-                let mut temp_path = Fs::Path::init(entry_point);
+                let mut temp_path = Fs::Path::init(entry_point.path());
                 temp_path.namespace = b"file";
                 if plugins.has_any_matches(&temp_path, false) {
                     bun_core::scoped_log!(
                         Bundle,
                         "Entry point '{}' plugin match",
-                        bstr::BStr::new(entry_point)
+                        bstr::BStr::new(entry_point.path())
                     );
 
                     // Arena-owned.
@@ -6494,12 +6602,13 @@ pub mod bv2_impl {
                             kind: ImportKind::EntryPointBuild,
                             source_file: Box::default(), // No importer for entry points
                             namespace: (&b"file"[..]).into(),
-                            specifier: entry_point.into(),
+                            specifier: entry_point.path().into(),
                             importer_source_index: u32::MAX, // Sentinel value for entry points
                             import_record_index: 0,
                             range: bun_ast::Range::NONE,
                             original_target: target,
                             loader,
+                            key_loader: entry_point.key_loader(),
                         },
                     );
 
@@ -6970,7 +7079,7 @@ pub mod bv2_impl {
                     options::Target,
                 ) = if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
-                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
+                        self.log_for_resolution_failures(self.source_key(source.path.text, source.index.0), ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle"),
@@ -6988,7 +7097,7 @@ pub mod bv2_impl {
                             .unwrap()
                             .separate_ssr_graph;
                     if !is_supported {
-                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
+                        self.log_for_resolution_failures(self.source_key(source.path.text, source.index.0), ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("Framework does not have a separate SSR graph to put this import into"),
@@ -7097,7 +7206,7 @@ pub mod bv2_impl {
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
                                     self.log_for_resolution_failures(
-                                        source.path.text,
+                                        self.source_key(source.path.text, source.index.0),
                                         ctx.target.bake_graph(),
                                     ),
                                 )
@@ -7125,7 +7234,7 @@ pub mod bv2_impl {
                                     if let Some(dev) = self.dev_server {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(
-                                            source.path.text,
+                                            self.source_key(source.path.text, source.index.0),
                                             import_record.path.text,
                                             ctx.target.bake_graph(), // use the source file target not the altered one
                                             loader,
@@ -7324,7 +7433,7 @@ pub mod bv2_impl {
                             // reserves the HTML file's spot in IncrementalGraph for the
                             // route definition.
                             let log = self.log_for_resolution_failures(
-                                source.path.text,
+                                self.source_key(source.path.text, source.index.0),
                                 ctx.target.bake_graph(),
                             );
                             log.add_range_error_fmt(
@@ -7342,7 +7451,9 @@ pub mod bv2_impl {
 
                         import_record.source_index = Index::INVALID;
 
-                        if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
+                        // `import_record_key_loader` runs below: for the dev server it decides `None` for every record.
+                        let cached_key = ModuleKey::of_path(path.text);
+                        if let Some(entry) = dev_server.is_file_cached(cached_key, bake_graph) {
                             let rel = bun_paths::resolve_path::relative_platform::<
                                 bun_paths::resolve_path::platform::Loose,
                                 false,
@@ -7352,7 +7463,7 @@ pub mod bv2_impl {
                             // A cached JSON or text module is also an `Asset`, but it has no asset URL.
                             if loader == Loader::Html
                                 && entry.kind == bake_types::CacheKind::Asset
-                                && let Some(hash) = dev_server.asset_hash(path.text)
+                                && let Some(hash) = dev_server.asset_hash(cached_key)
                             {
                                 // Overload `path.text` to point to the final URL
                                 // This information cannot be queried while printing because a lock wouldn't get held.
@@ -7992,8 +8103,8 @@ pub mod bv2_impl {
                         if let Some(dev) = this.dev_server {
                             let source =
                                 &this.graph.input_files.items_source()[result_source_index];
-                            dev.put_or_overwrite_asset_erased(
-                                &source.path,
+                            dev.put_or_overwrite_asset(
+                                this.source_key(source.path.text, result_source_index as IndexInt),
                                 // SAFETY: when shouldCopyForBundling is true, the
                                 // contents are allocated by bun.default_allocator
                                 &source.contents,
@@ -8235,7 +8346,7 @@ pub mod bv2_impl {
                                 .handle_parse_task_failure(
                                     err.err,
                                     err.target.bake_graph(),
-                                    abs_path,
+                                    this.source_key(abs_path, err.source_index.get()),
                                     &raw const err.log,
                                     std::ptr::from_mut(this),
                                 )

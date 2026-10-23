@@ -142,7 +142,7 @@ impl DirectoryWatchStore {
     /// retried when the containing directory changes.
     pub(crate) fn track_resolution_failure(
         &mut self,
-        import_source: &[u8],
+        import_source: ModuleKey<'_>,
         specifier: &[u8],
         renderer: Graph,
         loader: bun_ast::Loader,
@@ -152,7 +152,7 @@ impl DirectoryWatchStore {
         if specifier.is_empty() {
             return Ok(());
         }
-        if !bun_paths::is_absolute(import_source) {
+        if !bun_paths::is_absolute(import_source.path()) {
             return Ok(());
         }
 
@@ -174,7 +174,7 @@ impl DirectoryWatchStore {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(joined) =
             bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source.path()),
                 &mut buf.0,
                 &[specifier],
             )

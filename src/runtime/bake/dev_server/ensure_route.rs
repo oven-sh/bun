@@ -514,7 +514,7 @@ impl DevServer {
             if let Some(existing) = self
                 .client_graph
                 .bundled_files
-                .get(&html_ref.bundle.path)
+                .get(ModuleKey::of_path(&html_ref.bundle.path))
                 .and_then(|file| file.html_route_bundle_index)
             {
                 html_ref.dev_server_id.set(Some(existing));
@@ -539,7 +539,7 @@ impl DevServer {
                 route_bundle::UnresolvedIndex::Html(html) => 'brk: {
                     let html_ref = &*html;
                     let incremental_graph_index = self.client_graph.insert_stale_extra(
-                        &html_ref.bundle.path,
+                        ModuleKey::of_path(&html_ref.bundle.path),
                         bake::Graph::Client,
                         incremental_graph::RouteKind::Route,
                     )?;

@@ -1978,7 +1978,9 @@ describe("an option of the wrong type", () => {
     for (const ALPNProtocols of noList) {
       expect(() => apis[api]({ ALPNProtocols })).toThrow(new TypeError("Must give a Buffer as first argument"));
     }
-    // Node refuses a string too. 1.4.4 connected without ALPN.
-    for (const ALPNProtocols of ["h2", false, 0, "", null]) expect(() => apis[api]({ ALPNProtocols })).not.toThrow();
+    // Node refuses a string and an ArrayBuffer too. 1.4.4 connected without ALPN.
+    for (const ALPNProtocols of ["h2", new ArrayBuffer(3), false, 0, "", null]) {
+      expect(() => apis[api]({ ALPNProtocols })).not.toThrow();
+    }
   });
 });

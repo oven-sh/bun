@@ -4233,6 +4233,23 @@ function writeUntilQueued(stream: { write(chunk: Buffer, cb: (err?: any) => void
   while (stream.write(chunk, err => err && events.push(`write ${err.code}`))) {}
 }
 
+it("resume() and pause() in one tick read nothing more into a full buffer", async () => {
+  using pair = await connectToPausedPeer();
+  const { peer } = pair;
+  writeUntilQueued(pair.socket);
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  // The first pair starts the reads, which stop at the high water mark.
+  peer.resume();
+  peer.pause();
+  while (peer.readableLength < peer.readableHighWaterMark) await turn();
+  const full = peer.readableLength;
+  peer.resume();
+  peer.pause();
+  // The kernel holds more, so a read that started would deliver it in the next turn.
+  for (let i = 0; i < 5; i++) await turn();
+  expect(peer.readableLength).toBe(full);
+});
+
 describe("setTimeout() with a queued write", () => {
   it("fires when the peer stops reading", async () => {
     using pair = await connectToPausedPeer();

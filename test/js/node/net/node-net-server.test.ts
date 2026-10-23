@@ -1,6 +1,6 @@
 import { closeSync, existsSync, openSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { AddressInfo, BlockList, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -1094,6 +1094,27 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
 // dropped the Listener's KeepAlive but the uv handle still pinned
 // uv_loop_alive and the process never exited. TCP and unix-socket listeners go
 // through usockets, which unrefs its uv handles up front.
+it("closes a peer on options.blockList without an event, like Node", async () => {
+  const blockList = new BlockList();
+  blockList.addAddress("127.0.0.1");
+  const events: string[] = [];
+  const server = createServer({ blockList }, () => events.push("connection"));
+  server.on("drop", () => events.push("drop"));
+  try {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1").resume();
+    await once(client, "close");
+    expect(events).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
+it("createServer() stores keepAliveInitialDelay in seconds, like Node", () => {
+  const stored = (options?: { keepAliveInitialDelay: number }) => (createServer(options) as any).keepAliveInitialDelay;
+  expect([stored({ keepAliveInitialDelay: 2500 }), stored({ keepAliveInitialDelay: -1 }), stored()]).toEqual([2, 0, 0]);
+});
+
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
   // The child exits without close() (natural exit is the observable), so the
   // unix socket file must live in a tempDir the parent disposes.

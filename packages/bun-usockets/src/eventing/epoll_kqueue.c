@@ -557,7 +557,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
      * it sets timed_out=1 (line 1952) and returns before any scheduler
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
-    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
+    static const struct timespec no_wait = { 0, 0 };
+    /* A counted wakeup whose eventfd signal the last tick's read already took leaves nothing ready, and nothing above prepared this tick to park. */
+    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, will_idle_inside_event_loop ? timeout : &no_wait);
 #else
     loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
         /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.

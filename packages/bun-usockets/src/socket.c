@@ -775,7 +775,7 @@ int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
     return c->error_is_dns ? c->error : 0;
 }
 
-unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, int *port)
 {
     // This function is manual inlining + modification of
     //      us_socket_remote_address
@@ -797,7 +797,7 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     return length;
 }
 
-unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, int *port)
 {
     struct bsd_addr_t addr;
     if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {

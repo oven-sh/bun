@@ -1,5 +1,5 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView } = require("node:util/types");
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
@@ -613,8 +613,8 @@ function TLSSocket(socket?, options?) {
   const { ALPNProtocols, secureContext } = options;
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, this);
-    // What convertALPNProtocols() leaves alone, Node's setALPNProtocols() refuses. A string is ignored, as on 1.4.4.
-    if (this.ALPNProtocols === undefined && typeof ALPNProtocols !== "string") {
+    // What convertALPNProtocols() leaves alone, Node's setALPNProtocols() refuses. A string or an ArrayBuffer is ignored, as on 1.4.4.
+    if (this.ALPNProtocols === undefined && typeof ALPNProtocols !== "string" && !isAnyArrayBuffer(ALPNProtocols)) {
       throw new TypeError("Must give a Buffer as first argument");
     }
   }
@@ -642,7 +642,7 @@ function TLSSocket(socket?, options?) {
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {
     if (isServer) {
-      this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null, null));
+      this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null));
     } else {
       // The rule of tls.connect(): an untrusted certificate is rejected unless the caller passes `false`.
       this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")
@@ -936,7 +936,7 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
   return this[kTLSHandle]?.getX509Certificate?.();
 };
 
-TLSSocket.prototype[buntls] = function (port, host) {
+TLSSocket.prototype[buntls] = function (host) {
   const ctx = this[ksecureContext];
   // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
   // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
@@ -1118,7 +1118,7 @@ function Server(options, secureConnectionListener): void {
     this._sharedCreds = isContext ? options : own;
   };
 
-  this[buntls] = function (port, host) {
+  this[buntls] = function (host) {
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),

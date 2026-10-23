@@ -740,8 +740,8 @@ struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kin
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 /* The bundled Mozilla root certificates, DER-encoded, in static memory. Returns the count. */
 size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
-unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
-unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
+unsigned int us_get_remote_address_info(char *buf, us_socket_r s, int *port);
+unsigned int us_get_local_address_info(char *buf, us_socket_r s, int *port);
 int us_socket_get_error(us_socket_r s);
 /* A writable event's write made zero progress: does that prove the peer is
  * gone? On epoll/kqueue a writable event implies real send-buffer space, so

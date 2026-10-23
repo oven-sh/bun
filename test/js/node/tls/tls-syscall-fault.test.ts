@@ -413,6 +413,21 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect(client.events).toEqual(["error", "close(hadError=true)"]);
   });
 
+  test("send → EPIPE for ciphertext that waits for the writable event fails the write of a reader that stopped", async () => {
+    using p = await connectedTLSPair();
+    const client = observe(p.client);
+    p.client.pause();
+    // More than the client buffers, so it stops reading with input left in the kernel.
+    await new Promise<void>(resolve => p.serverSock.write(Buffer.alloc(1024 * 1024, "a"), () => resolve()));
+    fault.set({ syscall: "send", action: "short", bytes: 10, fd: fdOf(p.client) });
+    const written = Promise.withResolvers<Error | null | undefined>();
+    p.client.write("hello", written.resolve);
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: fdOf(p.client) });
+    expect(await written.promise).toMatchObject({ code: "EPIPE", syscall: "write" });
+    await client.closed;
+    expect(client.events).toEqual(["error", "close(hadError=true)"]);
+  });
+
   test("send → EPIPE past the FIN of the peer holds the loop until the write has failed", async () => {
     await using ending = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true }, socket => {
       socket.on("error", () => {}).end();

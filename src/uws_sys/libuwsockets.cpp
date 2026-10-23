@@ -1620,7 +1620,7 @@ __attribute__((callback (corker, ctx)))
     //      AsyncSocket::addressAsText
     // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     static thread_local char b[64];
-    auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
+    auto length = us_get_remote_address_info(b, (us_socket_t *)res, port);
 
     if (length == 0) return 0;
     if (length == 4) {
@@ -1639,7 +1639,7 @@ __attribute__((callback (corker, ctx)))
   uint64_t uws_res_get_local_address_info(uws_res_r res, const char **dest, int *port, bool *is_ipv6)
   {
     static thread_local char b[64];
-    auto length = us_get_local_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
+    auto length = us_get_local_address_info(b, (us_socket_t *)res, port);
 
     if (length == 0) return 0;
     if (length == 4) {

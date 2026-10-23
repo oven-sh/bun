@@ -6539,6 +6539,10 @@ function initializeOptions(options) {
     if (options.remoteCustomSettings.length > MAX_ADDITIONAL_SETTINGS) throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
   }
 
+  if (options.strictSingleValueFields !== undefined) {
+    validateBoolean(options.strictSingleValueFields, "options.strictSingleValueFields");
+  }
+
   if (options.maxSessionInvalidFrames !== undefined)
     validateUint32(options.maxSessionInvalidFrames, "options.maxSessionInvalidFrames");
 
@@ -6549,10 +6553,6 @@ function initializeOptions(options) {
   if (options.unknownProtocolTimeout !== undefined)
     validateUint32(options.unknownProtocolTimeout, "options.unknownProtocolTimeout");
   else options.unknownProtocolTimeout = 10000;
-
-  if (options.strictSingleValueFields !== undefined) {
-    validateBoolean(options.strictSingleValueFields, "options.strictSingleValueFields");
-  }
 
   // Initialize http1Options bag for HTTP/1 fallback when allowHTTP1 is true.
   options.http1Options = { ...options.http1Options };

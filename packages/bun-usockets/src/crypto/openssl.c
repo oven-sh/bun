@@ -2448,6 +2448,8 @@ struct us_socket_t *us_internal_ssl_close_after_rejected_send(struct us_socket_t
   if (unread) {
     /* The handshake can't complete, so the queued read only reports the failure. Resume a paused socket so that read happens. */
     if (s->ssl_handshake_state == HANDSHAKE_PENDING) us_socket_resume(s);
+    /* A Bun socket holds a write open for these records, and a reader that stopped may be waiting for that write. */
+    else if (us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS) return us_dispatch_writable(s);
     return s;
   }
   if (s->ssl_handshake_state == HANDSHAKE_PENDING) {

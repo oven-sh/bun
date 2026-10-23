@@ -997,6 +997,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.native_callback.get().on_writable() {
             return Ok(());
         }
+        // The TLS layer couldn't send records it still held.
+        let send_error = this.socket.get().rejected_send_error();
+        if send_error != 0 {
+            this.fail_queued_writes(send_error);
+            return Ok(());
+        }
         let callback = handlers.on_writable();
         let queue = this.buffered_data_for_node_net.get();
         if callback.is_empty()

@@ -2529,6 +2529,54 @@ it("handshakeTimeout reports a stalled natively-accepted client through tlsClien
   }
 });
 
+// The handshake deadline is its own timer. A 'timeout' of the program's socket.setTimeout() isn't one.
+describe.each([
+  { name: "only the program's setTimeout() fires", handshakeTimeout: 60_000, own: 1, events: ["timeout"] },
+  {
+    name: "only the deadline fires",
+    handshakeTimeout: 1,
+    own: 0,
+    events: ["tlsClientError ERR_TLS_HANDSHAKE_TIMEOUT", "timeout"],
+  },
+  {
+    name: "the program's setTimeout() fires, then the deadline",
+    handshakeTimeout: 300,
+    own: 1,
+    events: ["timeout", "tlsClientError ERR_TLS_HANDSHAKE_TIMEOUT", "timeout"],
+  },
+  {
+    name: "the deadline fires, then the program's setTimeout()",
+    handshakeTimeout: 1,
+    own: 300,
+    events: ["tlsClientError ERR_TLS_HANDSHAKE_TIMEOUT", "timeout", "timeout"],
+  },
+])("a client that stalls in its handshake", ({ name, handshakeTimeout, own, events }) => {
+  it(name, async () => {
+    const server: Server = createServer({ ...COMMON_CERT, handshakeTimeout });
+    const seen: string[] = [];
+    const done = Promise.withResolvers<void>();
+    const saw = (event: string) => void (seen.push(event) === events.length && done.resolve());
+    server.on("tlsClientError", (err: Error & { code?: string }) => saw(`tlsClientError ${err.code}`));
+    server.on("connection", socket => {
+      if (own) socket.setTimeout(own);
+      socket.on("timeout", () => saw("timeout"));
+    });
+    let stalled: net.Socket | undefined;
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      stalled = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      stalled.on("error", () => {});
+      await done.promise;
+      // An event too many would come in the same turn as the last one.
+      await new Promise(resolve => setImmediate(resolve));
+      expect(seen).toEqual(events);
+    } finally {
+      stalled?.destroy();
+      server.close();
+    }
+  });
+});
+
 describe("tls.Server secure-context options", () => {
   // agent6-cert.pem is the agent6 leaf followed by the ca3 intermediate that
   // signed it (the chain continues to the ca1 root, which is NOT loaded here).

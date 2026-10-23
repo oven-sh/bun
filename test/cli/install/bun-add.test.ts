@@ -505,9 +505,11 @@ it.each([
   expect(await analyze("add", source, { files })).toEqual({ added, errors: [], exitCode: 0 });
 });
 
-// The scan is a browser bundle with every package external. These rows pin two results of that
-// which the link used to stop. Neither is what bun loads when it runs the file.
-it("bun add --analyze follows the browser field of package.json", async () => {
+// Open: the scan is a browser bundle with every package external, so it does not read these two
+// programs as bun runs them. The link used to stop both with an error. Each case fails until the
+// scan is fixed.
+// Now it adds `for-the-browser`: the scan follows the `browser` field, and bun loads impl.ts.
+it.failing("bun add --analyze adds the packages of the file that bun loads, not of its browser twin", async () => {
   expect(
     await analyze("add", `import { server } from "./impl.ts"; console.log(server);`, {
       packageJson: { name: "foo", browser: { "./impl.ts": "./impl.browser.ts" } },
@@ -516,15 +518,16 @@ it("bun add --analyze follows the browser field of package.json", async () => {
         "impl.browser.ts": `import "for-the-browser"; export const browser = 1;`,
       },
     }),
-  ).toEqual({ added: ["for-the-browser"], errors: [], exitCode: 0 });
+  ).toEqual({ added: ["for-the-server"], errors: [], exitCode: 0 });
 });
 
-it("bun add --analyze takes a URL without ./ in an HTML page for a package", async () => {
+// Now it adds `bar` and `images`: the scan reads `images/photo.webp` as a file of a package.
+it.failing("bun add --analyze reads a URL without ./ in an HTML page as a file beside the page", async () => {
   expect(
     await analyze("add", `import page from "./page.html"; import "bar"; console.log(page);`, {
       files: { "page.html": `<!doctype html><img src="images/photo.webp">`, "images/photo.webp": "" },
     }),
-  ).toEqual({ added: ["bar", "images"], errors: [], exitCode: 0 });
+  ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
 });
 
 it.each([
@@ -609,7 +612,9 @@ describe("bun create <component> and a file behind an unused re-export of a barr
     });
   });
 
-  it("stops at a link error of the bundle when the barrel has side effects", async () => {
+  // Without the field the bundle loads lib/server.ts, and a browser bundle has no default export
+  // for an HTML page: `bun build ./App.tsx` stops with this error too.
+  it("stops where the browser bundle of the component stops", async () => {
     expect(await create({ name: "foo" })).toEqual({
       install: undefined,
       errors: [`error: No matching export in "lib/page.html" for import "default"`],

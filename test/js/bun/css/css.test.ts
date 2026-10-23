@@ -172,7 +172,7 @@ describe("css tests", () => {
   width: calc(infinity * -1px);
   height: infinity;
 }`,
-      indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
+      indoc`.rounded-full{width:-3.40282e38px;height:infinity;border-radius:3.40282e38px}`,
     );
 
     // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
@@ -232,6 +232,160 @@ describe("css tests", () => {
       `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
+  });
+  describe("a value that does not parse keeps the declaration before it", () => {
+    // Browsers drop a declaration they cannot parse, so the one before it applies. The
+    // minifier must neither let such a value replace the earlier one nor move it ahead of it.
+    minify_test(`a { color: red; color: banana }`, `a{color:red;color:banana}`);
+    minify_test(`a { color: red; color: rgb(1 2) }`, `a{color:red;color:rgb(1 2)}`);
+    minify_test(`a { color: red; color: contrast-color(blue) }`, `a{color:red;color:contrast-color(blue)}`);
+    minify_test(`a { color: red; color: var(--c) }`, `a{color:red;color:var(--c)}`);
+    minify_test(`a { color: banana; color: red }`, `a{color:red}`);
+    minify_test(`a { color: red; color: banana; color: blue }`, `a{color:red;color:#00f}`);
+    minify_test(
+      `a { text-shadow: 0 0 1px red; text-shadow: 0 0 banana }`,
+      `a{text-shadow:0 0 1px red;text-shadow:0 0 banana}`,
+    );
+    // lightningcss#547: these were emitted after the unparsed value, in the wrong order.
+    minify_test(`a { width: 100px; width: var(--w) }`, `a{width:100px;width:var(--w)}`);
+    minify_test(`a { height: 100vh; height: 100dvb; height: var(--h) }`, `a{height:100dvb;height:var(--h)}`);
+    minify_test(`a { width: 100px; width: anchor-size(width) }`, `a{width:100px;width:anchor-size(width)}`);
+    minify_test(`a { width: 100px; width: calc-size(auto, size) }`, `a{width:100px;width:calc-size(auto,size)}`);
+    // `inherit` is valid in every browser, so the reorder made the earlier value win.
+    minify_test(`a { width: 100px; width: inherit }`, `a{width:100px;width:inherit}`);
+    minify_test(`a { min-width: 100px; min-width: var(--w) }`, `a{min-width:100px;min-width:var(--w)}`);
+    minify_test(`a { max-height: 100px; max-height: inherit }`, `a{max-height:100px;max-height:inherit}`);
+    minify_test(`a { max-height: 1px; max-height: banana }`, `a{max-height:1px;max-height:banana}`);
+    minify_test(`a { inline-size: 1px; inline-size: var(--w) }`, `a{inline-size:1px;inline-size:var(--w)}`);
+    minify_test(`a { min-width: 1px; height: 2px; width: env(foo) }`, `a{min-width:1px;height:2px;width:env(foo)}`);
+    minify_test(`a { width: var(--w); width: 100px }`, `a{width:var(--w);width:100px}`);
+    prefix_test(
+      `a { inline-size: 1px; inline-size: var(--w) }`,
+      indoc`
+        a {
+          width: 1px;
+          width: var(--w);
+        }
+      `,
+      { safari: 8 << 16 },
+    );
+    // The logical corner radii overwrote the buffered value instead.
+    minify_test(
+      `a { border-start-start-radius: 1px; border-start-start-radius: var(--r) }`,
+      `a{border-start-start-radius:1px;border-start-start-radius:var(--r)}`,
+    );
+    minify_test(
+      `a { border-end-end-radius: 1px; border-end-end-radius: banana }`,
+      `a{border-end-end-radius:1px;border-end-end-radius:banana}`,
+    );
+    minify_test(
+      `a { border-start-end-radius: var(--r); border-start-end-radius: 1px }`,
+      `a{border-start-end-radius:1px}`,
+    );
+    minify_test(
+      `a { border-top-left-radius: 1px; border-top-left-radius: var(--r) }`,
+      `a{border-top-left-radius:1px;border-top-left-radius:var(--r)}`,
+    );
+    // The same for every typed property: `p: <parsed>; p: <unparsed>` prints as written.
+    test("every typed property keeps a parsed value ahead of an unparsed one", () => {
+      const parsed: [value: string, properties: string][] = [
+        ["normal", "align-content align-items place-content place-items"],
+        ["auto", "align-self place-self"],
+        ["1s a", "animation"],
+        ["a", "animation-name"],
+        ["1/2", "aspect-ratio"],
+        ["hidden", "backface-visibility overflow overflow-x overflow-y visibility"],
+        [
+          "red",
+          `background background-color border-block-color border-block-end-color border-block-start-color
+           border-bottom-color border-color border-inline-color border-inline-end-color border-inline-start-color
+           border-left-color border-right-color border-top-color color outline-color text-decoration-color
+           text-emphasis-color`,
+        ],
+        ["fixed", "background-attachment"],
+        ["padding-box", "background-clip background-origin mask-clip mask-origin"],
+        ["linear-gradient(red,red)", "background-image border-image-source mask mask-border-source mask-image"],
+        ["1px 2px", "background-position mask-position perspective-origin transform-origin"],
+        [
+          "1px",
+          `background-position-x background-position-y background-size block-size border-block-end-width
+           border-block-start-width border-block-width border-bottom-left-radius border-bottom-right-radius
+           border-bottom-width border-end-end-radius border-end-start-radius border-image-outset border-image-width
+           border-inline-end-width border-inline-start-width border-inline-width border-left-width border-radius
+           border-right-width border-spacing border-start-end-radius border-start-start-radius border-top-left-radius
+           border-top-right-radius border-top-width border-width bottom column-gap flex-basis gap height inline-size
+           inset inset-block inset-block-end inset-block-start inset-inline inset-inline-end inset-inline-start left
+           margin margin-block margin-block-end margin-block-start margin-bottom margin-inline margin-inline-end
+           margin-inline-start margin-left margin-right margin-top mask-border-outset mask-border-width
+           mask-position-x mask-position-y mask-size max-block-size max-height max-inline-size max-width
+           min-block-size min-height min-inline-size min-width outline-width padding padding-block padding-block-end
+           padding-block-start padding-bottom padding-inline padding-inline-end padding-inline-start padding-left
+           padding-right padding-top perspective right row-gap scroll-margin scroll-margin-block
+           scroll-margin-block-end scroll-margin-block-start scroll-margin-bottom scroll-margin-inline
+           scroll-margin-inline-end scroll-margin-inline-start scroll-margin-left scroll-margin-right
+           scroll-margin-top scroll-padding scroll-padding-block scroll-padding-block-end scroll-padding-block-start
+           scroll-padding-bottom scroll-padding-inline scroll-padding-inline-end scroll-padding-inline-start
+           scroll-padding-left scroll-padding-right scroll-padding-top top translate width`,
+        ],
+        ["no-repeat", "background-repeat mask-repeat"],
+        [
+          "1px solid red",
+          `border border-block border-block-end border-block-start border-bottom border-inline border-inline-end
+           border-inline-start border-left border-right border-top outline`,
+        ],
+        [
+          "solid",
+          `border-block-end-style border-block-start-style border-block-style border-bottom-style
+           border-inline-end-style border-inline-start-style border-inline-style border-left-style border-right-style
+           border-style border-top-style outline-style`,
+        ],
+        ["linear-gradient(red,red) 1", "border-image mask-border"],
+        ["round", "border-image-repeat mask-border-repeat"],
+        ["1", "border-image-slice flex flex-grow flex-shrink mask-border-slice order"],
+        ["0 0 1px red", "box-shadow text-shadow"],
+        ["border-box", "box-sizing"],
+        ["dark", "color-scheme"],
+        ["rtl", "direction"],
+        ["flex", "display"],
+        ["column", "flex-direction"],
+        ["column wrap", "flex-flow"],
+        ["wrap", "flex-wrap"],
+        ["12px serif", "font"],
+        ["serif", "font-family"],
+        ["12px", "font-size"],
+        ["50%", "font-stretch"],
+        ["italic", "font-style"],
+        ["small-caps", "font-variant-caps"],
+        ["700", "font-weight"],
+        ["center", "justify-content justify-items justify-self"],
+        ["2", "line-height scale"],
+        ["alpha", "mask-border-mode mask-mode mask-type"],
+        ["add", "mask-composite"],
+        [".5", "opacity"],
+        ["absolute", "position"],
+        ["1deg", "rotate"],
+        ["ellipsis", "text-overflow"],
+        ["scale(2)", "transform"],
+        ["fill-box", "transform-box"],
+        ["preserve-3d", "transform-style"],
+        ["all 1s", "transition"],
+        ["1s", "transition-delay transition-duration"],
+        ["opacity", "transition-property"],
+        ["linear", "transition-timing-function"],
+      ];
+      // Their typed parsers accept `inherit` as an identifier, so it is not an unparsed value for them.
+      const acceptInherit = ["color-scheme", "font-family", "transition", "transition-property"];
+      const sources = parsed.flatMap(([value, properties]) =>
+        properties
+          .split(/\s+/)
+          .flatMap(property =>
+            ["var(--x)", "banana(1)", "inherit"]
+              .filter(unparsed => unparsed !== "inherit" || !acceptInherit.includes(property))
+              .map(unparsed => `a{${property}:${value};${property}:${unparsed}}`),
+          ),
+      );
+      expect(sources.map(css => minify_test_with_options(css, css))).toEqual(sources);
+    });
   });
   describe("border_spacing", () => {
     minify_test(

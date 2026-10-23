@@ -14,7 +14,6 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -1401,22 +1400,20 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
         return {};
     }
 
+    // An object with a callable `then` is waited on through it, as `await` does. Without one, the promise is fulfilled at once.
+    JSC::JSPromise* adopted = nullptr;
+    if (returnValue.isObject() && !returnValue.inherits<JSC::JSPromise>()) {
+        adopted = JSC::JSPromise::resolvedPromise(globalObject, returnValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (adopted->status() == JSC::JSPromise::Status::Pending)
+            returnValue = adopted;
+    }
+
     if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
-        auto capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
         auto ctx = MockWithImplementationCleanupData::create(globalObject, thisObject, lastImpl, lastTail, lastFallback);
 
         JSFunction* cleanup = globalObject->mockModule.withImplementationCleanupFunction.getInitializedOnMainThread(globalObject);
-        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
-        auto callData = JSC::getCallData(performPromiseThenFunction);
-        MarkedArgumentBuffer arguments;
-        arguments.append(promise);
-        arguments.append(cleanup);
-        arguments.append(cleanup);
-        arguments.append(capability);
-        arguments.append(ctx);
-        ASSERT(!arguments.hasOverflowed());
-        call(globalObject, performPromiseThenFunction, callData, jsUndefined(), arguments);
-        RETURN_IF_EXCEPTION(scope, {});
+        promise->performPromiseThenWithContext(vm, globalObject, cleanup, cleanup, jsUndefined(), ctx);
 
         return JSC::JSValue::encode(promise);
     }
@@ -1424,6 +1421,13 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     thisObject->implementation.set(vm, thisObject, lastImpl);
     thisObject->tail.set(vm, thisObject, lastTail);
     thisObject->fallbackImplmentation.set(vm, thisObject, lastFallback);
+
+    // Reading `then` threw. Nothing else observes the promise that holds the error.
+    if (adopted && adopted->status() == JSC::JSPromise::Status::Rejected) [[unlikely]] {
+        adopted->markAsHandled();
+        throwException(globalObject, scope, adopted->result());
+        return {};
+    }
 
     return JSC::JSValue::encode(jsUndefined());
 }

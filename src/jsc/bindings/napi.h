@@ -912,8 +912,7 @@ public:
         }
     }
 
-    // Node's Reference with a reset persistent handle: empty, and ref() and unref() report 0 and never root again.
-    // A registered symbol or a primitive (no weak handle) cannot point into a realm and keeps its value.
+    // Node's Reference with a reset persistent handle. A symbol or primitive (no weak handle) has no realm to root.
     void releaseRealm()
     {
         if (m_released || m_isEternal || weakValueRef.isClear()) {

@@ -21,6 +21,8 @@ export function serialize(message, handle: IpcHandle, options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     const native = handle._handle;
+    // An https.Server never ran net.Server's constructor: it listens through Bun.serve and has no handle to pass.
+    if (native === undefined) throw $ERR_INVALID_HANDLE_TYPE();
     if (!native) return null;
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Server" }];
   }

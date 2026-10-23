@@ -49,7 +49,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. Client sockets are `tls.TLSSocket`s. `https.Server` is `http.Server` with TLS options rather than a `tls.Server`. Its request sockets (`req.socket`) are not `tls.TLSSocket`s: `encrypted`, `authorized` and `servername` work, but `getPeerCertificate()` and `getCipher()` are missing. `setSecureContext()`, `addContext()`, `SNICallback` and `handshakeTimeout` are not supported.
+🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. Client sockets are `tls.TLSSocket`s. `https.Server` extends `tls.Server` and runs on Bun's HTTP server rather than on a `net.Server` handle. Its request sockets (`req.socket`) are not `tls.TLSSocket`s: `encrypted`, `authorized` and `servername` work, but `getPeerCertificate()` and `getCipher()` are missing. `setSecureContext()`, `addContext()`, `SNICallback` and `handshakeTimeout` are not supported.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

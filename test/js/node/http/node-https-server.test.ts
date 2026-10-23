@@ -80,6 +80,94 @@ test("https.Server is its own class and still serves TLS only when it has a key 
   expect(await tlsRequest(port)).toEndWith("encrypted=true");
 });
 
+// https.Server extends tls.Server, and http.Server.prototype is not on its chain:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122
+test("https.Server extends tls.Server, not http.Server", () => {
+  expect(Object.getPrototypeOf(https.Server.prototype)).toBe(tls.Server.prototype);
+  expect(Object.getPrototypeOf(https.Server)).toBe(tls.Server);
+  const server = https.createServer();
+  expect([server instanceof http.Server, server instanceof tls.Server, server instanceof net.Server]).toEqual([false, true, true]); // prettier-ignore
+  expect((https.Server as any)()).toBeInstanceOf(https.Server);
+  // http.Server's methods are own properties of https.Server.prototype, so they shadow the net.Server handle versions.
+  const httpMethods = Reflect.ownKeys(http.Server.prototype).filter(key => key !== "constructor");
+  expect(httpMethods.filter(key => !Object.hasOwn(https.Server.prototype, key))).toEqual([]);
+  expect(typeof Object.getOwnPropertyDescriptor(https.Server.prototype, "listening")?.get).toBe("function");
+});
+
+// A wrapper of http.Server.prototype.emit must not be reachable through https.Server.prototype: a library that wraps
+// both (OpenTelemetry through shimmer) unwraps what it finds there first, and that removed the http wrapper.
+// https://github.com/oven-sh/bun/issues/46567
+describe.concurrent("wrapping Server.prototype.emit on node:http and node:https", () => {
+  test.each([
+    ["http first", "http", "https"],
+    ["https first", "https", "http"],
+  ])("%s: the http wrapper sees the request", async (_label, first, second) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const mods = { http: require("node:http"), https: require("node:https") };
+function wrapEmit(proto, label) {
+  if (proto.emit.__unwrap) proto.emit.__unwrap();
+  const original = proto.emit;
+  const wrapped = function (event, ...args) {
+    if (event === "request") console.log(label + " wrapper saw the request");
+    return original.call(this, event, ...args);
+  };
+  wrapped.__unwrap = () => { if (proto.emit === wrapped) proto.emit = original; };
+  proto.emit = wrapped;
+}
+wrapEmit(mods[${JSON.stringify(first)}].Server.prototype, ${JSON.stringify(first)});
+wrapEmit(mods[${JSON.stringify(second)}].Server.prototype, ${JSON.stringify(second)});
+const server = mods.http.createServer((req, res) => res.end("ok"));
+server.listen(0, "127.0.0.1", async () => {
+  await fetch("http://127.0.0.1:" + server.address().port + "/");
+  console.log("done");
+  server.close();
+});
+`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "http wrapper saw the request\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+test("loading node:https does not load node:tls until Server is read", async () => {
+  // https.Server is set up on first read because its parent class lives in node:tls.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const { heapStats } = require("bun:jsc");
+const count = () => { Bun.gc(true); return heapStats().objectCount; };
+const https = require("node:https");
+const before = count();
+https.Server;
+const afterServer = count();
+require("node:tls");
+const afterTls = count();
+console.log(JSON.stringify({ serverReadLoadsTls: afterServer - before > 500, tlsAlreadyLoaded: afterTls - afterServer < 200 }));
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ serverReadLoadsTls: true, tlsAlreadyLoaded: true }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // Bun only: Node's http.Server ignores key and cert. Deployments rely on this, it must never become cleartext.
 test.skipIf(!process.versions.bun).each<[string, () => object]>([
   ["key and cert", () => ({ ...validCert })],

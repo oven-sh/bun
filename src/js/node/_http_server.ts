@@ -304,6 +304,11 @@ interface Server extends NodeHTTPServer {
 }
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
+  return initHttpServer.$call(this, options, callback);
+}
+
+// The constructor body, with no `instanceof` guard. https.Server runs it on an instance that is not an http.Server.
+function initHttpServer(options, callback) {
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
@@ -4334,8 +4339,14 @@ http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
+// The methods this module defines on Server.prototype, captured before user code can patch them. https.Server takes
+// them as own properties of its own prototype: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122
+const { constructor: _constructor, ...serverPrototypeDescriptors } = Object.getOwnPropertyDescriptors(Server.prototype);
+
 export default {
   Server,
   ServerResponse,
   kConnectionsCheckingInterval,
+  initHttpServer,
+  serverPrototypeDescriptors,
 };

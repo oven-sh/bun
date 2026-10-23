@@ -2,7 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, tempDir, withoutAsanQuarantine } from "harness";
+import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -600,63 +600,59 @@ describe("session.close() with a stream that is still pending", () => {
       () => "fulfilled",
       e => e?.code ?? String(e),
     );
-
-  // A close that waits for a pending stream gives no signal. It ends when a
-  // timer fires, and the sessions below have no timer that can. The deadline
-  // reports that wait as a value, so it fails an assertion. CI runs many
-  // files at once, so a close that is only slow gets more time there.
-  async function unlessParked<T>(result: Promise<T>) {
-    const deadline = Promise.withResolvers<"still parked">();
-    const timer = setTimeout(deadline.resolve, isCI ? 15_000 : 3_000, "still parked");
+  // @types/node does not declare `pending`.
+  const isPending = (stream: object): boolean => (stream as any).pending;
+  // The body of a stream as text. If the read fails, the error code follows the text.
+  const text = async (stream: AsyncIterable<Uint8Array[]>) => {
+    let body = "";
     try {
-      return await Promise.race([result, deadline.promise]);
-    } finally {
-      clearTimeout(timer);
+      for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    } catch (e: any) {
+      body += `[${e?.code ?? e}]`;
     }
-  }
+    return body;
+  };
 
   // Raw QUIC sends no GOAWAY. Its close waited for the body of the pending
   // stream, which cannot leave before the handshake ends.
   test("before the handshake ends, closes a raw QUIC session at once", async () => {
+    await using cleanup = new AsyncDisposableStack();
     // Nothing answers on this socket.
     const silent = await Bun.udpSocket({ hostname: "127.0.0.1" });
+    cleanup.defer(() => silent.close());
     // An endpoint takes `handshakeTimeout` from its first connect(), so this
-    // session gets an endpoint of its own. No timer can then end the session.
+    // session gets an endpoint of its own. No timer can then end the session:
+    // a close that waits for the pending stream does not settle.
     const endpoint = new QuicEndpoint();
-    try {
-      const session = await connect(
-        { address: "127.0.0.1", port: silent.port },
-        {
-          endpoint,
-          alpn: "quic-test",
-          servername: "localhost",
-          verifyPeer: "manual",
-          handshakeTimeout: 600_000,
-          transportParams: { maxIdleTimeout: 0 },
-        },
-      );
-      const opened = outcome(session.opened);
-      const stream = await session.createBidirectionalStream({ body: new TextEncoder().encode("hello") });
-      const streamClosed = outcome(stream.closed);
-      const pending = stream.pending;
-      const result = await unlessParked(
-        (async () => ({ closed: await outcome(session.close()), opened: await opened, stream: await streamClosed }))(),
-      );
+    cleanup.defer(() => endpoint.destroy());
+    const session = await connect(`127.0.0.1:${silent.port}`, {
+      endpoint,
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      handshakeTimeout: 600_000,
+      transportParams: { maxIdleTimeout: 0 },
+    } as SessionOptions);
+    const opened = outcome(session.opened);
+    const stream = await session.createBidirectionalStream({ body: new TextEncoder().encode("hello") });
+    const streamClosed = outcome(stream.closed);
+    const pending = isPending(stream);
+    const closed = outcome(session.close());
 
-      expect({ pending, result }).toEqual({
-        pending: true,
-        result: { closed: "fulfilled", opened: "ERR_INVALID_STATE", stream: "fulfilled" },
-      });
-    } finally {
-      await endpoint.destroy();
-      silent.close();
-    }
+    expect({ pending, closed: await closed, opened: await opened, stream: await streamClosed }).toEqual({
+      pending: true,
+      closed: "fulfilled",
+      opened: "ERR_INVALID_STATE",
+      stream: "fulfilled",
+    });
   });
 
   // The peer allows two streams. Two requests are open and a third one is
   // pending when close() runs. close() sends a GOAWAY, waits for the two open
-  // requests, and never opens the third one.
+  // requests, and never opens the third one. No idle timer runs, so a close
+  // that waits for the third request does not settle.
   test("after the handshake, waits for the open streams and not for one over the peer's stream limit", async () => {
+    await using cleanup = new AsyncDisposableStack();
     const paths: string[] = [];
     const firstOnServer = Promise.withResolvers<any>();
     const server = await listen(
@@ -669,70 +665,68 @@ describe("session.close() with a stream that is still pending", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { initialMaxStreamsBidi: 2, maxIdleTimeout: 0 },
-        async onheaders(this: any, headers: Record<string, string>) {
+        async onheaders(this: any, headers: Record<string, any>) {
           const path = headers[":path"];
           paths.push(path);
           this.sendHeaders({ ":status": "200" });
           if (path === "/first") return firstOnServer.resolve(this);
-          if (path === "/upload") {
-            try {
-              for await (const _ of this);
-            } catch {}
-            this.writer.writeSync(new TextEncoder().encode("late"));
-          }
+          // The answer to the upload is the request body, so it comes after the end of the request.
+          if (path === "/upload") this.writer.writeSync(new TextEncoder().encode(await text(this)));
           this.writer.endSync();
         },
       },
     );
-    let client: any;
-    try {
-      client = await connect(server.address, {
-        servername: "localhost",
-        verifyPeer: "manual",
-        transportParams: { maxIdleTimeout: 0 },
-      });
-      await client.opened;
-      const firstAnswered = Promise.withResolvers<void>();
-      const uploadAnswered = Promise.withResolvers<void>();
-      const first = await client.createBidirectionalStream({
-        headers: { ...GET, ":path": "/first" },
-        onheaders: () => firstAnswered.resolve(),
-      });
-      const upload = await client.createBidirectionalStream({ onheaders: () => uploadAnswered.resolve() });
-      upload.sendHeaders({ ...GET, ":method": "POST", ":path": "/upload" });
-      const third = await client.createBidirectionalStream({ headers: { ...GET, ":path": "/third" } });
-      const pending = [first.pending, upload.pending, third.pending];
-      const thirdClosed = outcome(third.closed);
-      // Both requests are answered, so the server has everything the client sent.
-      await Promise.all([firstAnswered.promise, uploadAnswered.promise]);
+    cleanup.defer(() => server.destroy());
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 0 },
+    } as SessionOptions);
+    cleanup.defer(() => client.destroy());
+    await client.opened;
+    const firstAnswered = Promise.withResolvers<void>();
+    const uploadAnswered = Promise.withResolvers<void>();
+    const first = await client.createBidirectionalStream({
+      headers: { ...GET, ":path": "/first" },
+      onheaders: () => firstAnswered.resolve(),
+    });
+    const firstClosed = outcome(first.closed);
+    const upload = await client.createBidirectionalStream({ onheaders: () => uploadAnswered.resolve() });
+    const uploadClosed = outcome(upload.closed);
+    upload.sendHeaders({ ...GET, ":method": "POST", ":path": "/upload" });
+    const third = await client.createBidirectionalStream({ headers: { ...GET, ":path": "/third" } });
+    const thirdClosed = outcome(third.closed);
+    const pending = [first, upload, third].map(isPending);
+    // Both requests are answered, so the server has everything the client sent.
+    await Promise.all([firstAnswered.promise, uploadAnswered.promise]);
 
-      const closed = client.close();
-      const result = await unlessParked(
-        (async () => {
-          // The end of the first request frees a stream at the server. The
-          // client ends its upload after that, and the packet that carries
-          // the end acknowledges the first response. So the stream credit of
-          // the server reaches the client before the answer to the upload.
-          (await firstOnServer.promise).writer.endSync();
-          await outcome(first.closed);
-          upload.writer.endSync();
-          let body = "";
-          try {
-            for await (const batch of upload) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
-          } catch {}
-          return { body, closed: await outcome(closed), third: await thirdClosed };
-        })(),
-      );
+    const closed = outcome(client.close());
+    // The end of the first request frees a stream at the server. The client
+    // ends its upload after that, and the packet that carries the end
+    // acknowledges the first response. So the stream credit of the server
+    // reaches the client before the answer to the upload.
+    (await firstOnServer.promise).writer.endSync();
+    await firstClosed;
+    upload.writer.writeSync(new TextEncoder().encode("sent after close()"));
+    upload.writer.endSync();
 
-      expect({ pending, result, paths }).toEqual({
-        pending: [false, false, true],
-        result: { body: "late", closed: "fulfilled", third: "fulfilled" },
-        paths: ["/first", "/upload"],
-      });
-    } finally {
-      client?.destroy();
-      await server.destroy();
-    }
+    expect({
+      pending,
+      body: await text(upload),
+      closed: await closed,
+      first: await firstClosed,
+      upload: await uploadClosed,
+      third: await thirdClosed,
+      paths,
+    }).toEqual({
+      pending: [false, false, true],
+      body: "sent after close()",
+      closed: "fulfilled",
+      first: "fulfilled",
+      upload: "fulfilled",
+      third: "fulfilled",
+      paths: ["/first", "/upload"],
+    });
   });
 });
 

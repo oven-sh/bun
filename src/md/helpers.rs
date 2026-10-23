@@ -143,6 +143,53 @@ pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -
     LineIndentation { indent, off }
 }
 
+/// Where `indent` columns of white space before `beg` start, and the columns left of a tab that is split there.
+#[inline]
+pub fn indentation_start(text: &[u8], beg: OFF, indent: u32, floor: OFF) -> (OFF, u32) {
+    if indent == 0 {
+        return (beg, 0);
+    }
+    if let Some(start) = beg.checked_sub(indent)
+        && text
+            .get(start as usize..beg as usize)
+            .is_some_and(|run| run.iter().all(|&byte| byte == b' '))
+    {
+        return (start, 0);
+    }
+    indentation_start_by_columns(text, beg, indent, floor)
+}
+
+#[cold]
+fn indentation_start_by_columns(text: &[u8], beg: OFF, indent: u32, floor: OFF) -> (OFF, u32) {
+    let columns = |column: u64, bytes: &[u8]| {
+        bytes.iter().fold(column, |column, &byte| match byte {
+            b'\t' => (column + 4) / 4 * 4,
+            _ => column + 1,
+        })
+    };
+    let end = (beg as usize).min(text.len());
+    // The line of `beg` starts at `floor` or behind it: the walk to the start of the line ends there.
+    let floor = (floor as usize).min(end);
+    let mut offset = end;
+    while offset > floor && is_blank(text[offset - 1]) {
+        offset -= 1;
+    }
+    let mut line_start = offset;
+    while line_start > floor && !is_newline(text[line_start - 1]) {
+        line_start -= 1;
+    }
+    let mut column = columns(0, &text[line_start..offset]);
+    // Not before the blanks: `text` can have changed since the columns were counted.
+    let target = columns(column, &text[offset..end])
+        .saturating_sub(u64::from(indent))
+        .max(column);
+    while offset < end && column < target {
+        column = columns(column, &text[offset..offset + 1]);
+        offset += 1;
+    }
+    (offset as OFF, (column - target) as u32)
+}
+
 pub(crate) struct Utf8DecodeResult {
     pub(crate) codepoint: u32,
     pub(crate) len: u8,
@@ -556,5 +603,136 @@ impl HeadingIdTracker {
     /// Call after using the slug to reset text buffer.
     pub fn clear_after_heading(&mut self) {
         self.text_buf.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn next_column(column: u32, byte: u8) -> u32 {
+        match byte {
+            b'\t' => (column + 4) / 4 * 4,
+            _ => column + 1,
+        }
+    }
+
+    fn column_of(text: &[u8], line_start: usize, offset: usize) -> u32 {
+        text[line_start..offset]
+            .iter()
+            .fold(0, |column, &byte| next_column(column, byte))
+    }
+
+    /// The walk from the start of the line, which is handed to it.
+    fn walk_from(text: &[u8], line_start: usize, beg: usize, indent: u32) -> (OFF, u32) {
+        let target = column_of(text, line_start, beg).saturating_sub(indent);
+        let (mut offset, mut column) = (line_start, 0);
+        while offset < beg && column < target {
+            column = next_column(column, text[offset]);
+            offset += 1;
+        }
+        (offset as OFF, column - target)
+    }
+
+    #[test]
+    fn indentation_start_of_known_lines() {
+        let start =
+            |line: &[u8], indent: u32| indentation_start(line, line.len() as OFF - 1, indent, 0);
+        // CommonMark 0.31.2, examples 5 to 7: a tab that is used up in part.
+        assert_eq!(start(b"\t\tx", 2), (2, 2));
+        assert_eq!(start(b">\t\tx", 2), (3, 2));
+        assert_eq!(start(b"-\t\tx", 2), (3, 2));
+        // A tab that is not used up at all.
+        assert_eq!(start(b"\tx", 4), (0, 0));
+        assert_eq!(start(b"\t\tx", 4), (1, 0));
+        assert_eq!(start(b"   \tx", 2), (2, 0));
+        assert_eq!(start(b">> \tx", 1), (3, 0));
+        assert_eq!(start(b"x\r \tx", 4), (2, 0));
+        // Spaces only.
+        assert_eq!(start(b"      x", 2), (4, 0));
+        assert_eq!(start(b"x", 0), (0, 0));
+        // More columns than there is white space.
+        assert_eq!(start(b">   x", 5), (1, 0));
+        assert_eq!(start(b"> \tx", 9), (1, 0));
+        assert_eq!(indentation_start(b"", 5, 3, 0), (0, 0));
+        assert_eq!(indentation_start(b" ", 9, 1, 0), (0, 0));
+        // A text that changed can have lost the line break. The walk to it ends at `floor`.
+        assert_eq!(indentation_start(b"~~~\n ax \tb", 9, 4, 0), (8, 0));
+        assert_eq!(indentation_start(b"~~~\n ax \tb", 9, 4, 6), (7, 0));
+        assert_eq!(indentation_start(b"ab\t x", 4, 2, 0), (3, 1));
+        assert_eq!(indentation_start(b"ab\t x", 4, 2, 3), (3, 0));
+        assert_eq!(indentation_start(b"\t\t\t x", 4, 9, 2), (2, 0));
+        assert_eq!(indentation_start(b" \tx", 2, 1, 9), (2, 0));
+        // Spaces only are not walked: as many bytes as there are columns.
+        assert_eq!(indentation_start(b"    x", 4, 4, 2), (0, 0));
+        // Counts and places that no text has.
+        assert_eq!(indentation_start(b"\t\t\t\t", 4, u32::MAX, 0), (0, 0));
+        assert_eq!(
+            indentation_start(b"\t\t\t\t", u32::MAX, u32::MAX, u32::MAX),
+            (4, 0)
+        );
+        assert_eq!(indentation_start(b"", 0, 1, 0), (0, 0));
+    }
+
+    #[test]
+    fn indentation_start_is_the_inverse_of_line_indentation() {
+        let mut cases = 0;
+        for before in [&b""[..], b"\t a\n", b"a\r"] {
+            // Every line of up to four of these bytes, then a letter.
+            for shape in 0..(1 + 3 + 9 + 27 + 81) {
+                let mut text = before.to_vec();
+                let (mut rest, mut len) = (shape, 0);
+                while rest >= 3u32.pow(len) {
+                    rest -= 3u32.pow(len);
+                    len += 1;
+                }
+                for _ in 0..len {
+                    text.push(b" \t>"[(rest % 3) as usize]);
+                    rest /= 3;
+                }
+                let (line_start, beg) = (before.len(), text.len());
+                text.push(b'x');
+
+                let mut run_start = beg;
+                while run_start > line_start && is_blank(text[run_start - 1]) {
+                    run_start -= 1;
+                }
+                let run_column = column_of(&text, line_start, run_start);
+                let run = line_indentation(&text, run_column, run_start as OFF);
+                assert_eq!(run.off as usize, beg);
+                assert_eq!(run.indent, column_of(&text, line_start, beg) - run_column);
+
+                for indent in 0..=run.indent + 2 {
+                    cases += 1;
+                    let (start, spaces) = indentation_start(&text, beg as OFF, indent, 0);
+                    for floor in 1..=line_start {
+                        let bounded = indentation_start(&text, beg as OFF, indent, floor as OFF);
+                        assert_eq!(bounded, (start, spaces));
+                    }
+                    // A floor behind the start of the line, as in a text that changed.
+                    for floor in line_start + 1..=beg + 1 {
+                        let (start, spaces) =
+                            indentation_start(&text, beg as OFF, indent, floor as OFF);
+                        let start = start as usize;
+                        assert!(start <= beg && spaces < 4);
+                        assert!(text[start..beg].iter().all(|&byte| is_blank(byte)));
+                        let spaces_only = beg - start == indent as usize && spaces == 0;
+                        assert!(start >= floor.min(beg) || spaces_only);
+                    }
+                    if indent > run.indent {
+                        assert_eq!((start as usize, spaces), (run_start, 0));
+                        continue;
+                    }
+                    assert_eq!((start, spaces), walk_from(&text, line_start, beg, indent));
+                    assert!(spaces < 4 && start as usize >= run_start);
+                    assert!(spaces == 0 || text[start as usize - 1] == b'\t');
+                    let column = column_of(&text, line_start, start as usize);
+                    let written = line_indentation(&text, column, start);
+                    assert_eq!(written.off as usize, beg);
+                    assert_eq!(spaces + written.indent, indent);
+                }
+            }
+        }
+        assert_eq!(cases, 2193);
     }
 }

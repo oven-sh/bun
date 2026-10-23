@@ -392,3 +392,90 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+// Post-cancel invariant: after cancelling a from_pipe FileReader that never
+// received data, the io-ref taken by `from_pipe` must be released so the
+// wrapper is collectable. A stranded ref is a silent NewSource<FileReader>
+// leak in release and a `done && waiting` debug_assert at finalize_detach in
+// assertion builds.
+test.skipIf(isWindows)(
+  "cancelling a subprocess stdout FileReader before any data releases the io-ref",
+  async () => {
+    const script = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const count = () =>
+        heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;
+      const prot = () =>
+        heapStats().protectedObjectTypeCounts.FileInternalReadableStreamSource ?? 0;
+
+      // Warm up so per-class lazy structure allocation is in the baseline.
+      {
+        const p = Bun.spawn({
+          cmd: ["sleep", "0.3"],
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          lazy: true,
+        });
+        await p.stdout.cancel();
+        p.kill();
+        await p.exited;
+      }
+      for (let i = 0; i < 10; i++) { Bun.gc(true); await Bun.sleep(1); }
+      const base = count();
+
+      const ITERS = 6;
+      async function once() {
+        // lazy:true mirrors child_process: from_pipe transfers an Fd-backed
+        // handle (poll registration is deferred), so the only Strong root is
+        // the io-ref that on_cancel must release.
+        const p = Bun.spawn({
+          cmd: ["sleep", "5"],
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          lazy: true,
+        });
+        // Materialize the FileReader (waiting_for_on_reader_done = true) and
+        // cancel it before any data can arrive.
+        await p.stdout.cancel();
+        // The Subprocess wrapper caches stdout and has_pending_activity keeps
+        // it alive while the process runs, so reap it now and drop every JS
+        // reference; only the io-ref can keep the source alive past here.
+        p.kill();
+        await p.exited;
+      }
+      for (let i = 0; i < ITERS; i++) await once();
+
+      const protectedAfterCancel = prot();
+      for (let i = 0; i < 20; i++) { Bun.gc(true); await Bun.sleep(1); }
+      const aliveAfterCancel = count() - base;
+
+      console.log(JSON.stringify({
+        iters: ITERS, base, protectedAfterCancel, aliveAfterCancel,
+      }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    let result: { iters: number; protectedAfterCancel: number; aliveAfterCancel: number };
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+    }
+    // After cancel, nothing should keep the wrapper Strong-protected.
+    expect(result.protectedAfterCancel).toBe(0);
+    // The wrappers must be collectable; one may survive via a conservatively
+    // rooted stack slot (same caveat as the first test in this file).
+    expect(result.aliveAfterCancel).toBeLessThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

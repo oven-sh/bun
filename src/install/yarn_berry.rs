@@ -894,7 +894,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             &being_added,
         )?;
         parse_manifest_bin(this, &mut pkg, &manifest)?;
-        ws.package_id = this.append_package_dedupe(&mut pkg)?;
+        ws.package_id = this.append_package_dedupe(&mut pkg)?.0;
         if let Some(&idx) = lockfile_workspaces.get(&ws.path) {
             entries[idx].package_id = ws.package_id;
         }
@@ -1004,7 +1004,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         if let Some(cond) = get_str(&entry_expr, b"conditions") {
             (pkg.meta.os, pkg.meta.arch, pkg.meta.libc) = parse_conditions(cond);
         }
-        let pid = this.append_package_dedupe(&mut pkg)?;
+        // Two `__archiveUrl`s are not an error: the integrity comes from the registry's manifest below, so each has to serve those bytes.
+        let (pid, _) = this.append_package_dedupe(&mut pkg)?;
         entries[i].package_id = pid;
         this.record_package_extensions(pid, &added);
         if entry_of_package.len() <= pid as usize {

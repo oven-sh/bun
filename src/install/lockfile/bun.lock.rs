@@ -38,7 +38,7 @@ use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
-    PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
+    PackageIndexMap, PatchedDep, PinConflict, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
 use bun_io::AsFmt;
@@ -99,6 +99,7 @@ pub enum Version {
     /// - a git `.bun-tag` must be a safe path/checkout component (the same
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
+    /// - the entries of one package have no `PinConflict` (below v2 that is a warning, and the first entry is used)
     V2 = 2,
 
     /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped while such rules exist and the package walk in `Stringifier::version_to_write` is v2-clean (object rows themselves parse at every version)
@@ -209,6 +210,27 @@ impl Stringifier {
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_metas: &[Meta] = pkgs.items_meta();
+
+        // bun.lockb does not fold: two of its packages of one name and resolution are one package once bun.lock is read.
+        let is_written = |id: PackageID| resolution_buf.contains(&id);
+        let conflicts = |a: PackageID, b: PackageID| {
+            let (a_res, b_res) = (&pkg_resolutions[a as usize], &pkg_resolutions[b as usize]);
+            let (a_integrity, b_integrity) = (
+                &pkg_metas[a as usize].integrity,
+                &pkg_metas[b as usize].integrity,
+            );
+            a_res.eql(b_res, buf, buf)
+                && BinaryLockfile::pin_conflict(a_res, a_integrity, b_res, b_integrity, buf)
+                    .is_some()
+                && is_written(a)
+                && is_written(b)
+        };
+        if lockfile.package_index.values().any(|entry| {
+            let ids = entry.as_slice();
+            (ids.iter().enumerate()).any(|(at, &a)| ids[at + 1..].iter().any(|&b| conflicts(a, b)))
+        }) {
+            return Version::V1;
+        }
 
         let mut iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
             lockfile.buffers.trees.as_slice(),
@@ -2298,7 +2320,7 @@ pub(crate) fn parse_into_binary_lockfile(
             pkg.bin = parse_bin(&value, lockfile)?;
 
             // there should be no duplicates
-            let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+            let (pkg_id, _) = lockfile.append_package_dedupe(&mut pkg)?;
             pkg_map.put(name, pkg_id);
             workspace_pkgs_len += 1;
         }
@@ -2357,6 +2379,7 @@ pub(crate) fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
+        let mut conflicting_entries = false;
         'next_pkg_key: for row in pkg_rows {
             let key_loc = row.key_loc;
             let pkg_path = row.key.slice();
@@ -2429,6 +2452,7 @@ pub(crate) fn parse_into_binary_lockfile(
             };
 
             let mut npm_url_needs_integrity = false;
+            let registry_idx = i;
             if res.tag == ResolutionTag::Npm {
                 if i >= pkg_info.len() {
                     fail!(
@@ -2438,7 +2462,6 @@ pub(crate) fn parse_into_binary_lockfile(
                     );
                 }
                 let registry_expr = &pkg_info[i];
-                let registry_idx = i;
                 i += 1;
 
                 let Some(registry_str) = registry_expr.as_str() else {
@@ -2738,7 +2761,65 @@ pub(crate) fn parse_into_binary_lockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+            let (pkg_id, conflict) = lockfile.append_package_dedupe(&mut pkg)?;
+            if let Some(what) = conflict {
+                let index = match what {
+                    PinConflict::TarballUrl => registry_idx,
+                    PinConflict::GitRef => res_info_idx,
+                    PinConflict::Integrity => i,
+                };
+                // An entry without an integrity took a later one's: that later entry is the other.
+                let kept_integrity = lockfile.packages.items_meta()[pkg_id as usize].integrity;
+                let other = pkg_rows
+                    .iter()
+                    .filter(|row| pkg_map.get(row.key.slice()) == Some(&pkg_id))
+                    .find(|row| {
+                        what != PinConflict::Integrity
+                            || (row.value.as_array())
+                                .and_then(|info| info.items().get(index)?.as_str())
+                                .is_some_and(|text| Integrity::parse(text) == kept_integrity)
+                    });
+                let (other_key, other_loc) = other.map_or((&b""[..], key_loc), |row| {
+                    (row.key.slice(), at_item(row.key_loc, index))
+                });
+                let note = |loc, text: &'static [u8]| {
+                    let range = bun_ast::Range {
+                        loc,
+                        ..Default::default()
+                    };
+                    bun_ast::range_data(Some(source), range, text)
+                };
+                // Below v2 the first entry is used, as before.
+                let add = if lockfile_version.at_least(Version::V2) {
+                    conflicting_entries = true;
+                    bun_ast::Log::add_range_error_fmt_with_notes
+                } else {
+                    bun_ast::Log::add_range_warning_fmt_with_notes
+                };
+                add(
+                    log,
+                    Some(source),
+                    bun_ast::Range {
+                        loc: at_item(key_loc, index),
+                        ..Default::default()
+                    },
+                    Box::new([
+                        note(other_loc, b"The other entry is here"),
+                        bun_ast::range_data(
+                            None,
+                            bun_ast::Range::NONE,
+                            b"Make both entries identical, or run 'bun pm migrate --force' to write bun.lock again from another lockfile",
+                        ),
+                    ]),
+                    format_args!(
+                        "\"{}\" and \"{}\" lock {} with a different {}",
+                        bun_core::fmt::for_terminal(bstr::BStr::new(other_key)),
+                        bun_core::fmt::for_terminal(bstr::BStr::new(pkg_path)),
+                        bun_core::fmt::for_terminal(bstr::BStr::new(res_info_str)),
+                        what.noun(),
+                    ),
+                );
+            }
 
             // The root's `bin` is recorded nowhere else.
             if pkg_id == 0 && res.tag == ResolutionTag::Root {
@@ -2760,6 +2841,9 @@ pub(crate) fn parse_into_binary_lockfile(
             }
 
             *entry.value_ptr = pkg_id;
+        }
+        if conflicting_entries {
+            return Err(ParseError::InvalidPackageInfo);
         }
 
         lockfile.buffers.resolutions =

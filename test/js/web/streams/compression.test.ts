@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 import zlib from "node:zlib";
 
 // CompressionStream et al are C++ subclasses of JSTransformStream so that
@@ -496,7 +497,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     writer.write(data.buffer);
     writer.close();
 
-    const compressedChunks: Uint8Array[] = [];
+    const compressedChunks: Uint8Array<ArrayBuffer>[] = [];
     const reader = cs.readable.getReader();
     while (true) {
       const { done, value } = await reader.read();
@@ -531,7 +532,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
       .catch(() => {});
     expect.assertions(1);
     try {
-      await writer.write(new SharedArrayBuffer(8));
+      await writer.write(new SharedArrayBuffer(8) as any);
     } catch (e: any) {
       expect(e.code).toBe("ERR_INVALID_ARG_TYPE");
     }
@@ -542,7 +543,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     const writer = cs.writable.getWriter();
     const reader = cs.readable.getReader();
 
-    const writeError = writer.write(42).catch(e => e);
+    const writeError = writer.write(42 as any).catch(e => e);
     const readError = reader.read().catch(e => e);
 
     const [we, re] = await Promise.all([writeError, readError]);
@@ -688,7 +689,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
     using socket = await Bun.connect({
       hostname: server.url.hostname,
-      port: server.port,
+      port: server.port!,
       socket: {
         open(s) {
           s.pause();
@@ -720,7 +721,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(head).toStartWith("HTTP/1.1 200");
     expect(head.toLowerCase()).toContain("transfer-encoding: chunked");
     const body: Buffer[] = [];
-    for (let i = headEnd + 4; ; ) {
+    for (let i = headEnd + 4; ;) {
       const sizeEnd = raw.indexOf("\r\n", i);
       const size = parseInt(raw.subarray(i, sizeEnd).toString(), 16);
       if (sizeEnd < 0 || Number.isNaN(size)) throw new Error(`malformed chunk framing at offset ${i}`);
@@ -770,7 +771,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     await using server = Bun.serve({
       port: 0,
       fetch(req) {
-        const cloned = req.clone();
+        const cloned = req.clone() as Request;
         return new Response(
           cloned.textStream().pipeThrough(new TextEncoderStream()).pipeThrough(new CompressionStream("gzip")),
         );

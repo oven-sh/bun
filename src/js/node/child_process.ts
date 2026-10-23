@@ -685,8 +685,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   return result;
 }
-const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
-const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const etimedoutErrorCode = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
+const enobufsErrorCode = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1608,6 +1608,16 @@ class ChildProcess extends EventEmitter {
         process.nextTick(callback, new TypeError("Process was closed while trying to send message"));
       } else {
         this.emit("error", new TypeError("Process was closed while trying to send message"));
+      }
+      return false;
+    }
+
+    if (!this.connected) {
+      const ex = $ERR_IPC_CHANNEL_CLOSED();
+      if (callback) {
+        process.nextTick(callback, ex);
+      } else {
+        process.nextTick(() => this.emit("error", ex));
       }
       return false;
     }

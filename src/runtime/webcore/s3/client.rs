@@ -350,6 +350,7 @@ pub(crate) fn list_objects(
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            tls_props: crate::socket::http_client_defaults(vm),
             signals: Some(task.signal_store.to()),
             ..Default::default()
         },
@@ -551,7 +552,7 @@ pub(crate) fn writable_stream(
     task.callback_context.set(response_stream.cast::<c_void>());
 
     // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
-    // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
+    // wrapper via `to_js()` (the C++ side stores it and calls `finalize` on collect).
     let sink = unsafe { &mut *response_stream };
     // `source` defaults to `SourceHandle::None`; no stream is attached on the
     // `writer()` path, so ready/close/start are no-ops.
@@ -1285,6 +1286,7 @@ fn download_stream(
             verbose: Some(verbose),
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
+            tls_props: crate::socket::http_client_defaults(vm),
             ..Default::default()
         },
     ));
@@ -1477,12 +1479,12 @@ pub(crate) fn readable_stream(
     // store as `'static` for the heap-allocated wrapper.
     let global_static = GlobalRef::from(cx.global());
 
-    // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
+    // Ownership of the heap-allocated NewSource transfers to the JS wrapper via
     // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
     let reader: *mut crate::webcore::byte_stream::Source =
         crate::webcore::byte_stream::Source::new(crate::webcore::readable_stream::NewSource {
             context: ByteStream::default(),
-            global_this: Some(bun_ptr::BackRef::new(cx.global())),
+            global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             ..Default::default()
         });
     // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.

@@ -7,6 +7,7 @@ import {
   isLinux,
   isMacOS,
   isPosix,
+  isRoot,
   isWindows,
   nodeExe,
   runBunInstall,
@@ -344,7 +345,7 @@ describe("spawn()", () => {
       ["inherit", ["inherit", "ignore", "ignore"]],
       ["fd 0", [0, "ignore", "ignore"]],
     ] as const)("spawn stdio[0]=%s", async (_, stdio) => {
-      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
+      const child: ChildProcess = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
       await once(child, "close");
       expect(child.stdin).toBe(null);
       expect(child.stdout).toBe(null);
@@ -850,7 +851,7 @@ describe("spawnSync()", () => {
     // /proc/self/stat field 5 is pgrp; parse after the last ')' since comm may contain spaces.
     const pgrp = (stat: string) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2];
     const childPgid = (detached: boolean) =>
-      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" }).stdout);
+      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" } as { encoding: "utf8" }).stdout);
     const parentPgid = pgrp(fs.readFileSync("/proc/self/stat", "utf8"));
 
     expect(parentPgid).toMatch(/^\d+$/);
@@ -1052,14 +1053,14 @@ describe.skipIf(!isLinux)("an exit signal with no name is reported as node repor
 
   it.concurrent.each([40, 64])("spawnSync: signal after signal %d", signal => {
     const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
-    expect({ status, signal: reported }).toEqual({ status: null, signal: "" });
+    expect({ status, signal: reported as string | null }).toEqual({ status: null, signal: "" });
   });
 });
 
 it("spawnSync(does-not-exist)", () => {
   const x = spawnSync("does-not-exist");
-  expect(x.error?.code).toEqual("ENOENT");
-  expect(x.error.path).toEqual("does-not-exist");
+  expect((x.error as NodeJS.ErrnoException | undefined)?.code).toEqual("ENOENT");
+  expect((x.error as NodeJS.ErrnoException).path).toEqual("does-not-exist");
   // The rest of the result is what node returns when the process could not be spawned.
   expect({
     status: x.status,
@@ -1068,7 +1069,7 @@ it("spawnSync(does-not-exist)", () => {
     pid: x.pid,
     stdout: x.stdout,
     stderr: x.stderr,
-  }).toEqual({
+  }).toEqual<unknown>({
     status: null,
     signal: null,
     output: null,
@@ -1095,8 +1096,8 @@ it.if(!isWindows)("spawn with an fd number at Darwin OPEN_MAX in stdio reports E
   expect({
     status: r.status ?? null,
     stdout: r.stdout?.toString() ?? null,
-    error: r.error?.code ?? null,
-  }).toEqual({ status: null, stdout: null, error: "EBADF" });
+    error: (r.error as NodeJS.ErrnoException | undefined)?.code ?? null,
+  }).toEqual<unknown>({ status: null, stdout: null, error: "EBADF" });
 
   // Async spawn throws synchronously: EBADF is not in node's delayed-error
   // list (EACCES/EAGAIN/EMFILE/ENFILE/ENOENT), so node throws here too.
@@ -1501,7 +1502,6 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
 });
 
 describe("uid/gid options", () => {
-  const isRoot = process.getuid?.() === 0;
   // 65534 is "nobody" on every Linux distro and on macOS.
   const NOBODY = 65534;
 
@@ -1549,9 +1549,9 @@ describe("uid/gid options", () => {
     expect(thrown?.syscall).toBe("spawn");
 
     const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
-    expect(r.error?.code).toBe("EPERM");
-    expect(r.error?.errno).toBe(-1);
-    expect(r.error?.syscall).toBe("spawnSync id");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("EPERM");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.errno).toBe(-1);
+    expect((r.error as NodeJS.ErrnoException | undefined)?.syscall).toBe("spawnSync id");
     expect(r.stdout == null).toBe(true);
   });
 
@@ -1596,7 +1596,7 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     expect(thrown?.code).toBe("ENOTSUP");
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
-    expect(r.error?.code).toBe("ENOTSUP");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOTSUP");
   });
 });
 
@@ -1650,6 +1650,31 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
     await once(c, "close");
     expect(c.exitCode).toBe(0);
   });
+});
+
+// The stderr pipe closes without any data before JS touches child.stderr, so the exit path creates its stream
+// without a native handle.
+it.skipIf(!isPosix)("emits 'close' when an unread stdio pipe closed without any data", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { spawn } = require("child_process");
+      const c = spawn("/bin/sh", ["-c", "echo hello"], { stdio: ["inherit", "pipe"] });
+      c.stdout.on("data", d => process.stdout.write("OUT:" + d));
+      c.on("close", () => {
+        c.stderr.unref();
+        c.stderr.ref();
+        console.log("closed", c.stderr.readableEnded, c.stderr.destroyed);
+      });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OUT:hello\nclosed true true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // child.stdout.pause() must stop the native reader so the kernel pipe fills

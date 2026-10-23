@@ -52,7 +52,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     mt: undefined,
     nasm: "/fake/bin/nasm",
     ...overrides,
-  };
+  } as Toolchain;
 }
 
 /**

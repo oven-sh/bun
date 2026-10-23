@@ -1,13 +1,13 @@
 //! Tree to text, for a document without comments.
 //!
-//! Without comments, the documents that Prettier's printer for JavaScript makes of JSON are so
-//! regular that what its document printer does with them can be said in a few lines:
+//! Without comments, the documents that Prettier's JavaScript printer builds for JSON are so regular that its document
+//! printer's behavior comes down to a few rules:
 //!
-//! - An object or an array is on one line if it can be ([`MUST_BREAK`]) and if it fits, together
-//!   with the comma after it. Otherwise each property or element is on a line of its own.
-//! - Of an array of numbers that does not fit on one line, as many are on each line as fit.
+//! - An object or an array is on one line if it's allowed to be ([`MUST_BREAK`]) and it fits, together with the comma
+//!   after it. Otherwise each property or element is on its own line.
+//! - An array of numbers that doesn't fit on one line gets as many per line as fit.
 //!
-//! The widths are known from parsing, so nothing is measured here, and nothing is written twice.
+//! The widths are known from parsing, so nothing is measured here and nothing is written twice.
 
 use super::Config;
 use super::parser::{
@@ -19,21 +19,21 @@ use crate::js::utils::number::format_trimmed_number;
 use crate::options::{IndentStyle, QuoteStyle};
 use crate::text::make_string;
 
-/// A container that is being written.
+/// An open container.
 struct Frame {
     /// The index of the node after it.
     end: u32,
     is_object: bool,
-    /// It is on one line.
+    /// It's on one line.
     is_flat: bool,
     is_concise: bool,
     is_first: bool,
-    /// An empty line follows the last property or element that was written.
+    /// An empty line follows the last property or element written.
     is_after_blank: bool,
     is_after_hole: bool,
 }
 
-/// What is allocated to write a document.
+/// The allocations for writing a document.
 #[derive(Default)]
 pub(super) struct Frames {
     frames: Vec<Frame>,
@@ -44,17 +44,17 @@ struct Writer<'t, 'o> {
     text: &'t [u8],
     config: &'o Config,
     out: &'o mut Vec<u8>,
-    /// The number of containers around that are not on one line.
+    /// How many enclosing containers aren't on one line.
     level: u32,
-    /// Where the next byte goes on the line.
+    /// The column of the next byte.
     column: u32,
     /// A line break and the deepest indentation so far.
     line_start: &'o mut Vec<u8>,
-    /// From here on no line has been started.
+    /// The output got too long, and no new line has been started since.
     is_too_long: bool,
 }
 
-/// Appends `tree`, which has a node and no comments, to `out`.
+/// Appends `tree`, which has at least one node and no comments, to `out`.
 pub(super) fn write(
     text: &[u8],
     tree: &Tree,
@@ -91,7 +91,7 @@ pub(super) fn write(
             break;
         };
 
-        // What is before the property or the element.
+        // What comes before the property or element.
         let mut is_flat = false;
         let mut rest = 0;
         let mut node = node;
@@ -218,7 +218,7 @@ impl Writer<'_, '_> {
                 self.column = alignment.saturating_add(self.level.saturating_mul(indent_width));
                 (b' ', self.column)
             }
-            // What is left of the alignment is a tab too, unless it is the end of the indentation.
+            // The alignment's remainder also becomes a tab, unless no indentation follows it.
             IndentStyle::Tab => {
                 let (tabs, spaces) = (
                     alignment / indent_width.max(1) + self.level,
@@ -281,7 +281,7 @@ impl Writer<'_, '_> {
         }
     }
 
-    /// Anything but an object, an array and a sign.
+    /// Anything but an object, an array or a sign.
     #[inline]
     fn scalar(&mut self, node: &Node) {
         self.column = self.column.saturating_add(node.width);
@@ -299,10 +299,10 @@ impl Writer<'_, '_> {
         }
     }
 
-    /// What is not written as it is in the source, which is `source`, or not always.
+    /// A scalar that isn't, or isn't always, copied from `source`, its source text.
     #[inline(never)]
     fn rare_scalar(&mut self, node: &Node, source: &[u8]) {
-        // What follows a name of several lines is behind the last of them.
+        // Whatever follows a multi-line name comes after its last line.
         if node.width == MUST_BREAK
             && let Some(line_break) = bun_core::strings::last_index_of_char(source, b'\n')
         {
@@ -326,13 +326,13 @@ impl Writer<'_, '_> {
                     quote.as_byte(),
                     self.out,
                 );
-                // The line break behind a `\` is written like every other.
+                // The line break after a `\` is written like every other one.
                 let has_line_break = (self.out.get(start..))
-                    .is_some_and(|written| bun_core::strings::contains_char(written, b'\n'));
+                    .is_some_and(|quoted| bun_core::strings::contains_char(quoted, b'\n'));
                 if has_line_break && self.config.line_ending != b"\n" {
-                    let written = self.out.split_off(start);
+                    let quoted = self.out.split_off(start);
                     crate::range::write_with_line_ending(
-                        &written,
+                        &quoted,
                         self.config.line_ending,
                         self.out,
                     );
@@ -365,7 +365,7 @@ fn write_template_as_string(source: &[u8], out: &mut Vec<u8>) {
     bun_core::printer::json_stringify(&cooked(raw), out);
 }
 
-/// The value of a string or a template, as WTF-8. `raw`: what is between its quotes.
+/// The value of a string or a template, as WTF-8. `raw` is the text between its quotes.
 #[cold]
 pub(super) fn cooked(raw: &[u8]) -> Vec<u8> {
     use bun_core::strings::push_codepoint_wtf8_joined as push_codepoint;

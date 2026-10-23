@@ -192,6 +192,9 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     if (propertyName.publicName() && propertyName.publicName()->isEmpty())
         return true;
 
+    // A cached put would store the raw value and skip this function. Inline caches also can't handle a toString() that adds or deletes a key.
+    slot.disableCaching();
+
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -214,6 +217,15 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         setNativeEnvValue(globalObject, String(uid), string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
+    // No write is cached, so skip the prototype chain walk when the variable is already a plain property.
+    Structure* structure = cell->structure();
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, propertyName, attributes);
+    if (isValidOffset(offset) && !attributes) [[likely]] {
+        structure->didReplaceProperty(offset);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirectOffset(vm, offset, string);
         return true;
     }
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
@@ -842,7 +854,9 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
                 if (!existing.isNull()) {
                     syncWindowsEnv(store, String(uid), nullptr);
                     store->remove(String(uid));
-                    object->putDirect(vm, propertyName, jsString(vm, existing), 0);
+                    // An env var name can be an array index.
+                    object->putDirectMayBeIndex(globalObject, propertyName, jsString(vm, existing));
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
             }
         }
@@ -921,6 +935,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     // Founding a new tree. processEnvObject() forces the lazy init so the OS
     // environment is captured before the swap below.
     JSObject* envObject = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!envObject->staticPropertiesReified()) {
         envObject->reifyAllStaticProperties(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -976,7 +991,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
-JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
+JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -995,7 +1010,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
 #else
     auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
     JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
@@ -1016,7 +1031,9 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)
-        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+        // Avoid [[Set]], which can run an indexed setter on Object.prototype while `list` points into the env table.
+        keyArray->putDirectIndex(globalObject, (unsigned)i, jsString(vm, name));
+        RETURN_IF_EXCEPTION(scope, nullptr);
 #endif
         if (name == TZ) {
             hasTZ = true;
@@ -1041,14 +1058,16 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // CustomGetterSetter doesn't support indexed properties yet.
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
-            if (auto index = parseIndex(identifier)) {
+            if (parseIndex(identifier)) {
                 EncodedSlice valueString = { nullptr, 0 };
                 EncodedSlice nameStr = toEncodedSlice(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
-                    RETURN_IF_EXCEPTION(scope, {});
-                    object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
-                    RETURN_IF_EXCEPTION(scope, {});
+                    RETURN_IF_EXCEPTION(scope, nullptr);
+                    // putDirectIndex falls back to [[Set]] on this exotic object, which can run an indexed setter on Object.prototype.
+                    PropertyDescriptor descriptor(value, 0);
+                    JSObject::defineOwnProperty(object, globalObject, identifier, descriptor, false);
+                    RETURN_IF_EXCEPTION(scope, nullptr);
                 }
                 continue;
             }
@@ -1089,25 +1108,18 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     JSC::MarkedArgumentBuffer args;
     args.append(object);
     args.append(keyArray);
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (returnedException) {
-        throwException(globalObject, scope, returnedException.get());
-        return jsUndefined();
-    }
-
-    RELEASE_AND_RETURN(scope, result);
+    JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // windowsEnv returns `new Proxy(...)`.
+    return asObject(result);
 #else
     return object;
 #endif

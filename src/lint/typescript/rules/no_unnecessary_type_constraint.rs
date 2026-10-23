@@ -12,8 +12,7 @@ const UNNECESSARY_CONSTRAINT: Message = Message::new(
     "Constraining the generic type `{{name}}` to `{{constraint}}` does nothing and is unnecessary.",
 );
 
-/// Upstream's `checkRequiresGenericDeclarationDisambiguation`: in such a file `<T>() => {}` is not
-/// an arrow function.
+/// Upstream's `checkRequiresGenericDeclarationDisambiguation`: in such a file `<T>() => {}` isn't an arrow function.
 fn requires_generic_declaration_disambiguation(path: &[u8]) -> bool {
     let Some((before, extension)) = path.split_last_chunk::<4>() else {
         return false;
@@ -41,7 +40,7 @@ impl Rule for NoUnnecessaryTypeConstraint {
             return;
         };
         let parent = param.parent();
-        // That of an `infer` or of a mapped type is not in a list of type parameters.
+        // The type parameter of an `infer` or a mapped type isn't in a type parameter list.
         if matches!(parent, Node::Type(_)) {
             return;
         }

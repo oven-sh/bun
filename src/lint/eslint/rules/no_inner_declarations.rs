@@ -6,14 +6,14 @@ pub struct NoInnerDeclarations {
     is_both: bool,
     allows_block_scoped_functions: bool,
     has_options: bool,
-    /// An option of oxlint.
+    /// An oxlint option.
     allows_namespaces: bool,
 }
 
 const MOVE_DECL_TO_ROOT: Message =
     Message::new("moveDeclToRoot", "Move {{type}} declaration to {{body}} root.");
 
-/// It is directly in the file, in the body of a function or in a static block, or it is exported.
+/// True if it's directly in the file, a function body or a static block, or it's exported.
 fn is_at_root(statement: Stmt) -> bool {
     matches!(statement.parent(), Node::File(_) | Node::Func(_)) || statement.is_exported()
 }
@@ -29,14 +29,14 @@ fn get_allowed_body_description<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, NoInner
 }
 
 impl NoInnerDeclarations {
-    /// The rule of oxlint 1.87. Without options it allows no function in a block. What is in a namespace is not at the
-    /// root, exported or not. It points at the keyword.
+    /// oxlint 1.87's rule. Without options it allows no function in a block. Anything in a namespace isn't at the root,
+    /// exported or not. It reports at the keyword.
     fn check_as_oxlint<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let (kind, keyword) = match statement.kind() {
             StmtKind::Fn(func) if func.has_body() => {
                 let is_strict = || {
-                    let around = func.scope().and_then(Scope::parent);
-                    around.is_some_and(|it| utils::oxlint::is_strict_mode(it, cx.file()))
+                    let outer_scope = func.scope().and_then(Scope::parent);
+                    outer_scope.is_some_and(|it| utils::oxlint::is_strict_mode(it, cx.file()))
                 };
                 if !self.is_both && self.has_options && self.allows_block_scoped_functions && is_strict() {
                     return;

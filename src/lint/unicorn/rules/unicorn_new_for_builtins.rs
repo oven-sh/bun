@@ -25,7 +25,7 @@ fn is_disallowed(name: &[u8]) -> bool {
     matches!(name, b"BigInt" | b"Boolean" | b"Number" | b"Symbol" | b"String")
 }
 
-/// The `Map` of `Map` and of `globalThis.Map`, if `is_builtin` says that it is one and nothing in the file declares it.
+/// The `Map` in `Map` or `globalThis.Map`, if `is_builtin` accepts it and the file doesn't declare it.
 fn global_builtin<'a>(callee: Expr<'a>, is_builtin: fn(&[u8]) -> bool) -> Option<Name<'a>> {
     let is_builtin = |name: &[u8]| name.first().is_some_and(u8::is_ascii_uppercase) && is_builtin(name);
     if let Some(name) = callee.as_ident() {
@@ -35,7 +35,7 @@ fn global_builtin<'a>(callee: Expr<'a>, is_builtin: fn(&[u8]) -> bool) -> Option
         return None;
     }
     let name = static_property_name(callee).filter(|it| is_builtin(it.bytes()))?;
-    // What has a `?.` cannot become a `new` expression.
+    // An expression with a `?.` can't become a `new` expression.
     (!callee.is_chain_root() && !callee.is_optional()).then_some(name)
 }
 

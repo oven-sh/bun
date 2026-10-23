@@ -9,7 +9,7 @@ pub struct PreferNodeProtocol;
 const PREFER_NODE_PROTOCOL: Message =
     Message::new("", "Prefer using the `node:` protocol when importing Node.js built-in modules.");
 
-/// `span`: the string with its quotes.
+/// `span` is the string including its quotes.
 fn check<'a>(module_name: Option<Name<'a>>, span: impl FnOnce() -> Option<Span>, cx: &Cx<'a, PreferNodeProtocol>) {
     if let Some(module_name) = module_name
         && !matches!(module_name.bytes(), [b'.' | b'/' | b'@', ..] | [b'n', b'o', b'd', b'e', b':', ..])
@@ -22,7 +22,7 @@ fn check<'a>(module_name: Option<Name<'a>>, span: impl FnOnce() -> Option<Span>,
     }
 }
 
-/// `e`: the only argument of `require(..)`, the first of `import(..)`.
+/// `e` is the only argument of `require(..)` or the first of `import(..)`.
 fn check_argument<'a>(e: Option<Expr<'a>>, cx: &Cx<'a, PreferNodeProtocol>) {
     if let Some(e) = e.filter(|it| !it.is_parenthesized()) {
         check(e.as_string(), || Some(e.span()), cx);

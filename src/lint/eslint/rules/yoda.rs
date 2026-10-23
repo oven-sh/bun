@@ -16,7 +16,7 @@ const EXPECTED: Message = Message::new(
     "Expected literal to be on the {{expectedSide}} side of {{operator}}.",
 );
 
-/// The operator for the operands the other way around. `None` if `op` is not a comparison.
+/// Returns the operator to use when the operands are swapped, or `None` if `op` isn't a comparison.
 fn flipped(op: BinOp) -> Option<BinOp> {
     Some(match op {
         BinOp::EqEq | BinOp::EqEqEq | BinOp::NotEq | BinOp::NotEqEq => op,
@@ -28,7 +28,7 @@ fn flipped(op: BinOp) -> Option<BinOp> {
     })
 }
 
-/// The operand, if `e` is a negative number that is treated as a literal.
+/// Returns the operand, if `e` is a negative number that's treated as a literal.
 fn as_negative_numeric_literal(e: Expr<'_>) -> Option<Expr<'_>> {
     match e.kind() {
         ExprKind::Unary {
@@ -39,7 +39,7 @@ fn as_negative_numeric_literal(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// A `Literal`, or ESLint's `looksLikeLiteral`.
+/// True for a `Literal`, or if ESLint's `looksLikeLiteral` is true.
 fn is_literal_like(e: Expr) -> bool {
     match e.tag() {
         ExprTag::Null
@@ -55,7 +55,7 @@ fn is_literal_like(e: Expr) -> bool {
     }
 }
 
-/// The value of a literal, as far as `<=` tells values apart.
+/// A literal's value, with only the distinctions that matter to `<=`.
 enum Value<'a> {
     Number(f64),
     String(Cow<'a, [u8]>),
@@ -102,7 +102,7 @@ impl Value<'_> {
     }
 }
 
-/// The value of ESLint's `getNormalizedLiteral`.
+/// Returns the value of ESLint's `getNormalizedLiteral`.
 fn normalized_literal(e: Expr<'_>) -> Option<Value<'_>> {
     Some(match e.kind() {
         ExprKind::Number(n) => Value::Number(n),
@@ -127,7 +127,7 @@ fn normalized_literal(e: Expr<'_>) -> Option<Value<'_>> {
     })
 }
 
-/// The operands of a `<` or a `<=`.
+/// Returns the operands of a `<` or a `<=`.
 fn as_range_comparison(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     match e.kind() {
         ExprKind::Binary {
@@ -167,8 +167,9 @@ fn is_range_test(node: Node) -> bool {
     is_in_order && ast_utils::is_parenthesised(e)
 }
 
-/// Whether oxlint puts a blank before and after the flipped comparison, which is at `whole`: by the characters there.
-fn needs_spaces_for_oxlint(source: &[u8], whole: Span, left: Expr, right: Expr) -> (bool, bool) {
+/// Returns whether oxlint adds a space before, and after, the flipped comparison at `whole`. It goes by the adjacent
+/// characters.
+fn oxlint_needs_spaces(source: &[u8], whole: Span, left: Expr, right: Expr) -> (bool, bool) {
     let is_literal_or_name = |it: Expr| {
         !it.is_parenthesized()
             && matches!(
@@ -202,8 +203,7 @@ fn needs_spaces_for_oxlint(source: &[u8], whole: Span, left: Expr, right: Expr) 
     )
 }
 
-/// ESLint's `getFlippedString`: the text of the comparison `e` with its sides and its operator
-/// flipped around.
+/// ESLint's `getFlippedString`: returns the text of the comparison `e` with its sides swapped and its operator flipped.
 fn flipped_text<'a>(
     file: &'a File<'a>,
     e: Expr<'a>,
@@ -227,7 +227,7 @@ fn flipped_text<'a>(
         })
     };
     let (needs_space_before, needs_space_after) = match file.language().is_oxlint {
-        true => needs_spaces_for_oxlint(file.text(), whole, left_side, right_side),
+        true => oxlint_needs_spaces(file.text(), whole, left_side, right_side),
         false => (needs_space_before(), needs_space_after()),
     };
     let space = |is_needed: bool| -> &'static [u8] { if is_needed { b" " } else { b"" } };
@@ -282,7 +282,7 @@ impl Rule for Yoda {
             true => (left, right),
             false => (right, left),
         };
-        // oxlint sees through what only concerns types: `"a" as T`.
+        // oxlint looks through type-only wrappers: `"a" as T`.
         let is_oxlint = cx.language().is_oxlint;
         let is_literal_like = |it: Expr<'a>| is_literal_like(if is_oxlint { get_inner_expression(it) } else { it });
         if !is_literal_like(expected_non_literal)

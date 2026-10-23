@@ -140,7 +140,11 @@ describe.concurrent("a fatal error during a top-level await ends the run", () =>
     const { stdout, stderr, exitCode } = await run(
       {},
       "--print",
-      throws + `await new Promise(resolve => setTimeout(resolve, 50)); console.log("after"); 5`,
+      // The callback that throws arms the timer the module waits for. So that timer is never due in
+      // the same timer drain as the error: only the extra turn --print gives a pending result fires it.
+      `const { promise, resolve } = Promise.withResolvers();
+       setTimeout(() => { setTimeout(resolve, 1); throw new Error("boom"); }, 1);
+       await promise; console.log("after"); 5`,
     );
     expect(stderr).toContain("error: boom");
     expect({ stdout, exitCode }).toEqual({ stdout: "Promise { <pending> }\n", exitCode: 1 });
@@ -168,6 +172,7 @@ describe.concurrent("a fatal error during a top-level await ends the run", () =>
       "entry.mjs",
     );
     expect(stderr).toContain("error: boom");
+    // Node ends this run before "after", so only the start of the entry is pinned.
     expect(stdout).toStartWith("preload\nentry\n");
     expect(exitCode).toBe(1);
   });

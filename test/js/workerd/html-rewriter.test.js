@@ -3606,7 +3606,12 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
   //
   // `Bun.spawn({ stdin: "pipe" })` hands the child a socket pair. With `kernelPipe`, `cat`
   // sits in between and the fixture reads a pipe that hangs up with bytes still in it.
-  async function run(script, { input = inputs.alone, writes = [[html, "chunk"]], kernelPipe = false } = {}) {
+  //
+  // `ready` is the line the fixture prints once the document may be sent.
+  async function run(
+    script,
+    { input = inputs.alone, writes = [[html, "chunk"]], kernelPipe = false, ready = "wired" } = {},
+  ) {
     const fixture = `${prelude} const input = () => ${input}; ${script}; console.error("wired");`;
     await using proc = Bun.spawn({
       cmd: kernelPipe ? ["sh", "-c", 'cat | "$BUN" -e "$FIXTURE"'] : [bunExe(), "-e", fixture],
@@ -3616,7 +3621,7 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
       stderr: "pipe",
     });
     const stderr = watch(proc.stderr);
-    await stderr.printed("wired");
+    await stderr.printed(ready);
     for (const [chunk, seen] of writes) {
       // A fixture that is gone has closed its end of the pipe. What it printed is compared below.
       try {
@@ -3706,9 +3711,38 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
       `rewriter().onDocument({ end() { process.nextTick(() => print("nextTick")); } }).transform(input())`,
       "nextTick",
     ],
+    [
+      "the rest of an async function",
+      `(async () => { const text = await rewriter().transform(input()).text(); print({ text }); })()`,
+      { text: rewritten },
+    ],
+    // The body is a ReadableStream here, not a Blob. The same pipe reader is behind it.
+    [
+      "text() of a body made from Bun.stdin.stream()",
+      `rewriter().transform(new Response(Bun.stdin.stream())).text().then(text => print({ text }))`,
+      { text: rewritten },
+    ],
   ])("%s", async (_, script, expected) => {
     expect(await run(script)).toEqual(ran(expected));
   });
+
+  // A document of 300,000 bytes arrives in many chunks, and each delivery has a checkpoint
+  // of its own. The <b> is the last element, so the pipe is closed only once the fixture has
+  // read up to it. The second pipe is `cat page.html | bun filter.mjs`.
+  it.concurrent.each([["the pipe that Bun.spawn gives", false], ...(isWindows ? [] : [["a pipe from cat", true]])])(
+    "text() of a 300,000 byte document on %s",
+    async (_, kernelPipe) => {
+      const tail = "<b>tail</b>";
+      const document = "<p>" + Buffer.alloc(300_000 - 7 - tail.length, "a").toString() + "</p>" + tail;
+      const script = `
+        rewriter().transform(input()).text()
+          .then(text => print({ length: text.length, tail: text.slice(text.lastIndexOf("</p>")) }));
+      `;
+      expect(await run(script, { writes: [[document, "chunk"]], kernelPipe })).toEqual(
+        ran({ length: document.length + 9, tail: '</p><b seen="1">tail</b>' }),
+      );
+    },
+  );
 
   // The shape that was reported: the pipe is a child's stdout, and the child is unref'd.
   // The child copies the fixture's own stdin, so the test still decides when the document arrives.
@@ -3725,6 +3759,29 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
       rewriter().transform(new Response(stdout)).text().then(text => print({ text }));
     `;
     expect(await run(script)).toEqual(ran({ text: rewritten }));
+  });
+
+  // The same pipe with the child left ref'd, as in `Bun.spawn(["cat", file]).stdout`. That
+  // lost the reaction in some runs only: a child that still runs keeps the loop alive for
+  // one more turn, and that turn ran the jobs. So the losing order is forced: the child is
+  // reaped before the document arrives. A grandchild holds its stdout and copies the
+  // fixture's stdin into it.
+  it.skipIf(isWindows).concurrent("the pipe is the stdout of a child that has exited", async () => {
+    const script = `
+      const child = Bun.spawn({
+        cmd: ["sh", "-c", "exec 3<&0; cat <&3 &"],
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      child.exited.then(() => console.error("exited"));
+      rewriter().transform(new Response(child.stdout)).text().then(text => print({ text }));
+    `;
+    expect(await run(script, { ready: "exited" })).toEqual({
+      stdout: [{ text: rewritten }],
+      stderr: "wired\nexited\nchunk\n",
+      exitCode: 0,
+    });
   });
 
   // A Worker has a run loop of its own, and it ended the same way.

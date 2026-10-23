@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use bun_collections::HashMap;
 use bun_core::strings;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, UUID};
 use bun_threading::Guarded;
@@ -112,10 +112,19 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
     UUID::parse(pathname).ok()
 }
 
-pub(crate) fn create_object_url(blob: &Blob) -> bun_core::String {
+pub(crate) fn create_object_url<'a>(
+    heap: &JsHeap<'a>,
+    blob: JsLocal<'a>,
+) -> bindgen::Result<'a, bun_core::String> {
+    let Some(blob) = blob.to_js().as_class_ref::<Blob>() else {
+        return Err(heap.invalid_arguments(format_args!("createObjectURL expects a Blob object")));
+    };
     let registry = ObjectURLRegistry::singleton();
     let uuid = registry.register(VirtualMachine::get().as_mut(), blob);
-    bun_core::String::create_format(format_args!("blob:{}", uuid))
+    Ok(bun_core::String::create_format(format_args!(
+        "blob:{}",
+        uuid
+    )))
 }
 
 pub(crate) fn revoke_object_url(cx: &mut JsScope<'_>, url: &[JsLocal<'_>]) -> JsResult<()> {

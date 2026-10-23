@@ -1,13 +1,9 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { Blob } from "./Blob.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::object_url_registry" });
 
-export const createObjectURL = b.fn({
-  args: { blob: Blob },
-  expected: { blob: "createObjectURL expects a Blob object" },
-  returns: b.string,
-});
+/** `blob` is a `Blob` or a `BuildArtifact`. */
+export const createObjectURL = b.fn({ args: { blob: b.any }, returns: b.string, capability: "heap", throws: true });
 
 /** Without an argument it throws `ERR_MISSING_ARGS`, as in Node. */
 export const revokeObjectURL = b.fn({ args: { url: b.any.variadic }, capability: "js", throws: true, length: 1 });

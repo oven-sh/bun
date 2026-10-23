@@ -549,22 +549,7 @@ impl<R> CssRuleList<R> {
                     CssRule::LayerBlock(lay) => {
                         lay.rules.minify(context, parent_is_unused)?;
                         if lay.rules.v.is_empty() {
-                            if lay.name.is_none() {
-                                break 'arm;
-                            }
-                            if !context.in_style_rule
-                                && let Some(name) = lay.name.take()
-                            {
-                                if let Some(CssRule::LayerStatement(last_rule)) = rules.last_mut() {
-                                    last_rule.names.append(name);
-                                    break 'arm;
-                                }
-                                let loc = lay.loc;
-                                *rule = CssRule::LayerStatement(layer::LayerStatementRule {
-                                    names: css::SmallList::with_one(name),
-                                    loc,
-                                });
-                            }
+                            break 'arm;
                         }
                     }
                     CssRule::LayerStatement(_lay) => {
@@ -1269,6 +1254,4 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
-    /// Set inside a style rule, where browsers ignore an `@layer` statement, so an empty `@layer` block stays a block.
-    pub(crate) in_style_rule: bool,
 }

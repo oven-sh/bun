@@ -1,6 +1,5 @@
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
-use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
 use enumset::{EnumSet, EnumSetType};
 
@@ -709,15 +708,7 @@ impl TSConfigJSON {
             return None;
         }
 
-        let mut parts = strings::tokenize(text, b".").peekable();
-        // Text made of dots only ("." or "..") has no parts; report the whole text.
-        let invalid = if parts.peek().is_none() {
-            Some(text)
-        } else {
-            parts.find(|part| !js_lexer::is_identifier(part))
-        };
-
-        if let Some(invalid) = invalid {
+        if let Some(invalid) = options::jsx::Pragma::invalid_member(text) {
             let warn = source.range_of_string(loc);
             let _ = log.add_range_warning_fmt(
                 Some(source),

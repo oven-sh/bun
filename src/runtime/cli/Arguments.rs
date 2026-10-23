@@ -1562,6 +1562,29 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     let jsx_runtime = args.option(b"--jsx-runtime");
     let jsx_side_effects = args.flag(b"--jsx-side-effects");
 
+    for (flag, option, value) in [
+        (
+            "--jsx-factory",
+            options::jsx::MemberListOption::Factory,
+            jsx_factory,
+        ),
+        (
+            "--jsx-fragment",
+            options::jsx::MemberListOption::Fragment,
+            jsx_fragment,
+        ),
+    ] {
+        if let Some(value) = value
+            && let Err(expected) = option.check(value)
+        {
+            Output::err_generic(
+                "Invalid value for {}: {}. {}",
+                (flag, bun_core::fmt::quote(value), expected),
+            );
+            Global::exit(1);
+        }
+    }
+
     if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand) {
         // "run.silent" in bunfig.toml
         if args.flag(b"--silent") {

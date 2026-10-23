@@ -769,3 +769,392 @@ describe("conversions between color spaces", () => {
     );
   });
 });
+
+// A conversion into lch, oklch, hsl or hwb leaves the hue missing when the
+// converted color is a grey, within the "powerless hue ε" of the space
+// (https://drafts.csswg.org/css-color-4/#powerless). In color-mix() a missing
+// hue takes the hue of the other color.
+describe("the hue of a color converted to a grey is missing", () => {
+  test.each([
+    ["color-mix(in oklch, black, oklch(50% 0.2 120))", "oklch(25% .1 120)"],
+    ["color-mix(in oklch, oklch(50% 0.2 120), black)", "oklch(25% .1 120)"],
+    ["color-mix(in oklch, white, oklch(50% 0.2 120))", "oklch(75% .1 120)"],
+    ["color-mix(in oklch, oklch(50% 0.2 120), black 20%)", "oklch(40% .16 120)"],
+    ["color-mix(in lch, black, lch(50% 60 120))", "lch(25% 30 120)"],
+    ["color-mix(in lch, white, lch(50% 60 120))", "lch(75% 30 120)"],
+    // Two greys: nothing has a hue to give.
+    ["color-mix(in oklch, white, black)", "oklch(50% 0 none)"],
+    // A hue the author wrote for a grey in the interpolation space is used.
+    ["color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120))", "oklch(50% .1 160)"],
+    // Lightness makes no channel powerless, and an operand is not gamut mapped.
+    ["color-mix(in lab, lab(0% 30 40), lab(50% 50 -20))", "lab(25% 40 10)"],
+    ["color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+    ["color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("the mix is the color that the hand-written mix converts to", () => {
+    expect(color("color-mix(in oklch, black, oklch(50% 0.2 120))", "hex")).toBe(color("oklch(25% 0.1 120)", "hex"));
+    expect(color("color-mix(in oklch, #3b82f6, white 20%)", "hex")).toBe("#649dfa");
+  });
+
+  // The hsl format converts with the same functions. Near black and white the
+  // saturation of a grey is rounding noise divided by rounding noise.
+  test.each(["lab(L% 0 0)", "lch(L% 0 0)", "oklab(L% 0 0)", "oklch(L% 0 0)"])(
+    "%s in the hsl format has hue 0 and saturation 0",
+    form => {
+      const wrong: string[] = [];
+      for (const lightness of [0, 0.1, 1, 50, 98.7, 99, 99.5, 99.9, 99.99, 100]) {
+        const grey = form.replace("L", String(lightness));
+        const hsl = color(grey, "hsl") as string;
+        if (!hsl.startsWith("hsl(0, 0%, ")) wrong.push(`${grey} is ${hsl}`);
+      }
+      expect(wrong).toEqual([]);
+    },
+  );
+
+  test.each(["color-mix(in oklch, canvas, red)", "color-mix(in oklch, red, canvas)"])(
+    "%s has a system color and is not folded",
+    input => {
+      expect(color(input, "css")).toBeNull();
+    },
+  );
+});
+
+// Rows of two Web Platform Tests: `specified => computed`, with ` ± epsilon`
+// where the row sets one (the default is 0.01). A channel that WPT writes as a
+// bare number is written here as the percentage it stands for, because bun
+// does not parse the number form. Chrome 153 paints every row here the same
+// before and after the fold, within 4 of 255 per channel.
+// https://github.com/web-platform-tests/wpt/tree/172abd268d46f326b3fe937a5a84b99ce0390907/css/css-color/parsing
+describe("color-mix() computes what WPT expects", () => {
+  // The color space, then the channels and alpha. `none` is NaN. bun prints the
+  // lightness of oklab() and oklch() as a percentage, WPT as a number up to 1.
+  const parse = (css: string): [string, number[]] => {
+    const open = css.indexOf("(");
+    const tokens = css
+      .slice(open + 1, -1)
+      .replace("/", " ")
+      .trim()
+      .split(/\s+/);
+    const space = css.startsWith("color(") ? tokens.shift()! : css.slice(0, open);
+    const values = tokens.map(token => (token === "none" ? NaN : parseFloat(token)));
+    if (space.startsWith("ok") && tokens[0].endsWith("%")) values[0] /= 100;
+    return [space, values.length === 3 ? [...values, 1] : values];
+  };
+
+  function expectComputed(specified: string, computed: string, epsilon: number) {
+    const actual = color(specified, "css");
+    expect(actual).not.toBeNull();
+    const [space, want] = parse(computed);
+    // bun prints a mix in srgb, hsl or hwb as an 8-bit color: a hex color or a color name.
+    const eightBit = space === "srgb";
+    let got: number[];
+    if (eightBit) {
+      expect(actual).not.toContain("(");
+      got = (color(actual!, "[rgba]") as number[]).map(channel => channel / 255);
+    } else {
+      const [actualSpace, channels] = parse(actual!);
+      expect(actualSpace).toBe(space);
+      got = channels;
+    }
+    for (let i = 0; i < 4; i++) {
+      if (Number.isNaN(want[i])) {
+        expect(got[i]).toBeNaN();
+        continue;
+      }
+      let distance = Math.abs(got[i] - want[i]);
+      // The third channel of lch() and oklch() is an angle.
+      if (i === 2 && space.endsWith("lch")) distance = Math.min(distance % 360, 360 - (distance % 360));
+      expect(distance).toBeLessThanOrEqual(eightBit ? epsilon + 0.5 / 255 : epsilon);
+    }
+  }
+
+  const rows = (text: string) =>
+    text
+      .trim()
+      .split("\n")
+      .map(row => row.split(/ => | ± /));
+
+  describe.each([
+    [
+      // Rows with two operands.
+      "color-computed-powerless.html",
+      `
+color-mix(in hsl, hsl(0 50% 50%), hsl(11 33% 44%)) => color(srgb 0.66505 0.31070917 0.27495)
+color-mix(in hsl, hsl(0 0% 0%), hsl(11 33% 44%)) => color(srgb 0.2563 0.190355 0.1837)
+color-mix(in hsl, hsl(180 0.001% 50%), hsl(11 33% 44%)) => color(srgb 0.45578207 0.54755235 0.39244765)
+color-mix(in hsl, hsl(180 0.0011% 50%), hsl(11 33% 44%)) => color(srgb 0.45578203 0.54755258 0.39244742)
+color-mix(in hsl, hwb(0 25% 25%), hsl(11 33% 44%)) => color(srgb 0.66505 0.31070917 0.27495)
+color-mix(in hsl, hwb(180 100% 25%), hsl(11 33% 44%)) => color(srgb 0.6827 0.58029 0.5573)
+color-mix(in hsl, hwb(180 25% 100%), hsl(11 33% 44%)) => color(srgb 0.3728 0.28656 0.2672)
+color-mix(in hsl, hwb(0 100% 25%), hsl(11 33% 44%)) => color(srgb 0.6827 0.58029 0.5573)
+color-mix(in hsl, hwb(180 100% 100%), hsl(11 33% 44%)) => color(srgb 0.54755 0.420885 0.39245)
+color-mix(in hsl, hwb(0 25% 100%), hsl(11 33% 44%)) => color(srgb 0.3728 0.28656 0.2672)
+color-mix(in hsl, hwb(0 100% 100%), hsl(11 33% 44%)) => color(srgb 0.54755 0.420885 0.39245)
+color-mix(in hsl, hwb(180 49.998% 50%), hsl(11 33% 44%)) => color(srgb 0.45577679 0.54754888 0.39244112)
+color-mix(in hsl, lch(20% 20 0), hsl(11 33% 44%)) => color(srgb 0.43993218 0.21654551 0.23423138)
+color-mix(in hsl, lch(0% 0 180), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, lch(0% 0 0), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, lch(20% 0.00151 180), hsl(11 33% 44%)) => color(srgb 0.31843217 0.36661447 0.26275819)
+color-mix(in hsl, oklch(0% 0 180), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, oklch(0% 0 0), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, oklch(20% 0.0000041 180), hsl(11 33% 44%)) => color(srgb 0.26585563 0.30646187 0.21964017)
+color-mix(in hsl, rgb(0 0 0), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, color(display-p3 0 0 0), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, lab(0% 0 0), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, oklab(0% 0 0), hsl(11 33% 44%)) => color(srgb 0.2563 0.19701 0.1837)
+color-mix(in hsl, color(display-p3 0.49999645 0.50000513 0.50000531), hsl(11 33% 44%)) => color(srgb 0.45576023 0.54755258 0.39244741)
+color-mix(in hwb, hsl(0 50% 50%), hwb(11 33% 44%)) => color(srgb 0.655 0.32345833 0.29)
+color-mix(in hwb, hsl(180 0% 50%), hwb(11 33% 44%)) => color(srgb 0.53 0.43608333 0.415)
+color-mix(in hwb, hsl(180 50% 0%), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, hsl(0 0% 50%), hwb(11 33% 44%)) => color(srgb 0.53 0.43608333 0.415)
+color-mix(in hwb, hsl(180 0% 0%), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, hsl(0 50% 0%), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, hsl(0 0% 0%), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, hsl(180 0.0011% 50%), hwb(11 33% 44%)) => color(srgb 0.46195783 0.53000275 0.41499725)
+color-mix(in hwb, hwb(0 25% 25%), hwb(11 33% 44%)) => color(srgb 0.655 0.32345833 0.29)
+color-mix(in hwb, hwb(180 99.999% none), hwb(11 33% 44%)) => color(srgb 0.60180815 0.60180815 0.60180815)
+color-mix(in hwb, hwb(180 none 99.999%), hwb(11 33% 44%)) => color(srgb 0.31428721 0.31428721 0.31428721)
+color-mix(in hwb, hwb(180 49.999% 50%), hwb(11 33% 44%)) => color(srgb 0.46195538 0.53 0.414995)
+color-mix(in hwb, hwb(180 49.998% 50%), hwb(11 33% 44%)) => color(srgb 0.46195242 0.53 0.41499)
+color-mix(in hwb, lch(20% 20 0), hwb(11 33% 44%)) => color(srgb 0.4261832 0.23529449 0.25040745)
+color-mix(in hwb, lch(0% 0 180), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, lch(0% 0 0), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, lch(20% 0.00151 180), hwb(11 33% 44%)) => color(srgb 0.32133431 0.37468928 0.25968338)
+color-mix(in hwb, oklch(0% 0 180), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, oklch(0% 0 0), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, oklch(80% 0.0000041 180), hwb(11 33% 44%)) => color(srgb 0.5978169 0.65160487 0.53659799)
+color-mix(in hwb, rgb(0 0 0), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, color(display-p3 0 0 0), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, lab(0% 0 0), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, oklab(0% 0 0), hwb(11 33% 44%)) => color(srgb 0.28 0.18608333 0.165)
+color-mix(in hwb, color(display-p3 0.49999645 0.50000513 0.50000531), hwb(11 33% 44%)) => color(srgb 0.46194167 0.53000275 0.41499725)
+color-mix(in lch, hsl(180 50% 0%), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, hsl(180 0% 0%), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, hsl(0 50% 0%), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, hsl(0 0% 0%), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, hwb(180 100% 25%), lch(11% 33 44)) => lch(46.52289084 16.5 44)
+color-mix(in lch, hwb(180 25% 100%), lch(11% 33 44)) => lch(16.12336565 16.5 44)
+color-mix(in lch, hwb(0 100% 25%), lch(11% 33 44)) => lch(46.52289084 16.5 44)
+color-mix(in lch, hwb(0 25% 100%), lch(11% 33 44)) => lch(16.12336565 16.5 44)
+color-mix(in lch, hwb(180 99.999% 0%), lch(11% 33 44)) => lch(55.49956019 16.5 44)
+color-mix(in lch, lch(0% 20 180), lch(11% 33 44)) => lch(5.5 26.5 112)
+color-mix(in lch, lch(20% 0 180), lch(11% 33 44)) => lch(15.5 16.5 112)
+color-mix(in lch, lch(20% 20 0), lch(11% 33 44)) => lch(15.5 26.5 22)
+color-mix(in lch, lch(0% 0 180), lch(11% 33 44)) => lch(5.5 16.5 112)
+color-mix(in lch, lch(20% 0 0), lch(11% 33 44)) => lch(15.5 16.5 22)
+color-mix(in lch, lch(0% 20 0), lch(11% 33 44)) => lch(5.5 26.5 22)
+color-mix(in lch, lch(0% 0 0), lch(11% 33 44)) => lch(5.5 16.5 22)
+color-mix(in lch, lch(20% 0.0015 180), lch(11% 33 44)) => lch(15.5 16.50075 112)
+color-mix(in lch, lch(20% 0.00151 180), lch(11% 33 44)) => lch(15.5 16.500755 112)
+color-mix(in lch, oklch(0% 0.2 180), lch(11% 33 44)) => lch(5.50498007 17.8251974 112.60184783)
+color-mix(in lch, oklch(20% 0 180), lch(11% 33 44)) => lch(9.11318519 16.5 44)
+color-mix(in lch, oklch(20% 0.2 0), lch(11% 33 44)) => lch(8.05436608 46.24412025 22.62103659)
+color-mix(in lch, oklch(0% 0 180), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, oklch(20% 0 0), lch(11% 33 44)) => lch(9.11318519 16.5 44)
+color-mix(in lch, oklch(0% 0.2 0), lch(11% 33 44)) => lch(5.49501993 17.8251974 22.60184783)
+color-mix(in lch, oklch(0% 0 0), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, oklch(20% 0.000004 180), lch(11% 33 44)) => lch(9.11318519 16.5 44)
+color-mix(in lch, oklch(20% 0.0000041 180), lch(11% 33 44)) => lch(9.11320925 16.5 44)
+color-mix(in lch, rgb(0 0 0), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, color(display-p3 0 0 0), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, lab(0% 0 0), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in lch, oklab(0% 0 0), lch(11% 33 44)) => lch(5.5 16.5 44)
+color-mix(in oklch, hsl(180 0% 50%), oklch(11% 0.33 0.44)) => oklch(0.35409037 0.165 0.44)
+color-mix(in oklch, hsl(180 50% 0%), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, hsl(0 0% 50%), oklch(11% 0.33 0.44)) => oklch(0.35409037 0.165 0.44)
+color-mix(in oklch, hsl(180 0% 0%), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, hsl(0 50% 0%), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, hsl(0 0% 0%), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, hwb(180 100% 25%), oklch(11% 0.33 0.44)) => oklch(0.47761113 0.165 0.44)
+color-mix(in oklch, hwb(180 25% 100%), oklch(11% 0.33 0.44)) => oklch(0.21554626 0.165 0.44)
+color-mix(in oklch, hwb(0 100% 25%), oklch(11% 0.33 0.44)) => oklch(0.47761113 0.165 0.44)
+color-mix(in oklch, hwb(180 100% 100%), oklch(11% 0.33 0.44)) => oklch(0.35409037 0.165 0.44)
+color-mix(in oklch, hwb(0 25% 100%), oklch(11% 0.33 0.44)) => oklch(0.21554626 0.165 0.44)
+color-mix(in oklch, hwb(0 100% 100%), oklch(11% 0.33 0.44)) => oklch(0.35409037 0.165 0.44)
+color-mix(in oklch, hwb(180 99.999% 0%), oklch(11% 0.33 0.44)) => oklch(0.55499621 0.165 0.44)
+color-mix(in oklch, lch(0% 20 180), oklch(11% 0.33 0.44)) => oklch(0.02666949 0.29706278 87.85566456)
+color-mix(in oklch, lch(20% 0 180), oklch(11% 0.33 0.44)) => oklch(0.21017241 0.165 0.44)
+color-mix(in oklch, lch(20% 20 0), oklch(11% 0.33 0.44)) => oklch(0.21348598 0.19542764 359.91650151)
+color-mix(in oklch, lch(0% 0 180), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, lch(20% 0 0), oklch(11% 0.33 0.44)) => oklch(0.21017241 0.165 0.44)
+color-mix(in oklch, lch(0% 20 0), oklch(11% 0.33 0.44)) => oklch(0.08333051 0.29706278 357.85566456)
+color-mix(in oklch, lch(0% 0 0), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, oklch(0% 0.2 180), oklch(11% 0.33 0.44)) => oklch(0.055 0.265 90.22)
+color-mix(in oklch, oklch(20% 0 180), oklch(11% 0.33 0.44)) => oklch(0.155 0.165 90.22)
+color-mix(in oklch, oklch(20% 0.2 0), oklch(11% 0.33 0.44)) => oklch(0.155 0.265 0.22)
+color-mix(in oklch, oklch(0% 0 180), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 90.22)
+color-mix(in oklch, oklch(20% 0 0), oklch(11% 0.33 0.44)) => oklch(0.155 0.165 0.22)
+color-mix(in oklch, oklch(0% 0.2 0), oklch(11% 0.33 0.44)) => oklch(0.055 0.265 0.22)
+color-mix(in oklch, oklch(0% 0 0), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.22)
+color-mix(in oklch, oklch(20% 0.000004 180), oklch(11% 0.33 0.44)) => oklch(0.155 0.165002 90.22)
+color-mix(in oklch, oklch(20% 0.0000041 180), oklch(11% 0.33 0.44)) => oklch(0.155 0.16500205 90.22)
+color-mix(in oklch, rgb(0 0 0), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, color(display-p3 0 0 0), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, lab(0% 0 0), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+color-mix(in oklch, oklab(0% 0 0), oklch(11% 0.33 0.44)) => oklch(0.055 0.165 0.44)
+`,
+    ],
+    [
+      // The rows with a grey operand, an operand with `none`, or an operand
+      // written in the interpolation space.
+      "color-computed-color-mix-function.html",
+      `
+color-mix(in hsl, hsl(none none none), hsl(30deg 40% 80%)) => color(srgb 0.88 0.8 0.72)
+color-mix(in hsl, hsl(120deg 20% 40%), hsl(none none none)) => color(srgb 0.32 0.48 0.32)
+color-mix(in hsl, hsl(120deg 20% none), hsl(30deg 40% 60%)) => color(srgb 0.66 0.72 0.48)
+color-mix(in hsl, hsl(120deg 20% 40%), hsl(30deg 20% none)) => color(srgb 0.44 0.48 0.32)
+color-mix(in hsl, hsl(none 20% 40%), hsl(30deg none 80%)) => color(srgb 0.68 0.6 0.52)
+color-mix(in hsl, hsl(30deg 40% 80% / 25%) 0%, hsl(90deg none none / none)) => color(srgb 0.8 0.88 0.72 / 0.25)
+color-mix(in hsl, hsl(30deg 40% 80% / 25%) 0%, hsl(none 50% none / none)) => color(srgb 0.9 0.8 0.7 / 0.25)
+color-mix(in hsl, hsl(30deg 40% 80% / 25%) 0%, hsl(none none 50% / none)) => color(srgb 0.7 0.5 0.3 / 0.25)
+color-mix(in hsl, hsl(30deg 40% 80% / 25%) 0%, hsl(90deg 50% none / none)) => color(srgb 0.8 0.9 0.7 / 0.25)
+color-mix(in hsl, hsl(30deg 40% 80% / 25%) 0%, hsl(none none none / 0.5)) => color(srgb 0.88 0.8 0.72 / 0.5)
+color-mix(in hsl, hsl(30deg 40% 80% / 25%) 0%, hsl(90deg none none / 0.5)) => color(srgb 0.8 0.88 0.72 / 0.5)
+color-mix(in hwb, hwb(none none none), hwb(30deg 30% 40%)) => color(srgb 0.6 0.45 0.3)
+color-mix(in hwb, hwb(120deg 10% 20%), hwb(none none none)) => color(srgb 0.1 0.8 0.1)
+color-mix(in hwb, hwb(120deg 10% none), hwb(30deg 30% 40%)) => color(srgb 0.5 0.6 0.2)
+color-mix(in hwb, hwb(120deg 10% 20%), hwb(30deg 30% none)) => color(srgb 0.65 0.8 0.2)
+color-mix(in hwb, hwb(none 10% 20%), hwb(30deg none 40%)) => color(srgb 0.7 0.4 0.1)
+color-mix(in hwb, hwb(30deg 30% 40% / 25%) 0%, hwb(90deg none none / none)) => color(srgb 0.45 0.6 0.3 / 0.25)
+color-mix(in hwb, hwb(30deg 30% 40% / 25%) 0%, hwb(none 50% none / none)) => color(srgb 0.6 0.55 0.5 / 0.25)
+color-mix(in hwb, hwb(30deg 30% 40% / 25%) 0%, hwb(none none 50% / none)) => color(srgb 0.5 0.4 0.3 / 0.25)
+color-mix(in hwb, hwb(30deg 30% 40% / 25%) 0%, hwb(90deg 50% none / none)) => color(srgb 0.55 0.6 0.5 / 0.25)
+color-mix(in hwb, hwb(30deg 30% 40% / 25%) 0%, hwb(none none none / 0.5)) => color(srgb 0.6 0.45 0.3 / 0.5)
+color-mix(in hwb, hwb(30deg 30% 40% / 25%) 0%, hwb(90deg none none / 0.5)) => color(srgb 0.45 0.6 0.3 / 0.5)
+color-mix(in lch, white, blue) => lch(64.78 65.6 301.36) ± 0.1
+color-mix(in lch, white 10%, blue) => lch(36.61 118.08 301.36) ± 0.1
+color-mix(in lch, lch(100% 0 40deg), lch(100% 0 60deg)) => lch(100 0 50)
+color-mix(in lch, lch(100% 0 60deg), lch(100% 0 40deg)) => lch(100 0 50)
+color-mix(in lch, lch(100% 0 50deg), lch(100% 0 330deg)) => lch(100 0 10)
+color-mix(in lch, lch(100% 0 330deg), lch(100% 0 50deg)) => lch(100 0 10)
+color-mix(in lch, lch(100% 0 20deg), lch(100% 0 320deg)) => lch(100 0 350)
+color-mix(in lch, lch(100% 0 320deg), lch(100% 0 20deg)) => lch(100 0 350)
+color-mix(in lch shorter hue, lch(100% 0 40deg), lch(100% 0 60deg)) => lch(100 0 50)
+color-mix(in lch shorter hue, lch(100% 0 60deg), lch(100% 0 40deg)) => lch(100 0 50)
+color-mix(in lch shorter hue, lch(100% 0 50deg), lch(100% 0 330deg)) => lch(100 0 10)
+color-mix(in lch shorter hue, lch(100% 0 330deg), lch(100% 0 50deg)) => lch(100 0 10)
+color-mix(in lch shorter hue, lch(100% 0 20deg), lch(100% 0 320deg)) => lch(100 0 350)
+color-mix(in lch shorter hue, lch(100% 0 320deg), lch(100% 0 20deg)) => lch(100 0 350)
+color-mix(in lch shorter hue, red, white) => lch(77.145 53.4186 40.858)
+color-mix(in lch shorter hue, red, black) => lch(27.145 53.4186 40.858)
+color-mix(in lch longer hue, lch(100% 0 40deg), lch(100% 0 60deg)) => lch(100 0 230)
+color-mix(in lch longer hue, lch(100% 0 60deg), lch(100% 0 40deg)) => lch(100 0 230)
+color-mix(in lch longer hue, lch(100% 0 50deg), lch(100% 0 330deg)) => lch(100 0 190)
+color-mix(in lch longer hue, lch(100% 0 330deg), lch(100% 0 50deg)) => lch(100 0 190)
+color-mix(in lch longer hue, lch(100% 0 20deg), lch(100% 0 320deg)) => lch(100 0 170)
+color-mix(in lch longer hue, lch(100% 0 320deg), lch(100% 0 20deg)) => lch(100 0 170)
+color-mix(in lch increasing hue, lch(100% 0 40deg), lch(100% 0 60deg)) => lch(100 0 50)
+color-mix(in lch increasing hue, lch(100% 0 60deg), lch(100% 0 40deg)) => lch(100 0 230)
+color-mix(in lch increasing hue, lch(100% 0 50deg), lch(100% 0 330deg)) => lch(100 0 190)
+color-mix(in lch increasing hue, lch(100% 0 330deg), lch(100% 0 50deg)) => lch(100 0 10)
+color-mix(in lch increasing hue, lch(100% 0 20deg), lch(100% 0 320deg)) => lch(100 0 170)
+color-mix(in lch increasing hue, lch(100% 0 320deg), lch(100% 0 20deg)) => lch(100 0 350)
+color-mix(in lch increasing hue, red, white) => lch(77.145 53.4186 40.858)
+color-mix(in lch increasing hue, red, black) => lch(27.145 53.4186 40.858)
+color-mix(in lch decreasing hue, lch(100% 0 40deg), lch(100% 0 60deg)) => lch(100 0 230)
+color-mix(in lch decreasing hue, lch(100% 0 60deg), lch(100% 0 40deg)) => lch(100 0 50)
+color-mix(in lch decreasing hue, lch(100% 0 50deg), lch(100% 0 330deg)) => lch(100 0 10)
+color-mix(in lch decreasing hue, lch(100% 0 330deg), lch(100% 0 50deg)) => lch(100 0 190)
+color-mix(in lch decreasing hue, lch(100% 0 20deg), lch(100% 0 320deg)) => lch(100 0 350)
+color-mix(in lch decreasing hue, lch(100% 0 320deg), lch(100% 0 20deg)) => lch(100 0 170)
+color-mix(in lch decreasing hue, red, white) => lch(77.145 53.4186 40.858)
+color-mix(in lch decreasing hue, red, black) => lch(27.145 53.4186 40.858)
+color-mix(in lch, lab(50% 0 0), black) => lch(25 0 none)
+color-mix(in oklch, white, blue) => oklch(0.726 0.157 264.052)
+color-mix(in oklch, white 10%, blue) => oklch(0.507 0.282 264.052)
+color-mix(in oklch, oklch(100% 0 40deg), oklch(100% 0 60deg)) => oklch(1 0 50)
+color-mix(in oklch, oklch(100% 0 60deg), oklch(100% 0 40deg)) => oklch(1 0 50)
+color-mix(in oklch, oklch(100% 0 50deg), oklch(100% 0 330deg)) => oklch(1 0 10)
+color-mix(in oklch, oklch(100% 0 330deg), oklch(100% 0 50deg)) => oklch(1 0 10)
+color-mix(in oklch, oklch(100% 0 20deg), oklch(100% 0 320deg)) => oklch(1 0 350)
+color-mix(in oklch, oklch(100% 0 320deg), oklch(100% 0 20deg)) => oklch(1 0 350)
+color-mix(in oklch shorter hue, oklch(100% 0 40deg), oklch(100% 0 60deg)) => oklch(1 0 50)
+color-mix(in oklch shorter hue, oklch(100% 0 60deg), oklch(100% 0 40deg)) => oklch(1 0 50)
+color-mix(in oklch shorter hue, oklch(100% 0 50deg), oklch(100% 0 330deg)) => oklch(1 0 10)
+color-mix(in oklch shorter hue, oklch(100% 0 330deg), oklch(100% 0 50deg)) => oklch(1 0 10)
+color-mix(in oklch shorter hue, oklch(100% 0 20deg), oklch(100% 0 320deg)) => oklch(1 0 350)
+color-mix(in oklch shorter hue, oklch(100% 0 320deg), oklch(100% 0 20deg)) => oklch(1 0 350)
+color-mix(in oklch shorter hue, red, white) => oklch(0.81398 0.128842 29.2339)
+color-mix(in oklch shorter hue, red, black) => oklch(0.313978 0.128842 29.2339)
+color-mix(in oklch longer hue, oklch(100% 0 40deg), oklch(100% 0 60deg)) => oklch(1 0 230)
+color-mix(in oklch longer hue, oklch(100% 0 60deg), oklch(100% 0 40deg)) => oklch(1 0 230)
+color-mix(in oklch longer hue, oklch(100% 0 50deg), oklch(100% 0 330deg)) => oklch(1 0 190)
+color-mix(in oklch longer hue, oklch(100% 0 330deg), oklch(100% 0 50deg)) => oklch(1 0 190)
+color-mix(in oklch longer hue, oklch(100% 0 20deg), oklch(100% 0 320deg)) => oklch(1 0 170)
+color-mix(in oklch longer hue, oklch(100% 0 320deg), oklch(100% 0 20deg)) => oklch(1 0 170)
+color-mix(in oklch increasing hue, oklch(100% 0 40deg), oklch(100% 0 60deg)) => oklch(1 0 50)
+color-mix(in oklch increasing hue, oklch(100% 0 60deg), oklch(100% 0 40deg)) => oklch(1 0 230)
+color-mix(in oklch increasing hue, oklch(100% 0 50deg), oklch(100% 0 330deg)) => oklch(1 0 190)
+color-mix(in oklch increasing hue, oklch(100% 0 330deg), oklch(100% 0 50deg)) => oklch(1 0 10)
+color-mix(in oklch increasing hue, oklch(100% 0 20deg), oklch(100% 0 320deg)) => oklch(1 0 170)
+color-mix(in oklch increasing hue, oklch(100% 0 320deg), oklch(100% 0 20deg)) => oklch(1 0 350)
+color-mix(in oklch increasing hue, red, white) => oklch(0.81398 0.128842 29.2339)
+color-mix(in oklch increasing hue, red, black) => oklch(0.313978 0.128842 29.2339)
+color-mix(in oklch decreasing hue, oklch(100% 0 40deg), oklch(100% 0 60deg)) => oklch(1 0 230)
+color-mix(in oklch decreasing hue, oklch(100% 0 60deg), oklch(100% 0 40deg)) => oklch(1 0 50)
+color-mix(in oklch decreasing hue, oklch(100% 0 50deg), oklch(100% 0 330deg)) => oklch(1 0 10)
+color-mix(in oklch decreasing hue, oklch(100% 0 330deg), oklch(100% 0 50deg)) => oklch(1 0 190)
+color-mix(in oklch decreasing hue, oklch(100% 0 20deg), oklch(100% 0 320deg)) => oklch(1 0 350)
+color-mix(in oklch decreasing hue, oklch(100% 0 320deg), oklch(100% 0 20deg)) => oklch(1 0 170)
+color-mix(in oklch decreasing hue, red, white) => oklch(0.81398 0.128842 29.2339)
+color-mix(in oklch decreasing hue, red, black) => oklch(0.313978 0.128842 29.2339)
+color-mix(in oklch, oklab(50% 0 0), black) => oklch(0.25 0 none)
+color-mix(in srgb, color(srgb none none none), color(srgb .5 .6 .7)) => color(srgb 0.5 0.6 0.7)
+color-mix(in srgb, color(srgb .1 .2 .3), color(srgb none none none)) => color(srgb 0.1 0.2 0.3)
+color-mix(in srgb, color(srgb .1 .2 none), color(srgb .5 .6 .7)) => color(srgb 0.3 0.4 0.7)
+color-mix(in srgb, color(srgb .1 .2 .3), color(srgb .5 .6 none)) => color(srgb 0.3 0.4 0.3)
+color-mix(in srgb, color(srgb none .2 .3), color(srgb .5 none .7)) => color(srgb 0.5 0.2 0.5)
+color-mix(in srgb, color(srgb .1 .2 .3 / 25%) 0%, color(srgb 0.5 none none / none)) => color(srgb 0.5 0.2 0.3 / 0.25)
+color-mix(in srgb, color(srgb .1 .2 .3 / 25%) 0%, color(srgb none 0.5 none / none)) => color(srgb 0.1 0.5 0.3 / 0.25)
+color-mix(in srgb, color(srgb .1 .2 .3 / 25%) 0%, color(srgb none none 0.5 / none)) => color(srgb 0.1 0.2 0.5 / 0.25)
+color-mix(in srgb, color(srgb .1 .2 .3 / 25%) 0%, color(srgb 0.5 0.5 none / none)) => color(srgb 0.5 0.5 0.3 / 0.25)
+color-mix(in srgb, color(srgb .1 .2 .3 / 25%) 0%, color(srgb none none none / 50%)) => color(srgb 0.1 0.2 0.3 / 0.5)
+color-mix(in srgb, color(srgb .1 .2 .3 / 25%) 0%, color(srgb 0.5 none none / 50%)) => color(srgb 0.5 0.2 0.3 / 0.5)
+color-mix(in srgb-linear, color(srgb-linear 2 3 4 / 5), color(srgb-linear 4 6 8 / 10)) => color(srgb-linear 3 4.5 6)
+color-mix(in srgb-linear, color(srgb-linear -2 -3 -4), color(srgb-linear -4 -6 -8)) => color(srgb-linear -3 -4.5 -6)
+color-mix(in srgb-linear, color(srgb-linear none none none), color(srgb-linear none none none)) => color(srgb-linear none none none)
+color-mix(in srgb-linear, color(srgb-linear none none none), color(srgb-linear .5 .6 .7)) => color(srgb-linear 0.5 0.6 0.7)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3), color(srgb-linear none none none)) => color(srgb-linear 0.1 0.2 0.3)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 none), color(srgb-linear .5 .6 .7)) => color(srgb-linear 0.3 0.4 0.7)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3), color(srgb-linear .5 .6 none)) => color(srgb-linear 0.3 0.4 0.3)
+color-mix(in srgb-linear, color(srgb-linear none .2 .3), color(srgb-linear .5 none .7)) => color(srgb-linear 0.5 0.2 0.5)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3 / 25%) 0%, color(srgb-linear 0.5 none none / none)) => color(srgb-linear 0.5 0.2 0.3 / 0.25)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3 / 25%) 0%, color(srgb-linear none 0.5 none / none)) => color(srgb-linear 0.1 0.5 0.3 / 0.25)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3 / 25%) 0%, color(srgb-linear none none 0.5 / none)) => color(srgb-linear 0.1 0.2 0.5 / 0.25)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3 / 25%) 0%, color(srgb-linear 0.5 0.5 none / none)) => color(srgb-linear 0.5 0.5 0.3 / 0.25)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3 / 25%) 0%, color(srgb-linear none none none / 50%)) => color(srgb-linear 0.1 0.2 0.3 / 0.5)
+color-mix(in srgb-linear, color(srgb-linear .1 .2 .3 / 25%) 0%, color(srgb-linear 0.5 none none / 50%)) => color(srgb-linear 0.5 0.2 0.3 / 0.5)
+color-mix(in lch, hsl(0 100% 100%), blue) => lch(64.784 65.6 301.364) ± 0.001
+color-mix(in lch, lch(100% 0 0), blue) => lch(64.784 65.6 330.682) ± 0.001
+color-mix(in lch, oklch(100% 0 0), blue) => lch(64.784 65.6 301.364) ± 0.001
+color-mix(in oklch, hsl(0 100% 100%), blue) => oklch(0.726 0.1566 264.052) ± 0.001
+color-mix(in oklch, lch(100% 0 0), blue) => oklch(0.726 0.1566 264.052) ± 0.001
+color-mix(in oklch, oklch(100% 0 0), blue) => oklch(0.726 0.15661 312.026) ± 0.001
+`,
+    ],
+    [
+      // `longer hue` with a hue difference of 0 adds 360 to the second hue.
+      "color-computed-color-mix-function.html, longer hue",
+      `
+color-mix(in hsl longer hue, hsl(60deg 50% 50%), hsl(60deg 50% 50%)) => color(srgb 0.25 0.25 0.75)
+color-mix(in hsl longer hue, red, white) => color(srgb 0.625 0.875 0.875)
+color-mix(in hsl longer hue, red, black) => color(srgb 0.125 0.375 0.375)
+color-mix(in hsl longer hue, red, transparent) => color(srgb 0 1 1 / 0.5)
+color-mix(in hwb longer hue, red, white) => color(srgb 0.5 1 1)
+color-mix(in hwb longer hue, red, black) => color(srgb 0 0.5 0.5)
+color-mix(in hwb longer hue, red, transparent) => color(srgb 0 1 1 / 0.5)
+color-mix(in lch longer hue, red, white) => lch(77.145 53.4186 220.858)
+color-mix(in lch longer hue, red, black) => lch(27.145 53.4186 220.858)
+color-mix(in oklch longer hue, red, white) => oklch(0.81398 0.128842 209.234)
+color-mix(in oklch longer hue, red, black) => oklch(0.313978 0.128842 209.2339)
+`,
+    ],
+  ])("%s", (_, text) => {
+    for (const [specified, computed, epsilon] of rows(text)) {
+      test(specified, () => expectComputed(specified, computed, epsilon === undefined ? 0.01 : Number(epsilon)));
+    }
+  });
+});

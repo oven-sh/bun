@@ -746,12 +746,29 @@ it("Socket has a prototype", () => {
   require("util").inherits(Connection2, require("tls").TLSSocket);
 });
 
-it("unref should exit when no more work pending", async () => {
-  const process = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "node-unref-fixture.js")],
-    env: bunEnv,
+// node-unref-fixture.js and node-ref-default-fixture.js send a request to this TLS server.
+function replyingTLSServer() {
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: tlsCert,
+    socket: {
+      data(socket) {
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+      },
+      // The unref fixture exits in the middle of the handshake.
+      error() {},
+    },
   });
-  expect(await process.exited).toBe(0);
+}
+
+it.concurrent("unref should exit when no more work pending", async () => {
+  using server = replyingTLSServer();
+  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-unref-fixture.js"), {
+    PORT: String(server.port),
+  });
+  // The fixture prints "Received data. FAIL" and exits 1 if the unref'd socket held the loop until the reply.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 });
 
 // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; the call runs mid-lookup
@@ -887,12 +904,13 @@ describe.concurrent("unref()/pause() around connect()", () => {
   });
 });
 
-it("socket should keep process alive if unref is not called", async () => {
-  const process = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
-    env: bunEnv,
+it.concurrent("socket should keep process alive if unref is not called", async () => {
+  using server = replyingTLSServer();
+  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-ref-default-fixture.js"), {
+    PORT: String(server.port),
   });
-  expect(await process.exited).toBe(1);
+  // The fixture exits 1 from its 'data' listener. A socket that did not hold the loop lets it exit 0 before the reply.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Received data.", stderr: "", exitCode: 1 });
 });
 
 // Node never resumes a socket on the user's behalf: afterConnect only calls
@@ -991,11 +1009,15 @@ it("should not hang after destroy", async () => {
   }
 }, 120_000);
 
+// Never answers, so the connection attempt stays pending and nothing is dialed.
+const pendingLookup = () => {};
+
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);
   const socket = createConnection({
-    host: "example.com",
+    host: "pending.test",
     port: 999,
+    lookup: pendingLookup,
     signal: signal,
   });
   const { promise, resolve, reject } = Promise.withResolvers();
@@ -1010,12 +1032,55 @@ it("should trigger error when aborted even if connection failed #13126", async (
   expect(err.cause?.name).toBe("TimeoutError");
 });
 
+// The lookup above holds the attempt before the dial. Here the abort lands on a TCP connect that is in flight.
+// blackholePortSource does not run on Windows or musl.
+it.skipIf(isWindows || isMusl).each([
+  ["an address", `{ host: "127.0.0.1" }`],
+  [
+    "several addresses",
+    `{
+      host: "blackhole.test",
+      autoSelectFamily: true,
+      lookup: (hostname, options, callback) =>
+        process.nextTick(callback, null, [{ address: "127.0.0.1", family: 4 }, { address: "127.0.0.2", family: 4 }]),
+    }`,
+  ],
+])("should trigger error when aborted while connecting to %s #13126", async (_, options) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      ${blackholePortSource}
+      const events = [];
+      const socket = net.createConnection({ ...${options}, port, signal: AbortSignal.timeout(100) });
+      for (const name of ["connectionAttempt", "connect"]) socket.on(name, () => events.push(name));
+      socket.on("error", error => events.push([error.name, error.code, error.cause?.name].join(" ")));
+      socket.on("close", () => {
+        console.log(events.join(","));
+        filler.destroy();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "connectionAttempt,AbortError ABORT_ERR TimeoutError\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
   const signal = AbortSignal.timeout(1);
   await Bun.sleep(10);
   const socket = createConnection({
-    host: "example.com",
+    host: "pending.test",
     port: 999,
+    lookup: pendingLookup,
     signal: signal,
   });
   const { promise, resolve, reject } = Promise.withResolvers();

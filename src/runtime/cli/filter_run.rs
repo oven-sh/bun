@@ -364,11 +364,12 @@ impl<'a> State<'a> {
                     content = &content[i + 1..];
                     write!(
                         &mut self.draw_buf,
-                        "{} {}: {}",
+                        "{} {}: ",
                         bun_core::fmt::escape_control_chars(&handle.config.package_name),
                         bun_core::fmt::escape_control_chars(&handle.config.script_name),
-                        bstr::BStr::new(&handle.buffer),
                     )?;
+                    // Append the script's bytes. Formatting them would replace invalid UTF-8 with U+FFFD.
+                    self.draw_buf.extend_from_slice(&handle.buffer);
                     handle.buffer.clear();
                 } else {
                     handle.buffer.extend_from_slice(content);
@@ -380,11 +381,11 @@ impl<'a> State<'a> {
                 let line = &content[0..i + 1];
                 write!(
                     &mut self.draw_buf,
-                    "{} {}: {}",
+                    "{} {}: ",
                     bun_core::fmt::escape_control_chars(&handle.config.package_name),
                     bun_core::fmt::escape_control_chars(&handle.config.script_name),
-                    bstr::BStr::new(line),
                 )?;
+                self.draw_buf.extend_from_slice(line);
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
@@ -449,12 +450,13 @@ impl<'a> State<'a> {
             self.draw_buf.clear();
             // flush any remaining buffer
             if !handle.buffer.is_empty() {
-                writeln!(
+                write!(
                     &mut self.draw_buf,
-                    "{}: {}",
+                    "{}: ",
                     bun_core::fmt::escape_control_chars(&handle.config.package_name),
-                    bstr::BStr::new(&handle.buffer),
                 )?;
+                self.draw_buf.extend_from_slice(&handle.buffer);
+                self.draw_buf.push(b'\n');
                 handle.buffer.clear();
             }
             // print exit status

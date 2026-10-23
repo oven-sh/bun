@@ -944,7 +944,7 @@ pub mod zig_base64 {
 // `LinkerContext.rs::css_modules_hash_shim`). `bun_css` re-exports this as
 // `css_modules::hash` for its in-crate callers.
 //
-// Behavior: wyhash(u64) of the formatted args,
+// Behavior: wyhash(u64) of the concatenated parts,
 // truncated to u32, url-safe-base64-encoded into a bump-allocated slice. If
 // `at_start` and the first encoded byte is a digit, prefix `_` (CSS idents
 // can't start with a digit).
@@ -953,16 +953,13 @@ pub mod zig_base64 {
 // TODO: replace with bun's hash
 pub fn wyhash_url_safe<'a>(
     bump: &'a bun_alloc::Arena,
-    args: core::fmt::Arguments<'_>,
+    parts: &[&[u8]],
     at_start: bool,
 ) -> &'a [u8] {
-    use std::io::Write as _;
-
     let mut hasher = bun_wyhash::Wyhash11::init(0);
-    // Write into a scratch Vec then hash; freed immediately.
-    let mut fmt_str: Vec<u8> = Vec::with_capacity(128);
-    write!(&mut fmt_str, "{}", args).expect("unreachable");
-    hasher.update(&fmt_str);
+    for part in parts {
+        hasher.update(part);
+    }
 
     let h: u32 = hasher.final_() as u32; // @truncate
     let h_bytes: [u8; 4] = h.to_le_bytes();

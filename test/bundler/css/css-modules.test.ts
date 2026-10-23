@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -654,6 +655,47 @@ test("css-module/NoBundleHashesByRelativePath", async () => {
   expect(hashA).toBeDefined();
   expect(hashB).toBeDefined();
   expect(hashA).not.toBe(hashB);
+});
+
+// On Linux a directory name is bytes, not text. The hash is made from the bytes of the path, so two
+// modules whose paths differ only in a byte that is not UTF-8 get different class names. `sh` expands
+// the paths: a JavaScript string cannot hold a lone 0xFF byte.
+test.skipIf(!isLinux).concurrent.each([
+  ["bundled", `exec "$0" build ./d-*/index.js --outdir=out`],
+  ["--no-bundle", `exec "$0" build --no-bundle ./d-*/a.module.css --outdir=out`],
+])("css-module/HashesPathsThatAreNotUTF8 (%s)", async (_, script) => {
+  using dir = tempDir("css-module-path-bytes", {});
+  for (const byte of [0xfe, 0xff]) {
+    const sub = Buffer.concat([Buffer.from(join(String(dir), "d-")), Buffer.from([byte])]);
+    mkdirSync(sub);
+    writeFileSync(Buffer.concat([sub, Buffer.from("/a.module.css")]), `.card { color: red }`);
+    writeFileSync(
+      Buffer.concat([sub, Buffer.from("/index.js")]),
+      `import styles from "./a.module.css"; console.log(styles.card);`,
+    );
+  }
+
+  await using proc = Bun.spawn({
+    cmd: ["sh", "-c", script, bunExe()],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+  const out = Buffer.from(join(String(dir), "out"));
+  const hashes = readdirSync(out, { encoding: "buffer" }).map(sub => {
+    const subdir = Buffer.concat([out, Buffer.from("/"), sub]);
+    const css = readdirSync(subdir, { encoding: "buffer" }).find(name => name.toString("latin1").endsWith(".css"))!;
+    const text = readFileSync(Buffer.concat([subdir, Buffer.from("/"), css]), "latin1");
+    return text.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
+  });
+  expect(hashes).toHaveLength(2);
+  expect(hashes[0]).toBeDefined();
+  expect(hashes[1]).toBeDefined();
+  expect(hashes[0]).not.toBe(hashes[1]);
 });
 
 test("a resolve error in CSS covers the whole url() and composes path", async () => {

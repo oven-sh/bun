@@ -1145,6 +1145,35 @@ mod tests {
     }
 
     #[test]
+    fn test_wyhash11_chunked_matches_oneshot() {
+        // `bun_base64::wyhash_url_safe` feeds a key in parts: the digest must not depend on the cuts.
+        let mut data = [0u8; 200];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(7);
+        }
+        for total in [0usize, 1, 3, 15, 16, 17, 31, 32, 33, 63, 64, 65, 150, 200] {
+            let direct = Wyhash11::hash(0, &data[..total]);
+            for first in 0..=total {
+                let mut h = Wyhash11::init(0);
+                h.update(&data[..first]);
+                h.update(&data[first..total]);
+                assert_eq!(direct, h.final_(), "total={total} first={first}");
+            }
+        }
+        // Three parts, as the CSS module hash has them (`hash`, `_`, `name`).
+        let direct = Wyhash11::hash(0, &data);
+        for first in 0..=data.len() {
+            for second in first..=data.len().min(first + 40) {
+                let mut h = Wyhash11::init(0);
+                h.update(&data[..first]);
+                h.update(&data[first..second]);
+                h.update(&data[second..]);
+                assert_eq!(direct, h.final_(), "first={first} second={second}");
+            }
+        }
+    }
+
+    #[test]
     fn test_wyhash_is_not_wyhash11() {
         // Guard against the historical mix-up: these are different algorithms.
         assert_ne!(Wyhash::hash(0, b"abc"), Wyhash11::hash(0, b"abc"));

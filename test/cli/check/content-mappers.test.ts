@@ -1175,6 +1175,12 @@ async function build(check, entrypoint = "./main.ts") {
     });
   });
 
+  test("a mapper's own error has the mapper's label", async () => {
+    const own = `[{ start: 1, length: 8, messageText: "bad template", code: 7 }, { messageText: "worse", code: -1 }]`;
+    const { success, messages } = await run({ mapper: changed(`r.diagnostics = ${own}`) }, allowed);
+    expect({ success, messages }).toEqual({ success: false, messages: ["m-1: worse", "m7: bad template"] });
+  });
+
   test("a mapper that exits in the middle of a request", async () => {
     expect(await run({ mapper: `${recordsPid} serve({ transform: () => process.exit(3) });` }, allowed)).toEqual({
       success: false,

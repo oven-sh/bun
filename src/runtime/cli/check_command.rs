@@ -801,10 +801,9 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, build: Build) -
 /// location.
 fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
     use std::borrow::Cow;
-    let mut text = Vec::with_capacity(reported.text.len() + 8);
-    if reported.code != 0 {
-        use std::io::Write;
-        let _ = write!(text, "TS{}: ", reported.code);
+    let mut text = reported.code_label().unwrap_or_default();
+    if !text.is_empty() {
+        text.extend_from_slice(b": ");
     }
     text.extend_from_slice(&reported.text);
     let line_text = || {

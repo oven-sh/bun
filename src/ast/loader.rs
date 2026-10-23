@@ -1,4 +1,4 @@
-//! `Loader` + `SideEffects`.
+//! `Loader`, `ModuleKey` + `SideEffects`.
 //!
 //! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES`
 //! live in `bun_options_types::LoaderExt` (would back-edge into the schema
@@ -245,6 +245,40 @@ impl Loader {
             | Loader::Md => SideEffects::NoSideEffectsPureData,
             _ => SideEffects::HasSideEffects,
         }
+    }
+}
+
+/// A module: its resolved path plus a key loader, `None` for the loader the path gets by default.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct ModuleKey<'a> {
+    path: &'a [u8],
+    loader: Option<Loader>,
+}
+
+impl<'a> ModuleKey<'a> {
+    /// The module that the path's default loader gives.
+    #[inline]
+    pub const fn of_path(path: &'a [u8]) -> Self {
+        Self { path, loader: None }
+    }
+
+    /// `key_loader` is a key loader that `import_record_key_loader` decided, or one copied from a stored key.
+    #[inline]
+    pub const fn new(path: &'a [u8], key_loader: Option<Loader>) -> Self {
+        Self {
+            path,
+            loader: key_loader,
+        }
+    }
+
+    #[inline]
+    pub const fn path(self) -> &'a [u8] {
+        self.path
+    }
+
+    #[inline]
+    pub const fn key_loader(self) -> Option<Loader> {
+        self.loader
     }
 }
 

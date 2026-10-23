@@ -5243,6 +5243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             path,
             tag: bun_ast::ImportRecordTag::None,
             loader: None,
+            key_loader: None,
             source_index: bun_ast::Index::INVALID,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),

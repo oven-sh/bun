@@ -35,7 +35,7 @@ use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
-use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
+use crate::options::{CompileMode, Format, Loader, ModuleKey, SourceMapOption, Target};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
     LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
@@ -756,7 +756,7 @@ impl<'a> LinkerContext<'a> {
                 let source_index: u32 = unsafe {
                     (*parse_graph).path_to_source_index_map(Target::Browser)
                 }
-                .get(path_text)
+                .get(ModuleKey::of_path(path_text))
                 .unwrap_or_else(|| {
                     panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 });

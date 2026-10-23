@@ -327,7 +327,7 @@ pub use bun_options_types::WindowsOptions;
 // There is exactly ONE `Loader`; re-export so the bundler's
 // `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the
 // same nominal type.
-pub(crate) use bun_ast::Loader;
+pub(crate) use bun_ast::{Loader, ModuleKey};
 
 pub use bun_options_types::LOADER_API_NAMES;
 

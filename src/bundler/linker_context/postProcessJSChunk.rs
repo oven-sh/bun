@@ -227,6 +227,7 @@ pub(crate) fn post_process_js_chunk(
                 // Remaining fields (`ImportRecord` has no `Default` impl):
                 tag: ImportRecordTag::None,
                 loader: None,
+                key_loader: None,
                 source_index: Index::INVALID,
                 original_path: b"",
                 flags: ImportRecordFlags::default(),

@@ -10,7 +10,7 @@
 use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
-use bun_ast::{ImportKind, import_record};
+use bun_ast::{ImportKind, ModuleKey, import_record};
 use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::InputFileFlags;
@@ -323,7 +323,7 @@ fn record_target(
     if rec.source_index.is_valid() {
         return Some(rec.source_index.get());
     }
-    map?.get_path(&rec.path)
+    map?.get().get(rec.module_key())
 }
 
 /// The export names the result of `import()` / `require()` record `idx` can
@@ -488,7 +488,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // its index, so the direct path lookup below fails for those entries.
     // Build a fallback: raw specifier → surviving record's resolved path
     // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
+    let mut dedup_fallback: StringArrayHashMap<ModuleKey<'_>> = StringArrayHashMap::default();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
@@ -502,7 +502,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             if ir_probe.original_path == ir_probe.path.text {
                 continue;
             }
-            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text)?;
+            dedup_fallback.put(ir_probe.original_path, ir_probe.module_key())?;
         }
     }
 
@@ -525,18 +525,18 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // For dedup'd HMR records (is_unused), fall back to a sibling's
         // resolved path text since the record itself still has the raw
         // specifier in path.text.
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
+        let key = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
             dedup_fallback
                 .get(ir.path.text)
                 .copied()
-                .unwrap_or(ir.path.text)
+                .unwrap_or_else(|| ir.module_key())
         } else {
-            ir.path.text
+            ir.module_key()
         };
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get(key) {
                 Some(t) => t,
                 None => continue,
             }
@@ -558,7 +558,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(&dev, key.path(), alias);
             }
         }
     }
@@ -618,18 +618,18 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
             continue;
         }
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
+        let key = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
             dedup_fallback
                 .get(ir.path.text)
                 .copied()
-                .unwrap_or(ir.path.text)
+                .unwrap_or_else(|| ir.module_key())
         } else {
-            ir.path.text
+            ir.module_key()
         };
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+            match map.get().get(key) {
                 Some(t) => t,
                 None => continue,
             }

@@ -3,7 +3,7 @@
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
 
-use crate::Range;
+use crate::{ModuleKey, Range};
 use bun_paths::fs::Path;
 
 // Re-exported here (canonical at crate root) so callers that path through
@@ -18,6 +18,8 @@ pub struct ImportRecord {
     pub kind: ImportKind,
     pub tag: Tag,
     pub loader: Option<Loader>,
+    /// The key loader of the module that the bundler resolved this record to. See `ModuleKey`.
+    pub key_loader: Option<Loader>,
 
     pub source_index: Index,
 
@@ -31,6 +33,17 @@ pub struct ImportRecord {
     /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ImportRecord>() == 96);
+
+impl ImportRecord {
+    /// Valid once the bundler has resolved the record: `path` is then the resolved path.
+    #[inline]
+    pub fn module_key(&self) -> ModuleKey<'_> {
+        ModuleKey::new(self.path.text, self.key_loader)
+    }
 }
 
 bitflags::bitflags! {
@@ -107,9 +120,6 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
-
-        /// The bundler keyed this record's module by (path, loader), not by path alone.
-        const KEYED_BY_LOADER = 1 << 19;
     }
 }
 

@@ -1055,6 +1055,47 @@ child.on("exit", code => console.log("the child exited with", code));
       await closed;
     },
   );
+
+  // `bun bake` takes the flags of `bun` after `bake` too. It runs until it's killed.
+  test.each([
+    ["bun bake --check --runExternalCode", ["--runExternalCode"], {}, /url: http|error/, "url: http", 1],
+    [
+      "bun bake --check, with the flag in BUN_OPTIONS",
+      [],
+      { BUN_OPTIONS: "--runExternalCode" },
+      /url: http|Found \d+ error/,
+      notAllowed,
+      0,
+    ],
+  ] as const)("%s", async (_, flags, extra, pattern, expected, mappers) => {
+    using dir = project({
+      mapper,
+      config: { include: ["app", "*.vue"] },
+      files: {
+        "App.vue": files["App.vue"],
+        "app/pages/index.html": `<!doctype html><html><body></body></html>`,
+        "app/server.ts": `import type { Count } from "../App.vue";\ndeclare const Response: new (body: string) => object;\nconst one: Count = 1;\nexport default { fetch: () => new Response(String(one)) };\n`,
+      },
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "bake", "--check", ...flags, "--port=0"],
+      cwd: String(dir),
+      env: { ...env, ...extra },
+      timeout: longLimit,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let output = "";
+    const read = async (stream: ReadableStream<Uint8Array>) => {
+      for await (const chunk of stream) {
+        output += Buffer.from(chunk).toString();
+        if (pattern.test(output)) proc.kill();
+      }
+    };
+    await Promise.all([read(proc.stdout), read(proc.stderr)]);
+    expect(output).toContain(expected);
+    expect(pidsOf(dir)).toHaveLength(mappers);
+  });
 });
 
 describe.concurrent("Bun.build", () => {
@@ -1079,12 +1120,13 @@ const isRunning = pid => {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
     return false;
   }
 };
-async function build(check) {
-  const { success, logs } = await Bun.build({ entrypoints: ["./main.ts"], check, throw: false });
+async function build(check, entrypoint = "./main.ts") {
+  const { success, logs } = await Bun.build({ entrypoints: [entrypoint], check, throw: false });
   const messages = logs.map(log => log.message.split("\n")[0]);
   return { success, messages, started: pids().length, running: pids().filter(isRunning) };
 }
@@ -1204,16 +1246,92 @@ done({ builds: builds.map(it => [it.success, it.messages]), started: pids().leng
     });
   });
 
-  test("a process that exits during a build takes the mapper with it", async () => {
-    const mapper = `serve({ transform: () => (fs.writeFileSync(__dirname + "/working.txt", ""), SKIP) });`;
-    const program = `
+  // The mapper never answers for `Stuck.vue`, and there's no limit to how long a check waits for an answer.
+  const stuck = {
+    mapper: `${recordsPid}
+serve({ transform: ({ fileName, content }) =>
+  fileName.endsWith("Stuck.vue") ? (fs.writeFileSync(__dirname + "/working.txt", ""), SKIP) : script(content) });`,
+    files: {
+      // Not among the files that tsconfig.json includes, which are part of every check.
+      "stuck/Stuck.vue": files["App.vue"],
+      "stuck/main.ts": files["main.ts"].replace("App.vue", "Stuck.vue"),
+      // Builds each entry point that it's sent.
+      "worker.js": `${start}
+onmessage = async ({ data }) => {
+  const built = build({ runExternalCode: true }, data);
+  postMessage("started");
+  postMessage(await built);
+};`,
+    },
+  };
+  // For a program that has workers.
+  const workers = `
+const once = (worker, event) => new Promise(resolve => worker.addEventListener(event, resolve, { once: true }));
+const starts = (worker, entrypoint) => (worker.postMessage(entrypoint), once(worker, "message"));
+const terminated = worker => {
+  const closed = once(worker, "close");
+  worker.terminate();
+  return closed;
+};
+const mapperIsWorking = () =>
+  new Promise(resolve => {
+    const wait = () => (fs.existsSync("node_modules/m/working.txt") ? resolve() : setImmediate(wait));
+    wait();
+  });
+`;
+  const built = { success: true, messages: [], running: [] };
+
+  // With `BUN_DESTRUCT_VM_ON_EXIT`, which the test runner sets for some builds, a process that exits waits for its builds.
+  test.each([
+    ["", {}],
+    [", with BUN_DESTRUCT_VM_ON_EXIT", { BUN_DESTRUCT_VM_ON_EXIT: "1" }],
+  ])("a process that exits during a build takes the mapper with it%s", async (_, extra) => {
+    const program = `${workers}
 const exit = why => (done(why), process.exit(0));
-build({ runExternalCode: true }).then(() => exit("the build has settled"));
-const wait = () => (fs.existsSync("node_modules/m/working.txt") ? exit("the mapper is working") : setImmediate(wait));
-wait();`;
+build({ runExternalCode: true }, "./stuck/main.ts").then(() => exit("the build has settled"));
+await mapperIsWorking();
+exit("the mapper is working");`;
     // The mapper has the standard error of the process, so this only returns once both have exited.
-    // The test runner sets `BUN_DESTRUCT_VM_ON_EXIT` for some builds. With it, a process that exits waits for the build.
-    expect(await run({ mapper }, program, { BUN_DESTRUCT_VM_ON_EXIT: "0" })).toBe("the mapper is working");
+    expect(await run(stuck, program, extra)).toBe("the mapper is working");
+  });
+
+  test("a worker that's terminated during a build stops the mapper, and later builds go on", async () => {
+    const program = `${workers}
+const worker = new Worker("./worker.js");
+await starts(worker, "./stuck/main.ts");
+await mapperIsWorking();
+await terminated(worker);
+done({ running: pids().filter(isRunning), withMappers: await build({ runExternalCode: true }), without: await build(false) });`;
+    expect(await run(stuck, program)).toEqual({
+      running: [],
+      withMappers: { ...built, started: 2 },
+      without: { ...built, started: 2 },
+    });
+  });
+
+  test("a worker that's terminated during a build leaves the build of another worker alone", async () => {
+    const program = `${workers}
+const [first, second] = [new Worker("./worker.js"), new Worker("./worker.js")];
+await starts(first, "./stuck/main.ts");
+await mapperIsWorking();
+await starts(second, "./main.ts");
+const result = once(second, "message");
+await terminated(first);
+done((await result).data);
+await terminated(second);`;
+    expect(await run(stuck, program)).toEqual({ ...built, started: 2 });
+  });
+
+  test("workers that are terminated as soon as they have started a build", async () => {
+    const program = `${workers}
+for (let i = 0; i < 10; i++) {
+  const worker = new Worker("./worker.js");
+  await starts(worker, "./stuck/main.ts");
+  await terminated(worker);
+}
+const { success, messages, running } = await build({ runExternalCode: true });
+done({ success, messages, running });`;
+    expect(await run(stuck, program)).toEqual(built);
   });
 
   // A leak would add at least one per build. The garbage collector and the JIT start a few threads when they see fit.

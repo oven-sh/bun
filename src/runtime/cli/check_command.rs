@@ -9,6 +9,7 @@
 
 use bstr::BStr;
 
+use super::content_mapper_process::{KillSwitch, Programs};
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
@@ -204,9 +205,14 @@ pub(crate) fn command_runs_external_code() -> bool {
 }
 
 /// `Provided::content_mapper_transport`. A check starts the programs it needs, and all of them have exited when it ends.
-fn content_mapper_transport(runs_external_code: bool) -> Option<Box<dyn Transport>> {
-    runs_external_code
-        .then(|| Box::<super::content_mapper_process::Programs>::default() as Box<dyn Transport>)
+/// `None`: it isn't allowed to run them.
+fn content_mapper_transport(stopped_by: Option<KillSwitch>) -> Option<Box<dyn Transport>> {
+    stopped_by.map(|switch| Box::new(Programs::stopped_by(switch)) as Box<dyn Transport>)
+}
+
+/// `content_mapper_transport` for a command, which nothing stops but the end of the process.
+fn content_mapper_transport_of_command(runs_external_code: bool) -> Option<Box<dyn Transport>> {
+    content_mapper_transport(runs_external_code.then(KillSwitch::default))
 }
 
 fn reject(rejected: &RejectedFlag) -> ! {
@@ -505,7 +511,9 @@ impl CheckCommand {
             Provided {
                 // Only set here, because this function never returns.
                 ends_the_process: true,
-                content_mapper_transport: content_mapper_transport(options.runs_external_code),
+                content_mapper_transport: content_mapper_transport_of_command(
+                    options.runs_external_code,
+                ),
                 ..Default::default()
             },
             |report| (print_report(&report, options, &cwd), report),
@@ -605,7 +613,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
-        content_mapper_transport: content_mapper_transport(command_runs_external_code()),
+        content_mapper_transport: content_mapper_transport_of_command(command_runs_external_code()),
         ..Default::default()
     };
     let entries = Entries {
@@ -678,7 +686,7 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
     let build = Build {
         shows_progress: true,
-        runs_external_code: command_runs_external_code(),
+        content_mappers: command_runs_external_code().then(KillSwitch::default),
     };
     check_for_build(checked, log, build)
 }
@@ -687,7 +695,7 @@ pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::L
 pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
     let build = Build {
         shows_progress: false,
-        runs_external_code: false,
+        content_mappers: None,
     };
     check_for_build(checked, log, build)
 }
@@ -697,17 +705,18 @@ pub(crate) fn check_for_bun_build_with_external_code(
     checked: TypeChecked,
     log: &mut bun_ast::Log,
 ) -> bool {
+    use crate::api::js_bundle_completion_task::kill_switch_of;
     let build = Build {
         shows_progress: false,
-        runs_external_code: true,
+        content_mappers: Some(checked.completion.map(kill_switch_of).unwrap_or_default()),
     };
     check_for_build(checked, log, build)
 }
 
-#[derive(Clone, Copy)]
 struct Build {
     shows_progress: bool,
-    runs_external_code: bool,
+    /// See `content_mapper_transport`.
+    content_mappers: Option<KillSwitch>,
 }
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
@@ -720,6 +729,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, build: Build) -
         loaders,
         entry_points,
         sources,
+        completion: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows each file's loader. Files in `node_modules` always go by their extension.
@@ -733,7 +743,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, build: Build) -
     });
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
-        content_mapper_transport: content_mapper_transport(build.runs_external_code),
+        content_mapper_transport: content_mapper_transport(build.content_mappers),
         ..Default::default()
     };
     // Excludes files like `App.svelte`, which a plugin turns into TypeScript.
@@ -914,7 +924,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
     let provided = Provided {
         before_read,
-        content_mapper_transport: content_mapper_transport(command_runs_external_code()),
+        content_mapper_transport: content_mapper_transport_of_command(command_runs_external_code()),
         ..Default::default()
     };
     check_and_report(&Paths::EntryPoints(Entries::default()), provided)

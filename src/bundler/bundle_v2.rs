@@ -2598,6 +2598,7 @@ pub mod bv2_impl {
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
                 sources: &mut sources,
+                completion: self.completion.as_ref().map(|it| it.owner),
             };
             if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());

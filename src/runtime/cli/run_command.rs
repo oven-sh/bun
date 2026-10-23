@@ -2804,8 +2804,15 @@ impl RunCommand {
                     None => false,
                 };
             let (check, no_clear_screen) = (take_flag(b"--check"), take_flag(b"--no-clear-screen"));
+            let runs_external_code = take_flag(b"--runExternalCode");
             if check {
                 ctx.runtime_options.check = true;
+            }
+            if runs_external_code {
+                ctx.runs_external_code = crate::cli::check_command::is_allowed_to_run_code(
+                    bun_core::argv().as_slice().get(1..).unwrap_or_default(),
+                    0,
+                );
             }
             if no_clear_screen {
                 ctx.debug.no_clear_screen = true;

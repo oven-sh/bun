@@ -72,18 +72,20 @@ struct Inbox {
     is_closed: bool,
 }
 
-/// Starts the programs and passes messages between them and the checker.
-#[derive(Default)]
-pub(crate) struct Programs {
-    inbox: Arc<Guarded<Inbox>>,
-    programs: Guarded<Vec<Arc<Program>>>,
-    io_thread: Guarded<Option<std::thread::JoinHandle<()>>>,
-}
+/// Stops the programs of one `Programs`, from any thread and at any time. Before the `Programs` exists: it never starts
+/// a program. While threads wait for responses: the programs are killed, and each call fails. Later: nothing happens.
+#[derive(Clone, Default)]
+pub(crate) struct KillSwitch(Arc<Guarded<Inbox>>);
 
-impl Programs {
+impl KillSwitch {
+    /// Doesn't wait for the programs to exit. `Programs::close` does.
+    pub(crate) fn stop(&self) {
+        self.send(Command::Stop);
+    }
+
     /// Returns false if the I/O thread no longer accepts commands.
     fn send(&self, command: Command) -> bool {
-        let mut inbox = self.inbox.lock();
+        let mut inbox = self.0.lock();
         if inbox.is_closed {
             return false;
         }
@@ -95,6 +97,27 @@ impl Programs {
             unsafe { bun_uws::us_wakeup_loop(event_loop.0) };
         }
         true
+    }
+}
+
+/// Starts the programs and passes messages between them and the checker.
+pub(crate) struct Programs {
+    inbox: KillSwitch,
+    programs: Guarded<Vec<Arc<Program>>>,
+    io_thread: Guarded<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl Programs {
+    pub(crate) fn stopped_by(switch: KillSwitch) -> Programs {
+        Programs {
+            inbox: switch,
+            programs: Guarded::default(),
+            io_thread: Guarded::default(),
+        }
+    }
+
+    fn send(&self, command: Command) -> bool {
+        self.inbox.send(command)
     }
 
     /// Returns the program that `call` is for. The first call starts it.
@@ -122,10 +145,10 @@ impl Programs {
     fn start_io_thread(&self) -> Result<(), Vec<u8>> {
         let mut io_thread = self.io_thread.lock();
         // After `close`, `send` refuses the command.
-        if io_thread.is_some() || self.inbox.lock().is_closed {
+        if io_thread.is_some() || self.inbox.0.lock().is_closed {
             return Ok(());
         }
-        let inbox = Arc::clone(&self.inbox);
+        let inbox = Arc::clone(&self.inbox.0);
         let builder = std::thread::Builder::new().name("ContentMappers".to_owned());
         match builder.spawn(move || run_io_thread(&inbox)) {
             Ok(handle) => *io_thread = Some(handle),

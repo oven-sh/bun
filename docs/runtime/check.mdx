@@ -698,7 +698,7 @@ await Bun.build({
 });
 ```
 
-`Bun.build` reads `runExternalCode` from the object you pass, and from nowhere else. With `check: true`, it starts nothing and reports TS18068. The mappers have stopped when the promise settles.
+`Bun.build` reads `runExternalCode` from the object you pass, and from nowhere else. With `check: true`, it starts nothing and reports TS18068. The mappers have stopped when the promise settles. If the worker or the process that called `Bun.build` ends during the check, Bun stops the mappers and the check ends.
 
 With [`--watch`](#watch-mode), every check starts the mappers again.
 

@@ -46,7 +46,11 @@ function resolveStylesheet(id, base) {
         if (!isMap) target = rest ? undefined : withConditions(exports);
         else if (key in exports) target = withConditions(exports[key]);
         else {
-          for (const [pattern, value] of Object.entries(exports)) {
+          // Node's PATTERN_KEY_COMPARE: the longer part before `*` first, then the longer key. Not the object's order.
+          const patterns = Object.entries(exports).sort(
+            ([a], [b]) => b.indexOf("*") - a.indexOf("*") || b.length - a.length,
+          );
+          for (const [pattern, value] of patterns) {
             const [before, behind] = pattern.split("*");
             if (behind === undefined || !key.startsWith(before) || !key.endsWith(behind)) continue;
             const middle = key.slice(before.length, key.length - behind.length);

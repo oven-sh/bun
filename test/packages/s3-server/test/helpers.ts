@@ -23,6 +23,9 @@ if (isDebug) setDefaultTimeout(60_000);
  * A debug build of Bun adds `content-type: application/octet-stream` to a
  * response of `Bun.serve` that has no body. A release build does not. This
  * function removes that header, so that a test sees the response of a release build.
+ *
+ * https://github.com/oven-sh/bun/pull/30997 has the correction for `Bun.serve`.
+ * After it, this function and `TestClient` can go.
  */
 export function withoutDefaultType(response: Response): Response {
   const length = response.headers.get("content-length");

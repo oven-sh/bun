@@ -302,7 +302,70 @@ describe("expect()", () => {
       expect(new URLSearchParams("a=1&b=2")).not.toEqual(new URLSearchParams("a=1&"));
     });
 
+    test("URLSearchParams with a repeated name", () => {
+      expect(new URLSearchParams("tag=a&tag=b")).toEqual(new URLSearchParams("tag=a&tag=b"));
+      expect(new URLSearchParams("tag=a&tag=b")).toStrictEqual(new URLSearchParams("tag=a&tag=b"));
+      expect(new URLSearchParams("a=1&b=2&a=3")).toEqual(new URLSearchParams("a=1&b=2&a=3"));
+      expect(new URLSearchParams("a=1&a")).toEqual(new URLSearchParams("a=1&a="));
+      expect([new URLSearchParams("tag=a&tag=b")]).toContainEqual(new URLSearchParams("tag=a&tag=b"));
+      expect({ query: new URLSearchParams("tag=a&tag=b") }).toEqual({ query: new URLSearchParams("tag=a&tag=b") });
+      expect({ query: new URLSearchParams("tag=a&tag=b"), path: "/" }).toEqual(
+        expect.objectContaining({ query: new URLSearchParams("tag=a&tag=b") }),
+      );
+
+      expect(new URLSearchParams("a=1&a=2")).not.toEqual(new URLSearchParams("a=1&a=3"));
+      expect(new URLSearchParams("a=1&a=2")).not.toEqual(new URLSearchParams("a=2&a=1"));
+      expect(new URLSearchParams("a=1&a=2")).not.toEqual(new URLSearchParams("a=1"));
+      // The two have the same size, and get() returns the same value for each name.
+      expect(new URLSearchParams("a=1&a=1&b=2")).not.toEqual(new URLSearchParams("a=1&b=2&b=2"));
+      expect(new URLSearchParams("a=1&b=2&b=2")).not.toEqual(new URLSearchParams("a=1&a=1&b=2"));
+      expect(new URLSearchParams("a=1&a=1&b=2")).not.toStrictEqual(new URLSearchParams("a=1&b=2&b=2"));
+    });
+
+    test("URLSearchParams with the same entries from different sources", () => {
+      const appended = new URLSearchParams();
+      appended.append("a", "1");
+      appended.append("a", "2");
+      expect(appended).toEqual(new URLSearchParams("a=1&a=2"));
+      expect(appended).toEqual(
+        new URLSearchParams([
+          ["a", "1"],
+          ["a", "2"],
+        ]),
+      );
+      expect(new URLSearchParams(appended)).toEqual(appended);
+      expect(new URL("https://example.com/?a=1&a=2").searchParams).toEqual(appended);
+
+      const url = new URL("https://example.com/?a=1");
+      const searchParams = url.searchParams;
+      expect(searchParams).not.toEqual(appended);
+      url.search = "?a=1&a=2";
+      expect(searchParams).toEqual(appended);
+      searchParams.append("a", "3");
+      expect(searchParams).not.toEqual(appended);
+
+      const emptyValue = new URLSearchParams();
+      emptyValue.append("a", "");
+      expect(emptyValue).toEqual(new URLSearchParams("a="));
+    });
+
+    test("URLSearchParams with a repeated name in a mock call", () => {
+      const fn = jest.fn();
+      fn(new URLSearchParams("tag=a&tag=b"));
+      expect(fn).toHaveBeenCalledWith(new URLSearchParams("tag=a&tag=b"));
+      expect(fn).not.toHaveBeenCalledWith(new URLSearchParams("tag=a&tag=c"));
+    });
+
     if (isBun) {
+      // Jest compares the entries by position. Bun compares the values of each name.
+      test("URLSearchParams with distinct names in another order", () => {
+        expect(new URLSearchParams("a=1&b=2")).toEqual(new URLSearchParams("b=2&a=1"));
+        expect(new URLSearchParams("a=1&b=2")).toStrictEqual(new URLSearchParams("b=2&a=1"));
+        expect(new URLSearchParams("a=1&b=2&a=3")).toEqual(new URLSearchParams("b=2&a=1&a=3"));
+        expect(new URLSearchParams("a=1&b=2&a=3")).not.toEqual(new URLSearchParams("b=2&a=3&a=1"));
+        expect(new URLSearchParams("a=1&b=2&a=3")).not.toEqual(new URLSearchParams("b=2&a=1&b=3"));
+      });
+
       test("URL", () => {
         expect(new URL("https://example.com")).toEqual(new URL("https://example.com"));
         expect(new URL("http://wat")).not.toStrictEqual(new URL("http://huh"));
@@ -314,6 +377,95 @@ describe("expect()", () => {
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "b": "1" }));
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "2" }));
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
+      expect(new Headers({ "a": "" })).not.toEqual(new Headers({ "b": "" }));
+      expect(new Headers({ "content-type": "text/plain" })).not.toEqual(new Headers({ "content-type": "text/html" }));
+      expect(new Headers({ "content-type": "text/plain" })).not.toEqual(new Headers({ "accept": "text/plain" }));
+      // The order of the names and the case of a name do not count.
+      expect(new Headers({ "x-a": "1", "content-type": "text/plain", "x-b": "2" })).toEqual(
+        new Headers({ "X-B": "2", "Content-Type": "text/plain", "X-A": "1" }),
+      );
+      expect(new Headers({ "accept": "a", "content-type": "b" })).toEqual(
+        new Headers({ "content-type": "b", "accept": "a" }),
+      );
+      // The names are in another order, and one value is different.
+      expect(new Headers({ "x-a": "1", "x-b": "2" })).not.toEqual(new Headers({ "x-b": "2", "x-a": "9" }));
+      expect(new Headers({ "x-b": "2", "x-a": "9" })).not.toEqual(new Headers({ "x-a": "1", "x-b": "2" }));
+      expect(new Headers({ "accept": "a", "content-type": "b" })).not.toEqual(
+        new Headers({ "content-type": "b", "accept": "c" }),
+      );
+      expect(new Headers({ "content-type": "b", "accept": "c" })).not.toEqual(
+        new Headers({ "accept": "a", "content-type": "b" }),
+      );
+      // append() joins the values of every name but set-cookie.
+      expect(
+        new Headers([
+          ["accept", "x"],
+          ["accept", "y"],
+        ]),
+      ).toEqual(new Headers({ "accept": "x, y" }));
+    });
+
+    test("Headers with several set-cookie values", () => {
+      /** @param {...string} values */
+      const cookies = (...values) => {
+        const headers = new Headers({ "content-type": "text/plain", "x-a": "1" });
+        for (const value of values) headers.append("set-cookie", value);
+        return headers;
+      };
+
+      expect(cookies("k=1")).toEqual(cookies("k=1"));
+      expect(cookies("k=1", "j=2")).toEqual(cookies("k=1", "j=2"));
+      expect(cookies("k=1", "j=2")).toStrictEqual(cookies("k=1", "j=2"));
+      expect(cookies("k=1", "j=2", "i=3")).toEqual(cookies("k=1", "j=2", "i=3"));
+      expect(cookies("k=1", "j=2")).toEqual(new Headers(cookies("k=1", "j=2")));
+      expect(cookies("k=1", "j=2")).toEqual(
+        new Headers([
+          ["Set-Cookie", "k=1"],
+          ["X-A", "1"],
+          ["set-cookie", "j=2"],
+          ["Content-Type", "text/plain"],
+        ]),
+      );
+      expect([cookies("k=1", "j=2")]).toContainEqual(cookies("k=1", "j=2"));
+      expect({ headers: cookies("k=1", "j=2") }).toEqual({ headers: cookies("k=1", "j=2") });
+      expect({ headers: cookies("k=1", "j=2"), status: 200 }).toEqual(
+        expect.objectContaining({ headers: cookies("k=1", "j=2") }),
+      );
+
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("k=1", "j=3"));
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("k=1"));
+      expect(cookies("k=1")).not.toEqual(cookies("k=1", "j=2"));
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("k=1, j=2"));
+      // getSetCookie() and iteration show the order of the set-cookie values.
+      expect(cookies("k=1", "j=2")).not.toEqual(cookies("j=2", "k=1"));
+      expect(cookies("k=1", "j=2")).not.toStrictEqual(cookies("j=2", "k=1"));
+      expect(cookies("k=1", "k=1", "j=2")).not.toEqual(cookies("k=1", "j=2", "j=2"));
+      expect(cookies("k=1", "j=2", "j=2")).not.toEqual(cookies("k=1", "k=1", "j=2"));
+
+      const differentCommonHeader = cookies("k=1", "j=2");
+      differentCommonHeader.set("content-type", "text/html");
+      expect(cookies("k=1", "j=2")).not.toEqual(differentCommonHeader);
+
+      const differentCustomHeader = cookies("k=1", "j=2");
+      differentCustomHeader.set("x-a", "2");
+      expect(cookies("k=1", "j=2")).not.toEqual(differentCustomHeader);
+
+      // The two have the same number of entries.
+      const oneCookieAndOneMoreHeader = cookies("k=1");
+      oneCookieAndOneMoreHeader.set("x-b", "2");
+      expect(cookies("k=1", "j=2")).not.toEqual(oneCookieAndOneMoreHeader);
+    });
+
+    test("Headers with several set-cookie values in a mock call", () => {
+      const twoCookies = () =>
+        new Headers([
+          ["set-cookie", "a=1"],
+          ["set-cookie", "b=2"],
+        ]);
+      const fn = jest.fn();
+      fn({ status: 200, headers: twoCookies() });
+      expect(fn).toHaveBeenCalledWith({ status: 200, headers: twoCookies() });
+      expect(fn).not.toHaveBeenCalledWith({ status: 200, headers: new Headers({ "set-cookie": "a=1, b=2" }) });
     });
 
     // TODO: FormData
@@ -3577,6 +3729,29 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
       });
     }
+
+    test("equal Headers and URLSearchParams with repeated entries match", () => {
+      const twoCookies = () =>
+        new Headers([
+          ["set-cookie", "a=1"],
+          ["set-cookie", "b=2"],
+        ]);
+      expect(twoCookies()).toMatchObject(twoCookies());
+      expect({ status: 200, headers: twoCookies() }).toMatchObject({ headers: twoCookies() });
+
+      expect(new URLSearchParams("tag=a&tag=b")).toMatchObject(new URLSearchParams("tag=a&tag=b"));
+      expect({ path: "/", query: new URLSearchParams("tag=a&tag=b") }).toMatchObject({
+        query: new URLSearchParams("tag=a&tag=b"),
+      });
+      expect(new URL("https://example.com/?tag=a&tag=b").searchParams).toMatchObject(
+        new URLSearchParams("tag=a&tag=b"),
+      );
+
+      const fn = jest.fn();
+      fn({ headers: twoCookies(), query: new URLSearchParams("tag=a&tag=b") });
+      expect(fn.mock.calls).toMatchObject([[{ headers: twoCookies(), query: new URLSearchParams("tag=a&tag=b") }]]);
+    });
+
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");

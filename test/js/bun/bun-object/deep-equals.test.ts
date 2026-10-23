@@ -59,6 +59,289 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, baz)).toBe(false);
   });
 
+  describe("URLSearchParams", () => {
+    it.each([
+      ["", ""],
+      ["a=1&b=2", "a=1&b=2"],
+      ["tag=a&tag=b", "tag=a&tag=b"],
+      ["a=1&b=2&a=3", "a=1&b=2&a=3"],
+      ["a=1&a", "a=1&a="],
+      // The order of distinct names does not count. The values of each name keep their order.
+      ["a=1&b=2", "b=2&a=1"],
+      ["a=1&b=2&a=3", "b=2&a=1&a=3"],
+      ["a=1&b=2&a=3", "a=1&a=3&b=2"],
+      ["x=0&a=1&b=2", "x=0&b=2&a=1"],
+    ])("%p equals %p", (a, b) => {
+      expect(deepEquals(new URLSearchParams(a), new URLSearchParams(b))).toBe(true);
+      expect(deepEquals(new URLSearchParams(b), new URLSearchParams(a))).toBe(true);
+    });
+
+    it.each([
+      ["a=1", "a=2"],
+      ["a=1", "b=1"],
+      ["a=1&a=2", "a=1&a=3"],
+      ["a=1&a=2", "a=2&a=1"],
+      ["a=1&a=2", "a=1"],
+      ["a=1&a=1", "a=1"],
+      // The two have the same size, and get() returns the same value for each name.
+      ["a=1&a=1&b=2", "a=1&b=2&b=2"],
+      ["a=1&a=1", "a=1&b=1"],
+      ["a=1&b=2&a=3", "b=2&a=3&a=1"],
+      ["a=1&b=2&c=3", "a=9&c=3&b=2"],
+      ["a=1&b=2&c=3", "a=1&c=3&b=9"],
+    ])("%p does not equal %p", (a, b) => {
+      expect(deepEquals(new URLSearchParams(a), new URLSearchParams(b))).toBe(false);
+      expect(deepEquals(new URLSearchParams(b), new URLSearchParams(a))).toBe(false);
+    });
+
+    it("compares the same entries from different sources", () => {
+      const appended = new URLSearchParams();
+      appended.append("a", "1");
+      appended.append("a", "2");
+      expect(deepEquals(appended, new URLSearchParams("a=1&a=2"))).toBe(true);
+      expect(
+        deepEquals(
+          appended,
+          new URLSearchParams([
+            ["a", "1"],
+            ["a", "2"],
+          ]),
+        ),
+      ).toBe(true);
+      expect(deepEquals(appended, new URLSearchParams(appended))).toBe(true);
+      expect(deepEquals(appended, new URLSearchParams({ a: "1" }))).toBe(false);
+
+      const emptyValue = new URLSearchParams();
+      emptyValue.append("a", "");
+      expect(deepEquals(emptyValue, new URLSearchParams("a="))).toBe(true);
+    });
+
+    it("compares the current entries of the searchParams of a URL", () => {
+      const url = new URL("https://example.com/?a=1");
+      const searchParams = url.searchParams;
+      expect(deepEquals(searchParams, new URLSearchParams("a=1&a=2"))).toBe(false);
+      url.search = "?a=1&a=2";
+      expect(deepEquals(searchParams, new URLSearchParams("a=1&a=2"))).toBe(true);
+      searchParams.append("a", "3");
+      expect(deepEquals(searchParams, new URLSearchParams("a=1&a=2"))).toBe(false);
+      expect(deepEquals(searchParams, new URL("https://example.com/?a=1&a=2&a=3").searchParams)).toBe(true);
+    });
+
+    it("does not change the order of the entries", () => {
+      const a = new URLSearchParams("b=2&a=1&b=3");
+      const b = new URLSearchParams("a=1&b=2&b=3");
+      expect(deepEquals(a, b)).toBe(true);
+      expect([a.toString(), b.toString()]).toEqual(["b=2&a=1&b=3", "a=1&b=2&b=3"]);
+    });
+
+    it("compares the own properties when the entries are equal", () => {
+      const withExtra = () => Object.assign(new URLSearchParams("a=1&a=2"), { extra: 1 });
+      expect(deepEquals(withExtra(), withExtra())).toBe(true);
+      expect(deepEquals(withExtra(), new URLSearchParams("a=1&a=2"))).toBe(false);
+      expect(deepEquals(new URLSearchParams("a=1&a=2"), withExtra())).toBe(false);
+    });
+  });
+
+  describe("Headers", () => {
+    const headers = (...setCookies: string[]) => {
+      const result = new Headers({ "content-type": "text/plain", "x-a": "1" });
+      for (const cookie of setCookies) result.append("set-cookie", cookie);
+      return result;
+    };
+
+    it("compares every set-cookie value", () => {
+      expect(deepEquals(headers(), headers())).toBe(true);
+      expect(deepEquals(headers("k=1"), headers("k=1"))).toBe(true);
+      expect(deepEquals(headers("k=1", "j=2"), headers("k=1", "j=2"))).toBe(true);
+      expect(deepEquals(headers("k=1", "j=2", "i=3"), headers("k=1", "j=2", "i=3"))).toBe(true);
+      expect(deepEquals(headers("k=1", "j=2"), new Headers(headers("k=1", "j=2")))).toBe(true);
+      expect(
+        deepEquals(
+          headers("k=1", "j=2"),
+          new Headers([
+            ["Set-Cookie", "k=1"],
+            ["X-A", "1"],
+            ["set-cookie", "j=2"],
+            ["Content-Type", "text/plain"],
+          ]),
+        ),
+      ).toBe(true);
+      expect(deepEquals({ headers: headers("k=1", "j=2") }, { headers: headers("k=1", "j=2") })).toBe(true);
+
+      const unequal: [Headers, Headers][] = [
+        [headers("k=1", "j=2"), headers("k=1", "j=3")],
+        [headers("k=1", "j=2"), headers("k=1")],
+        [headers("k=1", "j=2"), headers("k=1, j=2")],
+        [headers("k=1", "j=2"), headers()],
+        // getSetCookie() and iteration show the order of the set-cookie values.
+        [headers("k=1", "j=2"), headers("j=2", "k=1")],
+        [headers("k=1", "k=1", "j=2"), headers("k=1", "j=2", "j=2")],
+      ];
+      for (const [a, b] of unequal) {
+        expect(deepEquals(a, b)).toBe(false);
+        expect(deepEquals(b, a)).toBe(false);
+      }
+    });
+
+    it("compares the other headers in any order", () => {
+      const reordered = new Headers({ "X-A": "1", "Content-Type": "text/plain" });
+      reordered.append("set-cookie", "k=1");
+      expect(deepEquals(headers("k=1"), reordered)).toBe(true);
+      expect(deepEquals(reordered, headers("k=1"))).toBe(true);
+
+      const differentContentType = headers("k=1", "j=2");
+      differentContentType.set("content-type", "text/html");
+      const differentCustomHeader = headers("k=1", "j=2");
+      differentCustomHeader.set("x-a", "2");
+      const oneMoreHeader = headers("k=1", "j=2");
+      oneMoreHeader.set("x-b", "2");
+      // The two have the same number of entries.
+      const oneCookieAndOneMoreHeader = headers("k=1");
+      oneCookieAndOneMoreHeader.set("x-b", "2");
+      const otherCustomName = new Headers({ "content-type": "text/plain", "x-b": "1" });
+      const otherCommonName = new Headers({ "accept": "text/plain", "x-a": "1" });
+
+      for (const other of [differentContentType, differentCustomHeader, oneMoreHeader, oneCookieAndOneMoreHeader]) {
+        expect(deepEquals(headers("k=1", "j=2"), other)).toBe(false);
+        expect(deepEquals(other, headers("k=1", "j=2"))).toBe(false);
+      }
+      for (const other of [otherCustomName, otherCommonName]) {
+        expect(deepEquals(headers(), other)).toBe(false);
+        expect(deepEquals(other, headers())).toBe(false);
+      }
+
+      // The names are in another order, and one value is different.
+      const reorderedWithOtherValue: [Headers, Headers][] = [
+        [new Headers({ "x-a": "1", "x-b": "2" }), new Headers({ "x-b": "2", "x-a": "9" })],
+        [new Headers({ "accept": "a", "content-type": "b" }), new Headers({ "content-type": "b", "accept": "c" })],
+      ];
+      for (const [a, b] of reorderedWithOtherValue) {
+        expect(deepEquals(a, b)).toBe(false);
+        expect(deepEquals(b, a)).toBe(false);
+      }
+      expect(
+        deepEquals(
+          new Headers({ "accept": "a", "content-type": "b" }),
+          new Headers({ "content-type": "b", "accept": "a" }),
+        ),
+      ).toBe(true);
+    });
+
+    it("does not take a header without a value for a missing header", () => {
+      // The location header of this response has no value: get("location") returns null.
+      const noValue = Response.redirect("").headers;
+      const otherName = new Headers({ "content-type": "text/plain" });
+      expect(noValue.count).toBe(otherName.count);
+      expect(deepEquals(noValue, otherName)).toBe(false);
+      expect(deepEquals(otherName, noValue)).toBe(false);
+      expect(deepEquals(noValue, Response.redirect("").headers)).toBe(true);
+    });
+
+    it("compares the own properties when the entries are equal", () => {
+      const withExtra = () => Object.assign(headers("k=1", "j=2"), { extra: 1 });
+      expect(deepEquals(withExtra(), withExtra())).toBe(true);
+      expect(deepEquals(withExtra(), headers("k=1", "j=2"))).toBe(false);
+      expect(deepEquals(headers("k=1", "j=2"), withExtra())).toBe(false);
+    });
+  });
+
+  // Replay a failure with BUN_DEEP_EQUALS_SEED=<seed>.
+  describe("Headers and URLSearchParams against their entries (seeded differential)", () => {
+    const iterations = 300;
+    const random = () => {
+      const seed = Number(process.env.BUN_DEEP_EQUALS_SEED ?? 0x64657175) >>> 0;
+      let state = seed;
+      const next = () => {
+        state = (state + 0x6d2b79f5) | 0;
+        let t = Math.imul(state ^ (state >>> 15), 1 | state);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      const int = (n: number) => Math.floor(next() * n);
+      const pick = <T>(list: readonly T[]): T => list[int(list.length)];
+      // The other side is unrelated, a copy, or a copy in another order with or without one changed name or value.
+      const other = (
+        entries: string[][],
+        fresh: () => string[][],
+        names: readonly string[],
+        values: readonly string[],
+      ) => {
+        const kind = int(8);
+        if (kind === 0) return fresh();
+        const copy = entries.map(entry => [...entry]);
+        if (kind === 2 || kind === 3 || kind === 4) {
+          for (let i = copy.length - 1; i > 0; i--) {
+            const j = int(i + 1);
+            [copy[i], copy[j]] = [copy[j], copy[i]];
+          }
+        }
+        if ((kind === 5 || kind === 6 || kind === 7) && copy.length > 1) {
+          const i = 1 + int(copy.length - 1);
+          [copy[i - 1], copy[i]] = [copy[i], copy[i - 1]];
+        }
+        if ((kind === 3 || kind === 6) && copy.length) pick(copy)[1] = pick(values);
+        if ((kind === 4 || kind === 7) && copy.length) pick(copy)[0] = pick(names);
+        return copy;
+      };
+      return { seed, int, pick, other };
+    };
+
+    it("URLSearchParams: the same answer as getAll() for each name", () => {
+      const { seed, int, pick, other } = random();
+      const names = ["a", "b", "c", "A", ""];
+      const values = ["1", "2", ""];
+      const fresh = () => Array.from({ length: int(6) }, () => [pick(names), pick(values)]);
+      const view = (params: URLSearchParams) =>
+        JSON.stringify([...new Set(params.keys())].sort().map(name => [name, params.getAll(name)]));
+
+      const disagreements: object[] = [];
+      let equal = 0;
+      for (let i = 0; i < iterations; i++) {
+        const entries = fresh();
+        const a = new URLSearchParams(entries);
+        const b = new URLSearchParams(other(entries, fresh, names, values));
+        const expected = view(a) === view(b);
+        equal += Number(expected);
+        const actual = [deepEquals(a, b), deepEquals(b, a)];
+        if (actual[0] !== expected || actual[1] !== expected)
+          disagreements.push({ a: a.toString(), b: b.toString(), expected, actual });
+      }
+      expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
+      // Both answers must be frequent. If one is rare, the loop proves little.
+      expect(equal).toBeWithin(iterations * 0.2, iterations * 0.8);
+    });
+
+    it("Headers: the same answer as the sorted entries and getSetCookie()", () => {
+      const { seed, int, pick, other } = random();
+      const names = ["accept", "Accept", "content-type", "x-a", "X-A", "x-b", "x-c", "set-cookie", "Set-Cookie"];
+      const values = ["1", "2", "3"];
+      const fresh = () => Array.from({ length: int(7) }, () => [pick(names), pick(values)]);
+      const build = (entries: string[][]) => {
+        const headers = new Headers();
+        for (const [name, value] of entries) headers.append(name, value);
+        return headers;
+      };
+      const view = (headers: Headers) =>
+        JSON.stringify([[...headers].filter(([name]) => name !== "set-cookie").sort(), headers.getSetCookie()]);
+
+      const disagreements: object[] = [];
+      let equal = 0;
+      for (let i = 0; i < iterations; i++) {
+        const entries = fresh();
+        const a = build(entries);
+        // The second side starts from the joined values of the first side, so another order moves whole names.
+        const b = build(other([...a], fresh, names, values));
+        const expected = view(a) === view(b);
+        equal += Number(expected);
+        const actual = [deepEquals(a, b), deepEquals(b, a)];
+        if (actual[0] !== expected || actual[1] !== expected)
+          disagreements.push({ a: [...a], b: [...b], expected, actual });
+      }
+      expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
+      expect(equal).toBeWithin(iterations * 0.2, iterations * 0.8);
+    });
+  });
+
   describe("global object", () => {
     let contexts: [vm.Context, vm.Context];
 
@@ -139,6 +422,16 @@ describe("Bun.deepEquals strict mode", () => {
   it("recurses into nested values", () => {
     expect(Bun.deepEquals({ a: { b: 1 } }, { a: { b: 1, c: undefined } })).toBe(true);
     expect(Bun.deepEquals({ a: { b: 1 } }, { a: { b: 1, c: undefined } }, true)).toBe(false);
+  });
+
+  it("distinguishes a Headers or a URLSearchParams from a wrapper of another class", () => {
+    const pairs: [object, object][] = [
+      [new Headers({ a: "1" }), new FormData()],
+      [new URLSearchParams("a=1"), new Bun.CookieMap("a=1")],
+    ];
+    for (const [a, b] of pairs) {
+      expect([Bun.deepEquals(a, b, true), Bun.deepEquals(b, a, true)]).toEqual([false, false]);
+    }
   });
 
   // Matches Node's util.isDeepStrictEqual, which rejects a null prototype

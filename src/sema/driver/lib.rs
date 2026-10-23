@@ -6,6 +6,7 @@
 pub mod format;
 pub mod host;
 pub mod outline;
+mod pages;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
@@ -883,6 +884,9 @@ pub struct Request<'a> {
     pub script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     /// `--conditions` of what is run or bundled, besides `customConditions`.
     pub conditions: &'a [Box<[u8]>],
+    /// Bun runs or bundles `paths`: what they import as an HTML page stands for the page's scripts
+    /// (`Host::scripts_of_page`). `None`: no import is a page.
+    pub pages: Option<PageRules<'a>>,
     /// Compiler options given on the command line. They override the configuration file, including those of referenced
     /// projects.
     pub compiler_options: &'a [CompilerOption],
@@ -905,6 +909,18 @@ pub struct Request<'a> {
     /// still alive. This is how to read the type of every expression. A discarded task's files are rechecked, so this
     /// can be called more than once for a file, and the last call counts.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, FileId) + Sync)>,
+}
+
+/// `Request::pages`: what decides, besides an import's own `type` attribute, whether Bun loads the import as an HTML
+/// page.
+#[derive(Clone, Copy)]
+pub struct PageRules<'a> {
+    /// The loader of a file by its extension, as `--loader` and a bundle's `loader` set it. An extension that isn't
+    /// listed has the loader of its own name (`bun_ast::Loader::of_extension`).
+    pub loaders: &'a bun_ast::LoaderHashTable,
+    /// The conditions that Bun matches in the `exports` and `imports` of a `package.json`, besides
+    /// `Request::conditions`.
+    pub conditions: &'a [&'a [u8]],
 }
 
 /// A diagnostic, ready to be formatted.
@@ -1740,9 +1756,16 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
     let mut report = check_paths(disk, request);
     // Each script is checked once, in its own project, like a file passed as a path.
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    // An entry point is checked already. A bundle names the scripts of its pages as entry points.
+    if request.are_entry_points && !report.scripts_elsewhere.is_empty() {
+        let cwd = host::from_native(request.cwd);
+        let entry_points = request.paths.iter();
+        let entry_points = entry_points.map(|path| host::from_argument(&cwd, path));
+        seen.extend(entry_points.map(|path| disk.with_on_disk_casing(&path)));
+    }
     loop {
         let mut scripts = std::mem::take(&mut report.scripts_elsewhere);
-        scripts.retain(|script| seen.insert(script.clone()));
+        scripts.retain(|script| seen.insert(disk.with_on_disk_casing(script)));
         if scripts.is_empty() {
             return report;
         }
@@ -3926,6 +3949,10 @@ fn check_named_files(
     let mut scripts_elsewhere = Vec::new();
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
+        // Whatever finding the pages caches is freed once the reached files are known.
+        let locating = Session::new();
+        let of_program = |rules| pages::Pages::new(host, program.files, rules, &locating);
+        let mut pages = request.pages.map(of_program);
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| is_among(named, modules[i].path.text))
@@ -3935,11 +3962,9 @@ fn check_named_files(
         }
         while let Some(i) = to_follow.pop() {
             // A page represents its scripts.
-            let specifiers = modules[i].bound.specifiers.iter();
-            let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
-            let pages = specifiers.filter(|it| it.ends_with(b".html") && is_relative(it));
-            let directory = dirname::<Posix>(modules[i].file_name());
-            let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
+            let importer = FileId(i as u32);
+            let scripts = pages.iter_mut();
+            let scripts = scripts.flat_map(|pages| pages.scripts_imported_by(importer));
             let scripts = scripts.filter_map(|script| {
                 let here = program.files.by_path.get(&script);
                 if here.is_none() {

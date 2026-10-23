@@ -184,6 +184,15 @@ impl Loader {
         })
     }
 
+    /// The loader of a file by its `extension`, which includes the dot: the entry of `loaders`, or else the loader
+    /// that has the extension's name.
+    pub fn of_extension(extension: &[u8], loaders: &LoaderHashTable) -> Option<Loader> {
+        loaders
+            .get(extension)
+            .copied()
+            .or_else(|| Loader::from_string(extension))
+    }
+
     #[inline]
     pub fn is_jsx(self) -> bool {
         self == Loader::Jsx || self == Loader::Tsx

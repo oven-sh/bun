@@ -668,6 +668,7 @@ impl<'h> Graph<'h> {
             through_paths: false,
             as_import: false,
             base_url: None,
+            conditions: &[],
         };
         // No TypeScript config applies here.
         let plain = self.resolver_of(b"", cwd);
@@ -700,6 +701,7 @@ impl<'h> Graph<'h> {
             through_paths: true,
             as_import: false,
             base_url: None,
+            conditions: &[],
         };
         let from_base_url = || {
             let base_url = base_url
@@ -865,6 +867,7 @@ impl<'h> Graph<'h> {
                 through_paths: true,
                 as_import: true,
                 base_url: base_url.map(Vec::as_slice),
+                conditions: &[],
             };
             let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
             let is_external = is_in_package(&code);

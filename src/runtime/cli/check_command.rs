@@ -242,6 +242,8 @@ struct Entries<'a> {
     script_kinds: &'a [(Vec<u8>, ScriptKind)],
     script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     conditions: &'a [Box<[u8]>],
+    /// `PageRules::loaders`. `None`: every extension has the loader of its name.
+    loaders: Option<&'a bun_ast::LoaderHashTable>,
 }
 
 fn run<R>(
@@ -300,7 +302,16 @@ fn run_quietly<R>(
     provided: Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
-    let request = request(cwd, project, paths, compiler_options, threads, progress);
+    let no_loaders = bun_ast::LoaderHashTable::default();
+    let request = request(
+        cwd,
+        project,
+        paths,
+        &no_loaders,
+        compiler_options,
+        threads,
+        progress,
+    );
     bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), then)
 }
 
@@ -321,14 +332,17 @@ fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
     }
 }
 
+/// `no_loaders`: an empty table, for paths that come without one.
 fn request<'a>(
     cwd: &'a [u8],
     project: Option<&'a [u8]>,
     paths: &Paths<'a>,
+    no_loaders: &'a bun_ast::LoaderHashTable,
     compiler_options: &'a [CompilerOption],
     threads: usize,
     progress: Option<&'a Progress>,
 ) -> Request<'a> {
+    use bun_bundler::options::TargetExt as _;
     let (entries, command_line) = match *paths {
         Paths::Arguments(command_line) => {
             let paths = Entries {
@@ -350,6 +364,11 @@ fn request<'a>(
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
+        // Every path is one that Bun runs or bundles, or one that a file it runs can import.
+        pages: Some(bun_sema_driver::PageRules {
+            loaders: entries.loaders.unwrap_or(no_loaders),
+            conditions: bun_ast::Target::default_conditions_map()[bun_ast::Target::Bun],
+        }),
         compiler_options,
         threads,
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -549,8 +568,8 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     // `--loader`, `--conditions`
     let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
     let loaders = args.and_then(|args| args.loaders.as_ref());
-    let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
-    let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
+    let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun).unwrap_or_default();
+    let by_extension = script_kinds_by_extension(&loaders);
     let Some((paths, script_kinds)) = paths_to_check(&cwd, entry_points, &by_extension) else {
         return true;
     };
@@ -565,6 +584,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
+        loaders: Some(&loaders),
     };
     check_and_report(&Paths::EntryPoints(entries), provided)
 }
@@ -677,6 +697,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions,
+        loaders: Some(loaders),
     });
     let then = |report| report;
     let report = match shows_progress {

@@ -1380,6 +1380,9 @@ pub struct AsRequire<'a> {
     pub as_import: bool,
     /// `baseUrl`, absolute: where oxc-resolver looks after `paths`, before any package.
     pub base_url: Option<&'a [u8]>,
+    /// The conditions that match in `exports` and `imports`, besides `default`, `import` or `require`, and
+    /// `customConditions`.
+    pub conditions: &'a [&'a [u8]],
 }
 
 /// `ForEachAncestorDirectory`: `dir`, then each of its ancestor directories up to the root.
@@ -1755,6 +1758,8 @@ struct Outcome<'a> {
     is_blocked: Cell<bool>,
     /// With [`Look::as_require`]: the extensions to try appending to a name.
     require_extensions: &'a [&'a [u8]],
+    /// [`AsRequire::conditions`]
+    require_conditions: &'a [&'a [u8]],
     /// `resolved.packageId`, stored as `getPackageId`'s inputs: the `packageInfo`'s
     /// `PackageDirectory` and `resolved.path`, both before symlinks are resolved. `None`: it's
     /// empty, as in every `resolved` whose file `tryFile` found.
@@ -2351,6 +2356,11 @@ impl<'h> Resolver<'h> {
         Self::with_tables(session, host, options, false)
     }
 
+    /// A resolver that one thread uses for a few lookups. Its memo tables are `Memo::Small`.
+    pub fn for_few_lookups(session: &'h Session, host: &'h dyn Host, options: &'h Options) -> Self {
+        Self::with_tables(session, host, options, true)
+    }
+
     fn with_tables(
         session: &'h Session,
         host: &'h dyn Host,
@@ -2886,6 +2896,7 @@ impl<'h> Resolver<'h> {
     ) -> Option<(Vec<u8>, Option<usize>)> {
         let outcome = Outcome {
             require_extensions: how.extensions,
+            require_conditions: how.conditions,
             ..Outcome::default()
         };
         let look = Look {
@@ -4462,6 +4473,7 @@ impl<'h> Resolver<'h> {
                 .any(|c| c == condition)
             || !look.as_import
                 && (condition == b"types" || is_applicable_versioned_types_key(condition))
+            || (look.outcome.require_conditions.iter()).any(|it| *it == condition)
     }
 
     /// `loadModuleFromImports`: `#name`, through the `imports` of the nearest `package.json`.

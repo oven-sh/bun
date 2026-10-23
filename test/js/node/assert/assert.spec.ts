@@ -1,5 +1,6 @@
 import assert, { AssertionError } from "assert";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { inheritedErrors, thrownBy } from "../inherited-errors";
 
 describe("assert(expr)", () => {
   // https://github.com/oven-sh/bun/issues/941
@@ -95,5 +96,31 @@ describe("assert.deepEqual(actual, expected)", () => {
       e1.a = { foo: "baz" };
       expect(() => assert.deepEqual(e1, e2)).toThrow(AssertionError);
     });
+  });
+});
+
+// The message of a failed comparison shows both operands with util.inspect. Two errors are shown
+// as copies, and a copy of a DOMException has `name` and `message` getters that throw.
+describe("a comparison that fails, with a value that inherits from Error.prototype", () => {
+  // The AssertionError constructor sets the limit to 0 while it builds the message.
+  const stackTraceLimit = Error.stackTraceLimit;
+  afterEach(() => {
+    Error.stackTraceLimit = stackTraceLimit;
+  });
+
+  function compare(actual: unknown, expected: unknown) {
+    const thrown = thrownBy(() => assert.deepStrictEqual(actual, expected));
+    return {
+      throws: thrown instanceof AssertionError ? "AssertionError" : thrown,
+      stackTraceLimit: Error.stackTraceLimit,
+    };
+  }
+
+  it.each(inheritedErrors)("%s as an operand or as a cause", (_kind, make) => {
+    const asNode = { throws: "AssertionError", stackTraceLimit };
+    expect({
+      operand: compare(make(), new Error("y")),
+      cause: compare(new Error("a", { cause: make() }), new Error("b")),
+    }).toEqual({ operand: asNode, cause: asNode });
   });
 });

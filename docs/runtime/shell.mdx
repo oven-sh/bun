@@ -71,6 +71,24 @@ console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
 console.log(stderr); // Buffer(0) []
 ```
 
+To be explicit about what each form resolves to:
+
+- `await $\`cmd\`` or `await $\`cmd\`.quiet()` resolves to a `ShellOutput` object — `.stdout` and `.stderr` are `Buffer`s, plus `.exitCode`.
+- `await $\`cmd\`.text()` (or `await $\`cmd\`.quiet().text()`) resolves to a **plain `string`**, not a `ShellOutput`.
+
+```js
+import { $ } from "bun";
+
+const output = await $`echo "Hello!"`.quiet();
+output.stdout.toString(); // "Hello!\n"
+output.exitCode; // 0
+
+const text = await $`echo "Hello!"`.quiet().text();
+text.trim(); // "Hello!"
+```
+
+A common pitfall is mixing the two: calling `.stdout` on a `.text()` result yields `undefined` (and a `TypeError` when chaining `.toString()`), because the promise resolved to a string rather than `ShellOutput`. If you need `.stdout`, `.stderr`, or `.exitCode`, await the shell promise directly instead of calling `.text()`.
+
 ---
 
 ## Error handling

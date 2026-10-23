@@ -3144,7 +3144,7 @@ it("delete process.env.TZ invalidates existing Date instances", async () => {
   });
 });
 
-it("a time zone change reaches a Date that cached its local time in an earlier task", async () => {
+it.concurrent("a time zone change reaches a Date that cached its local time in an earlier task", async () => {
   // The walk over the live Dates runs only when a Date has cached a local time. Each Date here caches one in one
   // task, and the zone changes in a later task, after the VM was left and entered again.
   await using proc = Bun.spawn({
@@ -3183,7 +3183,7 @@ it("a time zone change reaches a Date that cached its local time in an earlier t
   });
 });
 
-it("a time zone change reaches a Date that compiled code read first", async () => {
+it.concurrent("a time zone change reaches a Date that compiled code read first", async () => {
   // The DFG reads the cached local time of a Date without a call, and calls into the runtime only to compute it.
   // hours() is compiled before `d` exists, and the change to UTC walks the Dates of the loop. After that, only the
   // read of `d` from the compiled code can tell the next change that a Date has a local time to drop.

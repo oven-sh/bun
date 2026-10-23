@@ -3490,9 +3490,16 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("unicode surrogates", () => {
-      expectPrinted_(`console.log("𐌴")`, 'console.log("\\uD800\\uDF34")');
-      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("\\uD800\\uDF34")');
-      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      // Bun.Transpiler prints non-ASCII as-is; a well-formed surrogate pair is one character.
+      expectPrinted_(`console.log("𐌴")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("a\\uD800b\\uDF34c")`, 'console.log("a\\uD800b\\uDF34c")');
+      expectPrinted_(`console.log("\\uDF34\\uD800")`, 'console.log("\\uDF34\\uD800")');
+      expectPrinted_(`console.log("\\uD83D\\uDE0E\\uDE0E\\uD83D\\uD83D\\uDE0E")`, 'console.log("😎\\uDE0E\\uD83D😎")');
+      // A run of characters that need no escape, longer than the printer's run buffer.
+      const long = Buffer.alloc(150 * 3, "日").toString() + "😎" + Buffer.alloc(150 * 2, "é").toString();
+      expectPrinted_(`console.log("${long}\\\\${long}")`, `console.log("${long}\\\\${long}")`);
       expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
       expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
       expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');

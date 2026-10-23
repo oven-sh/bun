@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, copyFileSync, readdirSync, rmSync } from "fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1921,5 +1921,29 @@ test("a standalone executable does not run a synchronous full GC after loading i
   // option reached the compiled binary without depending on any GC happening.
   expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
   expect(stderr).not.toContain("FullCollection");
+  expect(exitCode).toBe(0);
+});
+
+// Homebrew installs bun with mode 0o555. On macOS, inject() clonefile()s the running executable into the cwd, and the
+// clone inherits that mode, so it used to fail to open read-write and was left behind as `.<hash>-00000000.bun-build`.
+test.skipIf(!isMacOS)("compile with a read-only bun executable leaves no temp file in the cwd", async () => {
+  using dir = tempDir("compile-readonly-bun", {
+    "project/app.js": `console.log("hello");`,
+  });
+  const readonlyBun = join(String(dir), "bun");
+  copyFileSync(bunExe(), readonlyBun);
+  chmodSync(readonlyBun, 0o555);
+  const cwd = join(String(dir), "project");
+
+  await using proc = Bun.spawn({
+    cmd: [readonlyBun, "build", "--compile", "app.js", "--outfile", "app"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error");
+  expect(readdirSync(cwd).sort()).toEqual(["app", "app.js"]);
   expect(exitCode).toBe(0);
 });

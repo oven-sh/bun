@@ -3081,6 +3081,7 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
+        let source = bun_ast::Source::init_path_string(file_path_text, entry.contents());
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
             entry.contents(),
@@ -3090,20 +3091,12 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(v) => v,
             Err(e) => {
-                let _ = self.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("{} parsing", e),
-                );
+                let _ = e.add_to_logger(self.log_mut(), &source);
                 return None;
             }
         };
         if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra) {
-            self.log_mut().add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!("{} while minifying", e.kind),
-            );
+            let _ = e.add_to_logger(self.log_mut(), &source);
             return None;
         }
         let symbols = bun_ast::symbol::Map::init_list(vec![extra.symbols]);
@@ -3120,11 +3113,7 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(v) => v,
             Err(e) => {
-                self.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("{} while printing", e),
-                );
+                let _ = e.add_to_logger(self.log_mut(), &source);
                 return None;
             }
         };

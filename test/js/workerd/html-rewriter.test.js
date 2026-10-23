@@ -3927,41 +3927,44 @@ describe("a document that arrives on a pipe, with nothing else alive", () => {
   // A failed read of the pipe ends the rewrite too. The fixture's stdin is one end of a
   // socket pair, and it leaves one byte unread at the test's end: closing that end then
   // fails the fixture's next read with ECONNRESET. Only Linux resets a Unix socket for that.
-  it.skipIf(!isLinux)("a read error rejects the body, and the reaction runs before 'beforeExit'", async () => {
-    const [childEnd, testEnd] = createSocketPair();
-    let testEndOpen = true;
-    try {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `${prelude}
-           require("node:fs").writeSync(0, "x");
-           process.on("beforeExit", () => print("beforeExit"));
-           rewriter().transform(new Response(Bun.stdin)).text()
-             .then(text => print({ text }), error => print({ rejected: error.code }));
-           console.error("wired");`,
-        ],
-        env: bunEnv,
-        stdin: childEnd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      fs.closeSync(childEnd);
-      const stderr = watch(proc.stderr);
-      await stderr.printed("wired");
-      fs.writeSync(testEnd, html);
-      await stderr.printed("chunk");
-      fs.closeSync(testEnd);
-      testEndOpen = false;
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), stderr.printed(), proc.exited]);
-      expect({ stdout: parseLines(stdout), stderr: stderr.text, exitCode }).toEqual(
-        ran({ rejected: "ECONNRESET" }, "beforeExit"),
-      );
-    } finally {
-      if (testEndOpen) fs.closeSync(testEnd);
-    }
-  });
+  it.skipIf(!isLinux).concurrent(
+    "a read error rejects the body, and the reaction runs before 'beforeExit'",
+    async () => {
+      const [childEnd, testEnd] = createSocketPair();
+      let testEndOpen = true;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `${prelude}
+             require("node:fs").writeSync(0, "x");
+             process.on("beforeExit", () => print("beforeExit"));
+             rewriter().transform(new Response(Bun.stdin)).text()
+               .then(text => print({ text }), error => print({ rejected: error.code }));
+             console.error("wired");`,
+          ],
+          env: bunEnv,
+          stdin: childEnd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        fs.closeSync(childEnd);
+        const stderr = watch(proc.stderr);
+        await stderr.printed("wired");
+        fs.writeSync(testEnd, html);
+        await stderr.printed("chunk");
+        fs.closeSync(testEnd);
+        testEndOpen = false;
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), stderr.printed(), proc.exited]);
+        expect({ stdout: parseLines(stdout), stderr: stderr.text, exitCode }).toEqual(
+          ran({ rejected: "ECONNRESET" }, "beforeExit"),
+        );
+      } finally {
+        if (testEndOpen) fs.closeSync(testEnd);
+      }
+    },
+  );
 
   // The checkpoint belongs to a delivery that the event loop dispatched. A read that the
   // rewriter's own drain drives delivers on its caller's stack, and a checkpoint there would

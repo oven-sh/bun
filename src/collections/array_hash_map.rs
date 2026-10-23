@@ -1450,7 +1450,7 @@ type StringHashMapInner<V, A = DefaultAlloc> =
 /// (`Static`, produced by `put_static_key`).
 ///
 /// Heap-boxing every key on `put` profiled as the dominant cost of
-/// `DirEntry::add_entry` (the resolver's per-file hot path): the key bytes
+/// `DirEntry::read_names` (the resolver's per-file hot path): the key bytes
 /// there already live in the process-static `FilenameStore`/`EntryStore`, so
 /// the `Box<[u8]>` was a redundant second copy. The `Static` variant lets such
 /// callers store the existing slice directly — zero-copy without giving up
@@ -1743,7 +1743,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// so a caller that already has the key bytes in hand (and will probe *and*
     /// then insert the same key) can hash once and feed the result to
     /// [`get_hashed`] / [`put_static_key_hashed`] instead of re-deriving it on
-    /// each call. The resolver's `DirEntry::add_entry` does precisely this: one
+    /// each call. The resolver's `DirEntry::read_names` does precisely this: one
     /// case-insensitive probe against the previous-generation directory map,
     /// one insert into the new one, same (lowercased) basename bytes.
     #[inline]

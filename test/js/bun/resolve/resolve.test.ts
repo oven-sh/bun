@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  expectRssDeltaBelow,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1375,6 +1387,29 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(stdout).toBe(`${(N * (N - 1)) / 2}\n${3 + 77}\n`);
   expect(exitCode).toBe(0);
 }, 20_000);
+
+it("keeps a listing no larger than the directory needs", async () => {
+  using dir = tempDir("resolver-listing-size", {});
+  const root = String(dir);
+  // 30 chains of 61 directories. Each directory has one entry.
+  const chain = Buffer.alloc(120, "/a").toString();
+  for (let c = 0; c < 30; c++) {
+    mkdirSync(root + "/c" + c + chain, { recursive: true });
+    writeFileSync(root + "/c" + c + chain + "/index.js", "");
+  }
+  const code = /* js */ `
+    const root = ${JSON.stringify(root)};
+    const file = ${JSON.stringify(chain + "/index.js")};
+    Bun.resolveSync("./c0" + file, root);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let c = 1; c < 30; c++) Bun.resolveSync("./c" + c + file, root);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+  // A table for 64 entries is 3.5 KB for 60 directories of each chain: 7.2 MiB, against 1.3 MiB.
+  await expectRssDeltaBelow(["-e", code], { release: 4.5, debug: 4.5 });
+});
 
 // ASAN builds print a warning on stderr that has nothing to do with resolution.
 function stripAsanWarning(stderr: string): string {

@@ -55,6 +55,7 @@ fn resolve_types(resolver: &Resolver<'_>) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn host_claim_wins_over_node_modules() {
     let installed = "/p/node_modules/fs/index.js";
     let claiming = empty_files(&[installed]).module("fs", 3);
@@ -63,6 +64,7 @@ fn host_claim_wins_over_node_modules() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn claimed_path_is_not_searched() {
     let host = linked_files()
         .claim("linked", HostResolution::Path(b"/p/linked.js".to_vec()))
@@ -78,6 +80,7 @@ fn claimed_path_is_not_searched() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn claimed_module_source_records_host_module() {
     let source = HostResolution::ModuleSource {
         module: HostModuleId(5),
@@ -95,6 +98,7 @@ fn claimed_module_source_records_host_module() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn external_and_erased_claims_pass_through() {
     let host = empty_files(&["/p/a.ts", "/p/b.ts"])
         .claim("./a.ts", external("renamed", ExternalKind::UncompiledCode))
@@ -105,6 +109,7 @@ fn external_and_erased_claims_pass_through() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn claimed_external_kind_is_unchanged() {
     let host = empty_files(&[])
         .claim("react", external("react", ExternalKind::UncompiledCode))
@@ -120,6 +125,7 @@ fn claimed_external_kind_is_unchanged() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn external_kind_of_imports_target_is_unchanged() {
     let manifest = (
         "/p/package.json",
@@ -132,6 +138,7 @@ fn external_kind_of_imports_target_is_unchanged() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn host_is_asked_for_every_request() {
     let installed = "/p/node_modules/dep/index.js";
     let module = HostResolution::Module(HostModuleId(7));
@@ -144,6 +151,7 @@ fn host_is_asked_for_every_request() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn stored_answer_does_not_depend_on_importer() {
     let installed = "/p/node_modules/dep/index.js";
     let files = [
@@ -163,6 +171,7 @@ fn stored_answer_does_not_depend_on_importer() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn urls_are_external_for_imports() {
     let host = empty_files(&["/p/a.ts"]);
     for url in ["http://x", "https://x", "//x", "data:,x", "data:,x?y"] {
@@ -173,6 +182,7 @@ fn urls_are_external_for_imports() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn urls_are_uncompiled_code() {
     let host = empty_files(&["/p/a.ts"]);
     for url in ["http://x", "https://x", "//x", "data:,x"] {
@@ -188,6 +198,7 @@ fn urls_are_uncompiled_code() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn query_string_is_not_supported() {
     let host = empty_files(&["/p/a.ts", "/p/b?x.ts"]);
     assert_eq!(import(&host, "./a.ts?x"), "NotFound(QueryString)");
@@ -196,6 +207,7 @@ fn query_string_is_not_supported() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn empty_and_nul_specifiers_find_nothing() {
     let host = empty_files(&["/p/a.ts", "/p/index.ts"]);
     assert_eq!(import(&host, ""), MODULE_NOT_FOUND);
@@ -204,12 +216,14 @@ fn empty_and_nul_specifiers_find_nothing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn empty_specifier_is_not_offered_to_host() {
     let host = empty_files(&["/p/a.ts"]).claim("", HostResolution::Erased);
     assert_eq!(import(&host, ""), MODULE_NOT_FOUND);
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn dot_names_importer_directory() {
     let host = empty_files(&["/p/b.ts", "/p/b/index.ts"]);
     let import = |specifier| resolve_in(&host, &bun_run(), "/p/b/x.ts", specifier, Import);
@@ -218,6 +232,7 @@ fn dot_names_importer_directory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn bare_entry_point_is_package_then_relative() {
     let host = empty_files(&["/p/index.ts", "/p/util.ts", INSTALLED]);
     assert_eq!(entry_point(&host, "pkg"), INSTALLED);
@@ -234,6 +249,7 @@ fn bare_entry_point_is_package_then_relative() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn entry_point_without_relative_file_keeps_package_answer() {
     let imports = ("/p/package.json", r##"{"imports": {"#fs": "node:fs"}}"##);
     let claimed = MemoryHost::new(&[imports]).module("node:fs", 7);
@@ -254,6 +270,7 @@ fn entry_point_without_relative_file_keeps_package_answer() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn failure_follows_specifier_form() {
     let host = empty_files(&["/p/a.ts"]);
     assert_eq!(import(&host, "node:nope"), BUILTIN_NOT_FOUND);
@@ -264,6 +281,7 @@ fn failure_follows_specifier_form() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn only_module_not_found_follows_specifier_form() {
     let manifest = r#"{"exports": {"./a": "./a.js"}}"#;
     let files = [(MANIFEST, manifest), ("/p/node_modules/pkg/a.js", "")];
@@ -273,6 +291,7 @@ fn only_module_not_found_follows_specifier_form() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn symlinks_resolve_to_real_paths() {
     let host = linked_files();
     assert_eq!(import(&host, "pkg"), "/store/pkg/index.js");
@@ -281,6 +300,7 @@ fn symlinks_resolve_to_real_paths() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn preserved_symlinks_keep_directory_links_only() {
     let host = linked_files();
     let options = CodeOptions {
@@ -294,6 +314,7 @@ fn preserved_symlinks_keep_directory_links_only() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn module_type_follows_extension_and_package() {
     let host = MemoryHost::new(&[
         ("/p/package.json", r#"{"name": "p", "type": "module"}"#),
@@ -318,6 +339,7 @@ fn module_type_follows_extension_and_package() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn relative_path_has_no_package_module_type() {
     let manifest = ("/package.json", r#"{"name": "root", "type": "module"}"#);
     let host = MemoryHost::new(&[manifest, ("/p/a.js", "")]);
@@ -331,6 +353,7 @@ fn relative_path_has_no_package_module_type() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn loader_request_has_settings_and_module_type() {
     let config = r#"{"compilerOptions": {"jsxImportSource": "preact"}}"#;
     let host = MemoryHost::new(&[
@@ -351,6 +374,7 @@ fn loader_request_has_settings_and_module_type() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn loader_request_passes_kind_and_attributes() {
     let host = empty_files(&["/p/a.js"]);
     with_resolver(&host, &bun_run(), |resolver| {
@@ -374,6 +398,7 @@ fn loader_request_passes_kind_and_attributes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn absolute_specifier_tries_paths_first() {
     let sources = [("/p/src/a.ts", ""), ("/virtual/a.ts", "")];
     let paths = r#"{"compilerOptions": {"paths": {"/virtual/*": ["./src/*"]}}}"#;
@@ -386,6 +411,7 @@ fn absolute_specifier_tries_paths_first() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn paths_substitution_preserves_trailing_slash() {
     let paths = r#"{"@/*": ["./src/*"], "rooted/*": ["/p/src/*"]}"#;
     let config = format!(r#"{{"compilerOptions": {{"paths": {paths}}}}}"#);
@@ -407,6 +433,7 @@ fn paths_substitution_preserves_trailing_slash() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn rooted_exact_substitution_is_loaded_as_written() {
     let paths = r#"{"exact": ["/lib/."], "pattern/*": ["/lib/*"]}"#;
     let config = format!(r#"{{"compilerOptions": {{"paths": {paths}}}}}"#);
@@ -423,6 +450,7 @@ fn rooted_exact_substitution_is_loaded_as_written() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn absolute_specifier_is_normalized() {
     let host = empty_files(&["/p/src.ts", "/p/src/index.ts"]);
     assert_eq!(import(&host, "/p/x/../src"), "/p/src.ts");
@@ -431,6 +459,7 @@ fn absolute_specifier_is_normalized() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn directory_defaults_to_working_directory() {
     let host = empty_files(&["/p/a.ts"]);
     let finds_file = |directory: &str| {
@@ -449,6 +478,7 @@ fn directory_defaults_to_working_directory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn repeated_request_returns_stored_answer() {
     let host = empty_files(&["/p/a.ts"]);
     with_resolver(&host, &bun_run(), |resolver| {
@@ -465,6 +495,7 @@ fn repeated_request_returns_stored_answer() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn manifest_text_is_read_once() {
     let files = [(MANIFEST, r#"{"name": "pkg"}"#), (INSTALLED, "")];
     let host = MemoryHost::new(&files);
@@ -482,6 +513,7 @@ fn manifest_text_is_read_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn project_resolver_shares_manifest_text() {
     let manifest = "/p/lib/node_modules/pkg/package.json";
     let installed = "/p/lib/node_modules/pkg/index.js";
@@ -502,6 +534,7 @@ fn project_resolver_shares_manifest_text() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 #[should_panic(expected = "for_compile")]
 fn resolve_code_requires_for_compile() {
     let host = empty_files(&["/p/a.ts"]);
@@ -578,6 +611,7 @@ fn first_of_repeated_json_keys_is_read() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn from_site_maps_every_kind() {
     let imports = [
         ImportSiteKind::JsxRuntime,

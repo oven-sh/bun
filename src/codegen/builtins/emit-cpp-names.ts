@@ -25,6 +25,9 @@ import { compareBytes, tokenOf } from "./paths.ts";
 
 export const textNamesArray = "builtinTableTextNames";
 export const textNameSlotsArray = "builtinTableTextNameSlots";
+// Code of the engine names this one, so its type has a name that does not say how long it is.
+export const classTokensArray = "builtinTableClassTokens";
+export const classTokensType = "BuiltinClassTokenStorage";
 
 interface TableArray {
   cppType: string;
@@ -62,7 +65,7 @@ export interface NamedList<Item> {
   cppType: string;
   array: string;
   countName: string;
-  // In the order of the positions: what the engine declares, then what the host declares, each by the bytes of its constant.
+  // In the order of the positions: what the engine declares, then the roles of the host, each by the bytes of its constant.
   items: readonly (readonly [constant: string, item: Item])[];
   format: (item: Item) => string;
 }
@@ -77,11 +80,8 @@ function orderNamedItems<Item>(
   );
 }
 
-// What hand-written C++ names is a position in one of these lists. A position depends only on the constants in front of it, so an entry of the host moves none of the engine's.
+// What hand-written C++ names is a position in one of these lists. The declarations of the engine alone say what is in them, so no entry of the host moves or adds a position.
 export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
-  const namesOfEngine = new Set<ModelName>(model.names.filter(name => name.kind === "WellKnownSymbol"));
-  for (const builtin of model.builtins) if (builtin.origin === "Engine") namesOfEngine.add(builtin.name);
-  for (const { keys } of model.protocolKeys) for (const key of keys) namesOfEngine.add(key);
   const isEngineRow = ({ origin }: { origin: string }): boolean => origin === "Engine";
   const builtins: NamedList<ModelBuiltin> = {
     namespace: "Builtins",
@@ -89,7 +89,7 @@ export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
     array: "builtinTableNamedBuiltins",
     countName: "numberOfNamedBuiltins",
     items: orderNamedItems(
-      model.builtins.map(builtin => [builtin.token, builtin] as const),
+      [...model.builtins.filter(isEngineRow), ...model.hostRoles].map(builtin => [builtin.token, builtin] as const),
       isEngineRow,
     ),
     format: builtin => formatId("BuiltinID", builtin),
@@ -100,8 +100,10 @@ export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
     array: "builtinTableNamedNames",
     countName: "numberOfNamedBuiltinNames",
     items: orderNamedItems(
-      model.names.flatMap(name => (name.cppConstant === null ? [] : [[name.cppConstant, name] as const])),
-      name => namesOfEngine.has(name),
+      model.names.flatMap(name =>
+        name.cppConstant === null || !model.namesOfEngine.has(name) ? [] : [[name.cppConstant, name] as const],
+      ),
+      () => true,
     ),
     format: name => formatName(name),
   };
@@ -111,7 +113,9 @@ export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
     array: "builtinTableNamedClasses",
     countName: "numberOfNamedBuiltinClasses",
     items: orderNamedItems(
-      model.classes.map(builtinClass => [builtinClass.token, builtinClass] as const),
+      [...model.classes.filter(isEngineRow), ...model.hostClassRoles].map(
+        builtinClass => [builtinClass.token, builtinClass] as const,
+      ),
       isEngineRow,
     ),
     format: builtinClass => formatId("BuiltinClassID", builtinClass),
@@ -128,6 +132,10 @@ export function namedListsOf(model: TableModel): readonly NamedList<any>[] {
     format: layout => formatId("BuiltinLayoutID", layout),
   };
   return [builtins, names, classes, layouts];
+}
+
+export function namedBuiltinsOf(model: TableModel): readonly ModelBuiltin[] {
+  return namedListsOf(model)[0].items.map(([, builtin]) => builtin);
 }
 
 function getText(name: ModelName): string {
@@ -229,7 +237,7 @@ export function nameArraysOf(model: TableModel): NameArrays {
           .filter(({ token, path }) => token !== tokenOf(path))
           .map(builtin => formatId("BuiltinID", builtin)),
       },
-      createTexts("builtinTableClassTokens", model.classes.map(getToken)),
+      createTexts(classTokensArray, model.classes.map(getToken)),
       createTexts("builtinTableSlotTokens", model.slots.map(slotTokenOf)),
       createTexts("builtinTableLayoutTokens", model.layouts.map(getToken)),
       createTexts("builtinTableModuleTokens", model.modules.map(getToken)),
@@ -238,20 +246,21 @@ export function nameArraysOf(model: TableModel): NameArrays {
 }
 
 // The zero behind the last text is the one that ends the literal.
-function emitTexts(declaration: string, texts: readonly string[]): string {
+function emitTexts(declaration: string, texts: readonly string[], isDerived = false): string {
   const starts: number[] = [0];
   for (const text of texts) starts.push(starts[starts.length - 1] + lengthOfCharacters(text) + 1);
   const rowsOfStarts: string[] = [];
   for (let first = 0; first < starts.length; first += 16)
     rowsOfStarts.push(`        ${starts.slice(first, first + 16).join(", ")},`);
   const literals = texts.map((text, index) => `    "${text}${index + 1 < texts.length ? "\\0" : ""}"`);
-  return `${declaration} = {\n    ${texts.length},\n    {\n${rowsOfStarts.join("\n")}\n    },\n${literals.join("\n")}\n};`;
+  return `${declaration} = ${isDerived ? "{ " : ""}{\n    ${texts.length},\n    {\n${rowsOfStarts.join("\n")}\n    },\n${literals.join("\n")}\n}${isDerived ? " }" : ""};`;
 }
 
 // The C++ compiler hashes the text names, so they have to be a constant expression.
 function emitNameArray({ cppType, name, elements, numberOfCharacters }: TableArray): string {
   if (numberOfCharacters === undefined) return emitArray(`constinit const ${cppType} ${name}`, elements);
   if (elements.length === 0) return "";
+  if (name === classTokensArray) return emitTexts(`constinit const ${classTokensType} ${name}`, elements, true);
   if (name !== textNamesArray) return emitTexts(`constinit const ${cppType} ${name}`, elements);
   return joinBlocks([
     emitTexts(`constexpr ${cppType} ${name}`, elements),
@@ -267,6 +276,12 @@ export function emitCppNames(model: TableModel): string {
       items.map(([, item]) => format(item)),
     ),
   );
-  const body = joinBlocks([...pools.map(pool => pool.emit()), ...arrays.map(emitNameArray), ...namedLists]);
+  const body = joinBlocks([
+    ...pools.map(pool => pool.emit()),
+    ...arrays.map(emitNameArray),
+    "inline namespace AOT_NAMESPACE_OF_ENGINE_LIST {",
+    ...namedLists,
+    "}",
+  ]);
   return wrapFile(["AOTBuiltinNameSlots.h", "AOTBuiltinTable.h", "AOTBuiltinTableArrays.h"], body);
 }

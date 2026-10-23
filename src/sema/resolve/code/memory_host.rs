@@ -692,6 +692,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn resolve_in_formats_answers() {
         let files = [("/p/a.ts", ""), ("/p/b.ts", "")];
         let host = MemoryHost::new(&files).module("node:fs", 3);
@@ -708,6 +709,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn resolve_computed_in_formats_answers() {
         let files = [
             ("/p/main.ts", ""),

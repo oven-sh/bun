@@ -199,7 +199,7 @@ const propertyOfBuffer = (name: string, property: string) =>
     getter: b.any,
     capability: "js",
     throws: true,
-    uses: { this: [b.runs("PrototypeChain", b.named(property))] },
+    uses: { this: [b.runs("PrototypeChain"), b.readByKey(b.keysNamed(property))] },
     implementation: b.compiled("builtins/JSBufferPrototype", name),
   }) satisfies b.GetterField;
 

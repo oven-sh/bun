@@ -38,11 +38,13 @@ for (const [file, text] of testFiles) {
       names.split(",").map(name => name.trim()),
     ).flat(),
   );
-  const add = (callee: string, before: string, part: number, parts: number) => {
+  const add = (callee: string, before: string, part: number, parts: number, behind = "") => {
     if (!imported.has(callee)) return;
     // The parts of a variant have its label in common: each part may be built with a switch of its own.
     const common = callee === "variant" ? (/^"[^"]*", /.exec(before)?.[0] ?? before) : before;
-    const shared = `${dirname(file) === "." ? "" : dirname(file) + "/: "}${callee}(${common}`;
+    // What stands behind the parts names another form of the same run: testPrograms(0, 1, "one file").
+    const form = callee === "variant" || !behind ? "" : `[..${behind}]`;
+    const shared = `${dirname(file) === "." ? "" : dirname(file) + "/: "}${callee}${form}(${common}`;
     splitCalls.set(shared, [...(splitCalls.get(shared) ?? []), { file, part, parts }]);
   };
   // The formatter lays a long call out with one argument a line.
@@ -50,10 +52,10 @@ for (const [file, text] of testFiles) {
     .replace(/\(\n\s+/g, "(")
     .replace(/,\n\s+/g, ", ")
     .replace(/,\n\)/g, ")");
-  for (const [, callee, before, part, parts] of onOneLine.matchAll(
-    /^(?:await |if \(.*\) )?(\w+)\((.*?)(\d+), (\d+)(?:, (?:"[^"]*"|\[[^\]]*\]|\d+))*\);$/gm,
+  for (const [, callee, before, part, parts, behind] of onOneLine.matchAll(
+    /^(?:await |if \(.*\) )?(\w+)\((.*?)(\d+), (\d+)((?:, (?:"[^"]*"|\[[^\]]*\]|\d+))*)\);$/gm,
   ))
-    add(callee, before, Number(part), Number(parts));
+    add(callee, before, Number(part), Number(parts), behind);
   if (dirname(file) !== ".") continue;
   for (const [, folder] of text.matchAll(/^programs\("([^"]+)"\);$/gm)) add("programs", `"${folder}", `, 1, 1);
   for (const [, folder] of text.matchAll(/^programs\("([^"]+)"[,)]/gm)) foldersRun.add(folder);

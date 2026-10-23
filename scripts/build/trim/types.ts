@@ -104,11 +104,19 @@ export interface BuiltinEntry {
 
 export interface BuiltinUses {
   entries: BuiltinEntry[];
+  /** The id of each built-in that code of the engine names, at its position in the engine's list of names. */
+  namedByEngine?: number[];
 }
 
-export type GuardOrigin = "NativeCode" | "Builtin" | "Definition";
+/** BuiltinNamedByEngine: the record has a position in `namedByEngine`. Who reads the records makes a Builtin of it. */
+export type GuardOrigin = "NativeCode" | "Builtin" | "Definition" | "BuiltinNamedByEngine";
 
-export const guardOrigins = ["NativeCode", "Builtin", "Definition"] as const satisfies readonly GuardOrigin[];
+export const guardOrigins = [
+  "NativeCode",
+  "Builtin",
+  "Definition",
+  "BuiltinNamedByEngine",
+] as const satisfies readonly GuardOrigin[];
 
 export interface EntryPoint {
   guard: number;

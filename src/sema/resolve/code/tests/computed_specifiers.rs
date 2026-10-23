@@ -51,6 +51,7 @@ fn external(specifier: &str, kind: ExternalKind) -> HostResolution {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn relative_prefix_lists_files_below_directory() {
     let host = empty_files(&[
         "/p/main.ts",
@@ -66,6 +67,7 @@ fn relative_prefix_lists_files_below_directory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn name_prefix_selects_files_and_directories() {
     let host = empty_files(&[
         "/p/main.ts",
@@ -79,6 +81,7 @@ fn name_prefix_selects_files_and_directories() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn every_spelling_reaches_file_once() {
     let host = empty_files(&[
         "/p/main.ts",
@@ -102,6 +105,7 @@ fn every_spelling_reaches_file_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn rewritten_spelling_matches_name_prefix() {
     let host = empty_files(&["/p/main.ts", "/p/mods/a.ts", "/p/mods/b.ts"]);
     assert_eq!(import_pattern(&host, "./mods/a.j", ""), "/p/mods/a.ts");
@@ -109,6 +113,7 @@ fn rewritten_spelling_matches_name_prefix() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn dot_directories_and_node_modules_are_not_entered() {
     let host = empty_files(&[
         "/p/main.ts",
@@ -120,6 +125,7 @@ fn dot_directories_and_node_modules_are_not_entered() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn prefix_without_known_form_is_unknown() {
     let host = empty_files(&["/p/main.ts", "/p/a/b.ts"]);
     let cases = [
@@ -150,6 +156,7 @@ fn prefix_without_known_form_is_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unresolvable_specifier_has_no_candidate() {
     let host = empty_files(&["/p/main.ts", "/p/a/b.ts"]);
     assert_eq!(import_pattern(&host, "./a/", ""), "/p/a/b.ts");
@@ -168,6 +175,7 @@ fn unresolvable_specifier_has_no_candidate() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn missing_directory_has_no_candidate() {
     let host = empty_files(&["/p/main.ts"]);
     assert_eq!(import_pattern(&host, "./missing/", ""), NO_CANDIDATE);
@@ -175,6 +183,7 @@ fn missing_directory_has_no_candidate() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn host_scheme_lists_matching_host_modules() {
     let host = empty_files(&["/p/main.ts"])
         .module("fs", 3)
@@ -188,6 +197,7 @@ fn host_scheme_lists_matching_host_modules() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn host_module_source_is_file_candidate() {
     let source = HostResolution::ModuleSource {
         module: HostModuleId(3),
@@ -216,6 +226,7 @@ fn host_module_source_is_file_candidate() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unknown_answer_keeps_matching_host_modules() {
     let host = empty_files(&["/p/main.ts"])
         .module("fs", 3)
@@ -236,6 +247,7 @@ fn unknown_answer_keeps_matching_host_modules() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn package_without_exports_lists_files() {
     let host = empty_files(&[
         "/p/main.ts",
@@ -256,6 +268,7 @@ fn package_without_exports_lists_files() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn package_with_exports_lists_exported_files_only() {
     let manifest = r#"{
         "name": "pkg",
@@ -283,6 +296,7 @@ fn package_with_exports_lists_exported_files_only() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exported_candidates_follow_request_conditions() {
     let manifest = r#"{"exports": {"./c": {"require": "./c.cjs", "import": "./c.mjs"}}}"#;
     let host = installed_package(manifest, &["c.cjs", "c.mjs"]);
@@ -295,6 +309,7 @@ fn exported_candidates_follow_request_conditions() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn self_reference_lists_own_exports() {
     let manifest = r#"{"name": "app", "exports": {"./x": "./x.ts"}}"#;
     let files = [
@@ -311,6 +326,7 @@ fn self_reference_lists_own_exports() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn installed_copies_in_ancestor_directories_are_listed() {
     let host = empty_files(&[
         "/p/src/main.ts",
@@ -326,6 +342,7 @@ fn installed_copies_in_ancestor_directories_are_listed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn files_sort_before_host_modules() {
     let host = empty_files(&["/p/main.ts", "/p/node_modules/pkg/a.js"])
         .module("pkg/second", 9)
@@ -335,6 +352,7 @@ fn files_sort_before_host_modules() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn matching_paths_key_makes_package_prefix_unknown() {
     let matching = configured_project(r#"{"paths": {"pkg/*": ["./src/*"]}}"#);
     assert_eq!(import_pattern(&matching, "pkg/", ""), "All(ConfigPaths)");
@@ -351,6 +369,7 @@ fn matching_paths_key_makes_package_prefix_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn paths_apply_to_absolute_prefix_and_not_to_relative_prefix() {
     let host = configured_project(r#"{"paths": {"/virtual/*": ["./src/*"], "*": ["./src/*"]}}"#);
     assert_eq!(import_pattern(&host, "/virtual/", ""), "All(ConfigPaths)");
@@ -361,6 +380,7 @@ fn paths_apply_to_absolute_prefix_and_not_to_relative_prefix() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn uncompiled_candidate_makes_answer_unknown() {
     let files = ["/p/main.ts", "/p/plugins/a.ts", "/p/plugins/b.ts"];
     let uncompiled = external("./plugins/b.ts", ExternalKind::UncompiledCode);
@@ -380,6 +400,7 @@ fn uncompiled_candidate_makes_answer_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn uncompiled_host_module_makes_answer_unknown() {
     let uncompiled = external("node:omitted", ExternalKind::UncompiledCode);
     let host = empty_files(&["/p/main.ts"])
@@ -399,6 +420,7 @@ fn uncompiled_host_module_makes_answer_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn one_file_over_limit_makes_answer_unknown() {
     let at_limit = empty_files(&["/p/main.ts", "/p/d/a.ts", "/p/d/b.ts"]);
     assert_eq!(
@@ -417,6 +439,7 @@ fn one_file_over_limit_makes_answer_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn one_directory_over_limit_makes_answer_unknown() {
     let host = empty_files(&["/p/main.ts", "/p/d/x/a.ts", "/p/d/y/b.ts"]);
     assert_eq!(
@@ -430,6 +453,7 @@ fn one_directory_over_limit_makes_answer_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn linked_directory_is_listed_under_real_paths() {
     let files = ["/p/main.ts", "/store/lang/en.json"];
     let host = empty_files(&files).link("/p/locales", "/store/lang");
@@ -440,6 +464,7 @@ fn linked_directory_is_listed_under_real_paths() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn link_cycle_ends() {
     let host = empty_files(&["/p/main.ts", "/p/d/a.ts"]).link("/p/d/loop", "/p/d");
     assert_eq!(import_pattern(&host, "./d/", ""), "/p/d/a.ts");

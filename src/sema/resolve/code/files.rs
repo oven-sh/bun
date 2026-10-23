@@ -249,6 +249,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn name_as_written_is_found_in_another_case() {
         let sources = empty_files(&["/p/foo.ts", "/p/common.cjs", "/p/Lib/inner.mjs"]);
         assert_eq!(resolve(&sources, "./Foo.ts", Import), "/p/foo.ts");
@@ -273,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn extension_order_follows_import_kind() {
         let sources = empty_files(&["/p/a.ts", "/p/a.js"]);
         assert_eq!(resolve(&sources, "./a", Import), "/p/a.ts");
@@ -284,6 +286,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn node_modules_prefers_javascript() {
         let sources = empty_files(&["/p/node_modules/x/a.ts", "/p/node_modules/x/a.js"]);
         let source = |kind| resolve_in_dependency(&sources, "./a", kind);
@@ -297,6 +300,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn unlisted_extension_is_not_added() {
         let host = empty_files(&["/p/a.css"]);
         assert_eq!(resolve(&host, "./a", Import), NOT_FOUND);
@@ -304,6 +308,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exact_name_wins_over_rewrite() {
         let both = empty_files(&["/p/a.js", "/p/a.ts"]);
         assert_eq!(resolve(&both, "./a.js", Import), "/p/a.js");
@@ -313,6 +318,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn node_modules_rewrites_js_but_not_mjs() {
         let project = empty_files(&["/p/a.mts"]);
         assert_eq!(resolve(&project, "./a.mjs", Import), "/p/a.mts");
@@ -324,6 +330,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn node_addon_extension_is_for_require_only() {
         let host = empty_files(&["/p/a.node"]);
         assert_eq!(resolve(&host, "./a", Require), "/p/a.node");
@@ -331,6 +338,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn file_wins_over_directory() {
         let host = empty_files(&["/p/d.ts", "/p/d/index.ts"]);
         assert_eq!(resolve(&host, "./d", Import), "/p/d.ts");
@@ -338,6 +346,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn directory_specifier_adds_no_extension() {
         let host = empty_files(&["/p/d.ts"]);
         assert_eq!(resolve(&host, "./d/", Import), NOT_FOUND);
@@ -345,6 +354,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn index_needs_listed_extension() {
         let host = empty_files(&["/p/d/index", "/p/d/index.css", "/p/e/index.json"]);
         assert_eq!(resolve(&host, "./d", Import), NOT_FOUND);
@@ -352,6 +362,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn trailing_separator_keeps_exact_name_and_rewrite() {
         let host = empty_files(&["/p/a", "/p/b.ts", "/p/c.ts"]);
         assert_eq!(load_file(&host, "/p/a/"), "/p/a");
@@ -361,6 +372,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn root_and_missing_directory_have_no_file() {
         let host = empty_files(&["/p/a.ts", "/.ts"]);
         assert_eq!(load_file(&host, "/"), "None");
@@ -369,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_wins_over_module_by_default() {
         let host = package(MODULE_AND_MAIN, &["/p/x/esm.js", "/p/x/cjs.js"]);
         assert_eq!(resolve_package(&host, Import), "/p/x/cjs.js");
@@ -376,6 +389,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn preferred_module_field_wins_for_import_only() {
         let host = package(MODULE_AND_MAIN, &["/p/x/esm.js", "/p/x/cjs.js"]);
         let options = CodeOptions {
@@ -388,6 +402,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn custom_main_fields_use_list_order() {
         let host = package(MODULE_AND_MAIN, &["/p/x/esm.js", "/p/x/cjs.js"]);
         let module_first = CodeOptions {
@@ -406,6 +421,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn module_without_main_falls_back_to_index() {
         let manifest = r#"{"module": "./esm.js"}"#;
         let with_index = package(manifest, &["/p/x/esm.js", "/p/x/index.js"]);
@@ -416,6 +432,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_uses_main_field_extension_order() {
         let files = &["/p/x/lib.js", "/p/x/lib.ts"];
         let main = package(r#"{"main": "./lib"}"#, files);
@@ -426,6 +443,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_directory_loads_index() {
         let host = package(
             r#"{"main": "./lib"}"#,
@@ -435,6 +453,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_field_trailing_slash_adds_no_extension() {
         let files = &["/p/x/lib.js", "/p/x/lib/index.js"];
         for field in ["main", "module", "jsnext:main"] {
@@ -455,6 +474,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_field_slash_stays_in_package() {
         let host = package(r#"{"main": "./"}"#, &["/p/x.js", "/p/x/index.js"]);
         assert_eq!(resolve(&host, "./x/", Import), "/p/x/index.js");
@@ -462,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_directory_manifest_is_not_read() {
         let host = MemoryHost::new(&[
             ("/p/x/package.json", r#"{"main": "./lib"}"#),
@@ -474,6 +495,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn absolute_main_replaces_package_directory() {
         let manifest = r#"{"main": "/p/other/entry.js"}"#;
         let host = package(manifest, &["/p/other/entry.js"]);
@@ -481,6 +503,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn missing_main_field_target_continues_search() {
         let manifest = r#"{"module": "./missing.js", "main": "./cjs.js"}"#;
         let next_field = package(manifest, &["/p/x/cjs.js"]);
@@ -495,6 +518,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_wins_over_jsnext_main() {
         let manifest = r#"{"jsnext:main": "./next.js", "main": "./cjs.js"}"#;
         let host = package(manifest, &["/p/x/next.js", "/p/x/cjs.js"]);
@@ -517,6 +541,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn jsnext_main_without_main_falls_back_to_index() {
         let manifest = r#"{"jsnext:main": "./next.js"}"#;
         let with_index = package(manifest, &["/p/x/next.js", "/p/x/index.js"]);
@@ -527,6 +552,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn wildcard_target_gets_extension() {
         let host = empty_files(&["/p/src/a.ts", "/p/src/b.c.ts", "/p/src/.env.ts"]);
         assert_eq!(probe(&host, "/p/src/a", Wildcard), "/p/src/a.ts");
@@ -536,6 +562,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn target_extension_is_rewritten() {
         let host = empty_files(&["/p/src/a.ts", "/p/src/b.scss", "/p/src/.ts"]);
         for target in [Exact, Wildcard] {
@@ -546,6 +573,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn target_in_node_modules_keeps_mjs() {
         let project = empty_files(&["/p/src/a.mts"]);
         assert_eq!(probe(&project, "/p/src/a.mjs", Exact), "/p/src/a.mts");

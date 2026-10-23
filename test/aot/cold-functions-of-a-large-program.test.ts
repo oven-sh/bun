@@ -1,6 +1,6 @@
-// The compiler has forms of its own for the coldest part of a large program: compact code, nothing copied into callers, no predictions. A program under 65,536 values has no such
-// part, so no program under ./programs is ever compiled that way as it stands. Here some of them are: each is followed by thousands of small functions that a loop calls, beside
-// which everything the program itself does is cold. heat/cold-*.test.ts do the same to every program with an option of the compiler, in the `jsc` shell.
+// The compiler has forms of its own for the coldest part of a large program: compact code, nothing copied into callers, no predictions. A program under 1,048,576 values has no such
+// part, so no program under ./programs is ever compiled that way as it stands. Here some of them are: the limit is 65,536 values, and each program is followed by thousands of small
+// functions that a loop calls, beside which everything the program itself does is cold. heat/cold-*.test.ts do the same to every program with an option of the compiler, in the `jsc` shell.
 import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -13,6 +13,8 @@ const programs = [
   "calls/members-called-by-signature",
   "typed-objects/generic-spread-for-bounded-type-parameter",
   "typed-objects/generic-spread-bound-with-layout",
+  "nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values",
+  "native-callbacks/callbacks-html-rewriter-handlers",
 ];
 
 function hotFunctions(count: number) {
@@ -39,7 +41,19 @@ test.concurrent.each(programs)(
     });
     const cwd = String(dir);
     const executable = join(cwd, isWindows ? "main.exe" : "main");
-    const built = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", executable], cwd);
+    const built = await run(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-limit=MaxWarmCodeValues:65536",
+        "./main.ts",
+        "--outfile",
+        executable,
+      ],
+      cwd,
+    );
     expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
       output: "",
       exitCode: 0,

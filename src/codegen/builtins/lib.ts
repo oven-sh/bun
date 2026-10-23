@@ -806,6 +806,8 @@ const entryColumnKeys = [
   "prototypeUsesFeature",
   "runsUnseenCode",
   "hasUndeclaredMembers",
+  "marks",
+  "loadsMachineCodeAs",
   "loads",
   "callsFunctions",
   "appendForm",
@@ -1291,6 +1293,10 @@ export const excluded = (file: string, ...functions: readonly string[]): Declara
   functions.map(functionName => ({ declares: "ExcludedFunction", function: { file, name: functionName } }));
 export const handwritten = (...files: readonly string[]): Declaration[] =>
   files.map(file => ({ declares: "HandwrittenFile", file }));
+export const hostRoles = (...paths: readonly BuiltinPath[]): Declaration[] =>
+  paths.map(path => ({ declares: "HostRole", path }));
+export const hostClassRoles = (...names: readonly ClassName[]): Declaration[] =>
+  names.map(className => ({ declares: "HostClassRole", name: className }));
 
 export const hostRead = (context: HostReadContext, exportName: string, use: HostReadUse): Declaration[] => [
   { declares: "HostRead", context, exportName, use },

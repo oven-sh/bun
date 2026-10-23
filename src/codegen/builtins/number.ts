@@ -273,6 +273,53 @@ function namesOfCallsClosedOn(holder: ModelBuiltin, names: readonly ModelName[])
   };
 }
 
+const unfilledRole = "is a role of the host, which code of the engine names, and the host declares no such";
+
+function resolveHostRoles(builder: ModelBuilder): readonly ModelBuiltin[] {
+  return Object.freeze(
+    builder.hostRoles.flatMap(({ path, source }) => {
+      const builtin = builder.find(path);
+      if (builtin === undefined) builder.problems.add(source, `${path} ${unfilledRole} entry`);
+      else if (builtin.origin === "Engine")
+        builder.problems.add(source, `${path} is an entry of the engine, so it is no role of the host`);
+      else if (builtin.token !== tokenOf(builtin.path))
+        builder.problems.add(
+          source,
+          `${path} is a role of the host, and another entry has its token ${tokenOf(builtin.path)}`,
+        );
+      else return [builtin];
+      return [];
+    }),
+  );
+}
+
+function resolveHostClassRoles(builder: ModelBuilder): readonly ModelClass[] {
+  return Object.freeze(
+    builder.hostClassRoles.flatMap(({ name, source }) => {
+      const builtinClass = builder.findClass(name);
+      if (builtinClass === undefined) builder.problems.add(source, `${name} ${unfilledRole} class`);
+      else if (builtinClass.origin === "Engine")
+        builder.problems.add(source, `${name} is a class of the engine, so it is no role of the host`);
+      else return [builtinClass];
+      return [];
+    }),
+  );
+}
+
+function collectNamesOfEngine(
+  builder: ModelBuilder,
+  names: readonly ModelName[],
+  builtins: readonly ModelBuiltin[],
+  keysByProtocol: readonly ModelProtocolKeys[],
+): ReadonlySet<ModelName> {
+  const namesOfEngine = new Set<ModelName>(builder.namesDeclaredByEngine);
+  for (const name of names) if (name.kind === "WellKnownSymbol") namesOfEngine.add(name);
+  for (const builtin of builtins) if (builtin.origin === "Engine") namesOfEngine.add(builtin.name);
+  for (const { keys } of keysByProtocol) for (const key of keys) namesOfEngine.add(key);
+  for (const text of textsOfPrimitiveKeys) namesOfEngine.add(builder.internComponent(text));
+  return namesOfEngine;
+}
+
 export function numberModel(builder: ModelBuilder, types: TypeInterner): TableModel {
   const { problems } = builder;
   const internedProtocolKeys = internProtocolKeys(builder);
@@ -322,6 +369,9 @@ export function numberModel(builder: ModelBuilder, types: TypeInterner): TableMo
     boxedStubs: Object.freeze([...builder.boxedStubs]),
     protocolKeys: internedProtocolKeys,
     hostReads: Object.freeze([...builder.hostReads]),
+    namesOfEngine: collectNamesOfEngine(builder, names, builtins, internedProtocolKeys),
+    hostRoles: resolveHostRoles(builder),
+    hostClassRoles: resolveHostClassRoles(builder),
     hostObjects: Object.freeze([...builder.hostObjects]),
     namedMemberCalls: Object.freeze([...builder.namedMemberCalls]),
     hostMethodCalls: Object.freeze([...builder.hostMethodCalls]),

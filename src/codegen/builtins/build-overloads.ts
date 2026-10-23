@@ -22,6 +22,7 @@ import {
 import { joinPath } from "./paths.ts";
 import {
   conversionProtocols,
+  conversionsFailingByValue,
   iterationKinds,
   typedArrayTypes,
   type BuiltinKind,
@@ -396,13 +397,28 @@ function buildResult(context: OverloadContext): ModelResult {
   };
 }
 
-function flagsOf({ signature, source }: OverloadContext): OverloadFlag[] {
+// The built-in throws for a negative index before it converts the operands behind the index. A conversion of one of them that ran
+// before the call would run code that the call never runs.
+export function mayRefuseValueBeforeConversion(
+  operands: readonly Pick<ModelParameter, "conversion" | "admitted">[],
+): boolean {
+  const first = operands.findIndex(
+    ({ conversion, admitted }) => conversionsFailingByValue.includes(conversion) || admitted !== null,
+  );
+  if (first === -1) return false;
+  return operands.slice(first + 1).some(({ conversion }) => conversionProtocols[conversion].includes("ToPrimitive"));
+}
+
+function flagsOf(context: OverloadContext): OverloadFlag[] {
+  const { signature, source } = context;
   const isSet: Readonly<Record<OverloadFlag, boolean>> = {
     IsUndeclared: signature.isUndeclared,
     IsProvenByConstruction: source.proof === "ByConstruction",
     Throws: signature.throws,
     RunsOnlyOperandCode: signature.runsOnlyOperandCode ?? false,
-    ReadsStateBeforeConversions: signature.readsStateBeforeConversions ?? false,
+    ReadsStateBeforeConversions:
+      (signature.readsStateBeforeConversions ?? false) ||
+      mayRefuseValueBeforeConversion(context.states.map(state => state.parameter)),
     IsSpecialCase: signature.isSpecialCase ?? false,
     OnlyPropagatesErrors: signature.onlyPropagatesErrors ?? false,
     ResultIsDeclaredOnly: signature.resultIsDeclaredOnly ?? false,

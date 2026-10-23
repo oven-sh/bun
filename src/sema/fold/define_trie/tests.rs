@@ -98,6 +98,7 @@ impl<'s> Workspace<'s> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn nested_defines_have_separate_values() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -115,6 +116,7 @@ fn nested_defines_have_separate_values() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn import_meta_root_has_members() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -128,6 +130,7 @@ fn import_meta_root_has_members() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn optional_link_hides_value() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -148,6 +151,7 @@ fn optional_link_hides_value() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn dropped_path_covers_members() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -168,6 +172,7 @@ fn dropped_path_covers_members() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn dropped_member_path_excludes_siblings() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -185,6 +190,7 @@ fn dropped_member_path_excludes_siblings() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn optional_link_breaks_dropped_path() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -204,6 +210,7 @@ fn optional_link_breaks_dropped_path() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn define_below_dropped_path_has_value() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -218,6 +225,7 @@ fn define_below_dropped_path_has_value() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unknown_root_has_no_state() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -233,6 +241,7 @@ fn unknown_root_has_no_state() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn later_define_wins() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -247,6 +256,7 @@ fn later_define_wins() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn empty_options_build_empty_inputs() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -260,6 +270,7 @@ fn empty_options_build_empty_inputs() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn features_and_switches_pass_through() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -285,6 +296,7 @@ fn features_and_switches_pass_through() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn string_limit_passes_through() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -299,6 +311,7 @@ fn string_limit_passes_through() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn define_values_keep_their_kind() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -326,6 +339,7 @@ fn define_values_keep_their_kind() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn state_below_dropped_path_has_no_node() {
     let session = Session::new();
     let workspace = Workspace::new(&session);

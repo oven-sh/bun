@@ -60,6 +60,7 @@ import {
   tokenOf,
 } from "./paths.ts";
 import {
+  builtinMarks,
   pristineTests,
   targetPlatforms,
   type BuiltinKind,
@@ -120,6 +121,7 @@ const listColumns: ReadonlySet<string> = new Set<keyof EntryColumns>([
   "loads",
   "callsFunctions",
   "nativeSymbols",
+  "marks",
 ]);
 const flagColumns = [
   ["requiresHolderAsThis", "RequiresHolderAsThis"],
@@ -175,6 +177,8 @@ function pathOfDeclaration(declaration: Declaration): BuiltinPath | null {
     case "Intrinsic":
     case "ExcludedFunction":
     case "HandwrittenFile":
+    case "HostRole":
+    case "HostClassRole":
     case "HostRead":
     case "HostObject":
     case "NamedMemberCall":
@@ -992,6 +996,11 @@ function finishEntries(context: EntryContext): void {
       if (columnOf(builder, builtin, column) === true) addFlag(builtin, flag);
     }
     if (holder !== null && holder === compilerHelpers) addFlag(builtin, "IsCompilerHelper");
+    const writtenColumns = builder.columnsOf(builtin);
+    builtin.marks = builtinMarks.filter(mark => writtenColumns.some(({ columns }) => columns.marks?.includes(mark)));
+    const loader = writtenColumns.find(({ columns }) => columns.loadsMachineCodeAs !== undefined);
+    if (loader !== undefined)
+      builtin.loadsMachineCodeAs = builder.resolve(loader.columns.loadsMachineCodeAs!, loader.source);
     builtin.mutability = columnOf(builder, builtin, "mutability") ?? defaultMutabilityOf(builtin);
   }
 }
@@ -1048,7 +1057,20 @@ export function buildEntries(builder: ModelBuilder, declarations: readonly Sourc
   linkPrototypes(context);
   finishEntries(context);
   checkOwnPropertyLists(context);
-  for (const { declaration } of select(sorted, "Name")) builder.internComponent(declaration.text);
+  for (const { declaration, source } of select(sorted, "Name")) {
+    const name = builder.internComponent(declaration.text);
+    if (source.origin === "Engine") builder.namesDeclaredByEngine.add(name);
+  }
+  for (const { declaration, source } of select(sorted, "HostRole")) {
+    if (source.origin !== "Engine")
+      builder.problems.add(source, `${declaration.path}: only the engine declares a role of the host`);
+    else builder.hostRoles.push({ path: declaration.path, source });
+  }
+  for (const { declaration, source } of select(sorted, "HostClassRole")) {
+    if (source.origin !== "Engine")
+      builder.problems.add(source, `${declaration.name}: only the engine declares a role of the host`);
+    else builder.hostClassRoles.push({ name: declaration.name, source });
+  }
 }
 
 const hasSameNames = (left: readonly ModelName[], right: readonly ModelName[]): boolean =>

@@ -117,6 +117,7 @@ fn extends_chain_settings(option: &str, written: &[Option<bool>]) -> TranspileSe
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn nearest_config_file_decides() {
     let host = create_host(
         r#"
@@ -147,6 +148,7 @@ fn nearest_config_file_decides() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn config_is_loaded_once() {
     let host = config_host("/lib/tsconfig.json", "{}");
     with_resolver(&host, &bun_run(), |resolver| {
@@ -158,6 +160,7 @@ fn config_is_loaded_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn extends_inherits_unset_options() {
     let host = create_host(
         r#"
@@ -192,6 +195,7 @@ fn extends_inherits_unset_options() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn child_paths_replace_parent_paths() {
     let host = create_host(
         r#"
@@ -220,6 +224,7 @@ fn child_paths_replace_parent_paths() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn extends_chain_has_limit() {
     let create_chain = |length: usize| {
         let files: Vec<String> = (0..length)
@@ -235,6 +240,7 @@ fn extends_chain_has_limit() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn extends_merges_settings_by_option() {
     let child = r#"{
         "extends": "./base.json",
@@ -259,6 +265,7 @@ fn extends_merges_settings_by_option() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn last_extended_file_decides_experimental_decorators() {
     let cases: [(&[Option<bool>], bool); 9] = [
         (&[Some(true)], true),
@@ -279,6 +286,7 @@ fn last_extended_file_decides_experimental_decorators() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn any_extended_file_sets_decorator_metadata() {
     let cases: [(&[Option<bool>], bool); 8] = [
         (&[Some(true)], true),
@@ -298,6 +306,7 @@ fn any_extended_file_sets_decorator_metadata() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn nearest_extended_file_decides_class_field_semantics() {
     let cases: [(&[Option<bool>], Option<bool>); 5] = [
         (&[None, None], None),
@@ -313,6 +322,7 @@ fn nearest_extended_file_decides_class_field_semantics() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn first_of_repeated_option_keys_wins() {
     let config = r#"{
         "compilerOptions": {
@@ -329,6 +339,7 @@ fn first_of_repeated_option_keys_wins() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn config_dir_is_directory_of_writing_file() {
     let host = create_host(
         r#"
@@ -347,6 +358,7 @@ fn config_dir_is_directory_of_writing_file() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn bare_substitution_needs_base_url() {
     let cases = [
         ("", "", "/app/lib/a"),
@@ -382,6 +394,7 @@ fn relative_and_rooted_text_needs_no_base_url() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn most_specific_key_is_selected() {
     let options = r#"{
         "paths": {
@@ -405,6 +418,7 @@ fn most_specific_key_is_selected() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn substitutions_resolve_against_base() {
     let options = r#"{
         "baseUrl": "./src",
@@ -449,6 +463,7 @@ fn can_match_prefix(options: &str, prefix: &str) -> bool {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pattern_key_matches_prefix_in_either_direction() {
     let options = r#"{"paths": {"@/*": ["./src/*"]}}"#;
     for prefix in ["@/a", "@/", "@", "", "@/a/b"] {
@@ -464,6 +479,7 @@ fn pattern_key_matches_prefix_in_either_direction() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exact_key_matches_only_own_prefixes() {
     let options = r#"{"paths": {"lib/core": ["./src/core.ts"]}}"#;
     for prefix in ["lib/core", "lib/", "l", ""] {
@@ -475,6 +491,7 @@ fn exact_key_matches_only_own_prefixes() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn config_without_paths_matches_no_prefix() {
     for options in ["{}", r#"{"paths": {}}"#, r#"{"baseUrl": "."}"#] {
         for prefix in ["", "@/a", "lib"] {
@@ -487,6 +504,7 @@ fn config_without_paths_matches_no_prefix() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn override_replaces_every_config() {
     let host = create_host(
         r#"
@@ -517,6 +535,7 @@ fn override_replaces_every_config() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn override_is_reported_for_every_directory() {
     let host = create_host("");
     for directory in ["/app", "/elsewhere", ""] {
@@ -534,6 +553,7 @@ fn override_is_reported_for_every_directory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn settings_start_from_command_line() {
     let expected = TranspileSettings {
         jsx: JsxSettings::default(),
@@ -558,6 +578,7 @@ fn settings_start_from_command_line() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn options_of_other_json_types_are_ignored() {
     let ignored = lib_settings(
         r#"{
@@ -582,6 +603,7 @@ fn jsx_emit_names_ignore_case() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn jsx_factories_are_identifier_chains() {
     let cases = [
         ("Preact.h", "Automatic dev Preact.h Preact.h react"),
@@ -597,6 +619,7 @@ fn jsx_factories_are_identifier_chains() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn working_directory_config_decides_development() {
     let host = create_host(
         r#"
@@ -625,6 +648,7 @@ fn working_directory_config_decides_development() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn forced_development_wins_over_config() {
     let host = create_host(
         r#"
@@ -653,6 +677,7 @@ fn forced_development_wins_over_config() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn runtime_specifier_follows_development() {
     let mut jsx = lib_settings(r#"{"jsxImportSource": "@emotion/react"}"#).jsx;
     assert_eq!(jsx.runtime_specifier(), b"@emotion/react/jsx-dev-runtime");
@@ -661,6 +686,7 @@ fn runtime_specifier_follows_development() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pragmas_override_one_member_each() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);

@@ -42,27 +42,34 @@ function createServer(onRequest: (request: Request) => void, onOpen: (socket: ob
   });
 }
 
+// The method is read at once: the call that is checked may give the value another prototype.
+function closerOf<T extends object>(value: T, name: keyof T, ...args: unknown[]): () => void {
+  const method = value[name] as Function;
+  return () => void Reflect.apply(method, value, args);
+}
+
 async function openServer(): Promise<Connection> {
   const server = createServer(() => {}, () => {});
-  return { value: server, close: () => void server.stop(true) };
+  return { value: server, close: closerOf(server, "stop", true) };
 }
 
 async function openRequest(): Promise<Connection> {
   const { promise, resolve } = Promise.withResolvers<Request>();
   const server = createServer(resolve, () => {});
   await fetch(`http://localhost:${server.port}/route/7?a=1`, { headers: { cookie: "a=1" } });
-  return { value: await promise, close: () => void server.stop(true) };
+  return { value: await promise, close: closerOf(server, "stop", true) };
 }
 
 async function openServerWebSocket(): Promise<Connection> {
   const { promise, resolve } = Promise.withResolvers<object>();
   const server = createServer(() => {}, resolve);
   const client = new WebSocket(`ws://localhost:${server.port}/socket`);
+  const stop = closerOf(server, "stop", true);
   return {
     value: await promise,
     close() {
       client.close();
-      void server.stop(true);
+      stop();
     },
   };
 }
@@ -72,12 +79,13 @@ async function openSocket(): Promise<{ listener: Bun.TCPSocketListener; accepted
   const handlers = { data() {}, close() {}, error() {} };
   const listener = Bun.listen({ hostname: "localhost", port: 0, data: { tag: 2 }, socket: { ...handlers, open: resolve } });
   const client = await Bun.connect({ hostname: "localhost", port: listener.port, socket: { ...handlers, open() {} } });
+  const stop = closerOf(listener, "stop", true);
   return {
     listener,
     accepted: await promise,
     close() {
       client.end();
-      listener.stop(true);
+      stop();
     },
   };
 }

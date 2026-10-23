@@ -93,6 +93,7 @@ pub struct RuntimeDescription {
 impl RuntimeDescription {
     pub const ENGINE: [u8; 8] = *b"BUNAOTRT";
     pub const HOST: [u8; 8] = *b"BUNAOTHO";
+    pub const BUILTIN_TABLE: [u8; 8] = *b"BUNAOTTB";
 
     pub fn read(file: &mut builtins::Image<'_>) -> Result<RuntimeDescription, SectionError> {
         let location = find_known_section(file, KnownSection::RuntimeDescription)?;

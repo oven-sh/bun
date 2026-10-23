@@ -1,5 +1,6 @@
 import type { FeatureModel, StubKind } from "../../../scripts/build/trim/types.ts";
 import { Problems } from "./declarations.ts";
+import { namedBuiltinsOf } from "./emit-cpp-names.ts";
 import { emitMacroList, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
 import type { ModelBuiltin, TableModel } from "./model.ts";
@@ -54,10 +55,6 @@ function isFirstWithSymbol(guarded: GuardedSymbol, index: number, sorted: readon
   return index === 0 || sorted[index - 1].symbol !== guarded.symbol;
 }
 
-function formatGuardedSymbol({ symbol, feature, stub, builtin }: GuardedSymbol): string {
-  return `${symbol}, ${feature}, ${stub}, ${builtin.id}`;
-}
-
 export function emitCppFeatures(model: TableModel, features: FeatureModel): string {
   const engineFeatures = features.features
     .filter(feature => feature.isEngine)
@@ -69,6 +66,10 @@ export function emitCppFeatures(model: TableModel, features: FeatureModel): stri
     .sort(compareGuardedSymbols)
     .filter(isFirstWithSymbol);
   problems.throwIfAny();
+  // Code of the engine records the position of the entry in the engine's list of names. It does not know the number that the table gives it.
+  const positions = new Map(namedBuiltinsOf(model).map((builtin, position) => [builtin, position]));
+  const formatGuardedSymbol = ({ symbol, feature, stub, builtin }: GuardedSymbol): string =>
+    `${symbol}, ${feature}, ${stub}, ${positions.get(builtin)}`;
   const blocks = [
     `${fileHeader}#pragma once`,
     emitMacroList(

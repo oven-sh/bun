@@ -1,4 +1,5 @@
 import type { BuiltinEntry, BuiltinFeatureUse, BuiltinKind, BuiltinUses } from "../../../scripts/build/trim/types.ts";
+import { namedBuiltinsOf } from "./emit-cpp-names.ts";
 import type { ModelBuiltin, ModelFeatureUse, ModelModule, TableModel } from "./model.ts";
 import { isHiddenRootComponent } from "./paths.ts";
 import type { FeatureName, TargetPlatform } from "./vocabulary.ts";
@@ -46,5 +47,5 @@ export function builtinUsesOf(model: TableModel, target: TargetPlatform): Builti
         hasHiddenRoot: isHiddenRootComponent(builtin.path[0]),
       };
     });
-  return { entries };
+  return { entries, namedByEngine: namedBuiltinsOf(model).map(({ id }) => id) };
 }

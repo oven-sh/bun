@@ -209,11 +209,13 @@ pub(crate) fn is_strict_for_oxc<'a>(file: &'a File<'a>, tree: &ScopeTree, scope:
 fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) -> bool {
     let hir = &file.hir;
     for s in statements {
-        let Some(hir::Stmt {
-            kind: StmtKind::Expr(e) | StmtKind::Directive { expr: e, .. },
-            ..
-        }) = hir.stmts.get(s.idx())
-        else {
+        let Some(statement) = hir.stmts.get(s.idx()) else {
+            return false;
+        };
+        if file.has_synthetic_nodes() && file.is_in_jsdoc(statement.start) {
+            continue;
+        }
+        let (StmtKind::Expr(e) | StmtKind::Directive { expr: e, .. }) = &statement.kind else {
             return false;
         };
         let Some(hir::Expr {

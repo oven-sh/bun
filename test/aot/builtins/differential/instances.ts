@@ -770,6 +770,8 @@ export const objects: Candidate[] = [
 ];
 
 export const everyCandidate: Candidate[] = [...objects, ...primitives];
+// Instances that are dear to make: one is passed only where a parameter names its class.
+export const candidatesForTheirClass: Candidate[] = [];
 
 export function findCandidate(name: string): Candidate {
   const candidate = everyCandidate.find(other => other.name === name);

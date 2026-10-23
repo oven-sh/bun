@@ -49,6 +49,7 @@ pub enum GuardOrigin {
     NativeCode = 0,
     Builtin = 1,
     Definition = 2,
+    BuiltinNamedByEngine = 3,
 }
 
 pub(crate) struct FeatureRecord {

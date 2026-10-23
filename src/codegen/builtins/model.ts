@@ -2,6 +2,7 @@ import type { HostReadUse, Proof, RuntimeFunctionRole, Source } from "./declarat
 import type {
   BoxedStubName,
   BuiltinKind,
+  BuiltinMark,
   CallbackResultUse,
   CallbackTimes,
   CalleeKind,
@@ -538,6 +539,8 @@ export interface ModelBuiltin {
   mutability: Mutability;
   platforms: readonly TargetPlatform[];
   flags: readonly BuiltinFlag[];
+  marks: readonly BuiltinMark[];
+  loadsMachineCodeAs: ModelBuiltin | null;
   holder: ModelBuiltin | null;
   name: ModelName;
   prototype: ModelPrototype;
@@ -758,6 +761,10 @@ export interface TableModel {
   boxedStubs: readonly BoxedStubName[];
   protocolKeys: readonly ModelProtocolKeys[];
   hostReads: readonly ModelHostRead[];
+  /** What hand-written code of the engine may name besides the entries, classes and layouts that the engine declares. */
+  namesOfEngine: ReadonlySet<ModelName>;
+  hostRoles: readonly ModelBuiltin[];
+  hostClassRoles: readonly ModelClass[];
   hostObjects: readonly ModelHostObject[];
   namedMemberCalls: readonly ModelNamedMemberCall[];
   hostMethodCalls: readonly ModelHostMethodCall[];

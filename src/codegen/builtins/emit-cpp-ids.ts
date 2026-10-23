@@ -1,6 +1,8 @@
 import { cap } from "../helpers.ts";
-import { Problems } from "./declarations.ts";
+import { GeneratorError, Problems } from "./declarations.ts";
 import {
+  classTokensArray,
+  classTokensType,
   hashOfBuiltinTokens,
   nameArraysOf,
   namedListsOf,
@@ -85,10 +87,25 @@ function formatCheckedNumber({ value, cppExpression }: ModelBound): string[] {
   return [`${isInt64 ? formatInt64(value) : formatDouble(value)}, (${cppExpression})`];
 }
 
+// FNV-1a over the text.
+function hashOfText(text: string): bigint {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of Buffer.from(text, "utf8")) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+  return hash;
+}
+
+const stampPattern = /^inline constexpr uint64_t engineListStamp = (0x[0-9a-f]{16})ULL;$/m;
+
+export function engineListStampOf(idsHeader: string): string {
+  const stamp = stampPattern.exec(idsHeader)?.[1];
+  if (stamp === undefined) throw new GeneratorError("AOTBuiltinIDs.h has no engineListStamp");
+  return stamp;
+}
+
+// What code that is compiled with the engine takes from the table at compile time. Only the declarations of the engine decide what is in it.
 export function emitCppIds(model: TableModel): string {
   const problems = new Problems();
   const { checkedJSTypes, linkTimeConstants } = model.syntax;
-  const functionConstants = model.functions.filter(hasConstant).map(functionConstantOf);
   const namedLists = namedListsOf(model);
   const [namedBuiltins, namedNames, namedClasses, namedLayouts] = namedLists.map(({ namespace, cppType, items }) =>
     emitConstants(
@@ -99,34 +116,35 @@ export function emitCppIds(model: TableModel): string {
     ),
   );
   const counts: readonly Constant[] = [
-    ["numberOfBuiltins", model.builtins.length],
-    ["numberOfBuiltinNames", model.names.length],
-    ["numberOfBuiltinClasses", model.classes.length],
     ["numberOfBuiltinSlots", model.slots.length],
-    ["numberOfBuiltinLayouts", model.layouts.length],
-    ["numberOfRuntimeModules", model.modules.length],
-    ["numberOfRuntimeFunctions", model.functions.length],
     ...namedLists.map(({ countName, items }): Constant => [countName, items.length]),
   ];
-  const blocks = [
-    `${fileHeader}#pragma once`,
-    "namespace JSC { namespace AOT {",
+  const body = [
     counts.map(emitCount).join("\n"),
     namedBuiltins,
     namedNames,
     namedClasses,
     emitConstants("BuiltinSlots", "BuiltinSlotID", model.slots.map(slotConstantOf), problems),
     namedLayouts,
-    emitConstants("RuntimeModules", "RuntimeModuleID", model.modules.map(tokenConstantOf), problems),
-    emitConstants("RuntimeFunctions", "RuntimeFunctionID", functionConstants, problems),
     emitEnum("CheckedJSType", "numberOfCheckedJSTypes", checkedJSTypes, problems),
     emitEnum("LinkTimeConstantID", "numberOfLinkTimeConstantIDs", linkTimeConstants.map(cap), problems),
     emitEnum("BuiltinBoxedStub", "numberOfBuiltinBoxedStubs", model.boxedStubs, problems),
-    "} }",
+  ];
+  const macros = [
     emitMacroList("FOR_EACH_AOT_ENGINE_BUILTIN_FUNCTION", model.functions.flatMap(formatEngineFunction)),
     emitMacroList("FOR_EACH_AOT_CHECKED_NUMBER", model.checkedNumbers.flatMap(formatCheckedNumber)),
   ];
   problems.throwIfAny();
+  const stamp = hashOfText(joinBlocks([...body, ...macros]));
+  const blocks = [
+    `${fileHeader}#pragma once`,
+    "namespace JSC { namespace AOT {",
+    `inline constexpr uint64_t engineListStamp = 0x${stamp.toString(16).padStart(16, "0")}ULL;`,
+    `#define AOT_NAMESPACE_OF_ENGINE_LIST EngineList_${stamp.toString(16).padStart(16, "0")}`,
+    ...body,
+    "} }",
+    ...macros,
+  ];
   return `${joinBlocks(blocks)}\n`;
 }
 
@@ -200,24 +218,55 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ["RuntimeFunctionID", "builtinTableModuleLoaderFunctions", startup.moduleLoaderFunctions.length],
     ["BuiltinHostRead", "builtinTableHostReads", model.hostReads.length],
     ["BuiltinID", "builtinTableLockedObjects", countBuiltins(isLockedObject)],
+    ["BuiltinMarkedEntry", "builtinTableMarks", builtins.reduce((count, { marks }) => count + marks.length, 0)],
+    [
+      "BuiltinLoaderOfMachineCode",
+      "builtinTableLoadersOfMachineCode",
+      countBuiltins(({ loadsMachineCodeAs }) => loadsMachineCodeAs !== null),
+    ],
     ["BuiltinClosedKeys", "builtinTableClosedKeys", model.closedKeys.length],
     ["BuiltinNamesReadByNativeCode", "builtinTableNamesReadByNativeCode", model.namesReadByNativeCode.length],
   ];
 }
 
-export function emitCppArraysHeader(model: TableModel): string {
+export function emitCppArraysHeader(model: TableModel, engineListStamp: string): string {
+  const problems = new Problems();
+  const counts: readonly Constant[] = [
+    ["numberOfBuiltins", model.builtins.length],
+    ["numberOfBuiltinNames", model.names.length],
+    ["numberOfBuiltinClasses", model.classes.length],
+    ["numberOfBuiltinLayouts", model.layouts.length],
+    ["numberOfRuntimeModules", model.modules.length],
+    ["numberOfRuntimeFunctions", model.functions.length],
+  ];
+  const functionConstants = model.functions.filter(hasConstant).map(functionConstantOf);
+  const constants = [
+    emitConstants("RuntimeModules", "RuntimeModuleID", model.modules.map(tokenConstantOf), problems),
+    emitConstants("RuntimeFunctions", "RuntimeFunctionID", functionConstants, problems),
+  ];
+  problems.throwIfAny();
   const declarations = collectArrayDeclarations(model)
     .filter(([, , count]) => count > 0)
     .flatMap(([cppType, name, count]) => [
       // lookup.rs in src/aot/builtins/table reads the text names where they lie.
       name === textNamesArray
         ? `extern "C" const ${cppType} ${name};`
-        : cppType.startsWith("BuiltinTextStorage<")
-          ? `extern const ${cppType} ${name};`
-          : `extern const ${cppType} ${name}[${count}];`,
+        : name === classTokensArray
+          ? `struct ${classTokensType} : ${cppType} { };`
+          : cppType.startsWith("BuiltinTextStorage<")
+            ? `extern const ${cppType} ${name};`
+            : `extern const ${cppType} ${name}[${count}];`,
       ...(name === textNamesArray ? [`extern const BuiltinNameSlots<${count}> ${textNameSlotsArray};`] : []),
     ]);
   const idLimits = [
+    `static_assert(engineListStamp == ${engineListStamp}ULL, "this table was written for another list of the names that the engine's code uses");`,
+    "static_assert(numberOfBuiltins <= maxNumberOfBuiltins);",
+    "static_assert(numberOfBuiltins <= BuiltinID::hashTableDeletedIndex);",
+    "static_assert(numberOfBuiltinNames <= BuiltinName::hashTableDeletedIndex);",
+    "static_assert(numberOfBuiltinClasses <= BuiltinClassID::hashTableDeletedIndex);",
+    "static_assert(numberOfBuiltinSlots <= BuiltinSlotID::hashTableDeletedIndex);",
+    "static_assert(numberOfBuiltinLayouts <= BuiltinLayoutID::hashTableDeletedIndex);",
+    "static_assert(numberOfRuntimeModules <= RuntimeModuleID::hashTableDeletedIndex);",
     `static_assert(${model.overloads.length} <= BuiltinOverloadID::hashTableDeletedIndex);`,
     `static_assert(${model.types.length} <= BuiltinTypeID::hashTableDeletedIndex);`,
     `static_assert(${model.dispatchNodes.length} <= BuiltinDispatchNodeID::hashTableDeletedIndex);`,
@@ -227,6 +276,8 @@ export function emitCppArraysHeader(model: TableModel): string {
     "#if ENABLE(AOT)",
     '#include "AOTBuiltinNameSlots.h"\n#include "AOTBuiltinTable.h"',
     "namespace JSC { namespace AOT {",
+    counts.map(emitCount).join("\n"),
+    ...constants,
     declarations.join("\n"),
     `constexpr uint32_t builtinTableHashOfBuiltinTokens = 0x${hashOfBuiltinTokens(model).toString(16)};`,
     idLimits.join("\n"),

@@ -440,6 +440,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn repeated_key_uses_first_entry() {
         let arena = Arena::new();
         let text = r#"{"name": "first", "type": "module", "name": "second", "type": "commonjs"}"#;
@@ -504,6 +505,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exports_tree_mirrors_json() {
         assert_trees(&[
             (r#""./a.js""#, "./a.js"),
@@ -527,6 +529,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn null_exports_count_as_absent() {
         let manifests = [
             (r#"{"exports": null}"#, None),
@@ -540,6 +543,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn invalid_exports_root_is_present() {
         let texts = [
             r#"{"exports": false}"#,
@@ -552,6 +556,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn mixed_subpath_and_condition_keys_are_invalid() {
         assert_trees(&[
             (r#"{".": "./a", "import": "./b"}"#, "invalid"),
@@ -568,6 +573,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn invalid_array_element_leaves_others_intact() {
         assert_trees(&[
             (r#"["./a.js", 1, "./b.js"]"#, "[./a.js, invalid, ./b.js]"),
@@ -576,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn imports_keys_count_as_conditions() {
         let manifests = [
             (
@@ -595,6 +602,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn expansion_keys_sort_by_specificity() {
         let arena = Arena::new();
         let text = r#"{"./a/*": "1", "./*": "2", "./a": "3", "./a/b/": "4", "./a/*.js": "5"}"#;
@@ -614,6 +622,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn targets_list_every_leaf_in_source_order() {
         let arena = Arena::new();
         let trees = [
@@ -641,6 +650,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn deep_nesting_becomes_invalid() {
         const STACK_SIZE: usize = 4 << 20;
         let build_trees = || {
@@ -660,6 +670,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn unusable_manifest_is_skipped() {
         let host = MemoryHost::new(&[
             (ROOT, r#"{"name": "root"}"#),
@@ -679,6 +690,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn missing_directory_has_no_module_type() {
         let host = MemoryHost::new(&[
             (ROOT, r#"{"name": "root", "type": "commonjs"}"#),
@@ -692,6 +704,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn directory_spellings_share_one_manifest() {
         let host = MemoryHost::new(&[
             ("/p/x/package.json", r#"{"name": "x"}"#),
@@ -713,6 +726,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn root_directory_can_have_manifest() {
         let files = [("/package.json", r#"{"name": "top"}"#), ("/a/b/c.js", "")];
         let host = MemoryHost::new(&files);
@@ -728,6 +742,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn root_directory_has_no_module_type() {
         let manifest = r#"{"name": "top", "type": "module"}"#;
         let host = MemoryHost::new(&[
@@ -747,6 +762,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn module_type_skips_unnamed_manifest_above() {
         let host = MemoryHost::new(&[
             (ROOT, r#"{"name": "root", "type": "commonjs"}"#),
@@ -767,6 +783,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn node_modules_does_not_stop_walks() {
         let installed = "/p/node_modules/pkg/package.json";
         let host = MemoryHost::new(&[
@@ -782,6 +799,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn enclosing_package_needs_name_and_version() {
         let installed = "/p/node_modules/s/package.json";
         let host = MemoryHost::new(&[
@@ -824,6 +842,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn same_package_stops_at_nested_manifest_and_node_modules() {
         let host = MemoryHost::new(&[
             ("/w/apps/web/package.json", r#"{"name": "web"}"#),
@@ -865,6 +884,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn side_effects_field_is_false_or_list() {
         for (field, expected) in [
             (r#""sideEffects": false"#, NONE),
@@ -890,6 +910,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn nearest_named_manifest_declares_side_effects() {
         let host = MemoryHost::new(&[
             ("/p/package.json", r#"{"name": "app"}"#),
@@ -931,6 +952,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn enclosing_package_shares_parsed_manifest() {
         let installed = "/p/node_modules/s/package.json";
         let host = MemoryHost::new(&[(installed, r#"{"name": "s", "version": "1.0.0"}"#)]);
@@ -951,6 +973,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn relative_path_has_no_enclosing_package() {
         let host = MemoryHost::new(&[
             ("/package.json", r#"{"name": "top", "version": "1.0.0"}"#),

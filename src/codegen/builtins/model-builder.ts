@@ -192,6 +192,9 @@ export class ModelBuilder {
   features: FeatureName[] = [];
   boxedStubs: BoxedStubName[] = [];
   hostReads: ModelHostRead[] = [];
+  readonly namesDeclaredByEngine = new Set<ModelName>();
+  readonly hostRoles: { path: BuiltinPath; source: Source }[] = [];
+  readonly hostClassRoles: { name: ClassName; source: Source }[] = [];
   hostObjects: ModelHostObject[] = [];
   namedMemberCalls: ModelNamedMemberCall[] = [];
   hostMethodCalls: ModelHostMethodCall[] = [];
@@ -371,6 +374,8 @@ export class ModelBuilder {
       mutability: "ChangesOnItsOwn",
       platforms: [...(holder?.platforms ?? targetPlatforms)],
       flags: [],
+      marks: [],
+      loadsMachineCodeAs: null,
       holder,
       name: holder === null ? this.internName(key, "Text") : this.internComponent(components[components.length - 1]),
       prototype: { link: "Unknown" },

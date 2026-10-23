@@ -26,7 +26,7 @@ import { emitCppAttachments } from "./emit-cpp-attachments.ts";
 import { emitEngineBindings, emitHostBindings } from "./emit-cpp-bindings.ts";
 import { emitCppBuiltins } from "./emit-cpp-builtins.ts";
 import { emitCppFeatures } from "./emit-cpp-features.ts";
-import { emitCppArraysHeader, emitCppIds } from "./emit-cpp-ids.ts";
+import { emitCppArraysHeader, emitCppIds, engineListStampOf } from "./emit-cpp-ids.ts";
 import { emitCppNames } from "./emit-cpp-names.ts";
 import { emitCppOverloads } from "./emit-cpp-overloads.ts";
 import { emitCppTypes } from "./emit-cpp-types.ts";
@@ -63,7 +63,10 @@ export interface GenerateOptions {
 }
 
 export interface GeneratedFiles {
+  /** What the engine is compiled with. Only the engine's declarations decide what is in it, so a prebuilt WebKit has the same. */
   engine: Map<string, string>;
+  /** The table, as WebKit's own build compiles it into its programs. */
+  table: Map<string, string>;
   codegen: Map<string, string>;
   dump: TableDump;
   undescribedResultsSummary: string;
@@ -71,6 +74,7 @@ export interface GeneratedFiles {
 
 interface EmittedCode {
   engine: Map<string, string>;
+  table: Map<string, string>;
   codegen: Map<string, string>;
 }
 
@@ -187,21 +191,37 @@ interface EmitterInput {
   nativeCallListStamp: string;
 }
 
+const arraysHeader = "AOTBuiltinTableArrays.h";
+
+// Bun compiles the table beside its own sources, where a header of the engine is a header of a framework.
+function spellIncludesForHost(text: string): string {
+  return text
+    .replace('#include "config.h"', '#include "root.h"')
+    .replace(/^#include "(\w+\.h)"$/gm, (include, header) =>
+      header === arraysHeader || header === "root.h" ? include : `#include <JavaScriptCore/${header}>`,
+    );
+}
+
 function emitCode({ model, schema, features, nativeCallListStamp }: EmitterInput): EmittedCode {
+  const ids = emitCppIds(model);
+  const table = new Map([
+    [arraysHeader, emitCppArraysHeader(model, engineListStampOf(ids))],
+    ["AOTBuiltinTableAttachments.cpp", emitCppAttachments(model, features)],
+    ["AOTBuiltinTableBuiltins.cpp", emitCppBuiltins(model)],
+    ["AOTBuiltinTableNames.cpp", emitCppNames(model)],
+    ["AOTBuiltinTableOverloads.cpp", emitCppOverloads(model)],
+    ["AOTBuiltinTableTypes.cpp", emitCppTypes(model)],
+  ]);
   return {
     engine: new Map([
       ["AOTBuiltinFeatures.h", emitCppFeatures(model, features)],
-      ["AOTBuiltinIDs.h", emitCppIds(model)],
-      ["AOTBuiltinTableArrays.h", emitCppArraysHeader(model)],
-      ["AOTBuiltinTableAttachments.cpp", emitCppAttachments(model, features)],
-      ["AOTBuiltinTableBuiltins.cpp", emitCppBuiltins(model)],
+      ["AOTBuiltinIDs.h", ids],
       ["AOTBuiltinTableEngineBindings.cpp", emitEngineBindings(model)],
-      ["AOTBuiltinTableNames.cpp", emitCppNames(model)],
-      ["AOTBuiltinTableOverloads.cpp", emitCppOverloads(model)],
-      ["AOTBuiltinTableTypes.cpp", emitCppTypes(model)],
       ["AOTBuiltinTableWords.h", emitCppWords(schema)],
     ]),
+    table,
     codegen: new Map([
+      ...Array.from(table, ([name, text]): [string, string] => [name, spellIncludesForHost(text)]),
       ["BunAOTHostBindings.cpp", emitHostBindings(model, features, nativeCallListStamp)],
       ["aot_builtin_ids.rs", emitRustIds(model, schema)],
       ["aot_builtin_syntax.rs", emitRustSyntax(model)],
@@ -237,7 +257,11 @@ export async function generate(options: GenerateOptions): Promise<GeneratedFiles
     syntaxUses: collectSyntaxUses(options.bunRoot, engine.engineFiles),
   });
 
-  const { engine: engineCode, codegen } = emitCode({
+  const {
+    engine: engineCode,
+    table,
+    codegen,
+  } = emitCode({
     model,
     schema,
     features,
@@ -249,7 +273,7 @@ export async function generate(options: GenerateOptions): Promise<GeneratedFiles
   codegen.set("aot_builtin_table.json", `${JSON.stringify(dump)}\n`);
   codegen.set("aot_engine_functions.json", `${JSON.stringify(engineFunctionsOf(model))}\n`);
   codegen.set("aot_builtin_undescribed_results.txt", describeUndescribedResults(model));
-  return { engine: engineCode, codegen, dump, undescribedResultsSummary: summarizeUndescribedResults(model) };
+  return { engine: engineCode, table, codegen, dump, undescribedResultsSummary: summarizeUndescribedResults(model) };
 }
 
 function writeFiles(directory: string, files: ReadonlyMap<string, string>): void {
@@ -274,8 +298,9 @@ function describeFirstDifference(found: string, written: string): string {
 
 const remedyForCheckout = "run src/codegen/builtins/index.ts without --check and check the result in";
 const remedyForPrebuilt =
-  "this WebKit was compiled with another table of built-ins than the one this tree declares, so code compiled with --aot would name the wrong built-ins: " +
-  "build with --webkit=local, or pin a release of WebKit whose aot/builtins/generated was written from this tree";
+  "this WebKit was compiled with another list of the built-ins that its own code names than the one this tree declares: " +
+  "a change to an entry that the engine declares or that aot/builtins/host-roles.builtins.ts lists needs a build of WebKit. " +
+  "Build with --webkit=local, or pin a release of WebKit whose aot/builtins/generated was written from this tree";
 
 function checkFilesAreCurrent(directory: string, files: ReadonlyMap<string, string>, remedy: string): void {
   const problems = new Problems();
@@ -341,11 +366,11 @@ function readCommandLine(): CommandLine {
 
 async function main(): Promise<void> {
   const { options, codegenPath, requiresVerified, isCheck } = readCommandLine();
-  const { engine, codegen, dump, undescribedResultsSummary } = await generate(options);
+  const { engine, table, codegen, dump, undescribedResultsSummary } = await generate(options);
   const generatedDirectory = generatedDirectoryOf(options);
   if (options.javaScriptCore === null) checkFilesAreCurrent(generatedDirectory, engine, remedyForPrebuilt);
-  else if (isCheck) checkFilesAreCurrent(generatedDirectory, engine, remedyForCheckout);
-  else writeFiles(generatedDirectory, engine);
+  else if (isCheck) checkFilesAreCurrent(generatedDirectory, new Map([...engine, ...table]), remedyForCheckout);
+  else writeFiles(generatedDirectory, new Map([...engine, ...table]));
   if (!isCheck) writeFiles(codegenPath, codegen);
   console.error(`builtins table: ${undescribedResultsSummary}`);
   reportStaleEntries(dump, verifiedHashesOf(options), requiresVerified);

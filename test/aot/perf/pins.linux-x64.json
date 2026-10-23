@@ -1306,18 +1306,18 @@
     "jit": 10
   },
   "bytes/fill-a-buffer-by-index": {
-    "typed": 420,
+    "typed": 867.8,
     "untyped": 7967,
     "jit": 406
   },
   "bytes/find-a-byte-in-a-buffer": {
-    "typed": 356.1,
+    "typed": 611.4,
     "untyped": 8741,
     "jit": 471
   },
   "bytes/read-the-shorts-of-a-buffer": {
     "typed": 770.8,
-    "untyped": 574.8,
+    "untyped": 575.1,
     "jit": 503
   },
   "bytes/read-the-words-of-a-buffer": {
@@ -1326,17 +1326,17 @@
     "jit": 343
   },
   "bytes/sum-the-bytes-of-a-buffer-declared-a-view": {
-    "typed": 358.1,
+    "typed": 676.8,
     "untyped": 9060.9,
     "jit": 375
   },
   "bytes/sum-the-bytes-of-a-buffer": {
-    "typed": 387.1,
+    "typed": 515,
     "untyped": 9061.2,
     "jit": 375
   },
   "bytes/sum-the-bytes-of-a-view": {
-    "typed": 355.2,
+    "typed": 673.8,
     "untyped": 9061.4,
     "jit": 375
   },
@@ -1346,7 +1346,7 @@
     "jit": 25
   },
   "bytes/write-words-into-a-buffer": {
-    "typed": 266,
+    "typed": 265.8,
     "untyped": 307,
     "jit": 341.7
   }

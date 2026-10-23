@@ -64,7 +64,11 @@ export function parseBuiltinUses(json: unknown, path: string): BuiltinUses {
   if (!isRecord(json)) fail("the built-in uses are not an object", path);
   if (json.version !== builtinUsesVersion) fail(`unknown version of the built-in uses: ${String(json.version)}`, path);
   if (!Array.isArray(json.entries)) fail("the built-in uses have no entries", path);
-  return { entries: json.entries.map((entry, position) => parseEntry(entry, position, path)) };
+  const { namedByEngine = [] } = json;
+  if (!Array.isArray(namedByEngine) || !namedByEngine.every(isBuiltinId))
+    fail("namedByEngine is not a list of built-in ids", path);
+  const entries = json.entries.map((entry, position) => parseEntry(entry, position, path));
+  return namedByEngine.length === 0 ? { entries } : { entries, namedByEngine };
 }
 
 export function readBuiltinUses(path: string): BuiltinUses {
@@ -105,6 +109,7 @@ export function checkBuiltinUses(uses: BuiltinUses, model: FeatureModel, path: s
 }
 
 export function serializeBuiltinUses(uses: BuiltinUses): string {
+  const { namedByEngine = [] } = uses;
   const entries = uses.entries.map(
     ({ id, path, kind, uses: entryUses, nativeSymbols, creationSymbol, hasHiddenRoot }) => ({
       id,
@@ -116,7 +121,13 @@ export function serializeBuiltinUses(uses: BuiltinUses): string {
       ...(hasHiddenRoot ? { hasHiddenRoot } : {}),
     }),
   );
-  return JSON.stringify({ version: builtinUsesVersion, entries }, null, 2) + "\n";
+  return (
+    JSON.stringify(
+      { version: builtinUsesVersion, entries, ...(namedByEngine.length === 0 ? {} : { namedByEngine }) },
+      null,
+      2,
+    ) + "\n"
+  );
 }
 
 export function entriesById(uses: BuiltinUses): Map<number, BuiltinEntry> {

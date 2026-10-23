@@ -262,10 +262,11 @@ export default b.declarations(
     enqueue: takesBytesOf("chunk", b.undefined),
     error: undeclaredFunction,
   }),
+  // For a receiver that is no reader both answer a new rejected promise.
   partOfByteStream("ReadableStreamBYOBReader", {
-    closed: readsStream(b.any),
+    closed: { ...readsStream(b.any), this: b.any, mutability: "ChangesOnItsOwn" },
     cancel: undeclaredFunction,
-    read: takesBytesOf("view", b.any),
+    read: { ...takesBytesOf("view", b.any), this: b.any },
     releaseLock: undeclaredFunction,
   }),
   partOfByteStream("ReadableStreamBYOBRequest", {

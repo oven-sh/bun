@@ -273,6 +273,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn relative_path_starts_below_package_directory() {
         let package = EnclosingPackage {
             directory: b"/app/node_modules/dep",

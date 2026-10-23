@@ -115,6 +115,9 @@ export const conversionProtocols: Readonly<Record<Conversion, readonly Protocol[
   Dictionary: ["Named"],
 };
 
+// A value inside the accepted type fails these by what it is: a negative index, a text that is no BigInt.
+export const conversionsFailingByValue: readonly Conversion[] = ["ToIndex", "ToBigInt", "Dictionary"];
+
 export const operandUses = [
   "Inspects",
   "Retains",
@@ -526,6 +529,21 @@ export interface StaticTableRef {
   table: string;
 }
 
+// What code of the engine asks about an entry, and few entries have. The table lists the entries of each mark, so the engine names none of them.
+export const builtinMarks = [
+  // A flag of the command line or an option of the engine puts it on the global object or on process.
+  "IsAddedByOption",
+  // Compiles text: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
+  "EvaluatesTextInGlobalScope",
+  // Who reads it has a loader of modules in hand.
+  "HoldsLoader",
+  // Replaces a member of its first operand by a function of its own.
+  "IsSpy",
+  // Whoever goes over the enumerable properties of its holder passes it by: Object.keys, values, entries and assign, a spread, JSON.stringify.
+  "IsNotEnumerable",
+] as const;
+export type BuiltinMark = (typeof builtinMarks)[number];
+
 export interface EntryColumns {
   mutability?: Mutability;
   deterministic?: boolean;
@@ -555,6 +573,9 @@ export interface EntryColumns {
   runsUnseenCode?: boolean | ConditionSpec;
   /** The function has own properties that the table does not list, or something else than Function.prototype above it. */
   hasUndeclaredMembers?: boolean;
+  marks?: readonly BuiltinMark[];
+  /** A call of it loads machine code that nobody has seen. A report names the entry at this path, which is what a program writes. */
+  loadsMachineCodeAs?: BuiltinPath;
   loads?: readonly ModuleLoadSpec[];
   callsFunctions?: readonly CalledFunctionSpec[];
   appendForm?: InlineBuiltinName;

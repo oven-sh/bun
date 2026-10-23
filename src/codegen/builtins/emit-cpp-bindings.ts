@@ -19,6 +19,7 @@ import {
   type ModelOverload,
   type TableModel,
 } from "./model.ts";
+import { compareBytes } from "./paths.ts";
 import type { CppClassRef, DirectEntrySpec, Origin } from "./vocabulary.ts";
 
 interface BindingLists {
@@ -28,7 +29,6 @@ interface BindingLists {
   appendFunctions: readonly string[];
   directFunctions: readonly string[];
   nativeFunctions: readonly string[];
-  linkTimeConstants: readonly string[];
   hostNumbers: readonly string[];
 }
 
@@ -113,6 +113,10 @@ const headersOfDirectFunctions = ["Bindgen/ExternTraits.h", "Bindgen/IDLConvert.
 
 const appendFunctionParameters =
   "(JSC::JSGlobalObject*, JSC::AOT::StringBuilderStorage*, JSC::EncodedJSValue, const JSC::EncodedJSValue*, size_t)";
+
+function inTokenOrder<Item extends { token: string }>(items: readonly Item[]): Item[] {
+  return items.toSorted((left, right) => compareBytes(left.token, right.token));
+}
 
 function sortUnique(texts: readonly string[]): string[] {
   return sortByBytes([...new Set(texts)]);
@@ -256,7 +260,7 @@ function formatLinkTimeConstantBinding(builtin: ModelBuiltin): string[] {
   if (linkTimeConstant === null) return [];
   return [
     formatAggregate([
-      ["builtin", formatId("BuiltinID", builtin)],
+      ["builtin", `Builtins::${builtin.token}`],
       ["constant", `LinkTimeConstant::${linkTimeConstant}`],
     ]),
   ];
@@ -270,7 +274,6 @@ function emitBindings(declaration: string, lists: BindingLists): string {
     ["appendFunctions", "static const BuiltinAppendFunctionBinding", lists.appendFunctions],
     ["directFunctions", "static const BuiltinDirectFunctionBinding", lists.directFunctions],
     ["nativeFunctions", "static constexpr BuiltinNativeFunctionBinding", lists.nativeFunctions],
-    ["linkTimeConstants", "static constexpr BuiltinLinkTimeConstantBinding", lists.linkTimeConstants],
     ["hostNumbers", "static constexpr BuiltinHostNumberBinding", lists.hostNumbers],
   ] as const;
   const bindingSet = formatAggregate(
@@ -302,24 +305,41 @@ function emitEngineFunctionDeclarations(entries: readonly NativeFunctionEntry[])
 
 function formatEngineNativeFunction({ builtin, nativeFunction }: NativeFunctionEntry): string {
   const pointer = `JSC_REGISTERED_HOST_FUNCTION(${nativeFunction.symbol})`;
-  return formatNativeFunctionBinding(formatId("BuiltinID", builtin), pointer, nativeFunction);
+  return formatNativeFunctionBinding(`Builtins::${builtin.token}`, pointer, nativeFunction);
 }
 
+function emitEngineBindingLists(
+  lists: Readonly<Record<"classes" | "nativeFunctions" | "linkTimeConstants", readonly string[]>>,
+): string {
+  const arrays = [
+    ["classes", "EngineClassBinding", lists.classes],
+    ["nativeFunctions", "EngineNativeFunctionBinding", lists.nativeFunctions],
+    ["linkTimeConstants", "EngineLinkTimeConstantBinding", lists.linkTimeConstants],
+  ] as const;
+  const bindingSet = formatAggregate(
+    arrays.map(([name, , elements]): AggregateMember => [name, elements.length === 0 ? null : name]),
+  );
+  return joinBlocks([
+    ...arrays.map(([name, cppType, elements]) => emitArray(`static constexpr ${cppType} ${name}`, elements)),
+    `constinit const EngineBindingSet engineBuiltinBindings = ${bindingSet};`,
+  ]);
+}
+
+// Compiled with the engine, so it names an entry by its constant and has none of the table's numbers.
 export function emitEngineBindings(model: TableModel): string {
   const classes = findClassesWithBindings(model, "Engine");
   const nativeFunctions = findNativeFunctions(model, "Engine");
   const { checkedJSTypes, linkTimeConstants } = model.syntax;
   const body = joinBlocks([
     emitEngineFunctionDeclarations(nativeFunctions),
-    emitBindings("constinit const BuiltinBindingSet engineBuiltinBindings", {
-      classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
-      cachedGetters: [],
-      customGetters: [],
-      appendFunctions: [],
-      directFunctions: [],
-      nativeFunctions: nativeFunctions.map(formatEngineNativeFunction),
-      linkTimeConstants: model.builtins.flatMap(formatLinkTimeConstantBinding),
-      hostNumbers: [],
+    emitEngineBindingLists({
+      classes: inTokenOrder(classes).map(builtinClass =>
+        formatClassBinding(builtinClass, `BuiltinClasses::${builtinClass.token}`),
+      ),
+      nativeFunctions: inTokenOrder(nativeFunctions.map(entry => ({ ...entry, token: entry.builtin.token }))).map(
+        formatEngineNativeFunction,
+      ),
+      linkTimeConstants: inTokenOrder(model.builtins).flatMap(formatLinkTimeConstantBinding),
     }),
     emitSwitchFunction(
       "JSType toJSType(CheckedJSType type)",
@@ -485,7 +505,6 @@ export function emitHostBindings(model: TableModel, features: FeatureModel, nati
       appendFunctions: model.builtins.flatMap(formatAppendFunctionBinding),
       directFunctions: directFunctions.map(formatDirectFunctionBinding),
       nativeFunctions: nativeFunctions.map(formatHostNativeFunction),
-      linkTimeConstants: [],
       hostNumbers: model.builtins.flatMap(formatHostNumberBinding),
     }),
     "}",

@@ -68,6 +68,14 @@ const accessorActions: readonly PropertyActionKind[] = [
   "DefinesSetter",
 ];
 
+const changingTraps: readonly LogEvent["trap"][] = [
+  "set",
+  "defineProperty",
+  "deleteProperty",
+  "setPrototypeOf",
+  "preventExtensions",
+];
+
 const usesAnObjectMayRefuse: readonly OperandUse[] = [
   "StoresByKey",
   "AssignsFrom",
@@ -190,7 +198,36 @@ class Comparison {
     if (protocols.includes("OwnValues") && (isOwnKey || isIndexKey(key) || protocols.includes("PrototypeChain"))) return true;
     // The iterator of the engine's arrays reads these from what it iterates.
     if (protocols.includes("Iterate") && (isIndexKey(key) || key === "length")) return true;
-    return depth === 0 && this.hasActionFor(operand, [...readingActions, ...definingActions, "DeletesByKey"], key);
+    if (depth > 0 && !this.hasAnyUse(parameter, "AppliesTransitively")) return false;
+    return this.hasActionFor(operand, depth === 0 ? [...readingActions, ...definingActions, "DeletesByKey"] : readingActions, key);
+  }
+
+  // b.handedOver: native code reads, calls, keeps and passes on such an operand, and does not change it. Flow takes what goes into
+  // native memory for escaped, a call that runs other code lets whatever has escaped be read and called, and no pass takes a
+  // summary of an operand from such an entry.
+  isHandedOver(parameter: DumpedParameter): boolean {
+    const { capability, runsOnlyOperandCode } = this.overload;
+    return capability === "js" && !runsOnlyOperandCode && this.goesIntoNativeMemory(parameter);
+  }
+
+  goesIntoNativeMemory(parameter: DumpedParameter): boolean {
+    const operand = JSON.stringify(parameter.operand);
+    return this.overload.transfers.some(
+      ({ from, to }) => to.place === "NativeMemory" && from.place === "Operand" && JSON.stringify(from.operand) === operand,
+    );
+  }
+
+  // [1].toLocaleString(locales, options) hands both on to Number.prototype.toLocaleString: a method of the engine that a protocol of
+  // another operand runs unseen may be given what has gone into native memory, and has an entry of its own.
+  isHandedToMethodsOfEngine(parameter: DumpedParameter): boolean {
+    if (!this.goesIntoNativeMemory(parameter)) return false;
+    return this.operandNames().some(other => {
+      const otherParameter = parameterOf(this.overload, other);
+      if (otherParameter === null || otherParameter === parameter) return false;
+      if (this.mayRunMethodsOfEngine(otherParameter, other)) return true;
+      // What it holds may be a primitive, whose methods are the engine's.
+      return this.hasAnyProtocol(otherParameter, "CallsNamed") && this.hasAnyUse(otherParameter, "AppliesToContents", "AppliesTransitively");
+    });
   }
 
   hasAnyProtocol({ protocols }: DumpedParameter, ...wanted: Protocol[]): boolean {
@@ -203,7 +240,8 @@ class Comparison {
 
   readsPrototype(operand: OperandName): boolean {
     const isPrototypeOf = (place: DumpedPlace) => place.place === "Prototype" && covers(place.operand, operand);
-    return this.overload.transfers.some(({ from }) => isPrototypeOf(from));
+    const { transfers, result } = this.overload;
+    return transfers.some(({ from }) => isPrototypeOf(from)) || (result.prototypeSource !== null && covers(result.prototypeSource, operand));
   }
 
   coversTrap(parameter: DumpedParameter, event: LogEvent, depth: number): boolean {
@@ -258,6 +296,23 @@ class Comparison {
     return parameter.namedMembers.includes(spelling) || (parameter.protocols.includes("ToPrimitive") && toPrimitiveKeys.includes(spelling));
   }
 
+  // A typed array makes a number of what is stored under an index, and an array of what is stored as its length. The effects take a
+  // store by key into what may be such an object to run code that nobody lists.
+  isRunByStore({ origin, trap, key }: LogEvent): boolean {
+    const name = origin.kind === "Content" && (trap === "apply" || origin.content === "Getter") ? origin.key : key;
+    if (name === undefined || !toPrimitiveKeys.includes(spellingOf(name))) return false;
+    return this.overload.propertyActions.some(({ action, object, value }) => {
+      if (!storingActions.includes(action) || value.place !== "Operand" || !covers(value.operand, origin.operand)) return false;
+      return operandValuesOf(this.run, object).some(holder => ArrayBuffer.isView(holder) || Array.isArray(holder));
+    });
+  }
+
+  // What a thenable hands to the functions that it is called with is in the hands of whoever made them, by the doing of its own code.
+  isSettledByThenable(parameter: DumpedParameter, { origin }: LogEvent): boolean {
+    if (origin.kind !== "Content" || origin.content !== "Value" || types.isPromise(valueOf(this.run, origin.operand))) return false;
+    return this.callsMember(parameter, "then", 1);
+  }
+
   placeAdmits(place: DumpedPlace, value: unknown): boolean {
     const { run } = this;
     switch (place.place) {
@@ -269,7 +324,14 @@ class Comparison {
         return includesSame(passed, value) || passed.some(operand => this.isWrapperOf(value, operand));
       }
       case "Slot":
-        return isInSlot(this.types, value, place.operand, place.slot);
+        return (
+          isInSlot(this.types, value, place.operand, place.slot) ||
+          // What the call itself puts there, which a callback that throws keeps out.
+          this.overload.transfers.some(
+            ({ from, to }) =>
+              from.place === "Operand" && JSON.stringify(to) === JSON.stringify(place) && this.placeAdmits(from, value),
+          )
+        );
       case "OwnValues": {
         if (!isObject(value)) return true;
         const origin = this.originOf(value);
@@ -280,7 +342,14 @@ class Comparison {
       case "Prototype":
         return operandValuesOf(run, place.operand).some(operand => prototypeBefore(run, operand) === value);
       case "Result":
-        return value === this.result || run.completion.kind === "Threw";
+        // What a callback returns becomes the result, so a later call may be handed what an earlier one returned.
+        return (
+          value === this.result ||
+          run.completion.kind === "Threw" ||
+          this.overload.callbacks.some(
+            ({ callee, resultUse }) => resultUse === "Returned" && includesSame(resultsOfCalls(run, callee), value),
+          )
+        );
       case "NewValue":
         return findMismatch(this.types, place.type, value) === undefined;
       case "Member": {
@@ -337,6 +406,15 @@ class Comparison {
     });
   }
 
+  admitsPassedValues({ thisValue, arguments: declared, spreadArguments }: DumpedCallback, event: LogEvent): boolean {
+    if (event.trap === "apply" && !this.placeAdmits(thisValue, event.thisValue)) return false;
+    const last = declared.at(-1);
+    const takesRest = last?.place === "Operand" && typeof last.operand === "object" && "argumentsFrom" in last.operand;
+    return event.passedValues.every((value, index) =>
+      this.placeAdmits(declared[index] ?? (takesRest ? last : spreadArguments), value),
+    );
+  }
+
   checkTimes(column: string, times: DumpedCallback["times"], event: LogEvent, calls: number): void {
     const isAfterReturn = times === "Later" || times === "PerEvent";
     if (event.isLate && !isAfterReturn) this.report(`${column}.times`, `${times}, and it was called after the call returned`);
@@ -353,8 +431,11 @@ class Comparison {
       return;
     }
     const constructs = event.trap === "construct";
-    const callback = declared.find(other => other.constructs === constructs && this.isAtDeclaredTime(other, event)) ??
-      declared.find(other => other.constructs === constructs);
+    const ofThisKind = declared.filter(other => other.constructs === constructs);
+    const atThisTime = ofThisKind.filter(other => this.isAtDeclaredTime(other, event));
+    const choices = atThisTime.length > 0 ? atThisTime : ofThisKind;
+    // A fold declares its first call and the later ones apart.
+    const callback = choices.find(other => this.admitsPassedValues(other, event)) ?? choices[0];
     if (!callback) {
       this.report("callbacks.constructs", `${describeOperand(operand)} was ${constructs ? "constructed" : "called"}`);
       return;
@@ -370,10 +451,15 @@ class Comparison {
     return event.isLate === (times === "Later" || times === "PerEvent");
   }
 
-  findHandler(origin: Extract<Origin, { kind: "Content" }>): DumpedHandlerCall | undefined {
+  findHandler(subject: object, origin: Extract<Origin, { kind: "Content" }>): DumpedHandlerCall | undefined {
+    const { log } = this.run;
+    const holder = log.originOf(log.holderOf(subject));
+    const holderKey = holder?.kind === "Content" ? holder.key : undefined;
     return this.overload.handlerCalls.find(({ callee }) => {
       if (callee.place !== "Member" || !covers(callee.operand, origin.operand) || origin.key === undefined) return false;
-      const last = callee.path[callee.path.length - 1];
+      const [before, last] = [callee.path[callee.path.length - 2], callee.path[callee.path.length - 1]];
+      // ["routes", every own value] is not `valueOf` of what is held under "port".
+      if (typeof before === "string" && holderKey !== undefined && before !== spellingOf(holderKey)) return false;
       return callee.path.length === origin.depth && (last === null || last === spellingOf(origin.key));
     });
   }
@@ -391,7 +477,7 @@ class Comparison {
       if (!this.hasActionFor(operand, storingActions, key)) this.report(`${column}.uses`, `a setter ran: ${describeEvent(event)}`);
       return;
     }
-    const handler = this.findHandler(origin);
+    const handler = this.findHandler(event.subject, origin);
     if (handler) {
       const handlerColumn = `handlerCalls[${this.overload.handlerCalls.indexOf(handler)}]`;
       this.checkPassedValues(handlerColumn, handler, { place: "None" }, event);
@@ -458,6 +544,8 @@ class Comparison {
       return;
     }
     if (claimsEveryUse(parameter)) return;
+    const isInOtherHands = this.isHandedOver(parameter) || this.isHandedToMethodsOfEngine(parameter);
+    if (isInOtherHands && !changingTraps.includes(event.trap)) return;
     if (origin.kind !== "Operand" && this.mayRunMethodsOfEngine(parameter, operand)) return;
     if (event.isDuringStep) {
       if (!this.hasAnyUse(parameter, "Retains", "RetainsContents")) {
@@ -466,6 +554,7 @@ class Comparison {
       return;
     }
     if (this.isResolutionOfPromise(event) || this.isReturnedByOperandCode(event)) return;
+    if (this.isRunByStore(event) || this.isSettledByThenable(parameter, event)) return;
     if (this.overload.capability !== "js" && !event.isLate && !this.isRunByConversion(parameter, event)) {
       this.report("capability", `code of an operand ran: ${describeEvent(event)}`);
     }
@@ -514,11 +603,16 @@ class Comparison {
 
   // What the built-in does with it is judged as what it does with the result of that code.
   isReturnedByOperandCode(event: LogEvent): boolean {
-    if (event.origin.kind !== "Content") return false;
+    if (event.origin.kind === "CallbackResult") return false;
     const { events } = this.run.log;
-    const subject = this.run.log.holderOf(event.subject) ?? event.subject;
+    const subjects = [this.run.log.holderOf(event.subject) ?? event.subject, valueOf(this.run, event.origin.operand)];
     const returnedBy = events.find(
-      other => other.origin.kind === "Operand" && other.outcome && "returned" in other.outcome && other.outcome.returned === subject,
+      other =>
+        other.origin.kind === "Operand" &&
+        other.origin.operand !== event.origin.operand &&
+        other.outcome &&
+        "returned" in other.outcome &&
+        subjects.includes(other.outcome.returned),
     );
     if (!returnedBy || events.indexOf(returnedBy) > events.indexOf(event)) return false;
     const { operand } = returnedBy.origin;
@@ -553,6 +647,8 @@ class Comparison {
 
   isKeptInResult(origin: Origin, value: unknown): boolean {
     if (origin.kind === "Content" && origin.content === "Thrown") return true;
+    // The body of a generator is code, and flow connects what it yields with what a step answers.
+    if (origin.kind === "Content" && origin.content === "Iterated" && types.isGeneratorObject(valueOf(this.run, origin.operand))) return true;
     if (this.isNamedInType(this.overload.result.type, value, 0)) return true;
     // What is reached through an operand that the result holds is reached through the result.
     const holder: Origin = { kind: "Operand", operand: origin.operand };
@@ -590,6 +686,7 @@ class Comparison {
     return propertyActions.some(
       ({ action, object, value: target }) =>
         (action === "BecomesPrototype" && origin.kind === "Operand" && covers(object, origin.operand) && target.place === "Result") ||
+        (action === "DescribesResult" && origin.kind === "Content" && covers(object, origin.operand)) ||
         (readingActions.includes(action) && origin.kind === "Content" && covers(object, origin.operand) && reachesResult(target)),
     );
   }
@@ -628,7 +725,7 @@ class Comparison {
 
   isUnchecked(origin: Origin): boolean {
     const parameter = parameterOf(this.overload, origin.operand);
-    return parameter !== null && claimsEveryUse(parameter);
+    return parameter !== null && (claimsEveryUse(parameter) || this.isHandedOver(parameter));
   }
 
   forEachHeldValue(root: object, visit: (value: object, origin: Origin) => void): void {
@@ -639,7 +736,9 @@ class Comparison {
       const held: unknown[] = internalsOf(holder, log).map(({ value }) => value);
       for (const key of Reflect.ownKeys(holder)) {
         const descriptor = Reflect.getOwnPropertyDescriptor(holder, key)!;
-        held.push(descriptor.value, descriptor.get, descriptor.set);
+        // Every Event has the one getter of isTrusted as its own: an accessor that stays as it is and that no operand brought is the class's.
+        const accessors = [descriptor.get, descriptor.set].filter(accessor => descriptor.configurable || log.originOf(accessor));
+        held.push(descriptor.value, ...accessors);
       }
       for (const value of held) {
         if (!isObject(value) || visited.has(value)) continue;
@@ -894,9 +993,31 @@ class Comparison {
     return [this.run.receiver, ...this.run.args].some(operand => ArrayBuffer.isView(operand) && this.run.before.get(operand)?.internals.some(({ value }) => value === object));
   }
 
+  // One object may be passed as several operands, and a built-in object as any: the change is that of the operand that declares it.
+  originOfChanged(change: Change): Origin | undefined {
+    const { object } = change;
+    const passedAs = this.operandNames().filter(operand => valueOf(this.run, operand) === object);
+    const declaring = passedAs.find(operand => {
+      const parameter = parameterOf(this.overload, operand);
+      return parameter !== null && (claimsEveryUse(parameter) || this.isChangeDeclared(parameter, operand, change));
+    });
+    const operand = declaring ?? passedAs[0];
+    if (operand !== undefined) return { kind: "Operand", operand };
+    return this.originOf(object) ?? (this.realm.isKnownObject(object) ? undefined : this.run.log.originOf(object));
+  }
+
+  // A method of the engine that was found through a tracked object changes what its own entry says.
+  isChangedByMethodOfEngine({ object }: Change): boolean {
+    const { log } = this.run;
+    return log.events.some(
+      ({ trap, subject, thisValue }) => trap === "apply" && log.holderOf(subject) !== undefined && log.targetOf(thisValue) === object,
+    );
+  }
+
   checkChange(change: Change): void {
     if (this.isStoreOfSet(change) || this.isBufferOfOperand(change.object)) return;
-    const origin = this.originOf(change.object) ?? (this.realm.isKnownObject(change.object) ? undefined : this.run.log.originOf(change.object));
+    if (this.isChangedByMethodOfEngine(change)) return;
+    const origin = this.originOfChanged(change);
     if (!origin) {
       const subject = `${this.describeValue(change.object)}, which is no operand`;
       this.report("writes", this.describeChange(change, subject));
@@ -989,7 +1110,7 @@ export function selectFor(realm: Realm, call: Call, run: Run): DumpedOverload | 
     isPristine: operand => candidateOf(run.set, operand)?.kind === "Pristine",
   });
   if (overload.isUndeclared) return undefined;
-  const isHolderRequired = call.entry.flags.includes("RequiresHolderAsThis") && call.mode === "Call";
+  const isHolderRequired = call.entry.flags.includes("RequiresHolderAsThis") && call.mode === "Call" && !overload.receiver?.accepted.isAnything;
   if (isHolderRequired && run.receiver !== realm.valueOf(call.entry.holder)) return undefined;
   return overload;
 }

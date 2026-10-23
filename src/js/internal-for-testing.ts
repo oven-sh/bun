@@ -1089,7 +1089,7 @@ export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
 // beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
 // a function expression) compiled under `name`.
 export const internalModuleBytecode: {
-  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
+  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array; lazyFunctionCount: number } | null;
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
 

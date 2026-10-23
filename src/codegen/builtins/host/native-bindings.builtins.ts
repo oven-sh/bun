@@ -32,9 +32,10 @@ const convertsDomain = {
 } satisfies b.FunctionField;
 
 // Native code keeps the server's flags and limits. It finds the server behind the wrapper, and throws for anything else.
+// It reads its operands without asking how many were passed.
 const configuresServer = (operands: Readonly<Record<string, readonly b.UseSpec[]>>) =>
   ({
-    args: Object.fromEntries(Object.keys(operands).map(name => [name, b.any.optional])),
+    args: Object.fromEntries(Object.keys(operands).map(name => [name, b.any])),
     returns: b.undefined,
     capability: "js",
     throws: true,
@@ -63,10 +64,10 @@ export default b.declarations(
       writes: externalState,
       implementation: b.generic,
     },
-    // It defines the columns and the rows as the first two elements of the array.
+    // It defines the columns and the rows as the first two elements of the array. Given a descriptor it reads the array without asking whether one was passed.
     getWindowSize: {
       ...operandCodeOnly,
-      args: { fd: b.any.optional, size: b.any.optional },
+      args: { fd: b.any, size: b.any },
       returns: b.bool,
       uses: { fd: converted, size: [b.writesContents(), b.storedByKey(b.indexKeys, b.f64)] },
       reads: externalState,

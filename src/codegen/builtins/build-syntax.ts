@@ -321,6 +321,26 @@ function buildNativeBindings(builder: ModelBuilder, declarations: readonly Sourc
     );
 }
 
+// The engine is compiled with an enumeration of these words, so its own lines say which there are.
+function wordsOfEngine(
+  builder: ModelBuilder,
+  lines: readonly SyntaxLine[],
+  kind: string,
+  wordsOf: (line: SyntaxLine) => readonly string[],
+): string[] {
+  const words = sortedUnique(lines.filter(({ source }) => source.origin === "Engine").flatMap(wordsOf));
+  for (const line of lines) {
+    for (const word of wordsOf(line)) {
+      if (words.includes(word)) continue;
+      builder.problems.add(
+        line.source,
+        `${subjectOf(line)}: no line of the engine has the ${kind} ${word}, so the engine has no number for it`,
+      );
+    }
+  }
+  return words;
+}
+
 export function buildSyntax(
   builder: ModelBuilder,
   declarations: readonly SourcedDeclaration[],
@@ -341,21 +361,21 @@ export function buildSyntax(
       if (meaning === null) return [];
       return [{ name: builder.internName(line.name, "Text"), position: line.position, meaning }];
     });
+  const lines = [...table.lines, ...table.prefixedGlobals];
   const intrinsics = resolveLines(table.lines);
   const prefixedGlobals = resolveLines(table.prefixedGlobals).map(({ name, meaning }): ModelPrefixedGlobal => ({
     name,
     meaning,
   }));
-  const meanings = [...intrinsics, ...prefixedGlobals].map(({ meaning }) => meaning);
   builder.syntax = {
     intrinsics,
     prefixedGlobals,
     nativeBindings: buildNativeBindings(builder, declarations),
-    checkedJSTypes: sortedUnique(
-      meanings.flatMap(meaning => (meaning.intrinsic === "HasJSType" ? [meaning.first, meaning.last] : [])),
+    checkedJSTypes: wordsOfEngine(builder, lines, "JSType", ({ spec }) =>
+      spec.intrinsic === "HasJSType" ? [spec.first, spec.last] : [],
     ),
-    linkTimeConstants: sortedUnique(
-      meanings.flatMap(meaning => (meaning.intrinsic === "LinkTimeConstant" ? [meaning.constant] : [])),
+    linkTimeConstants: wordsOfEngine(builder, lines, "link-time constant", ({ spec, name }) =>
+      spec.intrinsic === "LinkTimeConstant" ? [name] : [],
     ),
   };
 }

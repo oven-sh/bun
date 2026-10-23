@@ -233,6 +233,7 @@ fn add_object(file: &mut FileBuilder, key: PropKey, value: ExprId) -> ExprId {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn bundle_import_errors_name_specifier() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -262,6 +263,7 @@ fn bundle_import_errors_name_specifier() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn type_only_bundle_imports_are_skipped() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -284,6 +286,7 @@ fn type_only_bundle_imports_are_skipped() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn ambient_module_bundle_import_is_skipped() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -316,6 +319,7 @@ fn ambient_module_bundle_import_is_skipped() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn flag_argument_reads_through_cast() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -344,6 +348,7 @@ fn flag_argument_reads_through_cast() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn flag_argument_count_must_be_one() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -382,6 +387,7 @@ fn flag_argument_count_must_be_one() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn flag_must_be_ascii() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -411,6 +417,7 @@ fn flag_must_be_ascii() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn disabled_flag_is_false_without_error() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -435,6 +442,7 @@ fn disabled_flag_is_false_without_error() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn file_without_bundle_import_has_no_feature_symbol() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -449,6 +457,7 @@ fn file_without_bundle_import_has_no_feature_symbol() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn branch_condition_includes_object_literal() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -483,6 +492,7 @@ fn branch_condition_includes_object_literal() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn compiler_functions_are_bundle_exports() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
@@ -505,6 +515,7 @@ fn compiler_functions_are_bundle_exports() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn branch_condition_excludes_arms() {
     check_branch_conditions(|file, on, body| {
         let add_call = |file: &mut FileBuilder| add_feature_call(file, ExprKind::String(on)).call;
@@ -537,6 +548,7 @@ fn branch_condition_excludes_arms() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn branch_condition_includes_function_bodies() {
     check_branch_conditions(|file, on, body| {
         let add_call = |file: &mut FileBuilder| add_feature_call(file, ExprKind::String(on)).call;

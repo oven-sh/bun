@@ -243,13 +243,17 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
     resolve(cfg.codegenDir, "aot_builtin_syntax.rs"),
   ];
   const cpp = resolve(cfg.codegenDir, "BunAOTHostBindings.cpp");
+  const tableHeader = resolve(cfg.codegenDir, "AOTBuiltinTableArrays.h");
+  const table = ["Attachments", "Builtins", "Names", "Overloads", "Types"].map(part =>
+    resolve(cfg.codegenDir, `AOTBuiltinTable${part}.cpp`),
+  );
   const data = [
     builtinUsesJson(cfg),
     resolve(cfg.codegenDir, "aot_builtin_table.json"),
     resolve(cfg.codegenDir, "aot_builtin_undescribed_results.txt"),
     engineFunctionsJson(cfg),
   ];
-  const outputs = [...rust, cpp, ...data, ...engine.builtinTableOutputs];
+  const outputs = [...rust, cpp, tableHeader, ...table, ...data, ...engine.builtinTableOutputs];
 
   n.build({
     outputs,
@@ -304,7 +308,9 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
 
   o.all.push(...outputs);
   o.rustInputs.push(...rust);
-  o.cppSources.push(cpp);
+  o.cppSources.push(cpp, ...table);
+  o.builtinTableSources.push(...table);
+  o.cppHeaders.push(tableHeader);
 }
 
 export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {

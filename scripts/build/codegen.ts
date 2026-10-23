@@ -234,6 +234,9 @@ export interface CodegenOutputs {
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
   cppSources: string[];
 
+  /** Those of `cppSources` that are the table of built-ins. JavaScriptCore names its symbols, so WebKit's own programs link the objects too. */
+  builtinTableSources: string[];
+
   /**
    * Generated headers that are #included by hand-written .cpp files.
    * The PCH order-depends on all of these, and cxx waits on PCH — so
@@ -295,6 +298,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
     generatedTypes: [],
     rustInputs: [],
     cppSources: [],
+    builtinTableSources: [],
     cppHeaders: [],
     cppAll: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),

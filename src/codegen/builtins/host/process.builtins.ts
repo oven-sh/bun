@@ -468,10 +468,13 @@ export default b.declarations(
         uses: { value: [formattedInErrorMessage] },
         writes: externalState,
       }),
+      // setProcessPpid defines a data property on whatever it is called on: a proxy runs its trap, a frozen object refuses.
       ppid: nativeState(b.any, {
         value: b.any,
-        capability: "heap",
-        uses: { this: [b.definesName(["ppid"], b.operand("value"))], value: [b.retained] },
+        capability: "js",
+        throws: true,
+        runsOnlyOperandCode: true,
+        uses: { this: [b.definesName(["ppid"], b.operand("value")), ...b.ownPropertyTraps], value: [b.retained] },
       }),
       title: nativeState(b.string, {
         value: b.any,
@@ -597,7 +600,7 @@ export default b.declarations(
     getReport: { returns: b.object, capability: "js", throws: true, implementation: b.generic },
     writeReport: {
       args: { fileName: b.any.optional },
-      returns: b.operand("fileName"),
+      returns: b.union(b.operand("fileName"), b.undefined),
       capability: "none",
       uses: { fileName: b.inspected },
       implementation: b.generic,

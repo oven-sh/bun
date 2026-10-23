@@ -76,6 +76,7 @@ fn dist_typed_version(manifest: &str, dist_manifest: &str) -> Found {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn typed_version_comes_from_host_then_condition() {
     assert_eq!(
         typed_version(&typed_package(), INSTALLED),
@@ -88,6 +89,7 @@ fn typed_version_comes_from_host_then_condition() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn typed_condition_needs_package_exports() {
     assert_eq!(typed_version(&typed_package(), "/p/local.js"), None);
 
@@ -97,6 +99,7 @@ fn typed_condition_needs_package_exports() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn typed_versions_can_be_off() {
     let options = CodeOptions {
         typed_condition: None,
@@ -108,6 +111,7 @@ fn typed_versions_can_be_off() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn condition_name_comes_from_options() {
     let options = CodeOptions {
         typed_condition: Some(b"other-condition".to_vec()),
@@ -120,6 +124,7 @@ fn condition_name_comes_from_options() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn typed_version_does_not_depend_on_request() {
     let requests = [
         ("/p/main.ts", "pkg"),
@@ -140,6 +145,7 @@ fn typed_version_does_not_depend_on_request() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn host_is_asked_once_per_path() {
     let host = typed_package().typed(INSTALLED, "/p/.sound/pkg/index.ts");
     with_resolver(&host, &bun_run(), |resolver| {
@@ -153,6 +159,7 @@ fn host_is_asked_once_per_path() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn nearest_manifest_with_exports_names_typed_version() {
     let typed = by(FromPackage, DIST_TYPED_FILE);
     let exports_in_dist = r#"{"exports": {".": {"import": "./dist/index.js"}}}"#;
@@ -178,6 +185,7 @@ fn nearest_manifest_with_exports_names_typed_version() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn manifest_without_exports_does_not_hide_package_exports() {
     let manifest = r#"{
         "exports": {".": {"bun-aot": "./dist/index.aot.ts", "default": "./dist/index.js"}}
@@ -187,6 +195,7 @@ fn manifest_without_exports_does_not_hide_package_exports() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn manifest_must_export_file_and_other_typed_file() {
     let dist_manifests = [
         r#"{"name": "dist"}"#,
@@ -204,6 +213,7 @@ fn manifest_must_export_file_and_other_typed_file() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unexported_file_has_no_typed_version() {
     let host = package_with_dist(MAIN_IN_DIST, DIST_TYPED_EXPORTS);
     assert_eq!(
@@ -214,6 +224,7 @@ fn unexported_file_has_no_typed_version() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn pattern_key_names_typed_version() {
     let manifest = r#"{
         "exports": {"./*": {"bun-aot": "./typed/*.ts", "default": "./dist/*.js"}}
@@ -235,6 +246,7 @@ fn pattern_key_names_typed_version() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn directory_key_names_typed_version() {
     let manifest = r#"{
         "exports": {"./lib/": {"bun-aot": "./typed/", "default": "./dist/"}}
@@ -249,6 +261,7 @@ fn directory_key_names_typed_version() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn file_exported_for_require_only_has_typed_version() {
     let manifest = r#"{
         "exports": {
@@ -265,6 +278,7 @@ fn file_exported_for_require_only_has_typed_version() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn application_exports_name_typed_version_of_own_file() {
     let application = r#"{
         "name": "app", "version": "1.0.0",
@@ -284,6 +298,7 @@ fn application_exports_name_typed_version_of_own_file() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn linked_package_is_looked_up_by_real_path() {
     let host = MemoryHost::new(&[
         ("/store/pkg/package.json", TYPED_EXPORTS),

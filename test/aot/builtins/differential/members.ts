@@ -50,6 +50,7 @@ export class Realm {
   #classesByPrototype: Map<object, string> | undefined;
   #knownObjects: Set<object> | undefined;
   #idsInThisBuild: Map<string, number> | undefined;
+  #nativeNames: Map<string, string> | undefined;
 
   constructor(table: Table) {
     this.table = table;
@@ -177,7 +178,11 @@ export class Realm {
     }
     const native = this.#nativeClassOf(value);
     const general = brandOf(value);
-    const brand = native !== undefined && (general === undefined || this.table.isSameOrSubclass(native, general)) ? native : general;
+    // A BuildMessage passes for an Error and is none: native code knows it by the class of its cell. A shared buffer has the cell of any buffer.
+    const isKnownByCell = native !== undefined && this.table.classes.get(native)?.instanceTest === "ClassInfoInherits";
+    const isBelow = native !== undefined && general !== undefined && this.table.isSameOrSubclass(native, general);
+    const isAbove = native !== undefined && general !== undefined && this.table.isSameOrSubclass(general, native);
+    const brand = native !== undefined && (general === undefined || isBelow || (isKnownByCell && !isAbove)) ? native : general;
     const branded = brand === undefined ? [] : this.table.ancestryOf(brand);
     // The prototype says nothing about a class that native code recognizes by the cell.
     const derived = classes.filter(token => {
@@ -191,7 +196,19 @@ export class Realm {
   // The class of the cell, which is what an instance test of native code asks for.
   #nativeClassOf(value: object): string | undefined {
     const name = /\(Structure [^:]+:\[[^,]+, ([^,]+),/.exec(jscDescribe(value))?.[1];
-    return name !== undefined && name !== "Object" && this.table.classes.has(name) ? name : undefined;
+    if (name === undefined || name === "Object") return undefined;
+    return this.table.classes.has(name) ? name : this.#classesByNativeName().get(name.replaceAll(" ", ""));
+  }
+
+  // Native code names a class by the last word of its path: "Headers Iterator", "StringDecoder".
+  #classesByNativeName(): Map<string, string> {
+    if (this.#nativeNames) return this.#nativeNames;
+    const tokens = Map.groupBy(
+      this.table.dump.classes.filter(({ instanceTest }) => instanceTest === "ClassInfoInherits"),
+      ({ prototype }) => this.table.entries.get(prototype ?? "")?.path.replace(/\.prototype$/, "").split(".").at(-1)!.replaceAll("%", ""),
+    );
+    this.#nativeNames = new Map([...tokens].flatMap(([name, classes]) => (name !== undefined && classes.length === 1 ? [[name, classes[0].token]] : [])));
+    return this.#nativeNames;
   }
 
   isKnownObject(value: object): boolean {
@@ -216,6 +233,19 @@ function isBoundFunction(value: Function): boolean {
   return typeof name === "string" && name.startsWith("bound ") && !Object.hasOwn(value, "prototype");
 }
 
+// Their cells are named "Object". Neither function looks for a formatter that an older program has put on another object.
+const dateTimeFormatToParts = Intl.DateTimeFormat.prototype.formatToParts;
+const numberFormatToParts = Intl.NumberFormat.prototype.formatToParts;
+
+function accepts(method: Function, receiver: object): boolean {
+  try {
+    Reflect.apply(method, receiver, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function brandOf(value: object): string | undefined {
   if (Array.isArray(value)) return "Array";
   if (typeof value === "function") return isBoundFunction(value) ? "BoundFunction" : "Function";
@@ -232,5 +262,7 @@ function brandOf(value: object): string | undefined {
   if (types.isSharedArrayBuffer(value)) return "SharedArrayBuffer";
   if (types.isDataView(value)) return "DataView";
   if (types.isArgumentsObject(value)) return "Arguments";
+  if (accepts(dateTimeFormatToParts, value)) return "IntlDateTimeFormat";
+  if (accepts(numberFormatToParts, value)) return "IntlNumberFormat";
   return undefined;
 }

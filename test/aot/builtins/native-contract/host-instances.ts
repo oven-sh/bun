@@ -5,8 +5,8 @@ import { everyCandidate, operandOrigin, Unavailable, type Candidate } from "../d
 import type { Realm } from "../differential/members";
 import { isObject } from "../differential/table-description";
 
-type Opened = { value: object; close(): unknown };
-type Open = (realm: Realm) => Promise<Opened> | Opened;
+export type Opened = { value: object; close(): unknown };
+export type Open = (realm: Realm) => Promise<Opened> | Opened;
 
 const keysFolder = join(import.meta.dir, "../../../js/node/test/fixtures/keys");
 const readKey = (name: string) => readFileSync(join(keysFolder, name), "utf8");
@@ -14,7 +14,7 @@ const createTLSOptions = () => ({ cert: readKey("agent1-cert.pem"), key: readKey
 const noop = () => {};
 const socketHandlers = { data: noop, close: noop, error: noop, drain: noop, end: noop, timeout: noop, connectError: noop, handshake: noop };
 
-function bindingOf(realm: Realm, path: string): any {
+export function bindingOf(realm: Realm, path: string): any {
   const entry = realm.table.dump.entries.find(other => other.path === path);
   const value = entry && realm.valueOf(entry.token);
   if (value === undefined) throw new Unavailable(`this realm does not hand out ${path}`);
@@ -247,7 +247,7 @@ const openers: (Open & { className?: string })[] = [
   openWatcher("watchFile"),
   openCompressor("native:Bindgen:node_zlib_binding.bind.ts:NativeZlib", 1, handle => handle.init(15, 6, 8, 0, new Uint32Array(2), noop, undefined)),
   openCompressor("native:Bindgen:node_zlib_binding.bind.ts:NativeBrotli", 9, handle => handle.init(new Uint32Array(10), new Uint32Array(2), noop, undefined)),
-  openCompressor("native:Bindgen:node_zlib_binding.bind.ts:NativeZstd", 10, handle => handle.init(new Uint32Array(10), undefined, new Uint32Array(2), noop)),
+  openCompressor("native:Bindgen:node_zlib_binding.bind.ts:NativeZstd", 10, handle => handle.init(new Uint32Array(10).fill(-1), undefined, new Uint32Array(2), noop)),
   openFrameParser,
   openResolver,
   constructBinding("native:Bindgen:SocketAddress.bind.ts:SocketAddress", { address: "127.0.0.1", port: 1, family: "ipv4" }),
@@ -274,18 +274,22 @@ const openers: (Open & { className?: string })[] = [
 ];
 
 // Makes one of each, tells the realm their prototypes, and adds the candidates.
-export async function addHostInstances(realm: Realm): Promise<string[]> {
+export async function addHostInstances(
+  realm: Realm,
+  candidates: Candidate[] = everyCandidate,
+  otherOpeners: readonly Open[] = [],
+): Promise<string[]> {
   const failures: string[] = [];
   writeFileSync("native-contract-scratch.txt", "text");
-  for (const [index, open] of openers.entries()) {
+  for (const [index, open] of [...openers, ...otherOpeners].entries()) {
     try {
       const first = await open(realm);
-      const token = open.className ?? realm.classesOf(first.value)[0];
+      const token = ("className" in open ? open.className : undefined) ?? realm.classesOf(first.value)[0];
       const prototypeEntry = realm.table.entries.get(realm.table.classes.get(token)?.prototype ?? "");
       if (prototypeEntry && realm.valueOf(prototypeEntry.token) === undefined) realm.register(prototypeEntry.path, Reflect.getPrototypeOf(first.value));
       await first.close();
       if (token === undefined || token === "Object") failures.push(`opener ${index}: the table has no class for what it makes`);
-      else if (!everyCandidate.some(candidate => candidate.instanceOf === token)) everyCandidate.push(hostCandidate(realm, token, open));
+      else if (!everyCandidate.some(candidate => candidate.instanceOf === token)) candidates.push(hostCandidate(realm, token, open));
     } catch (error) {
       failures.push(`opener ${index}: ${String(error).slice(0, 160)}`);
     }

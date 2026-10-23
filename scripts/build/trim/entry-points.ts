@@ -84,6 +84,7 @@ function decodeRecordSection(
   section: RecordSection,
   reading: GraphReading,
   modelFeatures: Set<number>,
+  namedByEngine: readonly number[],
   decoded: DecodedRecords,
 ): void {
   const { object, bytes, references } = section;
@@ -99,11 +100,15 @@ function decodeRecordSection(
   let hasUnknownFeature = false;
   for (let at = 0; at < bytes.length; at += recordBytes) {
     const stub = stubKinds[bytes[at + stubOffset]!];
-    const origin = guardOrigins[bytes[at + originOffset]!];
-    const builtin = bytes.readUInt32LE(at + builtinOffset);
+    const recordedOrigin = guardOrigins[bytes[at + originOffset]!];
+    const recordedNumber = bytes.readUInt32LE(at + builtinOffset);
+    const isNamedByEngine = recordedOrigin === "BuiltinNamedByEngine";
+    const origin = isNamedByEngine ? "Builtin" : recordedOrigin;
+    const builtin = isNamedByEngine ? namedByEngine[recordedNumber] : recordedNumber;
     const isMalformed =
       stub === undefined ||
       origin === undefined ||
+      builtin === undefined ||
       (origin === "NativeCode" && builtin !== 0) ||
       (origin === "Definition" && stub !== "Abort" && stub !== "Throw") ||
       (origin === "Definition" && stub === "Abort" && builtin !== 0);
@@ -188,7 +193,11 @@ function guardEveryReference(graph: SectionGraph, definitions: EntryPointDefinit
   });
 }
 
-export function readEntryPoints(reading: GraphReading, model: FeatureModel): EntryPointReading {
+export function readEntryPoints(
+  reading: GraphReading,
+  model: FeatureModel,
+  namedByEngine: readonly number[] = [],
+): EntryPointReading {
   const modelFeatures = new Set(model.features.map(feature => feature.index));
   const decoded: DecodedRecords = {
     entryPoints: [],
@@ -197,7 +206,8 @@ export function readEntryPoints(reading: GraphReading, model: FeatureModel): Ent
     guardsWithoutReference: [],
     statistics: { records: 0, deadGuards: 0, guardsInsideEntryPoint: 0, definitions: 0, guardsOfEmptyEntryPoints: 0 },
   };
-  for (const section of reading.recordSections) decodeRecordSection(section, reading, modelFeatures, decoded);
+  for (const section of reading.recordSections)
+    decodeRecordSection(section, reading, modelFeatures, namedByEngine, decoded);
   return {
     entryPoints: sortedUnique(
       [...decoded.entryPoints, ...guardEveryReference(reading.graph, decoded.definitions)],

@@ -1,5 +1,6 @@
 import { types } from "node:util";
 import {
+  candidatesForTheirClass,
   everyCandidate,
   findCandidate,
   hugeArrayLikes,
@@ -49,6 +50,10 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
   [/^ShadowRealm\.prototype\.importValue$/, "it loads whatever its operand names"],
 ]);
+
+// Only the code of Bun and of the engine names these, and they take the kinds of their operands on trust: with a value outside the
+// declared types there is no such call, and native code may do anything.
+const takesOperandsOnTrust = /^%LinkTimeConstant:|^%NodeHTTPInternalBinding%\.setServer/;
 
 export function reasonNeverCalled(path: string): string | undefined {
   for (const [pattern, reason] of neverCalled) if (pattern.test(path)) return reason;
@@ -107,6 +112,13 @@ function contentsOf(value: object, contentsSlot: string | null): unknown[] {
   return held;
 }
 
+// The compiler asks it of the class of the operand, not of the class that the parameter names: a view of any kind stands for %TypedArray%,
+// of which there is no instance.
+function mayBePristine(realm: Realm, classOfValue: string): boolean {
+  const description = realm.table.classes.get(classOfValue);
+  return description !== undefined && (description.pristineTest !== "Mark" || !description.isNeverPristine);
+}
+
 // Whether a value that is passed lies in the type of a parameter, which names no operand.
 export function admitsValue(realm: Realm, type: DumpedType, value: unknown, isPristine: boolean): boolean {
   if (type.isAnything) return true;
@@ -118,7 +130,7 @@ export function admitsValue(realm: Realm, type: DumpedType, value: unknown, isPr
     switch (part.part) {
       case "Instance":
         if (!classes.includes(part.class)) return false;
-        if (part.pristine.length > 0 && (!isPristine || realm.table.classes.get(part.class)?.isNeverPristine)) return false;
+        if (part.pristine.length > 0 && (!isPristine || !mayBePristine(realm, classes[0]))) return false;
         return part.contents.every(({ slot, type: held }) =>
           contentsOf(value, realm.table.slots.get(slot)?.contentsSlot ?? null).every(content =>
             admitsValue(realm, held, content, true),
@@ -192,9 +204,14 @@ function sampleOf(candidate: Candidate): Sample {
   return sample;
 }
 
+function withoutNamedBuiltins(type: DumpedType): DumpedType {
+  return { ...type, parts: type.parts.filter(part => part.part !== "Builtin") };
+}
+
 function isAccepted(realm: Realm, parameter: DumpedParameter, candidate: Candidate): boolean {
   const { instanceOf } = candidate;
-  if (instanceOf !== undefined) return admitsAtom(realm.table, parameter.accepted, { class: instanceOf });
+  // One object is the built-in that a type names, and an instance that is made for the set is not it.
+  if (instanceOf !== undefined) return admitsAtom(realm.table, withoutNamedBuiltins(parameter.accepted), { class: instanceOf });
   const { value, isAvailable } = sampleOf(candidate);
   return isAvailable && admitsValue(realm, parameter.accepted, value, candidate.kind === "Pristine");
 }
@@ -224,6 +241,8 @@ function constructedCandidates(realm: Realm, { accepted }: DumpedParameter): Can
     if (part.part !== "Instance") return [];
     // There is one, and everybody shares it: it is passed only where nothing else will do.
     if (part.class === "Crypto") return [{ name: "crypto", kind: "Pristine", create: () => crypto }];
+    const made = candidatesForTheirClass.filter(({ instanceOf }) => instanceOf !== undefined && realm.table.isSameOrSubclass(instanceOf, part.class));
+    if (made.length > 0) return made;
     const classConstructor = realm.valueOf(realm.table.classes.get(part.class)?.constructor ?? null);
     if (typeof classConstructor !== "function") return [];
     return [
@@ -343,9 +362,11 @@ function receiversOf(realm: Realm, call: Call, overload: DumpedOverload): { base
   const { entry } = call;
   const isOwnPropertyOfInstances = entry.flags.includes("IsOwnPropertyOfInstances");
   const isReadFromHolder = entry.kind === "DataProperty" && !isOwnPropertyOfInstances;
-  if (overload.receiver === null || isReadFromHolder || entry.flags.includes("RequiresHolderAsThis")) {
+  // Of an entry that wants its holder as `this` an overload may say what it does with any other.
+  const wantsHolder = entry.flags.includes("RequiresHolderAsThis") && !overload.receiver?.accepted.isAnything;
+  if (overload.receiver === null || isReadFromHolder || wantsHolder) {
     const base = holderCandidate(realm, call);
-    const isFixed = overload.mode !== "Call" || entry.flags.includes("RequiresHolderAsThis");
+    const isFixed = overload.mode !== "Call" || wantsHolder;
     return { base, others: isFixed ? [] : otherReceivers };
   }
   const holder = holderCandidate(realm, call);
@@ -401,6 +422,21 @@ export function operandSetsFor(realm: Realm, call: Call): OperandSet[] {
     for (const set of combinationsOf(receiver, base)) add(set);
   }
   return [...sets.values()];
+}
+
+function isWithinDeclaredTypes(realm: Realm, overload: DumpedOverload, set: OperandSet): boolean {
+  const required = overload.parameters.filter(parameter => parameter.mode === "Required").length;
+  if (overload.isUndeclared || set.arguments.length < required) return false;
+  if (overload.receiver !== null && !isAccepted(realm, overload.receiver, set.receiver)) return false;
+  return set.arguments.every((candidate, position) => {
+    const parameter = parameterOf(overload, position);
+    return parameter !== null && isAccepted(realm, parameter, candidate);
+  });
+}
+
+export function isCallThatExists(realm: Realm, call: Call, set: OperandSet): boolean {
+  if (!takesOperandsOnTrust.test(call.entry.path)) return true;
+  return call.overloads.some(overload => isWithinDeclaredTypes(realm, overload, set));
 }
 
 export function baseSetOf(realm: Realm, call: Call, overload: DumpedOverload): OperandSet | undefined {

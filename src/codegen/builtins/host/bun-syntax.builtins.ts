@@ -1,6 +1,5 @@
 import * as b from "bun-builtins-table";
 
-const linkTimeConstant: b.IntrinsicSpec = { intrinsic: "LinkTimeConstant" };
 const privateGlobal: b.IntrinsicSpec = { intrinsic: "PrivateGlobal" };
 const erased: b.IntrinsicSpec = { intrinsic: "Erased" };
 const inlinableCall: b.IntrinsicSpec = { intrinsic: "Call", isNeverInlined: false };
@@ -8,12 +7,6 @@ const inlinableCall: b.IntrinsicSpec = { intrinsic: "Call", isNeverInlined: fals
 const builtin = (path: string): b.IntrinsicSpec => ({ intrinsic: "Builtin", path });
 
 const operation = (name: string, opcode: string) => b.intrinsic(name, "Call", { intrinsic: "Operation", opcode });
-
-const jsTypeTest = (name: string, first: string, last = first) =>
-  b.intrinsic(name, "Call", { intrinsic: "HasJSType", first, last });
-
-const integer = (name: string, value: number, cppExpression: string) =>
-  b.intrinsic(name, "Value", { intrinsic: "Int", value, cppExpression });
 
 const directive = (name: string, kind: b.DirectiveKind) =>
   b.intrinsic(name, "Value", { intrinsic: "Directive", directive: kind });
@@ -84,18 +77,10 @@ export default b.declarations(
   operation("getInternalField", "GetInternalField"),
   operation("getProxyInternalField", "GetInternalField"),
   b.intrinsic("isCallable", "Call", { intrinsic: "IsCallable" }),
-  jsTypeTest("isJSArray", "ArrayType"),
-  jsTypeTest("isMap", "JSMapType"),
   b.intrinsic("isObject", "Call", { intrinsic: "IsObject" }),
-  jsTypeTest("isPromise", "JSPromiseType"),
-  jsTypeTest("isProxyObject", "ProxyObjectType"),
-  jsTypeTest("isRegExpObject", "RegExpObjectType"),
-  jsTypeTest("isSet", "JSSetType"),
   b.intrinsic("isUndefinedOrNull", "Call", { intrinsic: "IsNullish" }),
   b.intrinsic("newArrayWithSize", "Call", { intrinsic: "Construct", path: "Array" }),
   operation("newPromise", "NewPromise"),
-  integer("proxyFieldHandler", 1, "ProxyObject::Field::Handler"),
-  integer("proxyFieldTarget", 0, "ProxyObject::Field::Target"),
   b.intrinsic("putByIdDirectPrivate", "Call", { intrinsic: "PutByValDirect", privateKey: true }),
   b.intrinsic("putByValDirect", "Call", { intrinsic: "PutByValDirect", privateKey: false }),
   operation("putInternalField", "PutInternalField"),
@@ -105,12 +90,9 @@ export default b.declarations(
   b.intrinsic("isArray", "Call", builtin("Array.isArray")),
   b.intrinsic("isArray", "Value", builtin(b.linkTimeConstantPath("isArray"))),
   b.intrinsic("isFinite", "Call", builtin("isFinite")),
-  jsTypeTest("isTypedArrayView", "Int8ArrayType", "BigUint64ArrayType"),
   b.intrinsic("min", "Call", builtin("Math.min")),
   b.intrinsic("Promise", "Value", builtin("Promise")),
-  b.intrinsic("rejectPromise", "Call", linkTimeConstant),
   operation("rejectPromiseWithFirstResolvingFunctionCallCheck", "RejectPromise"),
-  b.intrinsic("resolvePromise", "Call", linkTimeConstant),
   operation("resolvePromiseWithFirstResolvingFunctionCallCheck", "ResolvePromise"),
   operation("toLength", "ToLength"),
 
@@ -121,9 +103,6 @@ export default b.declarations(
   privateGlobalValues.flatMap(name => b.intrinsic(name, "Value", privateGlobal)),
   b.intrinsic("overridableRequire", "Value", { intrinsic: "ReplaceablePrivateGlobal" }),
 
-  integer("arrayStorageInt32", 1, "Typed::ArrayStorage::Int32"),
-  integer("arrayStorageDouble", 2, "Typed::ArrayStorage::Double"),
-  integer("arrayStorageContiguous", 3, "Typed::ArrayStorage::Contiguous"),
   operation("arrayStorageKind", "ArrayStorageKind"),
   b.intrinsic("call", "Call", inlinableCall),
   b.intrinsic("callNoInline", "Call", { intrinsic: "Call", isNeverInlined: true }),

@@ -356,6 +356,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   const cxxObjects: string[] = [];
+  const builtinTableObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
@@ -372,7 +373,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }
-    cxxObjects.push(cxx(n, cfg, src, opts));
+    const object = cxx(n, cfg, src, opts);
+    cxxObjects.push(object);
+    if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
   }
 
   // Compile all .c files. No PCH — dep signal applied directly.
@@ -460,7 +463,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady);
+  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -475,10 +478,17 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 /**
  * WebKit's own executables beside a local WebKit build (deps/webkit.ts
  * jscPrograms says which, and how JSC compiles them): their sources, linked
- * with the WebKit and mimalloc objects bun links. On request only
+ * with the WebKit and mimalloc objects bun links and with bun's table of
+ * built-ins, which JavaScriptCore leaves to whoever links it. On request only
  * (`--target=jsc`); nothing with the prebuilt WebKit, whose tarball ships them.
  */
-function emitJscPrograms(n: Ninja, cfg: Config, deps: ReadonlyMap<DepName, ResolvedDep>, headersReady: string): void {
+function emitJscPrograms(
+  n: Ninja,
+  cfg: Config,
+  deps: ReadonlyMap<DepName, ResolvedDep>,
+  headersReady: string,
+  builtinTableObjects: readonly string[],
+): void {
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
@@ -504,7 +514,7 @@ function emitJscPrograms(n: Ninja, cfg: Config, deps: ReadonlyMap<DepName, Resol
       cfg,
       from.flatMap(d => d.objects),
     );
-    const exe = link(n, cfg, program.name, [...objects, ...depLink.eager], {
+    const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
       libs: from.flatMap(d => d.libs),
       flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],

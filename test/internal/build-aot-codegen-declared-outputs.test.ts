@@ -99,6 +99,7 @@ function configure(buildDir: string): Configured {
     generatedTypes: [],
     rustInputs: [],
     cppSources: [],
+    builtinTableSources: [],
     cppHeaders: [],
     cppAll: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
@@ -320,13 +321,19 @@ describe("emitBuiltinsTable", () => {
     "aot_builtin_table.rs",
     "aot_builtin_syntax.rs",
     "BunAOTHostBindings.cpp",
+    "AOTBuiltinTableArrays.h",
+    "AOTBuiltinTableAttachments.cpp",
+    "AOTBuiltinTableBuiltins.cpp",
+    "AOTBuiltinTableNames.cpp",
+    "AOTBuiltinTableOverloads.cpp",
+    "AOTBuiltinTableTypes.cpp",
     "builtin-uses.json",
     "aot_builtin_table.json",
     "aot_builtin_undescribed_results.txt",
     "aot_engine_functions.json",
   ];
 
-  test("declares the three Rust tables, the C++ file, the four data files and the engine's table on one edge", () => {
+  test("declares the three Rust tables, the C++ files, the four data files and the engine's files on one edge", () => {
     using dir = tempDir("build-aot-builtins-table", {});
     const { cfg, n, o, dirStamp } = configure(String(dir));
     const script = resolve(cfg.cwd, "src", "codegen", "builtins", "index.ts");
@@ -351,7 +358,10 @@ describe("emitBuiltinsTable", () => {
     );
     expect(normalized(o.all)).toEqual(normalized([...inDir, ...checkout.builtinTableOutputs]));
     expect(normalized(o.rustInputs)).toEqual(normalized(inDir.filter(p => p.endsWith(".rs"))));
-    expect(o.cppSources).toEqual([cpp]);
+    const table = inDir.filter(p => /AOTBuiltinTable\w+\.cpp$/.test(p));
+    expect(o.cppSources).toEqual([cpp, ...table]);
+    expect(o.builtinTableSources).toEqual(table);
+    expect(o.cppHeaders).toEqual([resolve(cfg.codegenDir, "AOTBuiltinTableArrays.h")]);
 
     const inputs = edgeInputs(n, cpp);
     expect(inputs).toEqual(

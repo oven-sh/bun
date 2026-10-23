@@ -25,6 +25,10 @@
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/SourceProviderCache.h>
+#include <JavaScriptCore/SourceProviderCacheItem.h>
+#include <JavaScriptCore/SymbolTable.h>
+#include <JavaScriptCore/UnlinkedFunctionCodeBlock.h>
 #include <JavaScriptCore/AOTHost.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
@@ -77,6 +81,71 @@ static SourceCode makeInternalModuleSource(const String& text, const String& mod
 static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, const SourceCode& source, const String& moduleName)
 {
     return createBuiltinExecutable(vm, source, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+}
+
+#ifndef BUN_DYNAMIC_JS_LOAD_PATH
+static uint32_t readVarint(const uint8_t*& cursor)
+{
+    uint32_t value = 0;
+    for (unsigned shift = 0;; shift += 7) {
+        uint8_t byte = *cursor++;
+        value |= static_cast<uint32_t>(byte & 0x7f) << shift;
+        if (!(byte & 0x80))
+            return value;
+    }
+}
+#endif
+
+// src/codegen/lazy-function-table.ts
+static unsigned prefillSourceProviderCache(JSC::VM& vm, const SourceCode& source, uint32_t id)
+{
+#ifdef BUN_DYNAMIC_JS_LOAD_PATH
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(source);
+    UNUSED_PARAM(id);
+    return 0;
+#else
+    const uint8_t* cursor = InternalModuleRegistryConstants::lazyFunctionTable + InternalModuleRegistryConstants::lazyFunctionTableOffsets[id];
+    if (InternalModuleRegistryConstants::lazyFunctionTableOffsets[id] == InternalModuleRegistryConstants::lazyFunctionTableOffsets[id + 1])
+        return 0;
+
+    StringView view = source.provider()->source();
+    auto text = view.span8();
+    uint32_t capturedNameCount = readVarint(cursor);
+    Vector<Identifier, 128> capturedNames;
+    capturedNames.reserveInitialCapacity(capturedNameCount);
+    for (uint32_t i = 0, start = 0; i < capturedNameCount; ++i) {
+        start += readVarint(cursor);
+        uint32_t length = readVarint(cursor);
+        capturedNames.append(Identifier::fromString(vm, text.subspan(start, length)));
+    }
+
+    JSC::SourceProviderCache* cache = vm.addSourceProviderCache(source.provider());
+    uint32_t functionCount = readVarint(cursor);
+    uint32_t capturedNamesOwner = readVarint(cursor);
+    for (uint32_t i = 0, offset = 0; i < functionCount; ++i) {
+        uint32_t parametersStart = offset + readVarint(cursor);
+        uint32_t closeBrace = parametersStart + readVarint(cursor);
+        uint32_t bits = readVarint(cursor);
+        offset = closeBrace;
+
+        JSC::SourceProviderCacheItemCreationParameters parameters;
+        parameters.lastTokenStartOffset = closeBrace;
+        parameters.lastTokenEndOffset = closeBrace + 1;
+        parameters.endFunctionOffset = closeBrace;
+        parameters.parameterCount = bits >> 1;
+        parameters.containsTaggedTemplate = bits & 1;
+        parameters.lexicallyScopedFeatures = JSC::StrictModeLexicallyScopedFeature;
+        parameters.constructorKind = JSC::ConstructorKind::None;
+        parameters.expectedSuperBinding = JSC::SuperBinding::NotNeeded;
+        if (i == capturedNamesOwner) {
+            for (auto& name : capturedNames)
+                parameters.usedVariables.append(name.impl());
+        }
+        cache->add(parametersStart, JSC::SourceProviderCacheItem::create(parameters));
+    }
+    return functionCount;
+#endif
 }
 
 static const InternalModuleRegistryConstants::ModuleRecord& internalModuleRecord(uint32_t id)
@@ -137,8 +206,11 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
         if (executable)
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
     }
-    if (!executable)
-        executable = createInternalModuleExecutable(vm, source, moduleName);
+    if (!executable) {
+        JSC::BuiltinSourceMetadata metadata { static_cast<unsigned>(source.length()), static_cast<unsigned>(strlen("function (")), 0, static_cast<int>(strlen("})\n")), false, true };
+        executable = createBuiltinExecutable(vm, source, metadata, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+        prefillSourceProviderCache(vm, source, id);
+    }
 
     JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
 
@@ -485,12 +557,85 @@ namespace Bun {
 // bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module, and the
 // external string table it would embed beside it -- either for internal module number `index` (null past the last
 // one), or for `source` written in builtin syntax under `name`.
+static bool collectCapturedVariables(JSC::VM& vm, const SourceCode& source, const String& moduleName, UncheckedKeyHashSet<RefPtr<UniquedStringImpl>>& captured)
+{
+    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
+    ParserError error;
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, executable->linkedSourceCode(source), CodeSpecializationKind::CodeForCall, {}, error, executable->parseMode());
+    if (!codeBlock)
+        return false;
+    for (auto& constant : codeBlock->constantRegisters()) {
+        auto* table = constant.get().isCell() ? dynamicDowncast<SymbolTable>(constant.get().asCell()) : nullptr;
+        if (!table)
+            continue;
+        ConcurrentJSLocker locker(table->m_lock);
+        for (auto it = table->begin(locker), end = table->end(locker); it != end; ++it) {
+            if (it->value.varOffset().isScope())
+                captured.add(it->key);
+        }
+    }
+    return true;
+}
+
+static String checkLazyFunctionTable(JSC::VM& vm, uint32_t id, unsigned& lazyFunctionCount)
+{
+    const auto& m = internalModuleRecord(id);
+    String moduleName = internalModuleString(m.nameOffset, m.nameLength);
+    String url = internalModuleString(m.urlOffset, m.urlLength);
+    SourceCode parsed = makeInternalModuleSource(internalModuleSource(id), moduleName, url, JSC::SourceProvenance::Static);
+    SourceCode prefilled = makeInternalModuleSource(internalModuleSource(id), moduleName, url, JSC::SourceProvenance::Static);
+    lazyFunctionCount = prefillSourceProviderCache(vm, prefilled, id);
+    if (!lazyFunctionCount)
+        return {};
+
+    UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> capturedWhenParsed;
+    UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> capturedWhenPrefilled;
+    if (!collectCapturedVariables(vm, parsed, moduleName, capturedWhenParsed) || !collectCapturedVariables(vm, prefilled, moduleName, capturedWhenPrefilled))
+        return makeString(moduleName, ": does not parse"_s);
+    for (auto& name : capturedWhenParsed) {
+        if (!capturedWhenPrefilled.contains(name))
+            return makeString(moduleName, ": "_s, StringView(name.get()), " is captured, and the lazy function table does not say so"_s);
+    }
+
+    JSC::SourceProviderCache* parsedCache = vm.addSourceProviderCache(parsed.provider());
+    JSC::SourceProviderCache* prefilledCache = vm.addSourceProviderCache(prefilled.provider());
+    unsigned found = 0;
+    for (unsigned offset = 0; offset < m.codeLength; ++offset) {
+        const JSC::SourceProviderCacheItem* expected = parsedCache->get(offset);
+        const JSC::SourceProviderCacheItem* actual = prefilledCache->get(offset);
+        if (!actual)
+            continue;
+        ++found;
+        if (!expected)
+            return makeString(moduleName, ": no function has its parameters at "_s, offset);
+        if (expected->endFunctionOffset != actual->endFunctionOffset
+            || expected->lastTokenStartOffset != actual->lastTokenStartOffset
+            || expected->lastTokenEndOffset != actual->lastTokenEndOffset
+            || expected->parameterCount != actual->parameterCount
+            || expected->strictMode != actual->strictMode
+            || expected->taintedByWithScope != actual->taintedByWithScope
+            || expected->usesEval != actual->usesEval
+            || expected->usesImportMeta != actual->usesImportMeta
+            || expected->needsSuperBinding != actual->needsSuperBinding
+            || expected->expectedSuperBinding != actual->expectedSuperBinding
+            || expected->constructorKind != actual->constructorKind
+            || expected->implementationVisibility != actual->implementationVisibility
+            || expected->isBodyArrowExpression != actual->isBodyArrowExpression
+            || expected->containsTaggedTemplate != actual->containsTaggedTemplate)
+            return makeString(moduleName, ": the lazy function table describes the function at "_s, offset, " differently from the parser"_s);
+    }
+    if (found < lazyFunctionCount)
+        return makeString(moduleName, ": the lazy function table names a function twice"_s);
+    return {};
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     String text, name, url;
     uint32_t stamp = 0;
+    unsigned lazyFunctionCount = 0;
     if (callFrame->argument(0).isString()) {
         text = callFrame->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -511,6 +656,8 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * global
         name = internalModuleString(m.nameOffset, m.nameLength);
         url = internalModuleString(m.urlOffset, m.urlLength);
         stamp = bun_internal_modules_header.sourceStamp;
+        if (String mismatch = checkLazyFunctionTable(vm, index, lazyFunctionCount); !mismatch.isNull())
+            return throwVMError(globalObject, scope, mismatch);
     }
     JSC::EncoderStringTable externalStrings;
     const uint8_t* bytes = nullptr;
@@ -530,6 +677,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * global
     result->putDirect(vm, vm.propertyNames->name, jsString(vm, name));
     result->putDirect(vm, Identifier::fromString(vm, "bytecode"_s), buffer);
     result->putDirect(vm, Identifier::fromString(vm, "strings"_s), strings);
+    result->putDirect(vm, Identifier::fromString(vm, "lazyFunctionCount"_s), jsNumber(lazyFunctionCount));
     return JSValue::encode(result);
 }
 

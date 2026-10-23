@@ -39,6 +39,7 @@ fn subpaths_of(exports: &str, file: &str) -> String {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn condition_is_found_at_any_depth() {
     let has = |json| with_exports(json, |exports| has_condition(exports, b"bun-aot"));
     assert!(has(r#"{"bun-aot": "./a.ts"}"#));
@@ -51,6 +52,7 @@ fn condition_is_found_at_any_depth() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn condition_is_compared_with_whole_key() {
     let has = |condition: &[u8]| {
         with_exports(r#"{"bun-aot": "./a.ts"}"#, |exports| {
@@ -63,6 +65,7 @@ fn condition_is_compared_with_whole_key() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exported_subpaths_start_at_package_root() {
     let conditions = r#"{"import": "./a.js"}"#;
     for exports in [r#""./a.js""#, r#"["./a.js"]"#, conditions, "false"] {
@@ -74,6 +77,7 @@ fn exported_subpaths_start_at_package_root() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn expansion_key_names_subpath_of_matching_file() {
     let pattern = r#"{"./f/*.js": {"bun-aot": "./typed/*.ts", "default": "./dist/*.js"}}"#;
     assert_eq!(subpaths_of(pattern, "dist/a/b.js"), ". ./f/a/b.js");
@@ -86,12 +90,14 @@ fn expansion_key_names_subpath_of_matching_file() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn subpath_is_listed_once() {
     let exports = r#"{"./*": ["./dist/*.js", "./dist/*.js"], "./a": "./dist/a.js"}"#;
     assert_eq!(subpaths_of(exports, "dist/a.js"), ". ./a");
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn key_and_target_have_same_form() {
     let find = |key: &[u8], target: &[u8]| find_matching_subpath(key, target, b"./dist/x.js");
     let subpath = Some(b"./lib/x.js".to_vec());
@@ -104,6 +110,7 @@ fn key_and_target_have_same_form() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn star_of_key_is_replaced_by_matched_text() {
     let find = |relative: &[u8]| find_matching_subpath(b"./f/*.js", b"./src/*.ts", relative);
     assert_eq!(find(b"./src/a/b.ts"), Some(b"./f/a/b.js".to_vec()));
@@ -112,6 +119,7 @@ fn star_of_key_is_replaced_by_matched_text() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn relative_path_starts_at_manifest_directory() {
     with_manifest("{}", |manifest| {
         let relative = |path: &[u8]| package_relative_path(manifest, path);
@@ -125,6 +133,7 @@ fn relative_path_starts_at_manifest_directory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn package_exports_are_searched_up_to_node_modules() {
     let host = MemoryHost::new(&[
         ("/p/package.json", r#"{"exports": "./main.js"}"#),
@@ -151,6 +160,7 @@ fn package_exports_are_searched_up_to_node_modules() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn typed_export_is_other_file_of_same_subpath() {
     let manifest = r#"{
         "exports": {

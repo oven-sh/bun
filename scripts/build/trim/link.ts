@@ -272,7 +272,7 @@ function analyze(link: Link, session: LinkSession): Analysis {
   stopwatch.lap(`graph of the ${link.name} link`);
   const unpartitioned: ReportContext = { graph: reading.graph, model, uses, demangler, partition: undefined };
   ensureNoFailures(reading.failures, unpartitioned);
-  const recorded = readEntryPoints(reading, model);
+  const recorded = readEntryPoints(reading, model, uses.namedByEngine);
   ensureNoFailures(recorded.failures, unpartitioned);
   const symbolNames = new Demangler(demangler);
   const listedInTables = findStaticTableEntryPoints({

@@ -308,6 +308,7 @@ fn candidates_are_sorted_and_unique() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn search_starts_in_request_directory_or_working_directory() {
     let host = MemoryHost::new(&[]);
     let directory_of = |directory: &str| {
@@ -323,6 +324,7 @@ fn search_starts_in_request_directory_or_working_directory() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn search_has_limit_and_extension_orders_of_options() {
     let host = MemoryHost::new(&[]);
     with_search(&host, &import_pattern("./", "/p"), |search| {
@@ -339,6 +341,7 @@ fn search_has_limit_and_extension_orders_of_options() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn specifier_outside_pattern_is_not_resolved() {
     let host = MemoryHost::new(&[("/p/a.ts", ""), ("/p/b.ts", "")]);
     with_search(&host, &import_pattern("./a", "/p"), |search| {
@@ -350,6 +353,7 @@ fn specifier_outside_pattern_is_not_resolved() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn specifier_is_resolved_once() {
     let host = MemoryHost::new(&[("/p/a.ts", "")]);
     with_search(&host, &import_pattern("./a", "/p"), |search| {
@@ -400,6 +404,7 @@ fn spellings_are_sorted_and_name_sorted_candidates() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn answer_lists_every_spelling_inside_pattern() {
     let host = MemoryHost::new(&[
         ("/p/plugins/a.ts", ""),
@@ -441,6 +446,7 @@ fn answer_lists_every_spelling_inside_pattern() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exported_specifier_is_also_tried_with_javascript_extension() {
     let host = MemoryHost::new(&[]);
     with_search(&host, &import_pattern("pkg/", "/p"), |search| {
@@ -452,6 +458,7 @@ fn exported_specifier_is_also_tried_with_javascript_extension() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn uncompiled_specifier_ends_search() {
     let uncompiled = HostResolution::External {
         specifier: b"./a.ts".to_vec(),
@@ -466,6 +473,7 @@ fn uncompiled_specifier_ends_search() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn packages_in_node_path_are_listed() {
     let host = MemoryHost::new(&[
         ("/p/main.ts", ""),

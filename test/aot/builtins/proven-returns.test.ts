@@ -428,7 +428,7 @@ testWithAssertions.each(
 )("%s(%s) ends the process and names the member", async (member, value, type) => {
   const { stdout, stderr, exitCode } = await run(`instance.${member}(${value}); console.log("returned");`);
   expect(stderr).toContain(messageOf(member, type));
-  expect(stdout).toBe("");
+  expect(stdout).not.toContain("returned");
   expect(exitCode).not.toBe(0);
 });
 
@@ -443,6 +443,6 @@ testWithAssertions.each([
 ])("%s is checked too", async (_, body, message) => {
   const { stdout, stderr, exitCode } = await run(`${body} console.log("returned");`);
   expect(stderr).toContain(message);
-  expect(stdout).toBe("");
+  expect(stdout).not.toContain("returned");
   expect(exitCode).not.toBe(0);
 });

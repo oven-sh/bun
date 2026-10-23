@@ -329,6 +329,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn nearest_node_modules_wins() {
         let host = empty_files(&[
             "/p/node_modules/a/index.js",
@@ -342,6 +343,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn nested_node_modules_is_skipped() {
         let host = empty_files(&[
             "/p/node_modules/a/x.js",
@@ -356,6 +358,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn walk_starts_at_first_existing_directory() {
         let host = empty_files(&["/p/node_modules/a/index.js"]);
         let importer = "/p/missing/deep/x.ts";
@@ -365,6 +368,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn scoped_package_subpath() {
         let manifest = r#"{"exports": {"./sub": "./lib/sub.js"}}"#;
         let host = package("/p/node_modules/@scope/pkg", manifest, &["lib/sub.js"]);
@@ -375,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn package_directory_selects_node_modules_order() {
         let host = empty_files(&[
             "/p/node_modules/a/index.ts",
@@ -387,6 +392,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn config_paths_then_base_url_then_packages() {
         let paths = r#"{"baseUrl": ".", "paths": {"lib": ["./mapped/lib.ts"]}}"#;
         assert_eq!(resolve_lib_with_config(paths), "/p/mapped/lib.ts");
@@ -401,6 +407,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn trailing_slash_names_directory() {
         let paths = [
             "/p/node_modules/pkg/lib.js",
@@ -416,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn trailing_slash_survives_base_url_and_node_path() {
         let tsconfig = r#"{"compilerOptions": {"baseUrl": "."}}"#;
         let host = MemoryHost::new(&[
@@ -438,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn trailing_slash_survives_imports_target() {
         let names = &["node_modules/pkg/lib.js", "node_modules/pkg/lib/index.js"];
         let host = project(r##"{"imports": {"#x/": "pkg/"}}"##, names);
@@ -447,6 +456,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exports_hide_unlisted_files() {
         let names = &["index.js", "lib/x.js"];
         let exporting = dependency(r#"{"exports": {".": "./index.js"}}"#, names);
@@ -458,6 +468,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn failed_exports_end_walk() {
         let manifest = r#"{"exports": {".": "./index.js"}}"#;
         let host = MemoryHost::new(&[
@@ -471,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn invalid_exports_resolve_nothing() {
         let invalid = dependency(r#"{"exports": false}"#, &["index.js"]);
         assert_eq!(resolve(&invalid, "pkg"), INVALID_CONFIGURATION);
@@ -480,6 +492,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exports_lookup_retries_without_js_extension() {
         let host = dependency(r#"{"exports": {"./sub": "./main.js"}}"#, &["main.js"]);
         assert_eq!(resolve(&host, "pkg/sub"), "/p/node_modules/pkg/main.js");
@@ -488,6 +501,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn package_json_needs_no_export() {
         let names = &["index.js", "other.json"];
         let host = dependency(r#"{"exports": {".": "./index.js"}}"#, names);
@@ -497,6 +511,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exact_target_is_rewritten_but_not_extended() {
         let manifest = r#"{"exports": {"./a": "./a.js", "./b": "./src/b", "./c": "./c.js"}}"#;
         let host = dependency(manifest, &["a.ts", "src/b.ts"]);
@@ -506,6 +521,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn wildcard_target_gets_extension() {
         let names = &["src/a.ts", "src/d/index.ts", "src/e.ts", "src/e/index.ts"];
         let host = dependency(r#"{"exports": {"./*": "./src/*"}}"#, names);
@@ -516,6 +532,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exact_directory_target_is_not_probed() {
         let manifest = r#"{"exports": {"./exact": "./lib/d.js", "./any/*": "./lib/*"}}"#;
         let host = dependency(manifest, &["lib/d.js/nested.txt", "lib/d.ts"]);
@@ -525,6 +542,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn directory_key_loads_files_and_directories() {
         let names = &["src/a.ts", "src/d/index.ts"];
         let host = dependency(r#"{"exports": {"./lib/": "./src/"}}"#, names);
@@ -535,6 +553,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn target_path_starts_at_package_root() {
         let host = empty_files(&["/p/a.js"]);
         let session = Session::new();
@@ -558,6 +577,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn self_reference_needs_name_and_exports() {
         let names = &[
             "src/x.ts",
@@ -580,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn only_exports_switch_extension_order() {
         let names = &["src/a.ts", "src/a.js"];
         let manifest = r#"{"name": "pkg", "exports": {"./lib/": "./src/"}}"#;
@@ -591,6 +612,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn imports_resolve_files_packages_and_host_modules() {
         let manifest =
             r##"{"imports": {"#file": "./src/a.js", "#package": "other", "#fs": "node:fs"}}"##;
@@ -634,6 +656,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn plugins_and_externals_skip_imports_target() {
         let manifest = r##"{"imports": {"#db": "other"}}"##;
         let names = &["node_modules/other/index.js"];
@@ -653,6 +676,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn external_imports_target_names_target() {
         let manifest = r##"{"imports": {"#fs": "node:fs", "#any/*": "node:*"}}"##;
         let host = project(manifest, &["node_modules/node:fs/index.js"])
@@ -664,6 +688,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn other_runtime_module_answers_are_ignored() {
         let manifest = r##"{"imports": {"#db": "other"}}"##;
         let names = &["node_modules/other/index.js"];
@@ -679,6 +704,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn malformed_and_undefined_imports_fail() {
         let host = project(r##"{"imports": {"#a": "./a.js"}}"##, &["a.js"]);
         assert_eq!(resolve(&host, "#a"), "/p/a.js");
@@ -688,6 +714,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn imports_target_skips_imports() {
         let manifest = r##"{"imports": {"#a": "#b", "#b": "./b.js"}}"##;
         let host = project(manifest, &["b.js"]);
@@ -699,6 +726,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn only_nearest_manifest_provides_imports() {
         let host = MemoryHost::new(&[
             ("/p/package.json", r##"{"imports": {"#a": "./a.js"}}"##),
@@ -712,6 +740,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn hash_specifier_without_imports_is_package_name() {
         let host = project(r#"{"name": "app"}"#, &["node_modules/#a/index.js"]);
         assert_eq!(resolve(&host, "#a"), "/p/node_modules/#a/index.js");
@@ -722,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn node_paths_come_after_walk() {
         let host = MemoryHost::new(&[
             ("/p/node_modules/a/index.js", ""),
@@ -744,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn version_is_dropped_for_exports_only() {
         let manifest = r#"{"exports": {".": "./main.js", "./x": "./x.js"}}"#;
         let exporting = package("/p/node_modules/foo", manifest, &["main.js", "x.js"]);
@@ -758,6 +789,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn conditions_follow_import_kind() {
         let manifest = r#"{"exports": {"import": "./esm.mjs", "require": "./cjs.cjs"}}"#;
         let host = dependency(manifest, &["esm.mjs", "cjs.cjs"]);
@@ -768,6 +800,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn custom_condition_matches_when_listed() {
         let manifest = r#"{"exports": {"custom": "./custom.js", "default": "./default.js"}}"#;
         let host = dependency(manifest, &["custom.js", "default.js"]);
@@ -780,6 +813,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn first_matching_key_wins() {
         let names = &["default.js", "esm.js"];
         let default_first = r#"{"exports": {"default": "./default.js", "import": "./esm.js"}}"#;

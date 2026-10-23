@@ -355,7 +355,9 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
 static bool describesWithoutScript(JSC::JSGlobalObject* globalObject)
 {
 #if ENABLE(AOT)
-    return globalObject->aotInstance();
+    // test/aot/builtins/differential.test.ts asks a plain Bun what a native function does in an executable.
+    static const bool isAskedForByTest = getenv("BUN_INTERNAL_DESCRIBE_VALUES_WITHOUT_SCRIPT");
+    return globalObject->aotInstance() || isAskedForByTest;
 #else
     UNUSED_PARAM(globalObject);
     return false;

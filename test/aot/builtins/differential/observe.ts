@@ -115,7 +115,13 @@ function isRepeatable({ mode }: Invocation, { receiver, arguments: candidates }:
 function saveMember({ mode, key }: Invocation, realm: Realm, receiver: unknown): (() => void) | undefined {
   if (mode !== "Set" || !isObject(receiver) || !realm.isKnownObject(receiver)) return undefined;
   const descriptor = Reflect.getOwnPropertyDescriptor(receiver, key);
-  if (descriptor && Object.hasOwn(descriptor, "value")) return () => Reflect.defineProperty(receiver, key, descriptor);
+  if (descriptor && Object.hasOwn(descriptor, "value")) {
+    // A store reaches what native code keeps beside the property, and a definition does not: the engine goes on calling what was last stored to Error.prepareStackTrace.
+    return () => {
+      Reflect.set(receiver, key, descriptor.value);
+      if (!Bun.deepEquals(Reflect.getOwnPropertyDescriptor(receiver, key), descriptor, true)) Reflect.defineProperty(receiver, key, descriptor);
+    };
+  }
   if (!descriptor) return () => Reflect.deleteProperty(receiver, key);
   try {
     const value = Reflect.get(receiver, key);

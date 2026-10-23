@@ -12,7 +12,7 @@ import type {
   ModelTypePart,
   TableModel,
 } from "./model.ts";
-import type { Conversion, OperandUse, Protocol } from "./vocabulary.ts";
+import { conversionsFailingByValue, type Conversion, type OperandUse, type Protocol } from "./vocabulary.ts";
 
 // NotPassed: the call has no argument at the position.
 export const operandKinds = [
@@ -67,9 +67,6 @@ const convertedWithoutError: Readonly<Record<Conversion, readonly OperandKind[]>
   ToBigInt: ["Boolean", "BigInt"],
   Dictionary: ["Undefined", "Null"],
 };
-
-// A value inside the accepted type fails these by what it is: a negative index, a text that is no BigInt.
-const conversionsFailingByValue: readonly Conversion[] = ["ToIndex", "ToBigInt", "Dictionary"];
 
 const protocolsOnObjectsOnly: readonly Protocol[] = [
   "OwnKeys",

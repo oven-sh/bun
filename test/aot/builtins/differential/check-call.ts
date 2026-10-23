@@ -2,7 +2,7 @@ import { compare, type Difference } from "./compare";
 import { createMemberProbe } from "./instances";
 import type { Invocation, Realm } from "./members";
 import { runSet, type RunOptions } from "./observe";
-import { operandSetsFor, reasonNeverCalled, withArgument, withReceiver, type Call } from "./operands";
+import { isCallThatExists, operandSetsFor, reasonNeverCalled, withArgument, withReceiver, type Call } from "./operands";
 import { checkPairs } from "./run-pairs";
 import type { OperandSet, Run } from "./runs";
 import type { CallMode, DumpedEntry, OperandName } from "./table-description";
@@ -93,10 +93,13 @@ function findInvocation(realm: Realm, { entry, mode }: Call): Invocation | strin
   return realm.invocationOf(entry, mode) ?? "this realm does not have it";
 }
 
+export function emptyReport({ entry, mode }: Call): CallReport {
+  return { path: entry.path, mode, setCount: 0, skippedSetCount: 0, slowestSet: "", slowestSetMilliseconds: 0, unreachable: undefined, overloads: [] };
+}
+
 export async function checkCall(realm: Realm, call: Call, onSet?: (name: string) => void): Promise<CallReport> {
-  const { entry, mode } = call;
   const reports = new Reports(call);
-  const report: CallReport = { path: entry.path, mode, setCount: 0, skippedSetCount: 0, slowestSet: "", slowestSetMilliseconds: 0, unreachable: undefined, overloads: [] };
+  const report = emptyReport(call);
   const invocation = findInvocation(realm, call);
   if (typeof invocation === "string") return { ...report, unreachable: invocation };
 
@@ -105,7 +108,7 @@ export async function checkCall(realm: Realm, call: Call, onSet?: (name: string)
   const pending = operandSetsFor(realm, call);
   for (let index = 0; index < pending.length; index++) {
     const set = pending[index];
-    if (seen.has(set.name)) continue;
+    if (seen.has(set.name) || !isCallThatExists(realm, call, set)) continue;
     seen.add(set.name);
     onSet?.(set.name);
     const start = performance.now();

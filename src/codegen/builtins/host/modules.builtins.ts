@@ -16,11 +16,13 @@ const loadsModule = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+// A receiver that is no module object gets undefined before anything is converted.
 const compilesText = {
   args: { text: b.string.loose, filename: b.string.loose },
   returns: b.any,
   capability: "js",
   throws: true,
+  readsStateBeforeConversions: true,
   uses: { text: [b.evaluatedAsText] },
   implementation: b.generic,
 } satisfies b.FunctionField;
@@ -164,8 +166,24 @@ export default b.declarations(
   b.same("node:module.Module", "node:module"),
   b.static("node:module._cache", b.property(moduleCache)),
   b.static("node:module._extensions", b.property(moduleExtensions)),
-  b.static("node:module._load", loadsModule),
-  b.static("node:module.wrapper", b.property(b.object)),
+  // It returns undefined and converts nothing.
+  b.static("node:module._load", { ...loadsModule, readsStateBeforeConversions: true }),
+  // nodeModuleWrapper in NodeModuleModule.cpp keeps nothing: every read calls getWrapperArrayProxy, which makes a proxy of a new array.
+  b.static("node:module.wrapper", {
+    getter: b.object,
+    capability: "js",
+    throws: true,
+    mutability: "ChangesOnItsOwn",
+    implementation: b.generic,
+    setter: {
+      value: b.any,
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      uses: { value: [b.runsTransitively("ToPrimitive", b.named("0", "1"))] },
+      implementation: b.generic,
+    },
+  }),
   b.static("node:module.createRequire", {
     args: { filename: b.string.loose },
     returns: b.builtin("%ModuleRequire%"),
@@ -211,8 +229,6 @@ export default b.declarations(
   b.fn("bun:test.spyOn", spyOn),
   b.namespace("bun:test.jest", { spyOn }),
   b.namespace("bun:test.vi", { spyOn }),
-  // The text that goes around the source text of a CommonJS module. A compiled module has none, so a program may replace it.
-  b.extend("node:module.wrapper", constantUnlessWritten),
   b.namespace("%bun:bundle%", {
     feature: {
       args: { flag: b.string },

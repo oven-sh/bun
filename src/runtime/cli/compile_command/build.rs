@@ -314,7 +314,13 @@ fn find_difference(template: &Template) -> Option<Vec<u8>> {
     let Some(engine) = template.description.record(RuntimeDescription::ENGINE) else {
         return unreadable();
     };
-    describe_difference_of_runtime(engine)
+    let Some(table) = template
+        .description
+        .record(RuntimeDescription::BUILTIN_TABLE)
+    else {
+        return unreadable();
+    };
+    describe_difference_of_runtime(engine).or_else(|| describe_difference_of_runtime(table))
 }
 
 fn build_program(

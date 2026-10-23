@@ -150,6 +150,7 @@ fn default_host_reads_manifest_like_types_question_and_no_tsconfig() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn default_host_parses_code_with_parse() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -174,6 +175,7 @@ fn default_host_parses_code_with_parse() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn default_host_leaves_tree_and_payload_unchanged() {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));

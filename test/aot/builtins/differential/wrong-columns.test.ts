@@ -1,6 +1,7 @@
 // For each thing an entry can leave out: a function that does it, an entry that says so and passes, and the same entry without
 // that word, which must be reported in that column.
 import { expect } from "bun:test";
+import { types } from "node:util";
 import { describe, test } from "../../supported";
 import {
   action,
@@ -43,6 +44,9 @@ const objectHeaps = ["NamedProperties", "ObjectFields", "ShapeWords", "Elements"
 const ignored = () => {};
 const pristineArray = instanceOf("Array");
 pristineArray.parts = [{ part: "Instance", class: "Array", pristine: ["Storage", "Names"], contents: [] }];
+
+const sizeOf = Reflect.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const timeOf = Date.prototype.getTime;
 
 function requireObject(value: unknown): void {
   if ((typeof value !== "object" || value === null) && typeof value !== "function") throw new TypeError();
@@ -152,6 +156,46 @@ const readsLengthFirst = overload({
   parameters: [parameter(first, { accepted: primitive("Number"), conversion: "ToNumber", protocols: ["ToPrimitive"] })],
   capability: "none",
   reads: ["ArrayStorage"],
+  readsStateBeforeConversions: true,
+  ...returning(primitive("Number")),
+});
+const toNumber = { accepted: primitive("Number"), conversion: "ToNumber", protocols: ["ToPrimitive"] } as const;
+const refusesOtherReceivers = overload({
+  receiver: parameter("this", { accepted: instanceOf("Map"), uses: ["Inspects", "ReadsContents"] }),
+  parameters: [parameter(first, toNumber)],
+  capability: "none",
+  reads: ["CollectionStorage"],
+  throws: true,
+  ...returning(primitive("Number")),
+});
+const convertsReceiverFirst = overload({
+  receiver: parameter("this", { accepted: primitive("String"), conversion: "ToString", protocols: ["ToPrimitive"] }),
+  parameters: [parameter(first, toNumber)],
+  throws: true,
+  ...returning(primitive("String")),
+});
+const readsDateLast = overload({
+  receiver: parameter("this", { accepted: instanceOf("Date"), uses: ["Inspects", "ReadsContents"] }),
+  parameters: [parameter(first, toNumber)],
+  capability: "none",
+  reads: ["InternalFields"],
+  throws: true,
+  ...returning(primitive("Number")),
+});
+const readsLengthOfArgumentFirst = overload({
+  parameters: [
+    parameter(first, { accepted: pristineArray, uses: ["Inspects", "ReadsContents"] }),
+    parameter(second, toNumber),
+  ],
+  capability: "none",
+  reads: ["ArrayStorage"],
+  readsStateBeforeConversions: true,
+  ...returning(primitive("Number")),
+});
+const refusesNegativeIndex = overload({
+  parameters: [parameter(first, { accepted: primitive("Number") }), parameter(second, toNumber)],
+  capability: "none",
+  throws: true,
   readsStateBeforeConversions: true,
   ...returning(primitive("Number")),
 });
@@ -464,6 +508,60 @@ const cases: Case[] = [
     declared: readsLengthFirst,
     wrong: { ...readsLengthFirst, readsStateBeforeConversions: false },
     column: "readsStateBeforeConversions",
+  },
+  {
+    title: "state of an argument that is read before a conversion",
+    hasOtherwise: true,
+    double: (list: unknown[], value: unknown) => {
+      const { length } = list;
+      return length + Number(value);
+    },
+    declared: readsLengthOfArgumentFirst,
+    wrong: { ...readsLengthOfArgumentFirst, readsStateBeforeConversions: false },
+    column: "readsStateBeforeConversions",
+  },
+  {
+    title: "a value that is refused before a conversion",
+    hasOtherwise: true,
+    double: (index: unknown, value: unknown) => {
+      if (typeof index !== "number") throw new TypeError();
+      if (index < 0) throw new RangeError();
+      return index + Number(value);
+    },
+    declared: refusesNegativeIndex,
+    wrong: { ...refusesNegativeIndex, readsStateBeforeConversions: false },
+    column: "readsStateBeforeConversions",
+  },
+  {
+    title: "nothing, where a receiver that the entry does not take is refused before a conversion",
+    double: function (this: unknown, value: unknown) {
+      if (!types.isMap(this)) throw new TypeError();
+      return Number(value) + Reflect.apply(sizeOf, this, []);
+    },
+    declared: refusesOtherReceivers,
+    wrong: refusesOtherReceivers,
+    column: "",
+  },
+  {
+    title: "nothing, where the receiver is converted before the arguments",
+    double: function (this: unknown, value: unknown) {
+      const text = `${this}`;
+      return text + Number(value);
+    },
+    declared: convertsReceiverFirst,
+    wrong: convertsReceiverFirst,
+    column: "",
+  },
+  {
+    title: "nothing, where a conversion makes the receiver an invalid date",
+    hasOtherwise: true,
+    double: function (this: unknown, value: unknown) {
+      if (!types.isDate(this)) throw new TypeError();
+      return Number(value) + Reflect.apply(timeOf, this, []);
+    },
+    declared: readsDateLast,
+    wrong: readsDateLast,
+    column: "",
   },
   {
     title: "the order of the conversions",

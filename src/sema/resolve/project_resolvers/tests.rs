@@ -42,6 +42,7 @@ fn assert_resolves(resolver: &Resolver<'_>, spec: &str, from: &str, expected: Op
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn project_resolver_uses_own_paths() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());
@@ -55,6 +56,7 @@ fn project_resolver_uses_own_paths() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn one_resolver_per_options() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());
@@ -73,6 +75,7 @@ fn one_resolver_per_options() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn equal_options_at_other_address_get_other_resolver() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());
@@ -86,6 +89,7 @@ fn equal_options_at_other_address_get_other_resolver() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn program_options_return_program() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());
@@ -99,6 +103,7 @@ fn program_options_return_program() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn redirect_numbers_follow_referenced_projects() {
     let (session, host) = (Session::new(), two_projects());
     let app = Options {
@@ -117,6 +122,7 @@ fn redirect_numbers_follow_referenced_projects() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn racing_threads_get_one_resolver() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());
@@ -141,6 +147,7 @@ fn racing_threads_get_one_resolver() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn shared_memo_separates_program_and_project() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", source_alias());
@@ -158,6 +165,7 @@ fn shared_memo_separates_program_and_project() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn shared_memo_separates_two_projects() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());
@@ -176,6 +184,7 @@ fn shared_memo_separates_two_projects() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn shared_caches_read_manifest_once() {
     let manifest = "/p/node_modules/pkg/package.json";
     let files = [
@@ -196,6 +205,7 @@ fn shared_caches_read_manifest_once() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn separate_caches_read_manifest_again() {
     let manifest = "/p/node_modules/pkg/package.json";
     let files = [
@@ -215,6 +225,7 @@ fn separate_caches_read_manifest_again() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn project_referenced_outputs_prevent_cache_sharing() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());
@@ -229,6 +240,7 @@ fn project_referenced_outputs_prevent_cache_sharing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn program_referenced_outputs_prevent_cache_sharing() {
     let (session, host) = (Session::new(), two_projects());
     let app = project_with_referenced_output(b"/p/app");
@@ -242,6 +254,7 @@ fn program_referenced_outputs_prevent_cache_sharing() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn project_links_reach_program_when_added() {
     let files = [
         ("/p/app/x.ts", ""),
@@ -274,6 +287,7 @@ fn project_links_reach_program_when_added() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn no_project_adds_no_link() {
     let (session, host) = (Session::new(), two_projects());
     let app = project(b"/p/app", Paths::new());

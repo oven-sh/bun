@@ -626,7 +626,7 @@ describe("readEntryPoints", () => {
       failures: [{ kind: "UnreadInput", object: "unrelated.o", reason: "NotFound" }],
       statistics: {},
     };
-    return readEntryPoints(reading, model);
+    return readEntryPoints(reading, model, [70, 80, 90]);
   };
 
   const guarded: ToyRecord = { guard: "Lguard", entry: "Gentry" };
@@ -688,7 +688,7 @@ describe("readEntryPoints", () => {
   });
 
   test("the origin byte is an index into guardOrigins", () => {
-    expect(guardOrigins).toEqual(["NativeCode", "Builtin", "Definition"]);
+    expect(guardOrigins).toEqual(["NativeCode", "Builtin", "Definition", "BuiltinNamedByEngine"]);
     const { entryPoints } = read(
       recordSection(
         "a.o",
@@ -696,6 +696,18 @@ describe("readEntryPoints", () => {
       ),
     );
     expect(entryPoints.map(entryPoint => entryPoint.origin)).toEqual(guardOrigins.slice(0, 2));
+  });
+
+  test("a position that code of the engine records becomes the number of the built-in in the table", () => {
+    const { entryPoints, failures } = read(recordSection("a.o", [{ ...guarded, origin: 3, builtin: 2 }]));
+    expect(entryPoints).toEqual([{ ...guardedInA, origin: "Builtin", builtin: 90 }]);
+    expect(failures).toEqual([]);
+  });
+
+  test("a position behind the end of the engine's list is malformed", () => {
+    const { entryPoints, failures } = read(recordSection("a.o", [{ ...guarded, origin: 3, builtin: 3 }]));
+    expect(entryPoints).toEqual([]);
+    expect(failures).toEqual([{ kind: "UnreadInput", object: "a.o", reason: "MalformedRecords" }]);
   });
 
   test("a reference is resolved in the object of its section", () => {
@@ -780,7 +792,7 @@ describe("readEntryPoints", () => {
   test.each<[string, ToyRecord]>([
     ["stub 4", { stub: 4 }],
     ["stub 255", { stub: 255 }],
-    ["origin 3", { origin: 3 }],
+    ["origin 4", { origin: 4 }],
     ["origin 255", { origin: 255 }],
     ["a guard in native code with the id of a built-in", { origin: 0, builtin: 7 }],
     ["a guard in native code with an id in the last byte only", { origin: 0, builtin: 0x80000000 }],

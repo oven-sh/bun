@@ -272,6 +272,17 @@ export interface HandwrittenFileDeclaration {
   file: string;
 }
 
+/** An entry of the host that hand-written code of the engine names. The engine declares it, so the host cannot leave it out or add one. */
+export interface HostRoleDeclaration {
+  declares: "HostRole";
+  path: BuiltinPath;
+}
+
+export interface HostClassRoleDeclaration {
+  declares: "HostClassRole";
+  name: ClassName;
+}
+
 /** What the host does with an export of a module of the program. It takes the forms that the front end has a record for. */
 export type HostReadUse = Extract<HostUseSpec, { read: "Inspected" | "PassedTo" }> | { read: "Called" };
 
@@ -343,6 +354,8 @@ export type Declaration =
   | IntrinsicDeclaration
   | ExcludedFunctionDeclaration
   | HandwrittenFileDeclaration
+  | HostRoleDeclaration
+  | HostClassRoleDeclaration
   | HostReadDeclaration
   | HostObjectDeclaration
   | NamedMemberCallDeclaration

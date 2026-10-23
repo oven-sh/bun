@@ -82,13 +82,24 @@ const environment: Record<string, string> = {
 
 const outputLimit = 1 << 20;
 
+// A program that prints without end until its time is over prints gigabytes. What lies behind the limit is read and dropped: a slice of the whole text would keep the whole text alive.
+async function textUpToTheLimit(stream: ReadableStream<Uint8Array>) {
+  const kept: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    if (size < outputLimit) kept.push(chunk.slice(0, outputLimit - size));
+    size += chunk.length;
+  }
+  return Buffer.concat(kept).toString();
+}
+
 export async function spawned(cmd: string[], cwd: string, seconds: number): Promise<Run> {
   // No core files, and a limit on processor time and on memory behind the limit on wall time.
   const limited = ["/bin/sh", "-c", `ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
   await using child = Bun.spawn({ cmd: limited, cwd, env: environment, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
   const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
-  return { stdout: stdout.slice(0, outputLimit), stderr: stderr.slice(0, outputLimit), exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut };
+  return { stdout, stderr, exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut };
 }
 
 export interface Bed {

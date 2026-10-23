@@ -66,6 +66,8 @@ pub(crate) fn with_test_context<R>(
     configure: impl FnOnce(&mut BundleOptions<'_>),
     then: impl FnOnce(&BuildContext) -> R,
 ) -> R {
+    static OUTPUT: std::sync::Once = std::sync::Once::new();
+    OUTPUT.call_once(bun_core::output::stdio::init);
     let mut log = Log::init();
     let mut event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();

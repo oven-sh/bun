@@ -38,8 +38,12 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/doConnect|clusterRawBind|sendHelperPrimary|emitHandleIPCMessage/, "it opens a connection or writes to the channel of a parent process"],
   [/^%(Quic\w+|PostgresSQL\w+|MySQL\w+)%|node_quic_binding|postgres\.rs|mysql\.rs/, "it needs a server that the test does not have"],
   [
-    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:/,
+    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
     "only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust",
+  ],
+  [
+    /createNativeFrameForTesting|TestingAPIs\.(orderedRemoveProbe|noProxyMatches)|createStatsForIno|describeCheckerQueries|createMemfdForTesting|jsFunction_readFreedStringUnderASAN/,
+    "a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose",
   ],
   [
     /TestingAPIs\.(shellLex|shellParse|proxyFor)|jsFunction(OperatingSystem|Architecture)IsMatch|compareCodeResolution|describeCodeGraph/,
@@ -279,6 +283,11 @@ export function collectTargets(realm: Realm, filter: RegExp): (Target | Unreacha
   for (const [name, callee] of Object.entries(internals.privateGlobalFunctions ?? {})) {
     const path = `private global ${name}`;
     if (!filter.test(path)) continue;
+    const reason = reasonTargetIsSkipped(path);
+    if (reason !== undefined) {
+      targets.push({ name: path, path, mode: "Call", reason, isSkipped: true });
+      continue;
+    }
     const entry = entries.find(entry => entry.path === `%PrivateGlobals%.${name.split(" ")[0]}`);
     targets.push({
       name: path,

@@ -78,6 +78,7 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
     generatedSources: [
       ...evaluated.list("JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES"),
       ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES"),
+      ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES"),
     ],
     generatedHeaders: [
       ...evaluated.list("JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS"),

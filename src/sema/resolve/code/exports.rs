@@ -513,6 +513,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn main_export() {
         let cases = [
             (r#""./a.js""#, "Exact /a.js"),
@@ -534,6 +535,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn subpath_keys() {
         let cases = [
             (r#"{"./a": "./a.js"}"#, "Exact /a.js"),
@@ -554,6 +556,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn imports_table() {
         let cases = [
             (r##"{"#a": "./a.js"}"##, "Exact /a.js"),
@@ -573,6 +576,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn pattern_keys() {
         let by_base = r#"{"./*": "./any/*.js", "./a/*": "./deep/*.js"}"#;
         assert_eq!(exports(by_base, "./a/x"), "ExactEndsWithStar /deep/x.js");
@@ -590,6 +594,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn directory_key_is_inexact() {
         let json = r#"{"./a/": "./src/"}"#;
         assert_eq!(exports(json, "./a/x.js"), "Inexact /src/x.js");
@@ -601,6 +606,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exact_lookup_skips_expansion_syntax() {
         let cases = [
             (r#"{"./a": "./a.js"}"#, "./a", "Exact /a.js"),
@@ -614,6 +620,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn conditions_match_in_key_order() {
         let json = r#"{"require": "./r.js", "import": "./i.js"}"#;
         let resolve = |conditions: &[&str]| exports_with_conditions(conditions, json, ".");
@@ -626,6 +633,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn only_undefined_conditions_fall_through() {
         let nested = r#"{"import": {"deno": "./x.js"}, "default": "./d.js"}"#;
         assert_eq!(target(nested), "Exact /d.js");
@@ -640,6 +648,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn arrays_and_leaves() {
         let cases = [
             (r#""./a.js""#, "Exact /a.js"),
@@ -659,6 +668,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn deep_nesting_is_invalid_configuration() {
         const STACK_SIZE: usize = 4 << 20;
         let resolve_nested = || {
@@ -680,6 +690,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn target_length_limit() {
         let longest = MAX_PATH_BYTES - PACKAGE_URL.len() - JOIN_HEADROOM;
         let fitting = format!("./{}", "a".repeat(longest - 2));
@@ -693,6 +704,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn leftover_subpath_needs_directory_target() {
         let cases = [
             ("./x/", "y", Directory, Exports, "Inexact /x/y"),
@@ -707,6 +719,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn invalid_subpaths() {
         for subpath in ["../x", "x/./y", "x\\..\\y", "NODE_MODULES/x", "%2e%2e/x"] {
             let pattern = target_text("./src/*", subpath, Pattern, Exports);
@@ -721,6 +734,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn target_outside_package() {
         for target in ["../x", "/x", "pkg", ""] {
             assert_eq!(exported_text(target), BAD_TARGET, "{target}");
@@ -740,6 +754,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn invalid_target_segments() {
         for target in ["./a/../b", "./a\\..\\b", "./node_modules/x", "./%2e%2e/x"] {
             assert_eq!(exported_text(target), BAD_TARGET, "{target}");
@@ -749,6 +764,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn pattern_substitution() {
         let cases = [
             ("./src/*.js", "x", "ExactEndsWithStar /src/x.js"),
@@ -764,6 +780,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn substitution_length_limit() {
         let subpath = "a".repeat(MAX_PATH_BYTES / 4);
         let exported = |target: &str| target_text(target, &subpath, Pattern, Exports);
@@ -776,6 +793,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn path_segments() {
         for path in ["./a", "../a", "node_modules/a", "./a//b/", "/"] {
             assert!(!has_invalid_segment(path.as_bytes()), "{path}");
@@ -803,6 +821,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn resolved_path_is_decoded() {
         let cases = [
             (r#""./a%20b.js""#, "Exact /a b.js"),
@@ -828,6 +847,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn resolved_directory_is_unsupported() {
         for json in [r#""./dir/""#, r#""./""#, r#""./dir\\""#, r#""./a%20/""#] {
             assert_eq!(exports(json, "."), IS_DIRECTORY, "{json}");
@@ -837,6 +857,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn strict_percent_decoding() {
         let decode = |text: &str| decode_percent(text.as_bytes());
         assert_eq!(decode("a%20b%41%7a"), Some(b"a bAz".to_vec()));
@@ -857,6 +878,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn package_specifiers() {
         let cases = [
             ("react", parts("react", ".")),
@@ -895,6 +917,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn subpath_capacity() {
         let fitting = format!("a/{}", "b".repeat(SUBPATH_CAPACITY - 2));
         let parsed = PackageSpecifier::parse(fitting.as_bytes()).unwrap();
@@ -908,6 +931,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn status_failures() {
         let same_name = [
             ExportsStatus::InvalidModuleSpecifier,

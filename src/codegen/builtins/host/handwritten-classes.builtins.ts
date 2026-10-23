@@ -41,6 +41,8 @@ const codecStream = (name: string) =>
   });
 
 const sinkPaths = sinkNames.map(name => `%${name}%`);
+// generate-jssink.ts: they do nothing to a receiver that is no sink, and return.
+const sinkMembersOfAnyReceiver = ["ref", "unref"];
 
 const sinkClass = (name: string) =>
   b.class(`%${name}%`, {
@@ -49,7 +51,12 @@ const sinkClass = (name: string) =>
     // generate-jssink.ts initializeProperties: `length` and `name`.
     constructorHoldsPrototype: false,
     proto: Object.fromEntries(
-      Object.entries(prototypeMembersOf(name)).map(([member, { returns }]) => [member, methodReturning(returns)]),
+      Object.entries(prototypeMembersOf(name)).map(([member, { returns }]) => [
+        member,
+        sinkMembersOfAnyReceiver.includes(member)
+          ? { ...methodReturning(returns), this: b.any }
+          : methodReturning(returns),
+      ]),
     ),
   });
 

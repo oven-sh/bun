@@ -207,6 +207,7 @@ fn string_to_number_declines_inexact_radix_literals() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn to_number_converts_primitives() {
     with_evaluator(|evaluator| {
         let convert = |literal: Literal| evaluator.operand(literal.to_primitive(evaluator));
@@ -223,6 +224,7 @@ fn to_number_converts_primitives() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn to_boolean_and_is_nullish_follow_ecmascript() {
     let cases = [
         (Undefined, false, true),
@@ -250,6 +252,7 @@ fn to_boolean_and_is_nullish_follow_ecmascript() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn to_string_follows_ecmascript() {
     let cases = [
         (Undefined, "undefined"),
@@ -281,6 +284,7 @@ fn to_string_follows_ecmascript() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn push_text_follows_to_string() {
     let cases = [
         (Undefined, "undefined"),
@@ -315,6 +319,7 @@ fn push_text_follows_to_string() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn is_string_sees_scratch_strings() {
     with_evaluator(|evaluator| {
         for parts in [["a", "b"], ["", ""], ["1", "2"]] {
@@ -339,6 +344,7 @@ fn is_string_sees_scratch_strings() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unary_operators() {
     assert_unary(&[
         (UnOp::Plus, Str(" 12 "), Num(12.0)),
@@ -380,6 +386,7 @@ fn unary_operators() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn addition_concatenates_or_sums() {
     assert_binary(&[
         (Num(1.0), BinOp::Add, Str("2"), Str("12")),
@@ -399,6 +406,7 @@ fn addition_concatenates_or_sums() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn addition_chains_associate_left() {
     assert_sums(&[
         (&[Num(5.0)], Num(5.0)),
@@ -421,6 +429,7 @@ fn addition_chains_associate_left() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn to_constant_interns_computed_string() {
     with_evaluator(|evaluator| {
         let addends = [Str("p"), Str("q"), Num(1234.5), Str("r")];
@@ -449,6 +458,7 @@ fn to_constant_interns_computed_string() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn template_without_substitutions_stays_interned() {
     with_evaluator(|evaluator| {
         let text = evaluator.atoms.intern(b"a");
@@ -462,6 +472,7 @@ fn template_without_substitutions_stays_interned() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn scratch_strings_are_operands() {
     with_evaluator(|evaluator| {
         let value = |literal: Literal| literal.to_value(evaluator);
@@ -568,6 +579,7 @@ fn scratch_strings_are_operands() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn arithmetic_follows_ieee_754() {
     assert_binary(&[
         (Num(5.0), BinOp::Sub, Num(7.0), Num(-2.0)),
@@ -592,6 +604,7 @@ fn arithmetic_follows_ieee_754() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn exponentiation_folds_exact_cases_only() {
     assert_binary(&[
         (Num(2.0), BinOp::Pow, Num(10.0), Num(1024.0)),
@@ -641,6 +654,7 @@ fn exponentiation_folds_exact_cases_only() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn bitwise_operators_and_shifts() {
     assert_binary(&[
         (Num(5.0), BinOp::BitAnd, Num(3.0), Num(1.0)),
@@ -667,6 +681,7 @@ fn bitwise_operators_and_shifts() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn int32_conversions_wrap() {
     let cases = [
         (0.0, 0),
@@ -747,6 +762,7 @@ fn other_operators_have_no_numeric_result() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn relational_comparison() {
     assert_binary(&[
         (Num(1.0), BinOp::Lt, Num(2.0), Bool(true)),
@@ -780,6 +796,7 @@ fn relational_comparison() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn loose_equality() {
     assert_binary(&[
         (Null, BinOp::EqEq, Undefined, Bool(true)),
@@ -811,6 +828,7 @@ fn loose_equality() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn strict_equality() {
     assert_binary(&[
         (Num(1.0), BinOp::EqEqEq, Num(1.0), Bool(true)),
@@ -834,6 +852,7 @@ fn strict_equality() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn in_and_instanceof_are_unknown() {
     assert_binary(&[
         (Str("a"), BinOp::In, Str("a"), Unknown),
@@ -842,6 +861,7 @@ fn in_and_instanceof_are_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn unknown_operands_stay_unknown() {
     let unary_operators = [
         UnOp::Plus,
@@ -886,6 +906,7 @@ fn unknown_operands_stay_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn templates_concatenate_texts_and_values() {
     assert_template(&["a"], &[], Str("a"));
     assert_template(&["a", "b"], &[Num(1.0)], Str("a1b"));
@@ -901,6 +922,7 @@ fn templates_concatenate_texts_and_values() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn long_strings_are_unknown() {
     with_evaluator(|evaluator| {
         let repeat = |count| Value::string(evaluator.atoms.intern(&vec![b'x'; count]));
@@ -925,6 +947,7 @@ fn long_strings_are_unknown() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn strings_over_limit_are_counted() {
     with_evaluator(|evaluator| {
         let count = || evaluator.over_limit_count();
@@ -947,6 +970,7 @@ fn strings_over_limit_are_counted() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn zero_limit_keeps_no_computed_text() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -972,6 +996,7 @@ fn zero_limit_keeps_no_computed_text() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn over_limit_count_saturates() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -985,6 +1010,7 @@ fn over_limit_count_saturates() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn surrogate_halves_join() {
     with_evaluator(|evaluator| {
         let lead = Value::string(evaluator.atoms.intern(b"\xED\xA0\xBD"));

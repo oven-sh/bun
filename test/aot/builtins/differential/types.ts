@@ -110,8 +110,8 @@ export function isIteratedFrom(context: TypeContext, value: unknown, declared: D
   const origin = log.originOf(value);
   if (isContentOf(origin, declared)) return isSettled || origin.depth === 1;
   if (origin !== undefined) return false;
-  // An entry of a map or of an array iterator is a pair that the iteration makes.
-  if (!Array.isArray(value)) return false;
+  // An entry of a map or of an array iterator is a pair that the iteration makes, a segment of a string is a record.
+  if (!Array.isArray(value)) return isNewPlainData(context, value, 0);
   return value.every(element => !isObject(element) || isContentOf(log.originOf(element), declared));
 }
 

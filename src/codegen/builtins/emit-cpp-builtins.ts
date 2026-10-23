@@ -33,7 +33,7 @@ import {
   type ModelSlot,
   type TableModel,
 } from "./model.ts";
-import { targetPlatforms, type TargetPlatform } from "./vocabulary.ts";
+import { builtinMarks, targetPlatforms, type TargetPlatform } from "./vocabulary.ts";
 
 interface DeclaredArray {
   cppType: string;
@@ -100,6 +100,8 @@ const runtimeSpans: readonly SpanMember[] = [
   ["moduleLoaderFunctions", "builtinTableModuleLoaderFunctions"],
   ["hostReads", "builtinTableHostReads"],
   ["lockedObjects", "builtinTableLockedObjects"],
+  ["marks", "builtinTableMarks"],
+  ["loadersOfMachineCode", "builtinTableLoadersOfMachineCode"],
   ["closedKeys", "builtinTableClosedKeys"],
   ["namesReadByNativeCode", "builtinTableNamesReadByNativeCode"],
 ];
@@ -406,6 +408,22 @@ function emitTableData(arrays: DeclaredArrays, lockedMembers: string | null, rea
   return `constinit const BuiltinTableData builtinTableData = ${data};`;
 }
 
+// An executable says with which table it was built: numbers of the table are in the code of a compiled program.
+function emitDescription(model: TableModel): string {
+  const description = formatAggregate([
+    ["hashOfBuiltinTokens", "builtinTableHashOfBuiltinTokens"],
+    ["numberOfBuiltins", String(model.builtins.length)],
+    ["numberOfOverloads", String(model.overloads.length)],
+    ["numberOfTypes", String(model.types.length)],
+    ["numberOfClasses", String(model.classes.length)],
+    ["numberOfSlots", String(model.slots.length)],
+    ["numberOfLayouts", String(model.layouts.length)],
+    ["numberOfModules", String(model.modules.length)],
+    ["numberOfFunctions", String(model.functions.length)],
+  ]);
+  return `extern "C" AOT_KEPT_BY_EVERY_LINKER constinit const BuiltinTableDescription describedBuiltinTable = ${description};`;
+}
+
 export function emitCppBuiltins(model: TableModel): string {
   checkModel(model);
   const arrays = collectDeclaredArrays(model);
@@ -473,6 +491,34 @@ export function emitCppBuiltins(model: TableModel): string {
     emitTableArray(arrays, "builtinTableLockedObjects", formatBuiltinIds(model.builtins.filter(isLockedObject))),
     emitTableArray(
       arrays,
+      "builtinTableMarks",
+      builtinMarks.flatMap(mark =>
+        model.builtins
+          .filter(({ marks }) => marks.includes(mark))
+          .map(builtin =>
+            formatAggregate([
+              ["mark", formatEnumerator("BuiltinMark", mark)],
+              ["builtin", formatId("BuiltinID", builtin)],
+            ]),
+          ),
+      ),
+    ),
+    emitTableArray(
+      arrays,
+      "builtinTableLoadersOfMachineCode",
+      model.builtins.flatMap(builtin =>
+        builtin.loadsMachineCodeAs === null
+          ? []
+          : [
+              formatAggregate([
+                ["callee", formatId("BuiltinID", builtin)],
+                ["named", formatId("BuiltinID", builtin.loadsMachineCodeAs)],
+              ]),
+            ],
+      ),
+    ),
+    emitTableArray(
+      arrays,
       "builtinTableClosedKeys",
       model.closedKeys.map(closedKeys => formatClosedKeys(closedKeys, closedKeyNames)),
     ),
@@ -497,6 +543,7 @@ export function emitCppBuiltins(model: TableModel): string {
     `static_assert(${model.realmStructures.length} <= RealmStructureID::hashTableDeletedIndex);`,
     ...tableArrays,
     emitTableData(arrays, lockedMemberSpan, realmStructureSpan),
+    emitDescription(model),
   ]);
-  return wrapFile(["AOTBuiltinTable.h", "AOTBuiltinTableArrays.h", "JSCInlines.h"], body);
+  return wrapFile(["AOTBuiltinTable.h", "AOTBuiltinTableArrays.h", "AOTRuntimeDescription.h", "JSCInlines.h"], body);
 }

@@ -379,13 +379,38 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, int code, co
     return object;
 }
 
-// sqlite3_error_offset counts from the pointer that sqlite3_prepare_v3 got. `byteOffsetBase` is how far that pointer is into the caller's SQL text.
-static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db, int64_t byteOffsetBase = 0)
+// For a failure that SQLite gives only as a return code. It records nothing on the connection for it.
+static JSValue createSQLiteErrorFromCode(JSC::JSGlobalObject* globalObject, int rc)
 {
-    int64_t byteOffset = sqlite3_error_offset(db);
+    return createSQLiteError(globalObject, rc, sqlite3_errstr(rc), -1);
+}
+
+// A call that records nothing leaves the error of an earlier call on the connection. `rc` has an extended part only after sqlite3_extended_result_codes().
+static bool isErrorOfCall(int connectionCode, int rc)
+{
+    return (connectionCode & 0xff) == (rc & 0xff);
+}
+
+// The error of a call that compiles no SQL names no token. SQLite still has the offset of an earlier error then.
+static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
+{
+    return createSQLiteError(globalObject, sqlite3_extended_errcode(db), sqlite3_errmsg(db), -1);
+}
+
+// After sqlite3_prepare_v3 or sqlite3_step returned `rc`. sqlite3_error_offset counts from the pointer that sqlite3_prepare_v3 got. `byteOffsetBase` is how far that pointer is into the caller's SQL text.
+static JSValue createSQLiteErrorWithOffset(JSC::JSGlobalObject* globalObject, sqlite3* db, int rc, int64_t byteOffsetBase = 0)
+{
+    int code = sqlite3_extended_errcode(db);
+    if (!isErrorOfCall(code, rc))
+        return createSQLiteErrorFromCode(globalObject, rc);
+    const char* message = sqlite3_errmsg(db);
+    int primaryCode = code & 0xff;
+    // SQLite sets the offset only for an error that its parser reports: SQLITE_ERROR, or SQLITE_SCHEMA when the schema changed meanwhile, with a message of its own.
+    bool parserReported = (primaryCode == SQLITE_ERROR || primaryCode == SQLITE_SCHEMA) && strcmp(message, sqlite3_errstr(code)) != 0;
+    int64_t byteOffset = parserReported ? sqlite3_error_offset(db) : -1;
     if (byteOffset >= 0)
         byteOffset += byteOffsetBase;
-    return createSQLiteError(globalObject, sqlite3_extended_errcode(db), sqlite3_errmsg(db), byteOffset);
+    return createSQLiteError(globalObject, code, message, byteOffset);
 }
 
 struct SQLiteParameterName {
@@ -1425,7 +1450,7 @@ static std::optional<int64_t> runStatements(JSC::JSGlobalObject* lexicalGlobalOb
 
         if (rc != SQLITE_OK) [[unlikely]] {
             if (!scope.exception())
-                throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db, head - sql.begin()));
+                throwException(lexicalGlobalObject, scope, createSQLiteErrorWithOffset(lexicalGlobalObject, db, rc, head - sql.begin()));
             return std::nullopt;
         }
 
@@ -1583,7 +1608,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
     if (rc != SQLITE_OK) {
         if (!scope.exception())
-            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
+            throwException(lexicalGlobalObject, scope, createSQLiteErrorWithOffset(lexicalGlobalObject, db, rc));
         return {};
     }
 
@@ -1768,8 +1793,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunction, (JSC::JSGlobalObject * le
 
     if (rc != SQLITE_OK) [[unlikely]] {
         // A name or an argument count that SQLite refuses is SQLITE_MISUSE, which leaves no message on the connection.
-        bool hasMessage = (sqlite3_errcode(db) & 0xff) == (rc & 0xff);
-        throwException(lexicalGlobalObject, scope, hasMessage ? createSQLiteError(lexicalGlobalObject, db) : createSQLiteError(lexicalGlobalObject, rc, sqlite3_errstr(rc), -1));
+        bool hasMessage = isErrorOfCall(sqlite3_errcode(db), rc);
+        throwException(lexicalGlobalObject, scope, hasMessage ? createSQLiteError(lexicalGlobalObject, db) : createSQLiteErrorFromCode(lexicalGlobalObject, rc));
         return {};
     }
 
@@ -1962,8 +1987,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     if (ownsString)
         sqlite3_free(scratch.string);
 
+    // sqlite3_file_control records no error on the connection.
     if (statusCode == SQLITE_ERROR) {
-        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
+        throwException(lexicalGlobalObject, scope, createSQLiteErrorFromCode(lexicalGlobalObject, statusCode));
         return {};
     }
 
@@ -2143,11 +2169,11 @@ public:
 };
 
 // Not inline: the registers that this needs would be saved and restored for every row.
-static NEVER_INLINE void throwStepError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
+static NEVER_INLINE void throwStepError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt, int status)
 {
     // What a user function threw is pending already.
     if (!scope.exception())
-        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
+        throwException(lexicalGlobalObject, scope, createSQLiteErrorWithOffset(lexicalGlobalObject, sqlite3_db_handle(stmt), status));
 }
 
 // SQLITE_ROW or SQLITE_DONE. Anything else is thrown.
@@ -2155,7 +2181,7 @@ static ALWAYS_INLINE int step(JSC::JSGlobalObject* lexicalGlobalObject, JSC::Thr
 {
     int status = sqlite3_step(stmt);
     if (status != SQLITE_ROW && status != SQLITE_DONE) [[unlikely]]
-        throwStepError(lexicalGlobalObject, scope, stmt);
+        throwStepError(lexicalGlobalObject, scope, stmt, status);
     return status;
 }
 

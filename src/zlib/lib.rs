@@ -914,6 +914,18 @@ impl DeflateEncoder {
             deflate,
         )
     }
+
+    /// Like [`step`](Self::step), but `deflate()` sees exactly `limit` bytes of output space,
+    /// whatever `out`'s capacity is. At level 0 that space decides where a stored block ends.
+    pub fn step_limited(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, limit, limit, flush, deflate)
+    }
 }
 
 impl Drop for DeflateEncoder {
@@ -998,6 +1010,24 @@ impl InflateDecoder {
             reserve,
             usize::MAX,
             flush,
+            inflate,
+        )
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_limited(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+    ) -> (usize, ReturnCode) {
+        step(
+            &mut self.strm,
+            input,
+            out,
+            limit,
+            limit,
+            FlushValue::NoFlush,
             inflate,
         )
     }

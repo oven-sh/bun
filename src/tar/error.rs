@@ -36,6 +36,12 @@ pub enum Error {
     SparseMapTooLarge,
     #[error("Oversized AppleDouble extension")]
     OversizedMacMetadata,
+    #[error("truncated gzip input")]
+    TruncatedGzip,
+    #[error("gzip decompression failed")]
+    GzipDecompressionFailed,
+    #[error("gzip trailer mismatch: bad CRC32 or uncompressed size")]
+    GzipTrailerMismatch,
     #[error("Out of memory")]
     OutOfMemory,
 }

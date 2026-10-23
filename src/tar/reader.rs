@@ -278,12 +278,25 @@ enum Step {
     Continue,
     NeedInput,
     Entry,
+    Data { offset: i64, len: usize },
+    EndOfEntry,
+    EndOfArchive,
+}
+
+/// [`Event`] without the borrows. `Data` is `input[start..start + len]`, and the entry is
+/// [`Reader::entry`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Poll {
+    NeedInput,
+    Entry,
     Data {
         offset: i64,
         start: usize,
         len: usize,
     },
-    EndOfEntry,
+    EndOfEntry {
+        size: i64,
+    },
     EndOfArchive,
 }
 
@@ -416,6 +429,28 @@ impl Reader {
     /// Returns how much of `input` was consumed along with the event. `eof` says that nothing
     /// follows `input`. An error is final: every later call returns it again.
     pub fn next<'a>(&'a mut self, input: &'a [u8], eof: bool) -> Result<(usize, Event<'a>)> {
+        let (used, poll) = self.poll(input, eof)?;
+        let event = match poll {
+            Poll::NeedInput => Event::NeedInput,
+            Poll::Entry => Event::Entry(&self.entry),
+            Poll::Data { offset, start, len } => Event::Data {
+                offset,
+                bytes: input
+                    .get(start..start.saturating_add(len))
+                    .unwrap_or_default(),
+            },
+            Poll::EndOfEntry { size } => Event::EndOfEntry { size },
+            Poll::EndOfArchive => Event::EndOfArchive,
+        };
+        Ok((used, event))
+    }
+
+    /// The entry of the last [`Event::Entry`].
+    pub fn entry(&self) -> &Entry {
+        &self.entry
+    }
+
+    pub(crate) fn poll(&mut self, input: &[u8], eof: bool) -> Result<(usize, Poll)> {
         let mut pos = 0usize;
         loop {
             let rest = input.get(pos..).unwrap_or_default();
@@ -427,27 +462,19 @@ impl Reader {
                     return Err(error);
                 }
             };
-            let start_of_rest = pos;
+            let start = pos;
             pos = pos.saturating_add(used);
-            let event = match step {
+            let poll = match step {
                 Step::Continue => continue,
-                Step::NeedInput => Event::NeedInput,
-                Step::Entry => Event::Entry(&self.entry),
-                Step::Data { offset, start, len } => {
-                    let from = start_of_rest.saturating_add(start);
-                    Event::Data {
-                        offset,
-                        bytes: input
-                            .get(from..from.saturating_add(len))
-                            .unwrap_or_default(),
-                    }
-                }
-                Step::EndOfEntry => Event::EndOfEntry {
+                Step::NeedInput => Poll::NeedInput,
+                Step::Entry => Poll::Entry,
+                Step::Data { offset, len } => Poll::Data { offset, start, len },
+                Step::EndOfEntry => Poll::EndOfEntry {
                     size: self.disk_size,
                 },
-                Step::EndOfArchive => Event::EndOfArchive,
+                Step::EndOfArchive => Poll::EndOfArchive,
             };
-            return Ok((pos, event));
+            return Ok((pos, poll));
         }
     }
 
@@ -729,11 +756,7 @@ impl Reader {
                 if block.hole {
                     return Ok(Step::Continue);
                 }
-                Ok(Step::Data {
-                    offset,
-                    start: 0,
-                    len,
-                })
+                Ok(Step::Data { offset, len })
             }
 
             State::Drain => {

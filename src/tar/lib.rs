@@ -6,11 +6,14 @@
 #![forbid(unsafe_code)]
 #![warn(unused_must_use)]
 
+pub mod decoder;
 pub mod error;
+pub mod gzip;
 mod header;
 mod num;
 pub mod reader;
 
+pub use decoder::{Decoder, MemoryDecoder};
 pub use error::{Error, Result};
 pub use reader::{Charset, Dialect, Entry, Event, Options, Reader};
 

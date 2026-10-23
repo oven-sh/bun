@@ -1915,6 +1915,7 @@ name = "bun_tar"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "bun_zlib",
  "thiserror",
 ]
 

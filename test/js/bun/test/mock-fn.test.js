@@ -696,6 +696,32 @@ describe("mock()", () => {
     expect(await expectResolves(fn())).toBe(44);
     expect(await expectResolves(fn())).toBe(42);
   });
+  test("mockResolvedValue runs Promise.resolve(value) on every call", async () => {
+    const fn = jest.fn().mockResolvedValueOnce("once").mockResolvedValue("default");
+    const promises = [fn(), fn(), fn()];
+    expect(new Set(promises).size).toBe(3);
+    expect(fn.mock.results.map((result, i) => result.value === promises[i])).toEqual([true, true, true]);
+    expect(await Promise.all(promises)).toEqual(["once", "default", "default"]);
+
+    // Promise.resolve returns a native promise as is.
+    const native = Promise.resolve("native");
+    fn.mockResolvedValue(native);
+    expect(fn()).toBe(native);
+    expect(fn()).toBe(native);
+  });
+  test("mockResolvedValue adopts a thenable once per call, and not before the first call", async () => {
+    let thenCalls = 0;
+    const thenable = {
+      then(resolve) {
+        resolve(++thenCalls);
+      },
+    };
+    const fn = jest.fn().mockResolvedValueOnce(thenable).mockResolvedValue(thenable);
+    // A job queued by mockResolvedValue() to adopt the thenable would run before this continuation.
+    await null;
+    expect(thenCalls).toBe(0);
+    expect(await Promise.all([fn(), fn(), fn()])).toEqual([1, 2, 3]);
+  });
   test("mockRejectedValue", async () => {
     const fn = jest.fn();
     fn.mockRejectedValue(42);
@@ -725,23 +751,22 @@ describe("mock()", () => {
     );
     expect(fn()).toBe("1");
   });
-  if (isBun) {
-    // Bun wraps the value in a promise when mockResolvedValue is called, not when the mock is.
-    test("mockResolvedValue propagates an error thrown while wrapping the value in a promise", () => {
-      const boom = new Error("boom");
-      const value = Promise.resolve(1);
-      Object.defineProperty(value, "constructor", {
-        get() {
-          throw boom;
-        },
-      });
-      const fn = jest.fn();
-      expect(() => fn.mockResolvedValue(value)).toThrow(boom);
-      expect(() => fn.mockResolvedValueOnce(value)).toThrow(boom);
-      // nothing was queued
-      expect(fn()).toBeUndefined();
+  test("mockResolvedValue records an error thrown while wrapping the value in a promise as a thrown call", () => {
+    const boom = new Error("boom");
+    const value = Promise.resolve(1);
+    Object.defineProperty(value, "constructor", {
+      get() {
+        throw boom;
+      },
     });
-  }
+    const fn = jest.fn().mockResolvedValueOnce(value).mockResolvedValue(value);
+    expect(() => fn()).toThrow(boom);
+    expect(() => fn()).toThrow(boom);
+    expect(fn.mock.results).toEqual([
+      { type: "throw", value: boom },
+      { type: "throw", value: boom },
+    ]);
+  });
   test("withImplementation (callback throws)", () => {
     const fn = jest.fn(() => "1");
     expect(() =>

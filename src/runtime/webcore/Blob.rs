@@ -3393,10 +3393,7 @@ use bun_core::string_joiner::StringJoiner;
 use bun_jsc::JsClass as _;
 use bun_jsc::SysErrorJsc as _;
 
-/// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
-/// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
-/// `FormDataContext::on_entry` needs `&mut Blob` to call `resolve_size()`, so
-/// we drive the C++ `DOMFormData__forEach` directly with this mutable variant.
+/// One `DOMFormData` entry, as the `DOMFormData__forEach` callback receives it.
 pub(crate) enum FormDataEntry<'a> {
     String(EncodedSlice<'a>),
     File {
@@ -3584,9 +3581,6 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    if blob.size.get() == MAX_SIZE {
-                        blob.resolve_size();
-                    }
                     let store = blob
                         .store
                         .get()

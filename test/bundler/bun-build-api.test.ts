@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   MAX_PATH_BYTES,
   tempDir,
@@ -1003,6 +1004,75 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
+  // https://github.com/oven-sh/bun/pull/38212: a build that is queued behind another still reads its directories again.
+  // Not concurrent: the builds of the tests around it would sit between these on the one bundle thread.
+  test("a build sees a file written before the call while a second caller builds", async () => {
+    const rounds = [0, 1, 2];
+    const files: Record<string, string> = { "package.json": `{}`, "first.js": `export default 1;\n` };
+    for (const round of rounds) {
+      files[`missing-${round}.js`] = `import value from "./added-${round}.js";\nconsole.log(value);\n`;
+      files[`shadow-${round}.js`] = `import value from "./replaced-${round}";\nconsole.log(value);\n`;
+      files[`replaced-${round}.js`] = `export default "old";\n`;
+    }
+    using dir = tempDir("rebuild-sees-new-file", files);
+    const root = String(dir);
+
+    async function caller(form: "missing" | "shadow") {
+      const bundled: string[] = [];
+      for (const round of rounds) {
+        await Bun.build({ entrypoints: [join(root, "first.js")] });
+        // "./replaced-N" resolves to replaced-N.ts before replaced-N.js, once the listing has the .ts.
+        const added = form === "missing" ? `added-${round}.js` : `replaced-${round}.ts`;
+        writeFileSync(join(root, added), `export default "new";\n`);
+        const build = await Bun.build({ entrypoints: [join(root, `${form}-${round}.js`)], throw: false });
+        if (build.success) {
+          bundled.push(/"(old|new)"/.exec(await build.outputs[0].text())?.[1] ?? "neither");
+        } else {
+          bundled.push(build.logs[0].message);
+        }
+      }
+      return bundled;
+    }
+
+    const [missing, shadow] = await Promise.all([caller("missing"), caller("shadow")]);
+    expect({ missing, shadow }).toEqual({
+      missing: ["new", "new", "new"],
+      shadow: ["new", "new", "new"],
+    });
+  });
+
+  // https://github.com/oven-sh/bun/pull/38212: the first build of a process reads again what the runtime listed at startup.
+  // One CPU (`taskset`, where it works) makes a regression fail in every run. Not concurrent, to keep that CPU free.
+  test("the first build of a process sees a file written after the runtime listed the directory", async () => {
+    using dir = tempDir("first-build-sees-new-file", {
+      "package.json": `{}`,
+      "entry.js": `import value from "./added.js";\nconsole.log(value);\n`,
+      "driver.ts": `
+        import { writeFileSync } from "node:fs";
+        writeFileSync("added.js", 'export default "new";\\n');
+        const build = await Bun.build({ entrypoints: ["./entry.js"], throw: false });
+        console.log(build.success ? "built" : build.logs[0].message);
+      `,
+    });
+    const pin: string[] = [];
+    const taskset = isLinux ? Bun.which("taskset") : null;
+    if (taskset) {
+      await using probe = Bun.spawn({ cmd: [taskset, "1", "true"], stdio: ["ignore", "ignore", "ignore"] });
+      if ((await probe.exited) === 0) pin.push(taskset, "1");
+    }
+    await using proc = Bun.spawn({
+      cmd: [...pin, bunExe(), "driver.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("built\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
     // indexed by the property position instead of a dense counter, leaving garbage in
@@ -1054,6 +1124,80 @@ describe("Bun.build", () => {
     }
     expect(exitCode).toBe(0);
     Bun.gc(true);
+  });
+
+  // https://github.com/oven-sh/bun/pull/38212: a build reads its directories again even when the bundle thread's queue never drains.
+  test.concurrent("rebuilding sees directory changes while other builds keep the bundle thread busy", async () => {
+    using dir = tempDir("rebuild-while-bundle-thread-busy", {
+      "package.json": `{}`,
+      "driver.ts": `
+        const parkedBuilds: ReturnType<typeof Bun.build>[] = [];
+        let releaseParkedBuild = () => {};
+
+        // Queues a build that waits in onLoad until the next call releases it, so the thread's queue is never empty.
+        function parkBundleThread() {
+          const gate = Promise.withResolvers<void>();
+          parkedBuilds.push(
+            Bun.build({
+              entrypoints: ["./parked/entry.js"],
+              throw: false,
+              plugins: [
+                {
+                  name: "park",
+                  setup(build) {
+                    build.onResolve({ filter: /^parked:/ }, args => ({ path: args.path, namespace: "parked" }));
+                    build.onLoad({ filter: /.*/, namespace: "parked" }, async () => {
+                      await gate.promise;
+                      return { contents: "export default 1;", loader: "js" };
+                    });
+                  },
+                },
+              ],
+            }),
+          );
+          const releasePrevious = releaseParkedBuild;
+          releaseParkedBuild = gate.resolve;
+          releasePrevious();
+        }
+
+        async function buildApp() {
+          const build = Bun.build({ entrypoints: ["./app/entry.js"], throw: false });
+          parkBundleThread();
+          const result = await build;
+          return { success: result.success, messages: result.logs.map(log => log.message) };
+        }
+
+        parkBundleThread();
+        const before = await buildApp();
+        await Bun.write("app/mod.js", "export const value = 1;\\n");
+        const afterAdd = await buildApp();
+        await Bun.file("app/mod.js").delete();
+        const afterRemove = await buildApp();
+        releaseParkedBuild();
+        const parked = (await Promise.all(parkedBuilds)).map(result => result.success);
+        console.log(JSON.stringify({ before, afterAdd, afterRemove, parked }));
+      `,
+      "app/entry.js": `import { value } from "./mod.js";\nconsole.log(value);\n`,
+      "parked/entry.js": `import "parked:mod";\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "driver.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      before: { success: false, messages: ['Could not resolve: "./mod.js"'] },
+      afterAdd: { success: true, messages: [] },
+      // A stale listing would fail later, at the read ("File not found"), not here in the resolver.
+      afterRemove: { success: false, messages: ['Could not resolve: "./mod.js"'] },
+      parked: [true, true, true, true],
+    });
+    expect(exitCode).toBe(0);
   });
 
   // https://github.com/oven-sh/bun/issues/33099

@@ -2611,7 +2611,8 @@ function renderNativeHeaders(res) {
         const maxRequestsPerSocket = res._maxRequestsPerSocket;
         if (keepAliveTimeout && !hasKeepAlive) {
           const timeoutSecs = MathFloor(keepAliveTimeout / 1000);
-          const hasMax = ~~maxRequestsPerSocket > 0;
+          // `~undefined` leaves optimized code by an exit JSC does not learn from, which keeps a function in the baseline JIT.
+          const hasMax = maxRequestsPerSocket !== undefined && ~~maxRequestsPerSocket > 0;
           if (!hasMax && timeoutSecs >= 0 && timeoutSecs <= kMaxNativeKeepAliveSecs) {
             autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
             keepAliveSecs = timeoutSecs;

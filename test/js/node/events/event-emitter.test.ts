@@ -1,6 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, runWithError } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -755,6 +755,152 @@ describe("EventEmitter error handling", () => {
     }).toThrow("Hello");
 
     expect(handled).toBe(true);
+  });
+
+  test.each([false, true])("every argument reaches every listener (captureRejections: %p)", captureRejections => {
+    const myEmitter = new EventEmitter({ captureRejections });
+    const seen: unknown[][] = [];
+    myEmitter.on(EventEmitter.errorMonitor, (...args) => void seen.push(["monitor", ...args]));
+    myEmitter.on("error", function (this: unknown, ...args) {
+      seen.push(["first", this === myEmitter, ...args]);
+    });
+    myEmitter.on("error", (...args) => void seen.push(["second", ...args]));
+
+    const error = new Error("Hello");
+    expect([
+      myEmitter.emit("error"),
+      myEmitter.emit("error", error),
+      myEmitter.emit("error", error, undefined),
+      myEmitter.emit("error", 1, 2, 3, 4, 5, 6, 7),
+    ]).toEqual([true, true, true, true]);
+    expect(seen).toEqual([
+      ["monitor"],
+      ["first", true],
+      ["second"],
+      ["monitor", error],
+      ["first", true, error],
+      ["second", error],
+      ["monitor", error, undefined],
+      ["first", true, error, undefined],
+      ["second", error, undefined],
+      ["monitor", 1, 2, 3, 4, 5, 6, 7],
+      ["first", true, 1, 2, 3, 4, 5, 6, 7],
+      ["second", 1, 2, 3, 4, 5, 6, 7],
+    ]);
+  });
+
+  test("an unhandled error is the first argument, whatever follows it", () => {
+    const myEmitter = new EventEmitter();
+    const error = new Error("Hello");
+    const thrownBy = (...args: unknown[]) => runWithError(() => myEmitter.emit("error", ...args));
+    expect(thrownBy(error, "World", 3, 4, 5)).toBe(error);
+    expect(thrownBy({ a: 1 }, error)).toMatchObject({ code: "ERR_UNHANDLED_ERROR", context: { a: 1 } });
+    expect(thrownBy(undefined, error)).toMatchObject({ code: "ERR_UNHANDLED_ERROR", context: undefined });
+  });
+});
+
+test("removeAllListeners(undefined) is not removeAllListeners()", () => {
+  const listeners = (emitter: EventEmitter) => emitter.eventNames().map(name => [name, emitter.listenerCount(name)]);
+  for (const watched of [false, true]) {
+    const removed: unknown[] = [];
+    const make = () => {
+      const emitter = new EventEmitter();
+      emitter.on("a", () => {});
+      emitter.on("undefined", () => {});
+      emitter.on("b", () => {});
+      if (watched) emitter.on("removeListener", name => void removed.push(name));
+      return emitter;
+    };
+    const rest = watched ? [["removeListener", 1]] : [];
+    expect(listeners(make().removeAllListeners(undefined))).toEqual([["a", 1], ["b", 1], ...rest]);
+    expect(listeners(make().removeAllListeners("a"))).toEqual([["undefined", 1], ["b", 1], ...rest]);
+    expect(listeners(make().removeAllListeners())).toEqual([]);
+    expect(removed).toEqual(watched ? [undefined, "a", "a", "undefined", "b"] : []);
+  }
+});
+
+test.concurrent("emit('error') hands its arguments over without Array.prototype[Symbol.iterator]", async () => {
+  const src = `
+    const { EventEmitter } = require("events");
+    const emitters = [new EventEmitter(), new EventEmitter({ captureRejections: true })];
+    const seen = [];
+    for (let i = 0; i < emitters.length; i++) {
+      emitters[i].on(EventEmitter.errorMonitor, function () {
+        seen.push(["monitor", arguments.length, arguments[0], arguments[1]]);
+      });
+      emitters[i].on("error", function () {
+        seen.push(["error", arguments.length, arguments[0], arguments[1]]);
+      });
+    }
+    function emitAll() {
+      for (let i = 0; i < emitters.length; i++) emitters[i].emit("error", 1, 2);
+    }
+    const iterator = Array.prototype[Symbol.iterator];
+    Array.prototype[Symbol.iterator] = function* () {
+      yield "not an argument";
+    };
+    emitAll();
+    delete Array.prototype[Symbol.iterator];
+    emitAll();
+    Array.prototype[Symbol.iterator] = iterator;
+    console.log(JSON.stringify(seen));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const each = [
+    ["monitor", 2, 1, 2],
+    ["error", 2, 1, 2],
+  ];
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([...each, ...each, ...each, ...each]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// `...args` has to stay out of the heap when emit() is compiled on its own, which is how a program with many emitters runs it.
+test.concurrent("emit() allocates no array for its arguments once it is optimized", async () => {
+  const src = `
+    const { EventEmitter } = require("events");
+    const { heapStats, noInline, gcAndSweep } = require("bun:jsc");
+    const emitters = [new EventEmitter(), new EventEmitter({ captureRejections: true })];
+    let calls = 0;
+    const promise = Promise.resolve();
+    for (const emitter of emitters) {
+      noInline(emitter.emit);
+      emitter.on("one", () => void calls++);
+      // With captureRejections, emit() keeps the arguments of such a call, and of no other.
+      emitter.on("promise", () => promise);
+    }
+    function run(count, promises) {
+      for (const emitter of emitters) {
+        for (let i = 0; i < count; i++) {
+          emitter.emit("none");
+          emitter.emit("one");
+          emitter.emit("one", i);
+          emitter.emit("one", i, i, i);
+          if (promises) emitter.emit("promise", i);
+        }
+      }
+    }
+    run(20_000, true);
+    gcAndSweep();
+    const before = heapStats().objectTypeCounts.Array ?? 0;
+    run(1_000, false);
+    const arrays = (heapStats().objectTypeCounts.Array ?? 0) - before;
+    console.log(JSON.stringify({ calls, fewArrays: arrays < 100 || arrays }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ calls: 126_000, fewArrays: true }),
+    stderr: "",
+    exitCode: 0,
   });
 });
 

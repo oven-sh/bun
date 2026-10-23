@@ -144,18 +144,18 @@ EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
 };
 Object.defineProperty(EventEmitterPrototype.getMaxListeners, "name", { value: "getMaxListeners" });
 
-function emitError(emitter, args) {
-  var { _events: events } = emitter;
+function emitError(this: any, ...args) {
+  var { _events: events } = this;
 
   if (events !== undefined) {
     const errorMonitor = events[kErrorMonitor];
     if (errorMonitor !== undefined) {
-      applyHandlers(errorMonitor, emitter, args);
+      applyHandlers(errorMonitor, this, args);
     }
 
     const handlers = events.error;
     if (handlers !== undefined) {
-      applyHandlers(handlers, emitter, args);
+      applyHandlers(handlers, this, args);
       return true;
     }
   }
@@ -194,6 +194,11 @@ function applyHandlers(handlers, emitter, args) {
   }
 }
 
+// An array of its own for a caller whose `args` has to stay out of the heap: arrayOf.$apply(undefined, args).
+function arrayOf(...args) {
+  return args;
+}
+
 function addCatch(emitter, promise, type, args) {
   promise.then(undefined, function (err) {
     // The callback is called with nextTick to avoid a follow-up rejection from this promise.
@@ -217,11 +222,12 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   }
 }
 
+// `args` is only applied, indexed and measured: passed as it is, every call would allocate it; spread, it would go through Array.prototype[Symbol.iterator].
 const emitWithoutRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
   if (type === "error") {
-    return emitError(this, args);
+    return emitError.$apply(this, args);
   }
   var { _events: events } = this;
   if (events === undefined) return false;
@@ -277,7 +283,7 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
 const emitWithRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
   if (type === "error") {
-    return emitError(this, args);
+    return emitError.$apply(this, args);
   }
   var { _events: events } = this;
   if (events === undefined) return false;
@@ -304,13 +310,14 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         break;
     }
     if (result !== undefined && $isPromise(result)) {
-      addCatch(this, result, type, args);
+      addCatch(this, result, type, arrayOf.$apply(undefined, args));
     }
     return true;
   }
   // No defensive clone: stored arrays are never mutated in place (mutators
   // install a copy), so this list stays stable for the whole loop even if a
   // listener adds/removes listeners.
+  let kept;
   for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     let result;
@@ -332,7 +339,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         break;
     }
     if (result !== undefined && $isPromise(result)) {
-      addCatch(this, result, type, args);
+      addCatch(this, result, type, (kept ??= arrayOf.$apply(undefined, args)));
     }
   }
   return true;
@@ -510,7 +517,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
 
   // Not listening for removeListener, no need to emit
   if (events.removeListener === undefined) {
-    if (arguments.length === 0) {
+    if ($argumentCount() === 0) {
       this._events = Object.create(null);
       this._eventsCount = 0;
     } else if (events[type] !== undefined) {
@@ -522,7 +529,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   }
 
   // Emit removeListener for all listeners on all events
-  if (arguments.length === 0) {
+  if ($argumentCount() === 0) {
     for (const key of ReflectOwnKeys(events)) {
       if (key === "removeListener") continue;
       this.removeAllListeners(key);

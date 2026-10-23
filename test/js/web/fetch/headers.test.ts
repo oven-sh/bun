@@ -4,6 +4,8 @@ import { bunEnv, bunExe, isDebug } from "harness";
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
 import { bunEnv, bunExe } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -1149,6 +1151,63 @@ describe("Headers", () => {
       "",
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  // The names with a slot of their own are found through a perfect hash of a few of their bytes.
+  describe("the names in HTTPHeaderNames.in", () => {
+    const names = readFileSync(join(import.meta.dir, "../../../../src/jsc/bindings/webcore/HTTPHeaderNames.in"), "utf8")
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith("//"));
+    const alternating = (name: string) =>
+      Array.from(name, (c, i) => (i % 2 ? c.toUpperCase() : c.toLowerCase())).join("");
+
+    test("are the same name in any case", () => {
+      expect(names.length).toBeGreaterThan(90);
+      const wrong: unknown[] = [];
+      for (const name of names) {
+        const lower = name.toLowerCase();
+        const expected =
+          lower === "set-cookie"
+            ? [
+                [lower, "a"],
+                [lower, "b"],
+              ]
+            : [[lower, lower === "cookie" ? "a; b" : "a, b"]];
+        for (const spelling of [name, lower, name.toUpperCase(), alternating(name)]) {
+          // Latin-1, and the same in UTF-16.
+          for (const given of [spelling, Buffer.from(spelling, "utf16le").toString("utf16le")]) {
+            const headers = new Headers([[name, "a"]]);
+            headers.append(given, "b");
+            if (!Bun.deepEquals([...headers], expected)) wrong.push([given, [...headers]]);
+          }
+        }
+      }
+      expect(wrong).toEqual([]);
+    });
+
+    test("are not the names that differ from them by a byte", () => {
+      const wrong: unknown[] = [];
+      for (const name of names) {
+        const others = new Set<string>([`${name}x`, name.slice(0, -1), name.replaceAll("-", "_")]);
+        for (let i = 0; i < name.length; i++) {
+          // Another letter, and the byte that differs by the bit that tells the cases of a letter apart.
+          for (const c of [name[i].toLowerCase() === "x" ? "y" : "x", String.fromCharCode(name.charCodeAt(i) ^ 0x20)]) {
+            if (/^[!#$%&'*+.^_`|~0-9A-Za-z-]$/.test(c)) others.add(name.slice(0, i) + c + name.slice(i + 1));
+          }
+        }
+        for (const other of others) {
+          if (other.toLowerCase() === name.toLowerCase()) continue;
+          const headers = new Headers([
+            [name, "a"],
+            [other, "b"],
+          ]);
+          const found = [headers.get(name), headers.get(other), headers.count];
+          if (!Bun.deepEquals(found, ["a", "b", 2])) wrong.push([name, other, found]);
+        }
+      }
+      expect(wrong).toEqual([]);
+    });
   });
 
   // Header-name lowercasing on iteration (Object.fromEntries / spread / toJSON /

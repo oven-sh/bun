@@ -27,6 +27,7 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
+#include <initializer_list>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -413,6 +414,34 @@ public:
             }
         }
         return {length, false};
+    }
+
+    /* write() of each part that is not empty, looking the socket and its cork slot up once when all of them fit the cork buffer. */
+    void writeParts(std::initializer_list<std::string_view> parts) {
+        size_t total = 0;
+        for (auto part : parts) {
+            total += part.length();
+        }
+        LoopData *loopData = getLoopData();
+        int slot = loopData->findCorkSlot(this);
+        if (slot == LoopData::INVALID_CORK_SLOT || us_socket_is_closed((us_socket_t *) this) || getAsyncSocketData()->buffer.length()
+            || total > LoopData::CORK_COPY_MAX || LoopData::CORK_BUFFER_SIZE - loopData->getCorkSlot(slot)->offset < total) {
+            for (auto part : parts) {
+                if (part.length()) {
+                    write(part.data(), part.length());
+                }
+            }
+            return;
+        }
+        auto *s = loopData->getCorkSlot(slot);
+        for (auto part : parts) {
+            if (part.length()) {
+                memcpy(s->buffer + s->offset, part.data(), part.length());
+                s->offset += (unsigned int) part.length();
+            }
+        }
+        ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
+        loopData->touchCorkSlot(slot);
     }
 
     /* write(head), write(src), write(tail) in one writev when they do not fit the cork buffer. The framing is never optional, and tail follows only a complete src. Returns like write(src). */

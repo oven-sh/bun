@@ -326,14 +326,13 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
     });
 };
 
-// Gives `to` (and `second`) a getter for each own property name of `from`. The getter of a non-enumerable getter is
-// non-enumerable, so a spread does not call it. A non-enumerable data property stays listed (#4432).
-// Reads no data property by name, nor its descriptor: that builds a lazy property of a host object (`process.stdout`).
+// A getter on `to` (and `second`) for each own property name of `from`. Only a non-enumerable getter is hidden (#4432).
 var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => {
   // "module.exports" may be null, undefined, or a primitive.
   if ((from && typeof from === "object") || typeof from === "function") {
     names = __getOwnPropNames(from);
     try {
+      // In the order of `names`. A descriptor read for each name builds lazy host properties (`process.stdout`).
       enumerableKeys = Object.keys(from);
     } catch {
       // A module namespace object throws while a binding is uninitialized. All of its names are enumerable.
@@ -341,7 +340,6 @@ var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => 
     }
     i = 0;
     for (let key of names) {
-      // Object.keys() lists the enumerable names in the order of getOwnPropertyNames().
       let enumerable = key === enumerableKeys[i];
       if (enumerable) {
         i++;

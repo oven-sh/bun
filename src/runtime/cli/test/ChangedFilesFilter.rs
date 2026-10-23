@@ -697,6 +697,10 @@ fn git_failed(stderr: &[u8], otherwise: impl FnOnce()) -> GitError {
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
     for rel in strings::tokenize(stdout, b"\0") {
+        // `ls-files` names an untracked nested repository as `dir/` and lists no file in it.
+        if rel.ends_with(b"/") {
+            continue;
+        }
         // A path that does not fit the buffer is too long to open, so no source has it.
         let Some(abs) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
             git_root,

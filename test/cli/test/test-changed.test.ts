@@ -351,6 +351,22 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Git lists a repository inside the work tree (a clone, or the target of
+  // `git worktree add`) as `nested/` and names no file in it.
+  test.each([".", join("packages", "a")])("untracked nested repository is not a changed file (cwd %s)", async cwd => {
+    using dir = tempDir("test-changed-nested-repository", monorepo);
+    initRepo(String(dir));
+    const nested = join(String(dir), "nested");
+    mkdirSync(nested);
+    writeFileSync(join(nested, "lib.ts"), `export const value = 1;\n`);
+    initRepo(nested);
+
+    const { stderr, exitCode } = await runTestChanged(join(String(dir), cwd));
+    expect(stderr).toContain("--changed: no changed files, nothing to run\n");
+    expect(ranFiles(stderr, monorepoTests)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   // With `diff.relative` set, `git diff` lists only the files below the cwd, by
   // names relative to the cwd.
   test.each(["--changed", "--changed=HEAD"])("diff.relative does not change what %s lists", async flag => {

@@ -1079,6 +1079,13 @@ impl<'p, 's> Checker<'p, 's> {
         }))
     }
 
+    /// Whether the check of `file` leaves what is at `pos` to whoever asks for it: see `File::type_arguments_of_import_types`
+    /// and `unchecked_jsdoc_types`.
+    pub(super) fn is_resolved_on_request_at(&self, file: FileId, pos: u32) -> bool {
+        self.hir(file).type_arguments_of_import_types().contain(pos)
+            || self.unchecked_jsdoc_types(file).contain(pos)
+    }
+
     /// `getAliasSymbolForTypeNode`: the type alias declaration whose body is `node`, which is in
     /// `scope`. A `readonly` operator around `node` is skipped.
     pub(super) fn alias_with_body(
@@ -3300,6 +3307,11 @@ impl<'p, 's> Checker<'p, 's> {
                 has_type_arguments,
                 expr,
             } => {
+                // `checkExpressionWithTypeArguments`: `c.checkSourceElements(node.TypeArguments())`. For a type query
+                // that `checkSourceFile` visits, `check_type_node_worker` has done that.
+                if has_type_arguments && self.is_resolved_on_request_at(file, hir[node].pos) {
+                    self.check_type_nodes(file, args);
+                }
                 // `getTypeFromTypeQueryNode`: `getRegularTypeOfLiteralType(getWidenedType(t))`
                 // `checkExpressionWithTypeArguments` isn't a `checkExpressionCached`, so the
                 // resolutions that request the node don't hide any loop from the operand.
@@ -3326,7 +3338,8 @@ impl<'p, 's> Checker<'p, 's> {
                     return ty;
                 }
                 let args = self.types_from_nodes(file, args);
-                self.with_type_arguments(ty, &args, InstantiationExpression::TypeNode(file, node))
+                let node = InstantiationExpression::TypeNode(file, node);
+                self.with_type_arguments(ty, Some(args), node)
             }
             TypeNodeKind::Import { .. } => self.get_type_from_import_type_node(file, scope, node),
             TypeNodeKind::Ref { .. } => {
@@ -3433,9 +3446,8 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return ty;
             }
-            let args = self.types_from_nodes(file, args);
             let node = InstantiationExpression::TypeNode(file, node);
-            return self.with_type_arguments(ty, &args, node);
+            return self.with_type_arguments(ty, None, node);
         }
         let AliasTarget::Symbol(sym) = self.resolve_symbol(symbol) else {
             return TypeId::ERROR;
@@ -3462,6 +3474,38 @@ impl<'p, 's> Checker<'p, 's> {
         self.type_reference_type_of_node(file, scope, node, sym, args)
     }
 
+    /// `resolveExternalModuleName(node, n.Argument.AsLiteralTypeNode().Literal, false /*ignoreErrors*/)` of
+    /// `getTypeFromImportTypeNode`, for what it reports: the import type `node` of `file` names `spec`.
+    fn resolve_external_module_of_import_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        spec: Atom,
+    ) {
+        let hir = self.hir(file);
+        let (start, end) = (hir[node].pos, hir[node].end);
+        // The argument is the first specifier in the node. Those of the import types in its type arguments come after it.
+        let is_in_node = |it: &&SpecifierUse| {
+            it.kind == SpecifierKind::ImportType
+                && it.spec == spec
+                && (start..end).contains(&it.pos)
+        };
+        let uses = &hir.specifier_uses;
+        // FOR SPEED: the parser adds the specifiers of import types in source order. Calls may be out of order around them.
+        let first = uses.get(uses.partition_point(|it| it.pos < start));
+        let written = match first.filter(is_in_node) {
+            Some(written) => Some(written),
+            None => uses.iter().filter(is_in_node).min_by_key(|it| it.pos),
+        };
+        if let Some(&written) = written {
+            let site = SpecifierSite {
+                is_ambient: hir.kind == FileKind::Declaration,
+                ..Default::default()
+            };
+            self.resolve_external_module(file, written, site);
+        }
+    }
+
     /// The qualifier loop of `getTypeFromImportTypeNode`. Returns the final `currentNamespace` (the module symbol if
     /// there's no qualifier), or `None` where tsgo returns `errorType`.
     pub(super) fn resolve_import_type(
@@ -3485,6 +3529,9 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             SymFlags::TYPE
         };
+        if reports_errors {
+            self.resolve_external_module_of_import_type(file, node, spec);
+        }
         let inner_module_symbol = files.module_of_import_type(file, node)?;
         let module_symbol = self.resolve_external_module_symbol(inner_module_symbol);
         if name.is_empty() {
@@ -3982,7 +4029,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `IsTypeReferenceType(node)`. It's `Resolve` with `isUse`, so the symbol found is marked as
     /// referenced, whatever it aliases.
     fn resolve_type_reference_name_as_alias(
-        &self,
+        &mut self,
         file: FileId,
         scope: ScopeId,
         node: TypeNodeId,

@@ -1,5 +1,5 @@
 //! Circularity errors: 2313, and 2502 2577 7022 7023 7024. `report_circularity_error` reports 7022 when
-//! `check_circular_resolutions` requests the types.
+//! `check_source_file` or `check_circular_resolutions` requests the types.
 //!
 //! In TypeScript 7.1's checker.go these are reported when `pushTypeResolution` finds the requested resolution already
 //! in progress, in `getBaseConstructorTypeOfClass`, `getBaseTypes` and `getResolvedBaseConstraint`. Every entry from
@@ -9,13 +9,12 @@
 use super::explain::NOWHERE;
 use super::sink::held;
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
+use crate::bind::{Decl, FnOwner, Parent, Symbol, SymbolId};
 
 impl Checker<'_, '_> {
     pub(super) fn check_circularities(&mut self, file: FileId) {
         self.check_circular_resolutions(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let unchecked = self.unchecked_jsdoc_types(file);
         // `checkClassLikeDeclaration`, `checkInterfaceDeclaration`
         for c in 0..hir.classes.len() {
             if bound.class_symbol[c].is_some() && !self.is_never_checked(hir.classes[c].start) {
@@ -28,33 +27,66 @@ impl Checker<'_, '_> {
             let own = self.files().sym(file, symbol);
             self.base_types(own);
         }
-        for p in 0..hir.type_params.len() {
-            let constraint = hir.type_params[p].constraint;
-            if constraint.is_none()
-                || bound.type_param_scope[p].is_none()
-                || bound.type_param_symbol[p].is_none()
-                || unchecked.contain(hir[constraint].pos)
-            {
-                continue;
-            }
-            let own = TypeParamId(p as u32);
-            // `getConstraintDeclaration`: the merged declarations of a class or an interface all declare the same type
-            // parameter.
-            let (of, declaration, _) =
-                self.type_param_declaration_with(file, own, |it: &TypeParam| it.constraint);
-            if (of, declaration) != (file, own) {
-                continue;
-            }
-            let param = self.type_param(file, own);
-            if !self.has_non_circular_base_constraint(param) {
-                let start = start_of_type(hir, constraint);
-                let end = self.end_of_type_node_from(file, constraint, start);
-                let name = self.atom_text(hir.type_params[p].name);
-                let related = self.origin_of_circular_constraint(param, file, constraint);
-                self.error_at((file, start, end), 2313, &[Arg::Bytes(&name)])
-                    .related_information
-                    .extend(related);
-            }
+    }
+
+    /// `getResolvedBaseConstraint`: 2313 for the type parameter `own` of `file`, whose base constraint `checkTypeParameter` has
+    /// just asked for. Whichever resolution found the cycle, the check of the declaration reports it.
+    pub(super) fn check_circular_constraint(&mut self, file: FileId, own: TypeParamId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let constraint = hir[own].constraint;
+        if constraint.is_none()
+            || bound.type_param_scope[own.idx()].is_none()
+            || bound.type_param_symbol[own.idx()].is_none()
+        {
+            return;
+        }
+        // `getConstraintDeclaration`: the merged declarations of a class or an interface all declare the same type
+        // parameter.
+        let (of, declaration, _) =
+            self.type_param_declaration_with(file, own, |it: &TypeParam| it.constraint);
+        if (of, declaration) != (file, own) {
+            return;
+        }
+        let param = self.type_param(file, own);
+        if !self.has_non_circular_base_constraint(param) {
+            let err = self.circular_constraint_error(param, file, own);
+            self.add_diagnostic(err);
+        }
+    }
+
+    /// 2313 at the constraint of the type parameter `own` of `file`, whose type is `param`.
+    fn circular_constraint_error(
+        &mut self,
+        param: TypeId,
+        file: FileId,
+        own: TypeParamId,
+    ) -> Reported {
+        let hir = self.hir(file);
+        let constraint = hir[own].constraint;
+        let start = start_of_type(hir, constraint);
+        let end = self.end_of_type_node_from(file, constraint, start);
+        let name = self.atom_text(hir[own].name);
+        let mut err = self.new_diagnostic((file, start, end), 2313, &[Arg::Bytes(&name)]);
+        let related = self.origin_of_circular_constraint(param, file, constraint);
+        err.related_information.extend(related);
+        err
+    }
+
+    /// `getResolvedBaseConstraint`: 2313 for the type parameter `param`, where a cycle has just closed around the resolution of its
+    /// base constraint and no `checkTypeParameter` visits the declaration: see `is_resolved_on_request_at`.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn report_circular_constraint_on_request(&mut self, param: TypeId) {
+        let TypeData::TypeParam(file, tp, _) = *self.data(param) else {
+            return;
+        };
+        let (of, own, _) =
+            self.type_param_declaration_with(file, tp, |it: &TypeParam| it.constraint);
+        let constraint = self.hir(of)[own].constraint;
+        if constraint.is_some() && self.is_resolved_on_request_at(of, self.hir(of)[constraint].pos)
+        {
+            let err = self.circular_constraint_error(param, of, own);
+            self.add_diagnostic_of(Some(Query::TypeNode(of, constraint)), err);
         }
     }
 
@@ -90,73 +122,9 @@ impl Checker<'_, '_> {
         self.add_diagnostic_of(Some(Query::TypeNode(file, constraint)), err);
     }
 
-    /// Requests the types for which `reportCircularityError`, `getReturnTypeOfSignature` and
-    /// `getTypeOfAccessors` report cycles.
+    /// Requests the types for which `reportCircularityError` reports cycles, where no function of
+    /// `check_source_file` does.
     fn check_circular_resolutions(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let unchecked = self.unchecked_jsdoc_types(file);
-        for i in 0..hir.pats.len() {
-            let pat = PatId(i as u32);
-            if !matches!(hir[pat].kind, PatKind::Ident(_))
-                || matches!(bound.pat_parent[i], PatParent::None)
-                || unchecked.contain(hir[pat].pos)
-                || self.is_never_checked(hir[pat].pos)
-                || self.returns_before_type_of_symbol(file, pat)
-            {
-                continue;
-            }
-            self.type_of_pat(file, pat);
-            // `parameterInitializerContainsUndefined` is evaluated where the parameter is read. Reading it in its own
-            // default is circular.
-            if let PatParent::Param(p) = bound.pat_parent[i]
-                && hir[p].ty.is_some()
-                && hir[p].default.is_some()
-            {
-                self.type_of_expr(file, hir[p].default);
-            }
-        }
-        for i in 0..hir.members.len() {
-            let member = MemberId(i as u32);
-            if !matches!(
-                hir[member].kind,
-                MemberKind::Property | MemberKind::Getter | MemberKind::Setter
-            ) || matches!(bound.member_owner[i], MemberOwner::None)
-                || unchecked.contain(hir[member].start)
-                || self.is_never_checked(hir[member].start)
-            {
-                continue;
-            }
-            // `getTypeOfSymbol`: a symbol's property and accessor declarations form one property, identified by the
-            // first.
-            let is_first = bound.member_symbol[i].is_some() && {
-                let sym = self.symbol_of_member(file, member);
-                self.value_declaration_of_property(sym) == Some((file, Decl::Member(member)))
-            };
-            if is_first || hir[member].kind == MemberKind::Property {
-                self.type_of_member_declaration(file, member);
-            }
-        }
-        for i in 0..hir.fns.len() {
-            let func = FnId(i as u32);
-            if matches!(bound.fns[i].owner, FnOwner::None)
-                || unchecked.contain(hir[func].start)
-                || self.is_never_checked(hir[func].start)
-            {
-                continue;
-            }
-            // An annotated accessor of a class, an interface or a type literal was already requested above, along with
-            // the property it declares.
-            let is_member = matches!(hir[func].kind, FnKind::Getter | FnKind::Setter)
-                && !(hir[func].kind == FnKind::Getter
-                    && matches!(bound.fns[i].owner, FnOwner::Expr(_)));
-            if hir[func].ret.is_some() && !is_member
-                || hir[func].ret.is_none()
-                    && !matches!(hir[func].body, FnBody::None)
-                    && self.is_inferred_return_type_requested(file, func)
-            {
-                self.return_type_of_fn(file, func);
-            }
-        }
         self.check_circular_exports(file);
         self.check_circular_assignment_declarations(file);
     }

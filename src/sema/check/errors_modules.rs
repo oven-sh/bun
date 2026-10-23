@@ -127,7 +127,6 @@ impl Checker<'_, '_> {
         };
         self.modules_statements(&cx, hir.body, top);
         self.modules_misplaced_statements(&cx, top);
-        self.modules_import_calls_and_types(&cx);
         for (&decl, &sym) in cx.aliases.iter() {
             // `checkVariableLikeDeclaration`
             if let Decl::Require(name) = decl {
@@ -1835,6 +1834,8 @@ impl Checker<'_, '_> {
         let mut props: ArenaVec<Prop> = ArenaVec::with_capacity_in(attributes.len(), self.arena);
         for attribute in attributes.iter() {
             let (name, value) = (hir[attribute].key.name()?, hir[attribute].value);
+            // `checkExpression`: it checks an import type in the value, which no other check gets to.
+            self.check_expression(file, value);
             let ty = self.type_of_expr(file, value);
             let ty = self.regular(ty);
             // `members[member.Name] = member`: the last attribute with a given name wins.
@@ -1853,28 +1854,43 @@ impl Checker<'_, '_> {
         }))
     }
 
-    /// `checkImportType`: the checks of the attributes.
-    fn modules_import_calls_and_types(&mut self, cx: &Cx<'_>) {
-        let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
+    /// `checkImportType` for the attributes of the import type `node`: `checkGrammarImportAttributeValues` and
+    /// `getResolutionModeOverride(importAttributes, true /*reportErrors*/)`.
+    pub(super) fn check_attributes_of_import_type(&mut self, file: FileId, node: TypeNodeId) {
+        let hir = self.hir(file);
         if hir.import_attributes.is_empty() {
             return;
         }
-        for (i, node) in hir.types.iter().enumerate() {
-            if !matches!(node.kind, TypeNodeKind::Import { .. }) || bound.is_unchecked_type(i) {
-                continue;
+        if let Some(object) = hir.attributes_of_import_type(node)
+            && let ExprKind::Object(attributes) = hir[object].kind
+        {
+            self.check_grammar_import_attribute_values(file, attributes);
+            // `grammarErrorOnNode` only reports in a file that parses. `parseImportType`: `assert` in place of `with`
+            // is a parse error.
+            if !has_parse_diagnostics(hir) && !hir.diagnostics.iter().any(|d| d.code == 2880) {
+                self.get_resolution_mode_override(file, attributes, true);
             }
-            if let Some(object) = hir.attributes_of_import_type(TypeNodeId(i as u32))
-                && let ExprKind::Object(attributes) = hir[object].kind
-            {
-                self.check_grammar_import_attribute_values(cx.file, attributes);
-                // The `ImportAttributes` node starts at the inner `{`, because `with` is a property of the enclosing
-                // object literal.
-                let end = self.modules_end_of_import_attributes(cx.file, object);
-                self.check_type_of_import_attributes((cx.file, hir[object].pos, end), object);
-                if cx.grammar {
-                    self.get_resolution_mode_override(cx.file, attributes, true);
-                }
-            }
+        }
+    }
+
+    /// `checkImportAttributes` for the import type `node`. After the type of the attributes it only reads the
+    /// resolution mode again.
+    pub(super) fn check_import_attributes_of_import_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+    ) {
+        let hir = self.hir(file);
+        if hir.import_attributes.is_empty() {
+            return;
+        }
+        if let Some(object) = hir.attributes_of_import_type(node)
+            && matches!(hir[object].kind, ExprKind::Object(_))
+        {
+            // The `ImportAttributes` node starts at the inner `{`, because `with` is a property of the enclosing
+            // object literal.
+            let end = self.modules_end_of_import_attributes(file, object);
+            self.check_type_of_import_attributes((file, hir[object].pos, end), object);
         }
     }
 }

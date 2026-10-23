@@ -914,6 +914,7 @@ impl<'s> Program<'s> {
             relation_too_complex: false,
             current_source_element: None,
             is_type_checked: false,
+            has_checked_unused_identifiers: false,
             reported: Vec::new(),
             is_checking_in_flow_loop: false,
             check_in_flow_loop: None,
@@ -1710,6 +1711,8 @@ pub struct Checker<'p, 's> {
     pub(super) current_source_element: Option<CurrentNode>,
     /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.
     is_type_checked: bool,
+    /// `check_unused` has begun for `task.file`: `checkUnusedIdentifiers` sees no reference that is resolved from now on.
+    has_checked_unused_identifiers: bool,
     /// The diagnostics reported for the queries in progress, and with none in progress. See `sink`.
     reported: Vec<Reported>,
     /// True while `check_expression` runs for `check_expression_in_flow_loop`, possibly in a file

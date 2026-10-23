@@ -1,6 +1,6 @@
 'use strict';
 
-const common = require('../common');
+require('../common');
 
 const zlib = require('zlib');
 const assert = require('assert');
@@ -18,7 +18,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "options.chunkSize" property must be of type number.' + common.invalidArgTypeHelper('test')
+    message: 'The "options.chunkSize" property must be of type number. ' +
+             "Received type string ('test')"
   }
 );
 
@@ -51,7 +52,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "options.windowBits" property must be of type number.' + common.invalidArgTypeHelper('test')
+    message: 'The "options.windowBits" property must be of type number. ' +
+             "Received type string ('test')"
   }
 );
 
@@ -91,7 +93,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "options.level" property must be of type number.' + common.invalidArgTypeHelper('test')
+    message: 'The "options.level" property must be of type number. ' +
+             "Received type string ('test')"
   }
 );
 
@@ -131,7 +134,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "level" argument must be of type number.' + common.invalidArgTypeHelper('test')
+    message: 'The "level" argument must be of type number. ' +
+             "Received type string ('test')"
   }
 );
 
@@ -171,7 +175,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "options.memLevel" property must be of type number.' + common.invalidArgTypeHelper('test')
+    message: 'The "options.memLevel" property must be of type number. ' +
+             "Received type string ('test')"
   }
 );
 
@@ -218,7 +223,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "options.strategy" property must be of type number.' + common.invalidArgTypeHelper('test')
+    message: 'The "options.strategy" property must be of type number. ' +
+             "Received type string ('test')"
   }
 );
 
@@ -258,7 +264,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "strategy" argument must be of type number.' + common.invalidArgTypeHelper('test')
+    message: 'The "strategy" argument must be of type number. ' +
+             "Received type string ('test')"
   }
 );
 
@@ -298,5 +305,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
+    message: 'The "options.dictionary" property must be an instance of Buffer' +
+             ', TypedArray, DataView, or ArrayBuffer. Received type string ' +
+             "('not a buffer')"
   }
 );

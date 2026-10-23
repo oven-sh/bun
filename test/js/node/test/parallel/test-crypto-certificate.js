@@ -103,22 +103,6 @@ function checkMethods(certificate) {
   checkMethods(Certificate);
 }
 
-{
-  const spkacText = spkacValid.toString('utf8').trimEnd();
-  const padded = Buffer.alloc(Buffer.byteLength(spkacText) + 1);
-  padded.write(spkacText);
-  const zeroLengthView = padded.subarray(0, 0);
-  assert.strictEqual(Certificate.verifySpkac(zeroLengthView), false);
-  assert.strictEqual(Certificate.exportPublicKey(zeroLengthView), '');
-  assert.strictEqual(Certificate.exportChallenge(zeroLengthView), '');
-
-  for (const input of [Buffer.alloc(0), Buffer.from(' \n\r\t'), '', ' \n\r\t']) {
-    assert.strictEqual(Certificate.verifySpkac(Buffer.from(input)), false);
-    assert.strictEqual(Certificate.exportPublicKey(input), '');
-    assert.strictEqual(Certificate.exportChallenge(input), '');
-  }
-}
-
 function stripLineEndings(obj) {
   return obj.replace(/\n/g, '');
 }

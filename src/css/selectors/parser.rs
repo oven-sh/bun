@@ -7,7 +7,6 @@ use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
-use bun_css::selector::serialize;
 use bun_css::{
     CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, SmallList,
     Token, TokenList,
@@ -1044,13 +1043,6 @@ impl PseudoClass {
         self.eql(other)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // A buffered intermediate `Printer` would only matter for
-        // length-dependent minification decisions made by callers (none
-        // here), so write directly to `dest`.
-        serialize::serialize_pseudo_class(self, dest, None)
-    }
-
     // eql / hash — provided by `#[derive(CssEql, CssHash)]` (variant-wise; the
     // `Box<Selector>` arms recurse via the `CssEql for GenericSelector` impl
     // below). `deep_clone` is `Clone` — the selector AST is global-alloc and
@@ -1217,6 +1209,7 @@ impl<'a> SelectorParser<'a> {
         &mut self,
         name: Str,
         input: &mut CssParser,
+        state: &mut SelectorParsingState,
     ) -> CResult<PseudoElement> {
         // This lookup is intentionally CASE-SENSITIVE: `::CUE(..)` /
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
@@ -1233,7 +1226,7 @@ impl<'a> SelectorParser<'a> {
         match name.len() {
             3 if name == b"cue" => {
                 return Ok(PseudoElement::CueFunction {
-                    selector: Box::new(Selector::parse(self, input)?),
+                    selector: Box::new(Selector::parse_inner(self, input, state)?),
                 });
             }
             6 if name == b"picker" => {
@@ -1243,7 +1236,7 @@ impl<'a> SelectorParser<'a> {
             }
             10 if name == b"cue-region" => {
                 return Ok(PseudoElement::CueRegionFunction {
-                    selector: Box::new(Selector::parse(self, input)?),
+                    selector: Box::new(Selector::parse_inner(self, input, state)?),
                 });
             }
             19 => match name {
@@ -1797,6 +1790,20 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
+    }
+
+    /// `&` in the parsed selector counts as `&` in the selector that holds it.
+    pub(crate) fn parse_inner(
+        parser: &mut SelectorParser,
+        input: &mut CssParser,
+        outer_state: &mut SelectorParsingState,
+    ) -> CResult<Self> {
+        let mut state = SelectorParsingState::empty();
+        let selector = parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)?;
+        if state.contains(SelectorParsingState::AFTER_NESTING) {
+            outer_state.insert(SelectorParsingState::AFTER_NESTING);
+        }
+        Ok(selector)
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -3050,12 +3057,6 @@ impl PseudoElement {
                 | PE::ViewTransitionGroupChildren { .. }
         )
     }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // See PseudoClass::to_css — write directly to `dest`; no caller makes
-        // length-dependent minification decisions here.
-        serialize::serialize_pseudo_element(self, dest, None)
-    }
 }
 
 impl fmt::Display for PseudoElement {
@@ -3324,7 +3325,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     }
 
                     input.parse_nested_block(|i: &mut CssParser| {
-                        parser.parse_functional_pseudo_element(name, i)
+                        parser.parse_functional_pseudo_element(name, i, state)
                     })?
                 } else {
                     parser.parse_pseudo_element(location, name)?
@@ -3593,12 +3594,12 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     crate::match_ignore_ascii_case! { name, {
-        b"nth-child" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Child),
-        b"nth-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::OfType),
-        b"nth-last-child" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastChild),
-        b"nth-last-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastOfType),
-        b"nth-col" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Col),
-        b"nth-last-col" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastCol),
+        b"nth-child" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::Child),
+        b"nth-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::OfType),
+        b"nth-last-child" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::LastChild),
+        b"nth-last-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::LastOfType),
+        b"nth-col" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::Col),
+        b"nth-last-col" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::LastCol),
         b"is" => if parser.parse_is_and_where() {
             return parse_is_or_where::<Impl, _>(parser, input, state, |s| GenericComponent::convert_helper_is(s));
         },
@@ -3701,7 +3702,7 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
 pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: SelectorParsingState,
+    state: &mut SelectorParsingState,
     ty: NthType,
 ) -> CResult<GenericComponent<Impl>> {
     if !state.allows_tree_structural_pseudo_classes() {
@@ -3729,7 +3730,7 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     // Whitespace between "of" and the selector list is optional
     // https://github.com/w3c/csswg-drafts/issues/8285
     let mut child_state = {
-        let mut s = state;
+        let mut s = *state;
         s.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
         s.insert(SelectorParsingState::DISALLOW_PSEUDOS);
         s
@@ -3745,6 +3746,9 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
         ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
+    if child_state.contains(SelectorParsingState::AFTER_NESTING) {
+        state.insert(SelectorParsingState::AFTER_NESTING);
+    }
 
     Ok(GenericComponent::NthOf(NthOfSelectorData {
         data: nth_data,

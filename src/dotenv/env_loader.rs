@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
+use bun_collections::{ArrayHashMapExt, Entry, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
@@ -1320,7 +1320,27 @@ pub struct Map {
     pub map: HashTable,
 }
 
+/// A child that inherits `NODE_UNIQUE_ID` from a node:cluster worker takes itself for a worker.
+static OMIT_CLUSTER_UNIQUE_ID_FROM_CHILD_ENV: AtomicBool = AtomicBool::new(false);
+
+pub fn omit_cluster_unique_id_from_child_env() {
+    OMIT_CLUSTER_UNIQUE_ID_FROM_CHILD_ENV.store(true, Ordering::SeqCst);
+}
+
 impl Map {
+    /// The entries of the env of a child process.
+    fn child_env_entries(&mut self) -> impl Iterator<Item = Entry<'_, Box<[u8]>, HashTableValue>> {
+        let omitted = if OMIT_CLUSTER_UNIQUE_ID_FROM_CHILD_ENV.load(Ordering::SeqCst) {
+            self.map.get_index(b"NODE_UNIQUE_ID")
+        } else {
+            None
+        };
+        self.map
+            .iterator()
+            .enumerate()
+            .filter_map(move |(index, entry)| (omitted != Some(index)).then_some(entry))
+    }
+
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
@@ -1328,8 +1348,7 @@ impl Map {
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
         let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
         {
-            let mut it = self.map.iterator();
-            while let Some(pair) = it.next() {
+            for pair in self.child_env_entries() {
                 let klen = pair.key_ptr.len();
                 let vlen = pair.value_ptr.value.len();
                 let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
@@ -1340,7 +1359,7 @@ impl Map {
                 envp_buf.push(env_buf.as_ptr().cast::<c_char>());
                 storage.push(env_buf);
             }
-            debug_assert!(envp_buf.len() == envp_count);
+            debug_assert!(envp_buf.len() <= envp_count);
         }
         envp_buf.push(core::ptr::null()); // sentinel
         Ok(NullDelimitedEnvMap {
@@ -1361,8 +1380,7 @@ impl Map {
         // from 4 bytes), so the UTF-8 byte length is a safe upper bound.
         let mut capacity: usize = 4;
         {
-            let mut it = self.map.iterator();
-            while let Some(pair) = it.next() {
+            for pair in self.child_env_entries() {
                 capacity += pair.key_ptr.len() + 1 + pair.value_ptr.value.len() + 1;
             }
         }
@@ -1370,8 +1388,7 @@ impl Map {
         let mut result = vec![0u16; capacity];
         let mut i: usize = 0;
         {
-            let mut it = self.map.iterator();
-            while let Some(pair) = it.next() {
+            for pair in self.child_env_entries() {
                 i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
                 result[i] = b'=' as u16;
                 i += 1;

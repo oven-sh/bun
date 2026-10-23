@@ -330,6 +330,10 @@ fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> 
     result
 }
 
+/// [`JsSinkType::END_WITH_ERROR_FROM_JS`]: the sink, the caller, the error.
+pub(crate) type EndWithErrorFromJs<T> =
+    unsafe fn(*mut T, &bun_jsc::JsThread<'_>, JSValue) -> bun_jsc::JsResult<JSValue>;
+
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
 /// Most of these are optional, modeled with default method bodies and
 /// associated `const` gates.
@@ -339,6 +343,13 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
     const HAS_CONSTRUCT: bool = false;
     /// Mirrors `@hasDecl(SinkType, "flushFromJS")`.
     const HAS_FLUSH_FROM_JS: bool = false;
+    /// `end(error)` from JS with a value that is `instanceof Error`: the
+    /// caller's source failed, so the bytes written so far are a truncated
+    /// body. `None` keeps the clean end of `end_from_js` for any argument.
+    ///
+    /// The pointer is the cell's live sink. It is raw because failing can
+    /// re-enter the sink through its owner.
+    const END_WITH_ERROR_FROM_JS: Option<EndWithErrorFromJs<Self>> = None;
     /// Mirrors `@hasDecl(SinkType, "protectJSWrapper")`.
     const HAS_PROTECT_JS_WRAPPER: bool = false;
     /// Mirrors `@hasDecl(SinkType, "updateRef")`.
@@ -458,6 +469,13 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
 // `impl_js_sink_abi!`. `write_utf8` is intentionally NOT re-added: it has
 // no lut entry and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
+
+unsafe extern "C" {
+    /// `value instanceof Error` for the Error of any realm, also through a
+    /// Proxy. Runs no script. Defined in `generate-jssink.ts`.
+    #[link_name = "JSSink__isErrorValue"]
+    safe fn is_error_value(value: JSValue) -> bool;
+}
 
 impl<T: JsSinkType> JSSink<T> {
     /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
@@ -680,6 +698,17 @@ impl<T: JsSinkType> JSSink<T> {
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
+        }
+
+        if let Some(end_with_error) = T::END_WITH_ERROR_FROM_JS {
+            // Only an error value: `pipeTo` of `node:stream/iter` ends its
+            // writer with an options object, and that is a clean end.
+            let err = frame.argument(0);
+            if is_error_value(err) {
+                let sink: *mut T = &raw mut this.sink;
+                // SAFETY: `sink` is the cell's live sink; `this` is not used again.
+                return unsafe { end_with_error(sink, &cx, err) };
+            }
         }
 
         let result = match this.sink.end_from_js(&cx) {

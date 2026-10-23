@@ -2123,6 +2123,214 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+describe.concurrent("s3 writer().end(error)", () => {
+  const partSize = 5 * 1024 * 1024;
+
+  // A local S3 that records the name of every request it gets. With `hold`,
+  // it does not answer a request of that kind until the test calls
+  // `release()`, so that request is still in flight when the test ends the
+  // writer. `finished` resolves when the request that ends a multipart upload
+  // arrives: AbortMultipartUpload or CompleteMultipartUpload.
+  function mockS3(hold?: "CreateMultipartUpload" | "UploadPart") {
+    const requests: string[] = [];
+    const held = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { searchParams } = new URL(req.url);
+        if (req.method === "POST" && searchParams.has("uploads")) {
+          requests.push("CreateMultipartUpload");
+          if (hold === "CreateMultipartUpload") {
+            held.resolve();
+            await released.promise;
+          }
+          return new Response(
+            "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+            { headers: { "Content-Type": "application/xml" } },
+          );
+        }
+        if (req.method === "PUT" && searchParams.has("partNumber")) {
+          const { byteLength } = await req.arrayBuffer();
+          requests.push(`UploadPart ${byteLength}`);
+          if (hold === "UploadPart") {
+            held.resolve();
+            await released.promise;
+          }
+          return new Response(undefined, { headers: { ETag: '"etag"' } });
+        }
+        if (req.method === "POST" && searchParams.has("uploadId")) {
+          await req.arrayBuffer();
+          requests.push("CompleteMultipartUpload");
+          finished.resolve();
+          return new Response(
+            '<CompleteMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><ETag>"etag"</ETag></CompleteMultipartUploadResult>',
+            { headers: { "Content-Type": "application/xml" } },
+          );
+        }
+        if (req.method === "DELETE" && searchParams.has("uploadId")) {
+          requests.push("AbortMultipartUpload");
+          finished.resolve();
+          return new Response(undefined, { status: 204 });
+        }
+        const { byteLength } = await req.arrayBuffer();
+        requests.push(`${req.method} ${byteLength}`);
+        return new Response(undefined, { headers: { ETag: '"etag"' } });
+      },
+    });
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "eu-west-3",
+      bucket: "my_bucket",
+      endpoint: server.url.href,
+    });
+    return { server, client, requests, held: held.promise, release: released.resolve, finished: finished.promise };
+  }
+
+  it("aborts a multipart upload that is in progress", async () => {
+    const { server, client, requests, held, release, finished } = mockS3("UploadPart");
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize });
+    writer.write(Buffer.alloc(partSize, "a"));
+    writer.write("tail");
+    // Pending for as long as part 1 is in the upload queue.
+    const pendingFlush = writer.flush();
+    await held;
+
+    const error = new Error("the source failed");
+    const ended = writer.end(error);
+    release();
+    // Both reject with the caller's error, not with a generic S3 error.
+    expect(await Promise.allSettled([ended, pendingFlush])).toEqual([
+      { status: "rejected", reason: error },
+      { status: "rejected", reason: error },
+    ]);
+    await finished;
+    // Neither the buffered tail nor a CompleteMultipartUpload goes out.
+    expect(requests).toEqual(["CreateMultipartUpload", `UploadPart ${partSize}`, "AbortMultipartUpload"]);
+  });
+
+  it("aborts a multipart upload whose CreateMultipartUpload is still in flight", async () => {
+    const { server, client, requests, held, release, finished } = mockS3("CreateMultipartUpload");
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize });
+    writer.write(Buffer.alloc(partSize, "a"));
+    await held;
+
+    const error = new Error("the source failed");
+    const ended = writer.end(error);
+    release();
+    expect(await Promise.allSettled([ended])).toEqual([{ status: "rejected", reason: error }]);
+    await finished;
+    // The part does not go out. The upload that S3 created is aborted when its id arrives.
+    expect(requests).toEqual(["CreateMultipartUpload", "AbortMultipartUpload"]);
+  });
+
+  // `instanceof Error`, but not a native Error object. The AxiosError of axios 1.6 is built this way.
+  function LegacyError(this: { message: string }, message: string) {
+    this.message = message;
+  }
+  LegacyError.prototype = Object.create(Error.prototype);
+
+  it.each([
+    ["an Error", () => new RangeError("the source failed")],
+    ["a DOMException", () => AbortSignal.abort().reason],
+    ["an ES5-style error", () => new (LegacyError as any)("the source failed")],
+    ["a Proxy of an Error", () => new Proxy(new Error("the source failed"), {})],
+  ])("sends nothing when the upload has not started and the argument is %s", async (_name, makeError) => {
+    const { server, client, requests } = mockS3();
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize });
+    writer.write("only a few bytes");
+    const error = makeError();
+    await expect(writer.end(error)).rejects.toBe(error);
+    // A request of the writer would reach the mock before the answer to this one comes back.
+    await fetch(server.url);
+    expect(requests).toEqual(["GET 0"]);
+  });
+
+  it("has no effect after an earlier end()", async () => {
+    const { server, client, requests } = mockS3();
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize });
+    writer.write("only a few bytes");
+    const ended = writer.end();
+    // The upload is on its way: the pending promise of end() comes back, and the object is stored.
+    expect(writer.end(new Error("too late"))).toBe(ended);
+    expect(await ended).toBe(16);
+    expect(requests).toEqual(["PUT 16"]);
+  });
+
+  // The caller already has the error, so an end(error) that nobody awaits is
+  // not an unhandled rejection. The same holds for the flush() it rejects.
+  it("does not end the process when nobody awaits end(error) or a pending flush()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              if (req.method === "POST" && new URL(req.url).searchParams.has("uploads")) {
+                return new Response(
+                  "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+                );
+              }
+              await req.arrayBuffer();
+              return new Response(undefined, { headers: { ETag: '"etag"' } });
+            },
+          });
+          // Only the upload may keep the process alive.
+          server.unref();
+          const writer = new Bun.S3Client({
+            accessKeyId: "test",
+            secretAccessKey: "test",
+            bucket: "my_bucket",
+            endpoint: server.url.href,
+          })
+            .file("obj")
+            .writer({ partSize: ${partSize} });
+          writer.write(Buffer.alloc(${partSize}));
+          // Pending, because the part is in the upload queue.
+          writer.flush();
+          writer.end(new Error("the source failed"));
+          console.log("end(error) returned");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("end(error) returned\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    // pipeTo() of node:stream/iter ends its writer with an options object.
+    ["an options object", () => ({ signal: new AbortController().signal })],
+    ["a string", () => "the source failed"],
+    ["an object that only looks like an error", () => ({ name: "Error", message: "the source failed", stack: "" })],
+  ])("completes the upload when the argument is %s", async (_name, makeArgument) => {
+    const { server, client, requests } = mockS3();
+    using _ = server;
+
+    const writer = client.file("obj").writer({ partSize });
+    writer.write("only a few bytes");
+    // @ts-expect-error end() is typed to take an Error
+    expect(await writer.end(makeArgument())).toBe(16);
+    expect(requests).toEqual(["PUT 16"]);
+  });
+});
+
 describe("presigned url signature", () => {
   function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
     const url = new URL(presigned);

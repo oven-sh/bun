@@ -386,7 +386,7 @@ test("mock.module() that adds a default export to a module without one serves it
 
 test("a pending factory that adds an export serves it to the next import() once it settles", async () => {
   using dir = tempDir("mock-module-pending-adds-export", {
-    "a.ts": `export const a = "real a";`,
+    "a.ts": `export const a = "real a";\nexport const c = "real c";`,
   });
   const path = join(String(dir), "a.ts");
   const ns = await import(path);
@@ -398,7 +398,7 @@ test("a pending factory that adds an export serves it to the next import() once 
   expect(ns.a).toBe("mock a");
 
   const mocked = await import(path);
-  expect({ a: mocked.a, b: mocked.b }).toEqual({ a: "mock a", b: "mock b" });
+  expect({ a: mocked.a, b: mocked.b, c: mocked.c }).toEqual({ a: "mock a", b: "mock b", c: "real c" });
 });
 
 test("mock.module() that adds an export keeps the other exports of the loaded module for later importers", async () => {

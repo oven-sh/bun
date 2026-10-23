@@ -4161,9 +4161,6 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     })
 }
 
-/// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
-const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
-
 /// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
 ///
@@ -4295,16 +4292,12 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         // For JSX/TSX and other extensions, let the file contents decide.
         ModuleType::Unknown
     };
-    let pkg_name: Option<&[u8]> = lr
-        .package_json
-        .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
-
-    // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
+    // ── Concurrent-transpiler dispatch ──────────────────────────────────────
     // We only run the transpiler concurrently when we can — today that's import statements and
     // import expressions. Node compile cache: lazily initialize from env on the first fetch.
     bun_jsc::node_compile_cache::init_from_env_once();
 
-    'transpile_async: {
+    {
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
         let (has_loaded, is_in_preload, has_plugins, store_enabled) = unsafe {
@@ -4328,17 +4321,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             // fetch hook sees every module.
             && !bun_jsc::node_compile_cache::is_enabled()
         {
-            // Disgusting workaround: polyfills like
-            // `reflect-metadata` are CJS-with-side-effects that other ESM
-            // depends on synchronously, so they must transpile on-thread.
-            if let Some(pkg_name_) = pkg_name {
-                for always_sync in ALWAYS_SYNC_MODULES {
-                    if pkg_name_ == *always_sync {
-                        break 'transpile_async;
-                    }
-                }
-            }
-
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             // `lr.path` borrows `_specifier`, which the store immediately
             // heap-duplicates inside `transpile()`.

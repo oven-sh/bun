@@ -44,6 +44,29 @@ describe.concurrent("import defer", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("defers the evaluation of a CommonJS module until a property is accessed", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        import defer * as ns from "./dep.cjs";
+        console.log("before access");
+        console.log("keys:", Object.keys(ns).join(","));
+        console.log("value:", ns.value, ns.default.value);
+      `,
+      "dep.cjs": `
+        console.log("dep evaluated");
+        exports.value = 42;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      "before access",
+      "dep evaluated",
+      "keys: default,value",
+      "value: 42 42",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("does not re-evaluate on subsequent access", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.js": `

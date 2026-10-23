@@ -440,7 +440,7 @@ describe.concurrent("require.cache", () => {
       return { stdout, stderr, exitCode };
     }
 
-    // a.mjs is fetched, then its CommonJS dependency runs before a.mjs evaluates.
+    // a.mjs is linked, then its CommonJS dependency runs, right before the body of a.mjs.
     // The dependency evicts a.mjs and imports it again.
     const deleteThenImport = {
       "report.cjs": report,
@@ -489,6 +489,9 @@ describe.concurrent("require.cache", () => {
       expect(exitCode).toBe(0);
     });
 
+    // The dependency runs where a.mjs imports it, so a.mjs has not run yet: require() gives the
+    // dependency the namespace of the module that is importing it, with `x` not initialized.
+    // (Node.js throws ERR_REQUIRE_CYCLE_MODULE here.)
     test("require() of the module from its dependency", async () => {
       using dir = tempDir("require-cache-delete-loading-require", {
         ...deleteThenImport,
@@ -496,7 +499,18 @@ describe.concurrent("require.cache", () => {
           const result = require("./report.cjs");
           const key = require("node:path").join(__dirname, "a.mjs");
           result.deleted = delete require.cache[key];
-          result.depRequire = require("./a.mjs").x;
+          globalThis.__namespace = require("./a.mjs");
+          try {
+            result.depRequire = globalThis.__namespace.x;
+          } catch (e) {
+            result.depRequire = e.name;
+          }
+        `,
+        "main.mjs": `
+          const ns = await import("./a.mjs");
+          globalThis.__result.mainImport = ns.x;
+          globalThis.__result.secondImportIsSame = (await import("./a.mjs")) === ns;
+          globalThis.__result.depRequireIsSame = globalThis.__namespace === ns;
         `,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
@@ -504,9 +518,10 @@ describe.concurrent("require.cache", () => {
       expect(JSON.parse(stdout)).toEqual({
         evaluated: 1,
         deleted: true,
-        depRequire: 1,
+        depRequire: "ReferenceError",
         mainImport: 1,
         secondImportIsSame: true,
+        depRequireIsSame: true,
       });
       expect(exitCode).toBe(0);
     });

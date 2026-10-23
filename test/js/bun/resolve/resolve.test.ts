@@ -458,6 +458,304 @@ describe("When CJS and ESM are mixed", () => {
   it("loads reflect-metadata before tsyringe", async () => {
     expect(await bunRun(fixturePath)).toSpawn();
   });
+
+  // A CommonJS module that an ES module imports runs where the import order puts it: after the
+  // modules imported ahead of it, as in Node.js. It used to run as soon as its file was loaded,
+  // before every ES module of the graph.
+  describe.concurrent("a CommonJS module runs at its position in the import order", () => {
+    const setup = `(globalThis.order ??= []).push("setup"); process.env.CJS_ORDER_MODE = "configured";`;
+    // The require() call makes the file CommonJS whatever else it contains.
+    const lib = `const path = require("node:path"); (globalThis.order ??= []).push("lib:" + process.env.CJS_ORDER_MODE); exports.x = 1; module.exports.y = 2;`;
+    const print = `console.log(JSON.stringify(globalThis.order));`;
+
+    async function run(files: Record<string, string>, cmd: string[] = ["entry.mjs"]) {
+      using dir = tempDir("cjs-import-order", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    const shapes: Record<string, Record<string, string>> = {
+      "a side-effect import": { "entry.mjs": `import "./setup.mjs";\nimport "./lib.cjs";\n${print}` },
+      "a default import": { "entry.mjs": `import "./setup.mjs";\nimport lib from "./lib.cjs";\n${print}` },
+      "a named import": { "entry.mjs": `import "./setup.mjs";\nimport { x } from "./lib.cjs";\n${print}` },
+      "a namespace import": { "entry.mjs": `import "./setup.mjs";\nimport * as ns from "./lib.cjs";\n${print}` },
+      "export * from": { "entry.mjs": `import "./setup.mjs";\nexport * from "./lib.cjs";\n${print}` },
+      "export { x } from": { "entry.mjs": `import "./setup.mjs";\nexport { x } from "./lib.cjs";\n${print}` },
+      "export * as ns from": { "entry.mjs": `import "./setup.mjs";\nexport * as ns from "./lib.cjs";\n${print}` },
+      "an import of a module that imports it": {
+        "entry.mjs": `import "./setup.mjs";\nimport "./nested.mjs";\n${print}`,
+        "nested.mjs": `import "./lib.cjs";`,
+      },
+      "import() of the importing module": { "entry.mjs": `await import("./inner.mjs");`, "inner.mjs": `import "./setup.mjs";\nimport "./lib.cjs";\n${print}` },
+      "require() of the importing module": { "entry.cjs": `require("./inner.mjs");`, "inner.mjs": `import "./setup.mjs";\nimport "./lib.cjs";\n${print}` },
+    };
+    for (const [name, files] of Object.entries(shapes)) {
+      it(`after an ES module imported ahead of it: ${name}`, async () => {
+        const entry = "entry.cjs" in files ? "entry.cjs" : "entry.mjs";
+        const { stdout, stderr, exitCode } = await run({ "setup.mjs": setup, "lib.cjs": lib, ...files }, [entry]);
+        expect({ stdout, stderr }).toEqual({ stdout: ['["setup","lib:configured"]'], stderr: "" });
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    it("between two ES modules, and two CommonJS modules in the order of their imports", async () => {
+      const push = (name: string) => `(globalThis.order ??= []).push("${name}");`;
+      const { stdout, stderr, exitCode } = await run({
+        // The first CommonJS file is the slower one to transpile.
+        "big.cjs": `require("node:path"); ${push("big.cjs")}\n` + Buffer.alloc(512 * 1024, "// padding\n").toString(),
+        "small.cjs": `require("node:path"); ${push("small.cjs")}`,
+        "middle.mjs": push("middle.mjs"),
+        "last.cjs": `require("node:path"); ${push("last.cjs")}`,
+        "entry.mjs": `import "./big.cjs";\nimport "./small.cjs";\nimport "./middle.mjs";\nimport "./last.cjs";\n${print}`,
+      });
+      expect({ stdout, stderr }).toEqual({ stdout: ['["big.cjs","small.cjs","middle.mjs","last.cjs"]'], stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("in a --preload module, a Worker and a test file", async () => {
+      const inner = `import "./setup.mjs";\nimport "./lib.cjs";\n`;
+      const files = {
+        "setup.mjs": setup,
+        "lib.cjs": lib,
+        "preload.mjs": inner + `console.log("preload", JSON.stringify(globalThis.order));`,
+        "empty.mjs": ``,
+        "worker.mjs": inner + `postMessage(globalThis.order);`,
+        "spawn-worker.mjs": `const worker = new Worker(new URL("./worker.mjs", import.meta.url).href);\nworker.onmessage = event => { console.log("worker", JSON.stringify(event.data)); worker.terminate(); };`,
+        "order.test.mjs": inner + `import { test, expect } from "bun:test";\ntest("order", () => { expect(globalThis.order).toEqual(["setup", "lib:configured"]); });`,
+      };
+      const [preload, worker, testFile, isolated] = await Promise.all([
+        run(files, ["--preload", "./preload.mjs", "empty.mjs"]),
+        run(files, ["spawn-worker.mjs"]),
+        run(files, ["test", "./order.test.mjs"]),
+        run(files, ["test", "--isolate", "./order.test.mjs"]),
+      ]);
+      expect(preload.stdout).toEqual(['preload ["setup","lib:configured"]']);
+      expect(worker.stdout).toEqual(['worker ["setup","lib:configured"]']);
+      expect(testFile.stderr).toContain("1 pass");
+      expect(isolated.stderr).toContain("1 pass");
+      expect([preload.exitCode, worker.exitCode, testFile.exitCode, isolated.exitCode]).toEqual([0, 0, 0, 0]);
+    });
+
+    it("once, and not again when an ES module that runs first require()s it", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "lib.cjs": `(globalThis.order ??= []).push("lib"); exports.x = 1;`,
+        "early.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const path = require.resolve("./lib.cjs");
+globalThis.order = ["early: loaded=" + require.cache[path].loaded];
+globalThis.order.push("early: x=" + require("./lib.cjs").x + " loaded=" + require.cache[path].loaded);`,
+        "other.mjs": `import lib from "./lib.cjs";\nglobalThis.order.push("other: x=" + lib.x);`,
+        "entry.mjs": `import "./early.mjs";\nimport { x } from "./lib.cjs";\nimport "./other.mjs";\nglobalThis.order.push("entry: x=" + x);\n${print}`,
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: ['["early: loaded=false","lib","early: x=1 loaded=true","other: x=1","entry: x=1"]'],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("when an ES module that runs first deletes or replaces its require.cache entry", async () => {
+      const early = (change: string) => `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const path = require.resolve("./lib.cjs");
+${change}
+globalThis.order = ["early"];`;
+      const files = {
+        "lib.cjs": `(globalThis.order ??= []).push("lib"); exports.x = "real";`,
+        "entry.mjs": `import "./early.mjs";\nimport { x } from "./lib.cjs";\nglobalThis.order.push("entry: x=" + x);\n${print}`,
+      };
+      const [deleted, replaced] = await Promise.all([
+        run({ ...files, "early.mjs": early(`delete require.cache[path];`) }),
+        run({ ...files, "early.mjs": early(`require.cache[path] = { exports: { x: "fake" } };`) }),
+      ]);
+      // The import evaluates the module that was loaded for it.
+      expect(deleted.stdout).toEqual(['["early","lib","entry: x=real"]']);
+      expect(replaced.stdout).toEqual(['["early","lib","entry: x=real"]']);
+      expect([deleted.exitCode, replaced.exitCode]).toEqual([0, 0]);
+    });
+
+    it("after the synchronous part of a module with a top-level await that is imported ahead of it", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "tla.mjs": `(globalThis.order ??= []).push("tla:1");\nawait 0;\nglobalThis.order.push("tla:2");`,
+        "lib.cjs": `require("node:path"); globalThis.order.push("lib");`,
+        "entry.mjs": `import "./tla.mjs";\nimport "./lib.cjs";\n${print}`,
+      });
+      expect({ stdout, stderr }).toEqual({ stdout: ['["tla:1","lib","tla:2"]'], stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("not at all when the graph does not link, or a module imported ahead of it throws", async () => {
+      const files = {
+        "setup.mjs": `console.log("setup");`,
+        "lib.cjs": `require("node:path"); console.log("lib");`,
+        "esm.mjs": `export const a = 1;`,
+        "throws.mjs": `console.log("throws"); throw new Error("boom");`,
+      };
+      const [unlinked, thrown] = await Promise.all([
+        run({ ...files, "entry.mjs": `import "./setup.mjs";\nimport "./lib.cjs";\nimport { missing } from "./esm.mjs";` }),
+        run({ ...files, "entry.mjs": `import "./throws.mjs";\nimport "./lib.cjs";` }),
+      ]);
+      expect(unlinked.stdout).toEqual([""]);
+      expect(unlinked.stderr).toContain("Export named 'missing' not found in module");
+      expect(thrown.stdout).toEqual(["throws"]);
+      expect(thrown.stderr).toContain("boom");
+      expect([unlinked.exitCode, thrown.exitCode]).toEqual([1, 1]);
+    });
+
+    it("and its error is the import's, here and for a later import or require()", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "setup.mjs": `console.log("setup");`,
+        "lib.cjs": `const path = require("node:path"); globalThis.runs = (globalThis.runs ?? 0) + 1; console.log("lib run " + globalThis.runs); throw new Error("lib fails");`,
+        "graph.mjs": `import "./setup.mjs";\nimport "./lib.cjs";\nconsole.log("not reached");`,
+        "entry.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const attempt = async (name, fn) => { try { await fn(); console.log(name + ": ok"); } catch (e) { console.log(name + ": " + e.message); } };
+await attempt("import graph", () => import("./graph.mjs"));
+await attempt("import graph again", () => import("./graph.mjs"));
+await attempt("import lib", () => import("./lib.cjs"));
+await attempt("require lib", () => require("./lib.cjs"));`,
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: [
+          "setup",
+          "lib run 1",
+          "import graph: lib fails",
+          "import graph again: lib fails",
+          "import lib: lib fails",
+          "require lib: lib fails",
+        ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("and its named exports are still the keys of module.exports", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "setup.mjs": `globalThis.NAME = "computed";`,
+        "lib.cjs": `exports.plain = 1;
+exports[globalThis.NAME] = 2;
+Object.defineProperty(exports, "getter", { enumerable: true, get() { return 3; } });
+Object.defineProperty(exports, "hidden", { enumerable: false, value: 4 });`,
+        "barrel.mjs": `export * from "./lib.cjs";\nexport const own = 5;`,
+        "entry.mjs": `import "./setup.mjs";
+import { plain, computed, getter, hidden } from "./lib.cjs";
+import * as ns from "./lib.cjs";
+import { computed as viaBarrel, own } from "./barrel.mjs";
+import * as barrel from "./barrel.mjs";
+console.log(JSON.stringify({ plain, computed, getter, hidden, viaBarrel, own, ns: Object.keys(ns), barrel: Object.keys(barrel) }));`,
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: [
+          JSON.stringify({
+            plain: 1,
+            computed: 2,
+            getter: 3,
+            hidden: 4,
+            viaBarrel: 2,
+            own: 5,
+            ns: ["computed", "default", "getter", "hidden", "plain"],
+            barrel: ["computed", "getter", "hidden", "own", "plain"],
+          }),
+        ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("and a named import that module.exports does not have is an error once it has run", async () => {
+      const files = {
+        "setup.mjs": `console.log("setup");`,
+        "lib.cjs": `require("node:path"); console.log("lib"); exports.x = 1;`,
+        "a.mjs": `export const x = "a";`,
+      };
+      const [missing, ambiguous] = await Promise.all([
+        run({ ...files, "entry.mjs": `import "./setup.mjs";\nimport { missing } from "./lib.cjs";\nconsole.log("not reached");` }),
+        run({
+          ...files,
+          "barrel.mjs": `export * from "./a.mjs";\nexport * from "./lib.cjs";`,
+          "entry.mjs": `import "./setup.mjs";\nimport { x } from "./barrel.mjs";\nconsole.log("not reached");`,
+        }),
+      ]);
+      expect(missing.stdout).toEqual(["setup", "lib"]);
+      expect(missing.stderr).toContain("SyntaxError: Export named 'missing' not found in module");
+      expect(ambiguous.stdout).toEqual(["setup", "lib"]);
+      expect(ambiguous.stderr).toContain("SyntaxError: Export named 'x' cannot be resolved due to ambiguous multiple bindings in module");
+      expect([missing.exitCode, ambiguous.exitCode]).toEqual([1, 1]);
+    });
+
+    it("and code of its importer that runs first, in an import cycle, reads undefined", async () => {
+      const files = {
+        "lib.cjs": `require("node:path"); console.log("lib"); exports.x = 1; exports.helper = () => "helped";`,
+      };
+      const [direct, barrel] = await Promise.all([
+        run({
+          ...files,
+          // first.mjs runs before lib.cjs and calls into entry.mjs, which has not run.
+          "first.mjs": `import { peek } from "./entry.mjs";\nconsole.log("first: " + JSON.stringify(peek()));`,
+          "entry.mjs": `import "./first.mjs";
+import lib, { x } from "./lib.cjs";
+import * as ns from "./lib.cjs";
+export function peek() { return { x: typeof x, lib: typeof lib, ns: Object.keys(ns) }; }
+console.log("entry: " + JSON.stringify(peek()));`,
+        }),
+        run({
+          ...files,
+          "index.mjs": `export * from "./a.mjs";\nexport * from "./lib.cjs";\nconsole.log("index");`,
+          "a.mjs": `import { helper } from "./index.mjs";
+console.log("a: typeof helper = " + typeof helper);
+export const useHelper = () => helper();`,
+          "entry.mjs": `import { useHelper } from "./index.mjs";\nconsole.log("entry: " + useHelper());`,
+        }),
+      ]);
+      expect(direct.stdout).toEqual([
+        `first: {"x":"undefined","lib":"undefined","ns":[]}`,
+        "lib",
+        `entry: {"x":"number","lib":"object","ns":["default","helper","x"]}`,
+      ]);
+      expect(barrel.stdout).toEqual(["a: typeof helper = undefined", "lib", "index", "entry: helped"]);
+      expect([direct.stderr, barrel.stderr]).toEqual(["", ""]);
+      expect([direct.exitCode, barrel.exitCode]).toEqual([0, 0]);
+    });
+
+    it("and require() hooks that an ES module installed first see what it requires", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "setup.mjs": `import Module from "node:module";
+const original = Module.prototype.require;
+Module.prototype.require = function (id) { if (id.startsWith(".")) console.log("hook: " + id); return original.apply(this, arguments); };
+console.log("setup");`,
+        "dep.cjs": `console.log("dep"); module.exports = {};`,
+        "lib.cjs": `require("./dep.cjs"); console.log("lib");`,
+        "entry.mjs": `import "./setup.mjs";\nimport "./lib.cjs";`,
+      });
+      expect({ stdout, stderr }).toEqual({ stdout: ["setup", "hook: ./dep.cjs", "dep", "lib"], stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("and mock.module() from a module imported ahead of it replaces it before it runs", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          "lib.cjs": `console.log("the real lib ran"); exports.x = "real";`,
+          "mocks.mjs": `import { mock } from "bun:test";\nmock.module("./lib.cjs", () => ({ x: "mocked" }));`,
+          "mock.test.mjs": `import "./mocks.mjs";
+import { x } from "./lib.cjs";
+import * as ns from "./lib.cjs";
+import { test, expect } from "bun:test";
+test("mocked", () => { expect({ x, ns: ns.x }).toEqual({ x: "mocked", ns: "mocked" }); });`,
+        },
+        ["test", "./mock.test.mjs"],
+      );
+      expect(stdout.join("\n")).not.toContain("the real lib ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 // The "browser" map resolver copied the normalized input path into a 512-byte

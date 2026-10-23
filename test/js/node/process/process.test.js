@@ -1155,6 +1155,53 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
     });
 
+    it.each(["setTimeout", "setImmediate"])(
+      "is skipped after a fatal unhandled rejection in the last %s callback",
+      async schedule => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `process.on("beforeExit", () => console.log("beforeExit"));
+             process.on("exit", () => console.log("exit"));
+             ${schedule}(() => { Promise.reject(new Error("boom")); });`,
+          ],
+          env: bunEnv,
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("exit\n");
+        expect(stderr).toInclude("error: boom");
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    it.each([
+      ["the last timer callback", `setTimeout(() => { Promise.reject(new Error("boom")); });`],
+      ["a 'beforeExit' listener", `process.once("beforeExit", () => { Promise.reject(new Error("boom")); });`],
+    ])("what an 'unhandledRejection' listener schedules runs, for a rejection in %s", async (_, reject) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", e => {
+             console.log("unhandledRejection", e.message);
+             setTimeout(() => console.log("scheduled"));
+           });
+           process.on("exit", () => console.log("exit"));
+           ${reject}`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "unhandledRejection boom\nscheduled\nexit\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("still fires when an uncaughtException listener handled the throw", async () => {
       await using proc = Bun.spawn({
         cmd: [

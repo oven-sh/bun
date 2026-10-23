@@ -3,6 +3,7 @@
 use bun_paths::strings;
 
 use bun_ast as Log;
+use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
 use bun_jsc::ref_string::{RefString, StringTooLong};
@@ -460,15 +461,16 @@ impl MatchedRoute {
         let Some(map) = map else {
             return Ok(heap.create_empty_object().as_value());
         };
-        let mut buffer: [&[u8]; 256] = [b""; 256];
+        let mut values: SmallVec<[&[u8]; 256]> = SmallVec::new();
         let mut names = map.iter();
         let entries = core::iter::from_fn(|| {
-            let entry = names.next(&mut buffer)?;
-            let value = match &*entry.values {
+            values.clear();
+            let name = names.next(|value| values.push(value))?;
+            let value = match &*values {
                 [value] => to_js::utf8(heap, value),
                 values => to_js::array(heap, values, to_js::utf8),
             };
-            Some((entry.name, value))
+            Some((name, value))
         });
         // Never cuts: it tells `record` how many names there can be.
         let entries = entries.take(map.get_name_count());

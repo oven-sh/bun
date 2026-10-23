@@ -4,10 +4,10 @@ import assert from "node:assert";
 import {
   asciiLiteral,
   Builtin,
-  Constant,
   type Capability,
   type ClassMember,
   ClassType,
+  Constant,
   cppEmplace,
   cppReturnIfFailed,
   DefaultType,

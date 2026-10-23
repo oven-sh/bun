@@ -329,8 +329,8 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
 // Gives `to` (and `second`) a getter for each own property name of `from`
 // that reads the property from `from`. The getter of a non-enumerable getter
 // is non-enumerable, so a spread or a `for in` does not call it. Every other
-// getter stays enumerable: `bun run` also exports a non-enumerable data
-// property of "module.exports".
+// getter stays enumerable: a non-enumerable data property is an export too
+// (https://github.com/oven-sh/bun/issues/4432).
 //
 // This must not read a data property of `from` by name, its descriptor
 // included: the read builds a lazy property of a host object (`process.stdout`,

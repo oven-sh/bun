@@ -99,10 +99,6 @@ impl List {
         self.text.get(self.range(index)?)
     }
 
-    pub fn iter(self) -> impl Iterator<Item = &'static str> {
-        (0..self.ends.len()).filter_map(move |index| self.get(index))
-    }
-
     /// Looks at every `step`th word for `word`. They're sorted by what `fold` makes of their bytes.
     #[inline]
     fn search(self, step: usize, word: &[u8], fold: impl Fn(u8) -> u8) -> Option<usize> {
@@ -123,12 +119,6 @@ impl List {
             }
         }
         None
-    }
-
-    /// For sorted words.
-    #[inline]
-    pub fn contains(self, word: &[u8]) -> bool {
-        self.search(1, word, |it| it).is_some()
     }
 
     /// The word that equals `word` but for the case of ASCII letters. For words that are sorted without regard to it.

@@ -562,6 +562,73 @@ Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree 
 
 With `target: "bun"`, a `require()` of a bundled ES module becomes a chunk of its own as well. The call is emitted as `import.meta.require("./chunk-<hash>.js")` and stays synchronous — Bun evaluates the chunk when the call runs — so a `require()` inside a function that never runs keeps its module out of the startup working set entirely. Tree shaking treats these chunks like `import()` chunks. `require()` of a CommonJS module is unaffected and keeps returning `module.exports`. A `require()` cycle between such chunks follows Bun's runtime `require()` of an ES module: a module required again while its chunk is still being loaded sees the partially initialized CommonJS placeholder (`{}`) rather than the live bindings the in-chunk wrapper provides. For other targets — and with `splitRequire: false` (`--no-split-require`) — the required module is inlined into the calling chunk behind a lazy wrapper instead, because the call must return synchronously.
 
+#### Evaluation order in a shared chunk
+
+A chunk runs its modules in one order. When more than one entrypoint loads a chunk, the chunk follows the imports of one of them. Every other entrypoint that loads the chunk runs its modules in that order too. That order can differ from the order in which its own source imports the modules. A module that is loaded with `import()` counts as an entrypoint here.
+
+The difference shows when a module needs a side effect of another module that it does not import:
+
+<CodeGroup>
+
+```ts index.ts icon="/icons/typescript.svg"
+import("./a.ts");
+```
+
+```ts worker.ts icon="/icons/typescript.svg"
+import "./q.ts";
+import "./a.ts";
+```
+
+```ts a.ts icon="/icons/typescript.svg"
+import "./p.ts";
+import "./q.ts";
+```
+
+```ts p.ts icon="/icons/typescript.svg"
+process.env.APP_MODE = "production";
+```
+
+```ts q.ts icon="/icons/typescript.svg"
+console.log(process.env.APP_MODE);
+```
+
+</CodeGroup>
+
+```bash terminal icon="terminal"
+bun build ./index.ts ./worker.ts --outdir ./out --target bun --splitting
+```
+
+From source, `index.ts` prints `production` and `worker.ts` prints `undefined`, when `APP_MODE` is not set in the environment. In the build, `p.ts` and `q.ts` are in one chunk. That chunk follows `worker.ts`, which runs `q.ts` first. So `import("./a.ts")` in `index.ts` also runs `q.ts` before `p.ts`, and both entrypoints print `undefined`.
+
+Since Bun v1.4.3, a chunk follows the entrypoint that comes first in this list, among the entrypoints that load it:
+
+1. The entrypoints that you pass to the build, in the order in which you pass them.
+2. The modules that are loaded with `import()`, in the order in which the build reaches the `import()` calls.
+
+On an import cycle, Bun can pick a later entrypoint of the list, so that a module does not read a binding before the binding has a value.
+
+Bun v1.4.2 ordered a shared chunk in another way: a build of this example printed `production` from both entrypoints. To see the order of a chunk, open its file. It holds the modules in the order in which they run.
+
+To make one module run before another one under every entrypoint, export a value from the module that has to run first, and use that value in the module that needs it:
+
+<CodeGroup>
+
+```ts p.ts icon="/icons/typescript.svg"
+process.env.APP_MODE = "production";
+export const mode = process.env.APP_MODE;
+```
+
+```ts q.ts icon="/icons/typescript.svg"
+import { mode } from "./p.ts";
+console.log(mode);
+```
+
+</CodeGroup>
+
+Both entrypoints then print `production`, from source and from the build. A side-effect import (`import "./p.ts"` in `q.ts`) gives that order only while the two modules are in the same chunk.
+
+This rule is about the ES modules of one chunk. A CommonJS module, or a module in another chunk, does not follow it. [`bun lint`](/lint) has three rules that report a module that does work when it is imported, or that is imported for that work only: [`bun/no-side-effects-on-import`](/lint/rules/bun/no-side-effects-on-import), [`bun/no-env-at-module-scope`](/lint/rules/bun/no-env-at-module-scope) and [`import/no-unassigned-import`](/lint/rules/import/no-unassigned-import). They are off by default.
+
 #### Tree-shaking `import()` and `require()` results
 
 When the result of a string-literal `import()` or `require()` of an ES module is only ever used to read specific exports, the exports nobody reads are dropped from that module — and whatever only they depended on tree-shakes with them. This applies with and without `splitting`; the module is still loaded lazily, exactly where the call is written.

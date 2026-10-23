@@ -789,6 +789,19 @@ describe("Bun.Archive", () => {
   });
 
   describe("corrupted archives", () => {
+    test("a damaged block between two files is skipped, and Bun.inspect counts what files() returns", async () => {
+      const archive = new Bun.Archive(
+        Buffer.concat([
+          ustarEntry("a", Buffer.from("a")),
+          Buffer.alloc(512, "junk"),
+          ustarEntry("b", Buffer.from("b")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      expect([...(await archive.files()).keys()]).toEqual(["a", "b"]);
+      expect(Bun.inspect(archive)).toContain("files: 2");
+    });
+
     test("throws when extracting corrupted archive data", async () => {
       // Create garbage data that's not a valid archive
       const corruptedData = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);

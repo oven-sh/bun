@@ -26,20 +26,29 @@ pub fn os_path<'a>(entry: &'a Entry, _buf: &'a mut Vec<OSPathChar>) -> Result<&'
 #[cfg(windows)]
 pub fn os_path<'a>(entry: &'a Entry, buf: &'a mut Vec<OSPathChar>) -> Result<&'a [OSPathChar]> {
     buf.clear();
-    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf)
-        .map_err(|_| Error::Alloc(bun_alloc::AllocError))?;
+    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf)?;
     Ok(buf)
+}
+
+/// The entry's path as a program sees it: the name [`os_path`] gives the file, in UTF-8 on Windows.
+#[cfg(not(windows))]
+pub fn display_path(entry: &Entry) -> Result<std::borrow::Cow<'_, [u8]>> {
+    Ok(entry.path().into())
+}
+#[cfg(windows)]
+pub fn display_path(entry: &Entry) -> Result<std::borrow::Cow<'_, [u8]>> {
+    let mut wide = Vec::new();
+    Ok(strings::to_utf8_list_with_type(Vec::new(), os_path(entry, &mut wide)?)?.into())
 }
 
 pub fn entry_kind(entry: &Entry) -> bun_sys::FileKind {
     bun_sys::kind_from_mode(entry.filetype() as bun_sys::Mode)
 }
 
-/// A reader for an archive that is all in memory, gzipped or not.
-pub fn open_memory(bytes: &[u8], npm: bool) -> Result<MemoryDecoder<'_>> {
+/// A reader for an archive that is all in memory, gzipped or not. Fails for what is not one.
+pub fn open_memory(bytes: &[u8], npm: bool) -> bun_tar::Result<MemoryDecoder<'_>> {
     let dialect = if npm { Dialect::Npm } else { Dialect::General };
     MemoryDecoder::new(bytes, Options::for_host(dialect, true))
-        .map_err(|_| Error::Alloc(bun_alloc::AllocError))
 }
 
 /// Writes the contents of the current entry to `fd`.
@@ -60,7 +69,7 @@ pub fn read_data_into_fd(
     }
 }
 
-fn log_archive_error(path: &[OSPathChar], err: bun_tar::Error) {
+fn log_archive_error(path: &[OSPathChar], err: impl core::fmt::Display) {
     Output::err(
         "archive error",
         "extracting {}: {}",
@@ -537,20 +546,10 @@ impl Archiver {
         'loop_: loop {
             match reader.next_entry() {
                 Ok(None) => break 'loop_,
-                Err(_) => {
-                    return Err(crate::Error::Fail);
-                }
+                Err(err) => return Err(err.into()),
                 Ok(Some(entry)) => {
-                    #[cfg(not(windows))]
-                    let pathname_bytes = entry.path();
-                    // The name `extract_to_dir` writes to.
-                    #[cfg(windows)]
-                    let pathname_utf8 = {
-                        let mut wide = Vec::new();
-                        strings::to_utf8_list_with_type(Vec::new(), os_path(entry, &mut wide)?)?
-                    };
-                    #[cfg(windows)]
-                    let pathname_bytes: &[u8] = &pathname_utf8;
+                    let pathname = display_path(entry)?;
+                    let pathname_bytes: &[u8] = &pathname;
 
                     // Tokenizer semantics: `next()` skips leading
                     // separators and returns None only when no token remains;
@@ -676,9 +675,7 @@ impl Archiver {
         'loop_: loop {
             match reader.next_entry() {
                 Ok(None) => break 'loop_,
-                Err(_) => {
-                    return Err(crate::Error::Fail);
-                }
+                Err(err) => return Err(err.into()),
                 Ok(Some(entry)) => {
                     let pathname_z = os_path(entry, &mut os_path_buf)?;
 
@@ -986,13 +983,10 @@ impl Archiver {
                                             if let Err(err) =
                                                 reader.read_data(size, &mut plucker_.contents.list)
                                             {
-                                                if err == bun_tar::Error::OutOfMemory {
-                                                    return Err(bun_alloc::AllocError.into());
-                                                }
                                                 if options.log {
                                                     log_archive_error(path_slice, err);
                                                 }
-                                                return Err(crate::Error::Fail);
+                                                return Err(err.into());
                                             }
                                             plucker_.found = !plucker_.contents.list.is_empty();
                                             plucker_.fd = output.fd;
@@ -1004,9 +998,15 @@ impl Archiver {
                                 if let Err(err) =
                                     read_data_into_fd(&mut reader, output.fd, &mut write_strategy)
                                 {
-                                    if let (true, ReadDataError::Archive(err)) = (options.log, err)
-                                    {
-                                        log_archive_error(path_slice, err);
+                                    if options.log {
+                                        match err {
+                                            ReadDataError::Archive(err) => {
+                                                log_archive_error(path_slice, err)
+                                            }
+                                            ReadDataError::Sys(err) => {
+                                                log_archive_error(path_slice, err)
+                                            }
+                                        }
                                     }
                                     return Err(crate::Error::Fail);
                                 }

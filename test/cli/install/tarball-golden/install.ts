@@ -60,6 +60,7 @@ export async function install(exe: string, cases: { id: number; data: string }[]
     })();
   }).listen(0, "127.0.0.1");
   await once(server, "listening");
+  using _ = { [Symbol.dispose]: () => void server.close() };
   const { port } = server.address() as import("node:net").AddressInfo;
 
   using dir = tempDir("tarball-golden", {
@@ -74,13 +75,14 @@ export async function install(exe: string, cases: { id: number; data: string }[]
     env: {
       ...bunEnv,
       BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
-      ...(streaming ? { BUN_INSTALL_STREAMING_MIN_SIZE: "0" } : { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }),
+      ...(streaming
+        ? { BUN_INSTALL_STREAMING_MIN_SIZE: "0", BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1" }
+        : { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }),
     },
     stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  server.close();
 
   const refused = new Set(
     Array.from(stderr.matchAll(/extracting tarball (?:for|from) "?c(\d+)\b/g), m => Number(m[1])),
@@ -90,7 +92,10 @@ export async function install(exe: string, cases: { id: number; data: string }[]
     const path = join(String(dir), "node_modules", `c${id}`);
     const lines: string[] = [];
     if (existsSync(path)) tree(Buffer.from(path), Buffer.alloc(0), lines);
-    trees.set(id, refused.has(id) ? null : lines.join("\n") + "\n");
+    // `.bun-tag` holds a hash of the compressed tarball, which depends on the compressor. How many
+    // links a file has depends on how the platform copies it out of the cache.
+    const shown = lines.filter(line => !line.startsWith('file "/.bun-tag"')).join("\n");
+    trees.set(id, refused.has(id) ? null : shown.replace(/ nlink=\d+/g, "") + "\n");
   }
   return { trees, exitCode, stderr };
 }

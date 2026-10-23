@@ -1,7 +1,8 @@
 use crate::error::{Error, Result};
 use crate::header::{self, Block, gnu};
 use crate::num::{parse_decimal, parse_field, parse_pax_time};
-use bun_core::strings;
+use bun_alloc::AllocError;
+use bun_core::{slice_to_nul, strings};
 
 /// Where tar readers disagree about what counts as a file, as its name or as the end of the
 /// archive, this picks whose answer to give.
@@ -13,8 +14,8 @@ pub enum Dialect {
     Npm,
 }
 
-/// Decides which pax strings count as convertible. An entry with one that is not carries
-/// [`Entry::warned`].
+/// Decides which pax strings count as convertible. An entry with one that is not is read with
+/// less trust in its headers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Charset {
     /// POSIX in the "C" locale: only ASCII converts.
@@ -71,12 +72,10 @@ pub struct Entry {
     path: Vec<u8>,
     path_is_utf8: bool,
     link: Vec<u8>,
-    link_is_utf8: bool,
     link_kind: LinkKind,
     mode: u32,
     size: i64,
     mtime: Option<i64>,
-    warned: bool,
 }
 
 impl Entry {
@@ -91,12 +90,6 @@ impl Entry {
     }
     pub fn symlink(&self) -> Option<&[u8]> {
         (self.link_kind == LinkKind::Symbolic).then_some(&self.link[..])
-    }
-    pub fn hardlink(&self) -> Option<&[u8]> {
-        (self.link_kind == LinkKind::Hard).then_some(&self.link[..])
-    }
-    pub fn link_is_utf8(&self) -> bool {
-        self.link_is_utf8
     }
     /// One of the `S_IF*` constants, or whatever the header's mode field held for the few types
     /// that say nothing about it.
@@ -113,10 +106,6 @@ impl Entry {
     }
     pub fn mtime(&self) -> i64 {
         self.mtime.unwrap_or(0)
-    }
-    /// Something about the headers was off, and the entry is a best effort.
-    pub fn warned(&self) -> bool {
-        self.warned
     }
 }
 
@@ -194,14 +183,6 @@ fn padding_for(size: i64) -> i64 {
     0x1ff & size.wrapping_neg()
 }
 
-/// Everything here was a C string once, and callers depend on names ending at the first NUL.
-fn until_nul(bytes: &[u8]) -> &[u8] {
-    match strings::index_of_char_usize(bytes, 0) {
-        Some(end) => bytes.get(..end).unwrap_or_default(),
-        None => bytes,
-    }
-}
-
 fn assign(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     dest.clear();
     append(dest, bytes)
@@ -209,7 +190,7 @@ fn assign(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
 
 fn append(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     dest.try_reserve(bytes.len())
-        .map_err(|_| Error::OutOfMemory)?;
+        .map_err(|_| Error::Alloc(AllocError))?;
     dest.extend_from_slice(bytes);
     Ok(())
 }
@@ -467,6 +448,19 @@ impl Reader {
     /// The entry of the last [`Event::Entry`].
     pub fn entry(&self) -> &Entry {
         &self.entry
+    }
+
+    /// Does the detection that [`Options::detect`] asks for right away, given the start of the
+    /// input and at least a block of it if there is that much. Returns how much was consumed.
+    pub(crate) fn detect(&mut self, start: &[u8]) -> Result<usize> {
+        let mut used = 0usize;
+        if matches!(self.state, State::Detect)
+            && let Err(error) = self.step(start, true, &mut used)
+        {
+            self.state = State::Failed(error);
+            return Err(error);
+        }
+        Ok(used)
     }
 
     pub(crate) fn poll(&mut self, input: &[u8], eof: bool) -> Result<(usize, Poll)> {
@@ -1171,7 +1165,7 @@ impl Reader {
     }
 
     fn converts(&self, text: &[u8]) -> bool {
-        let text = until_nul(text);
+        let text = slice_to_nul(text);
         match self.options.charset {
             Charset::Ascii => text.is_ascii(),
             Charset::Utf8 => crate::compose::converts(text),
@@ -1189,7 +1183,7 @@ impl Reader {
         };
         if !path.is_empty() {
             let converts = !utf8 || self.converts(path);
-            assign(&mut self.entry.path, until_nul(path))?;
+            assign(&mut self.entry.path, slice_to_nul(path))?;
             self.entry.path_is_utf8 = utf8 && converts;
             if !converts {
                 status = Status::Warn;
@@ -1200,8 +1194,7 @@ impl Reader {
         }
         if !self.pax_link.is_empty() {
             let converts = !utf8 || self.converts(&self.pax_link);
-            assign(&mut self.entry.link, until_nul(&self.pax_link))?;
-            self.entry.link_is_utf8 = utf8 && converts;
+            assign(&mut self.entry.link, slice_to_nul(&self.pax_link))?;
             if self.entry.link_kind == LinkKind::None {
                 self.entry.link_kind = LinkKind::Hard;
             }
@@ -1227,13 +1220,12 @@ impl Reader {
         let body_padding = padding_for(i64::try_from(value.len()).unwrap_or(0));
         match what {
             Collect::LongName => {
-                assign(&mut self.entry.path, until_nul(value))?;
+                assign(&mut self.entry.path, slice_to_nul(value))?;
                 self.entry.path_is_utf8 = false;
                 self.state = State::Skip(body_padding, AfterSkip::BetweenHeaders(Status::Ok));
             }
             Collect::LongLink => {
-                assign(&mut self.entry.link, until_nul(value))?;
-                self.entry.link_is_utf8 = false;
+                assign(&mut self.entry.link, slice_to_nul(value))?;
                 if self.entry.link_kind == LinkKind::None {
                     self.entry.link_kind = LinkKind::Hard;
                 }
@@ -1360,7 +1352,9 @@ impl Reader {
     /// `false` for a block that cannot be. An empty one takes its place, so the list is no longer
     /// empty and the entry does not fall back to one block that covers all of it.
     fn add_sparse_block(&mut self, offset: i64, remaining: i64, hole: bool) -> Result<bool> {
-        self.sparse.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
+        self.sparse
+            .try_reserve(1)
+            .map_err(|_| Error::Alloc(AllocError))?;
         let valid = remaining >= 0 && offset >= 0 && offset.checked_add(remaining).is_some();
         self.sparse.push(if valid {
             SparseBlock {
@@ -1447,7 +1441,7 @@ impl Reader {
             self.format = Format::Gnu;
             if self.entry.path.is_empty() {
                 self.entry.path_is_utf8 = false;
-                assign(&mut self.entry.path, until_nul(header::name(&h)))?;
+                assign(&mut self.entry.path, slice_to_nul(header::name(&h)))?;
             }
             if !npm {
                 if gnu::real_size(&h).first() != Some(&0) {
@@ -1468,18 +1462,18 @@ impl Reader {
             }
             if self.entry.path.is_empty() {
                 self.entry.path_is_utf8 = false;
-                let prefix = until_nul(header::prefix(&h));
+                let prefix = slice_to_nul(header::prefix(&h));
                 assign(&mut self.entry.path, prefix)?;
                 if !prefix.is_empty() && prefix.last() != Some(&b'/') {
                     append(&mut self.entry.path, b"/")?;
                 }
-                append(&mut self.entry.path, until_nul(header::name(&h)))?;
+                append(&mut self.entry.path, slice_to_nul(header::name(&h)))?;
             }
         } else {
             self.format = Format::Old;
             if self.entry.path.is_empty() {
                 self.entry.path_is_utf8 = false;
-                assign(&mut self.entry.path, until_nul(header::name(&h)))?;
+                assign(&mut self.entry.path, slice_to_nul(header::name(&h)))?;
             }
         }
         self.header_common()
@@ -1541,8 +1535,7 @@ impl Reader {
             b'1' => {
                 self.entry.link_kind = LinkKind::Hard;
                 if self.entry.link.is_empty() {
-                    self.entry.link_is_utf8 = false;
-                    assign(&mut self.entry.link, until_nul(header::linkname(&h)))?;
+                    assign(&mut self.entry.link, slice_to_nul(header::linkname(&h)))?;
                 }
                 if self.entry.size > 0 {
                     self.entry.set_filetype(S_IFREG);
@@ -1562,8 +1555,7 @@ impl Reader {
             b'2' => {
                 self.entry.link_kind = LinkKind::Symbolic;
                 if self.entry.link.is_empty() {
-                    self.entry.link_is_utf8 = false;
-                    assign(&mut self.entry.link, until_nul(header::linkname(&h)))?;
+                    assign(&mut self.entry.link, slice_to_nul(header::linkname(&h)))?;
                 }
                 no_body(&mut self.entry, S_IFLNK);
             }
@@ -1695,7 +1687,6 @@ impl Reader {
             self.entry.set_filetype(0);
         }
 
-        self.entry.warned = status != Status::Ok;
         self.state = State::Emit;
         Ok(())
     }

@@ -71,12 +71,11 @@ fn is_readme_filename<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
         && (name.len() == README.len() || name[README.len()].into() == u32::from(b'.'))
 }
 
-fn archive_ok<T>(result: Result<T, tar::Error>, message: &str) -> T {
-    result.unwrap_or_else(|err| {
-        let message = match err {
-            tar::Error::UnrecognizedFormat => "failed to read tarball",
-            _ => message,
-        };
+fn archive_ok<T>(result: Result<T, tar::Error>, message: &str) -> Result<T, PackError> {
+    result.map_err(|err| {
+        if matches!(err, tar::Error::Alloc(_)) {
+            return PackError::OutOfMemory;
+        }
         Output::err_generic("{}: {}", (message, err));
         Global::crash();
     })
@@ -167,8 +166,10 @@ impl Context {
         let mut maybe_readme: Option<ReadmeInfo> = None;
         let mut files: Vec<Vec<u8>> = Vec::new();
 
-        let mut reader =
-            bun_archive::open_memory(&tarball_bytes, false).map_err(|_| PackError::OutOfMemory)?;
+        let mut reader = archive_ok(
+            bun_archive::open_memory(&tarball_bytes, false),
+            "failed to read tarball",
+        )?;
         let mut os_path_buf: Vec<OSPathChar> = Vec::new();
 
         let mut unpacked_size: usize = 0;
@@ -176,7 +177,7 @@ impl Context {
 
         Output::print(format_args!("\n"));
 
-        while let Some(entry) = archive_ok(reader.next_entry(), "failed to read archive header") {
+        while let Some(entry) = archive_ok(reader.next_entry(), "failed to read archive header")? {
             let pathname: &[OSPathChar] = bun_archive::os_path(entry, &mut os_path_buf)
                 .map_err(|_| PackError::OutOfMemory)?;
             let kind = bun_archive::entry_kind(entry);
@@ -226,7 +227,7 @@ impl Context {
                 archive_ok(
                     reader.read_data(size, &mut contents),
                     "failed to read archive data",
-                );
+                )?;
                 maybe_package_json_contents = Some(contents.into_boxed_slice());
             } else if maybe_readme.is_none() && is_readme_filename(filename) {
                 #[cfg(not(windows))]
@@ -237,7 +238,7 @@ impl Context {
                 archive_ok(
                     reader.read_data(size, &mut contents),
                     "failed to read archive data",
-                );
+                )?;
                 maybe_readme = Some(ReadmeInfo { filename, contents });
             }
         }

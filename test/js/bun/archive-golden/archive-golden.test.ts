@@ -127,7 +127,7 @@ describe("entry names", () => {
     expect(await names(file("._a"), file("a"), end)).toEqual(isMacOS ? ["a"] : ["._a", "a"]);
     const nothingAfter = /end-of-archive within a sequence of headers/;
     for (const tar of [[file("._a"), end], [file("._a")], [file("a"), file("._z"), end]]) {
-      if (isMacOS) expect(names(...tar)).rejects.toThrow(nothingAfter);
+      if (isMacOS) await expect(names(...tar)).rejects.toThrow(nothingAfter);
       else expect((await names(...tar)).at(-1)).toStartWith("._");
     }
   });

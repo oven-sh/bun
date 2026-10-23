@@ -134,7 +134,7 @@ test.concurrent.skipIf(isWindows).each([
   [["--gzip-level", "6"], "1f8b08000000000000ff"],
 ])("the bytes of a tarball do not change %j", async (args, gzipHeader) => {
   const n = (count: number) => Buffer.alloc(count, "n").toString();
-  using dir = tempDir("pack-bytes", {
+  const files = {
     "package.json": JSON.stringify({ name: "@scope/pack-bytes", version: "1.2.3", bin: { x: "bin/x.js" } }),
     "index.js": "module.exports = 1;",
     "empty.txt": "",
@@ -150,8 +150,10 @@ test.concurrent.skipIf(isWindows).each([
     "blocks/512": n(512),
     "blocks/513": n(513),
     "blocks/100000": n(100000),
-  });
-  await chmod(join(String(dir), "run.sh"), 0o755);
+  };
+  using dir = tempDir("pack-bytes", files);
+  // The archive records them, and what they start as depends on the umask.
+  for (const path of Object.keys(files)) await chmod(join(String(dir), path), path === "run.sh" ? 0o755 : 0o644);
 
   await pack(dir, bunEnv, ...args);
 

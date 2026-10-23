@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use crate::gzip::{self, Progress};
 use crate::reader::{Entry, Event, Options, Poll, Reader};
+use bun_alloc::AllocError;
 
 const BLOCK: usize = 64 * 1024;
 /// More wrappings than this are not looked for.
@@ -19,7 +20,7 @@ impl Layer {
     fn new() -> Result<Self> {
         let mut out = Vec::new();
         out.try_reserve_exact(BLOCK)
-            .map_err(|_| Error::OutOfMemory)?;
+            .map_err(|_| Error::Alloc(AllocError))?;
         Ok(Self {
             gzip: gzip::Decoder::new()?,
             out,
@@ -135,14 +136,7 @@ impl Decoder {
                 break Poll::EndOfArchive;
             };
             let base = layer.pos;
-            let (used, poll) = match self.tar.poll(layer.unread(), layer.done) {
-                // Damaged compression explains it better than what came out of it not being tar.
-                Err(Error::UnrecognizedFormat) if eof => {
-                    self.drain(input.get(used_total..).unwrap_or_default(), eof)?;
-                    return Err(Error::UnrecognizedFormat);
-                }
-                other => other?,
-            };
+            let (used, poll) = self.tar.poll(layer.unread(), layer.done)?;
             layer.pos = layer.pos.saturating_add(used);
             match poll {
                 Poll::NeedInput => {}
@@ -195,17 +189,16 @@ pub struct MemoryDecoder<'a> {
     data: &'a [u8],
     pos: usize,
     decoder: Decoder,
-    /// From looking at what a layer holds. It is reported in place of the first event.
-    failed: Option<Error>,
 }
 
 impl<'a> MemoryDecoder<'a> {
+    /// Fails if `data` is not an archive, or if the first block of a gzip layer does not
+    /// decompress. So nothing that is wrong from the start gets as far as the first entry.
     pub fn new(data: &'a [u8], options: Options) -> Result<Self> {
         let mut this = Self {
             data,
             pos: 0,
             decoder: Decoder::new(options, false)?,
-            failed: None,
         };
         while this.decoder.layers.len() < MAX_LAYERS {
             let is_gzip = match this.decoder.layers.last() {
@@ -219,16 +212,14 @@ impl<'a> MemoryDecoder<'a> {
             }
             this.decoder.layers.push(Layer::new()?);
             let top = this.decoder.layers.len().saturating_sub(1);
-            match this
-                .decoder
-                .refill(top, data.get(this.pos..).unwrap_or_default(), true)
-            {
-                Ok((used, _)) => this.pos = this.pos.saturating_add(used),
-                Err(error) => {
-                    this.failed = Some(error);
-                    break;
-                }
-            }
+            let (used, _) =
+                this.decoder
+                    .refill(top, data.get(this.pos..).unwrap_or_default(), true)?;
+            this.pos = this.pos.saturating_add(used);
+        }
+        match this.decoder.layers.last_mut() {
+            None => this.pos = this.decoder.tar.detect(data)?,
+            Some(layer) => layer.pos = this.decoder.tar.detect(layer.unread())?,
         }
         Ok(this)
     }
@@ -266,7 +257,8 @@ impl<'a> MemoryDecoder<'a> {
                 return Err(Error::OutOfOrderSparse);
             }
             let zeros = offset.min(size).saturating_sub(have);
-            out.try_reserve(zeros).map_err(|_| Error::OutOfMemory)?;
+            out.try_reserve(zeros)
+                .map_err(|_| Error::Alloc(AllocError))?;
             out.resize(out.len().saturating_add(zeros), 0);
             Ok(())
         };
@@ -277,7 +269,7 @@ impl<'a> MemoryDecoder<'a> {
                     let room = size.saturating_sub(out.len().saturating_sub(start));
                     let bytes = bytes.get(..room.min(bytes.len())).unwrap_or_default();
                     out.try_reserve(bytes.len())
-                        .map_err(|_| Error::OutOfMemory)?;
+                        .map_err(|_| Error::Alloc(AllocError))?;
                     out.extend_from_slice(bytes);
                 }
                 Event::EndOfEntry { size: end } => {
@@ -292,9 +284,6 @@ impl<'a> MemoryDecoder<'a> {
 
     /// Never returns [`Event::NeedInput`].
     pub fn next(&mut self) -> Result<Event<'_>> {
-        if let Some(error) = self.failed {
-            return Err(error);
-        }
         let (used, event) = self
             .decoder
             .next(self.data.get(self.pos..).unwrap_or_default(), true)?;

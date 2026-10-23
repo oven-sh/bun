@@ -89,6 +89,28 @@ pub struct TarballStream {
     read_pos: usize,
 
     decoder: Option<tar::Decoder>,
+    extraction: Extraction,
+
+    /// Incremental SHA over the *compressed* bytes, matching
+    /// `Integrity.verify` / `Integrity.forBytes` in the buffered path.
+    hasher: integrity::Streaming,
+
+    bytes_received: usize,
+    /// `Content-Length` of the response, when the server sent one.
+    pub(crate) content_length: Option<usize>,
+    fail: Option<crate::Error>,
+
+    /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
+    /// arrives and no drain is currently in flight.
+    drain_task: thread_pool::Task,
+
+    network_task: *mut NetworkTask,
+    package_manager: *mut PackageManager,
+}
+
+/// What the decoder's events are applied to. Nothing in here is touched by the HTTP thread, so the
+/// drain task can hold `&mut` to it for as long as it likes.
+struct Extraction {
     /// The decoder reached the end of the archive.
     done: bool,
 
@@ -105,30 +127,18 @@ pub struct TarballStream {
     // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.
     tmpname: ZBox,
 
-    /// Incremental SHA over the *compressed* bytes, matching
-    /// `Integrity.verify` / `Integrity.forBytes` in the buffered path.
-    hasher: integrity::Streaming,
-
     /// Resolved first-directory name for GitHub tarballs (written to
     /// `.bun-tag` and used for the cache folder name).
     resolved_github_dirname: &'static [u8],
     want_first_dirname: bool,
     npm_mode: bool,
 
-    bytes_received: usize,
     /// Compressed bytes the decoder has consumed so far.
     bytes_consumed: usize,
-    /// `Content-Length` of the response, when the server sent one.
-    pub(crate) content_length: Option<usize>,
     entry_count: u32,
-    fail: Option<crate::Error>,
     /// The decoder's message for `fail == Some(Fail)`.
     fail_detail: Vec<u8>,
     invalid_name: bool,
-
-    /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
-    /// arrives and no drain is currently in flight.
-    drain_task: thread_pool::Task,
 
     /// Completion task that carries the final result back to the main
     /// thread. Populated by `finish()` and pushed onto `resolve_tasks` there.
@@ -136,8 +146,6 @@ pub struct TarballStream {
     /// read-only `request_extract()` accessor in `open_destination` goes
     /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
     extract_task: bun_ptr::ParentRef<Task, bun_ptr::Mut>,
-    network_task: *mut NetworkTask,
-    package_manager: *mut PackageManager,
 }
 
 impl TarballStream {
@@ -229,27 +237,29 @@ impl TarballStream {
             reading: Vec::new(),
             read_pos: 0,
             decoder: None,
-            done: false,
-            out: None,
-            write_strategy: lib::WriteStrategy::default(),
-            dest: None,
-            tmpname: ZBox::from_bytes(b""),
+            extraction: Extraction {
+                done: false,
+                out: None,
+                write_strategy: lib::WriteStrategy::default(),
+                dest: None,
+                tmpname: ZBox::from_bytes(b""),
+                resolved_github_dirname,
+                want_first_dirname,
+                npm_mode,
+                bytes_consumed: 0,
+                entry_count: 0,
+                fail_detail: Vec::new(),
+                invalid_name: false,
+                extract_task,
+            },
             hasher,
-            resolved_github_dirname,
-            want_first_dirname,
-            npm_mode,
             bytes_received: 0,
-            bytes_consumed: 0,
             content_length: None,
-            entry_count: 0,
             fail: None,
-            fail_detail: Vec::new(),
-            invalid_name: false,
             drain_task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: drain_callback,
             },
-            extract_task,
             network_task,
             package_manager: manager,
         }))
@@ -343,7 +353,7 @@ impl TarballStream {
         // free `*this`; each `return` after it touches nothing.
         unsafe {
             loop {
-                if (*this).fail.is_none() && !(*this).done {
+                if (*this).fail.is_none() && !(*this).extraction.done {
                     // Only pull bytes into `reading` while the decoder is still
                     // going to consume them. After EOF/failure `step()` is
                     // never called again, so appending here would let
@@ -362,10 +372,10 @@ impl TarballStream {
                             (crate::Error::Fail, Some(http_err)) => http_err,
                             (err, _) => err,
                         });
-                        (*this).close_output_file();
+                        (*this).extraction.close_output_file();
                     }
 
-                    if (*this).fail.is_none() && !(*this).done {
+                    if (*this).fail.is_none() && !(*this).extraction.done {
                         if more {
                             continue;
                         }
@@ -482,67 +492,62 @@ impl TarballStream {
     unsafe fn step(this: *mut Self) -> crate::Result<()> {
         // SAFETY: see fn-level # Safety. Everything but `mutex`, `pending`
         // and `closed` is drain-local.
-        let (mut decoder, eof, reading) = unsafe {
+        unsafe {
             (*this).mutex.lock();
             // Nothing follows `reading` once the body has ended and all of it was taken.
             let eof = (*this).closed && (*this).pending.is_empty();
             (*this).mutex.unlock();
 
-            let decoder = match (*this).decoder.take() {
-                Some(decoder) => decoder,
-                None => {
-                    let head: &[u8] = &(*this).reading;
-                    if head.len() < 2 && !eof {
-                        // Telling gzip from tar takes two bytes.
-                        return Ok(());
-                    }
-                    // Plain tar is what a .tgz sent with `Content-Encoding: gzip` arrives as,
-                    // because the HTTP client has already decompressed it.
-                    let gzip = head.starts_with(&[0x1f, 0x8b]);
-                    let dialect = if (*this).npm_mode {
-                        tar::Dialect::Npm
-                    } else {
-                        tar::Dialect::General
-                    };
-                    tar::Decoder::new(tar::Options::for_host(dialect, false), gzip)
-                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?
+            if (*this).decoder.is_none() {
+                let head: &[u8] = &(*this).reading;
+                if head.len() < 2 && !eof {
+                    // Telling gzip from tar takes two bytes.
+                    return Ok(());
                 }
-            };
-            if (*this).dest.is_none() {
-                (*this).open_destination()?;
+                // Plain tar is what a .tgz sent with `Content-Encoding: gzip` arrives as,
+                // because the HTTP client has already decompressed it.
+                let gzip = head.starts_with(&[0x1f, 0x8b]);
+                let dialect = if (*this).extraction.npm_mode {
+                    tar::Dialect::Npm
+                } else {
+                    tar::Dialect::General
+                };
+                (*this).decoder = Some(
+                    tar::Decoder::new(tar::Options::for_host(dialect, false), gzip)
+                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
+                );
             }
-            // Both are moved out so that events, which borrow them, can be handed to `&mut self`
-            // methods.
-            (decoder, eof, core::mem::take(&mut (*this).reading))
-        };
-        // SAFETY: the methods called on it touch drain-local fields only.
-        let result = unsafe { (*this).run_decoder(&mut decoder, &reading, eof) };
-        // SAFETY: see above.
-        unsafe {
-            (*this).reading = reading;
-            (*this).decoder = Some(decoder);
+            // References to single drain-local fields, never to the whole struct.
+            let extraction = &mut (*this).extraction;
+            if extraction.dest.is_none() {
+                extraction.open_destination()?;
+            }
+            let Some(decoder) = (*this).decoder.as_mut() else {
+                return Ok(());
+            };
+            extraction.run(decoder, &(*this).reading, &mut (*this).read_pos, eof)
         }
-        result
     }
+}
 
-    fn run_decoder(
+impl Extraction {
+    fn run(
         &mut self,
         decoder: &mut tar::Decoder,
         reading: &[u8],
+        read_pos: &mut usize,
         eof: bool,
     ) -> crate::Result<()> {
         loop {
-            let (used, event) = match decoder.next(&reading[self.read_pos..], eof) {
+            let (used, event) = match decoder.next(&reading[*read_pos..], eof) {
                 Ok(next) => next,
-                Err(tar::Error::OutOfMemory) => {
-                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                }
+                Err(tar::Error::Alloc(err)) => return Err(err.into()),
                 Err(err) => {
                     self.fail_detail = err.to_string().into_bytes();
                     return Err(crate::Error::Fail);
                 }
             };
-            self.read_pos += used;
+            *read_pos += used;
             self.bytes_consumed += used;
             match event {
                 Event::NeedInput => return Ok(()),
@@ -744,7 +749,9 @@ impl TarballStream {
         }
         Ok(())
     }
+}
 
+impl TarballStream {
     /// # Safety
     /// `this` must be the live pointer returned by `init()`. Frees `*this`
     /// — caller must not touch it after return. Takes a raw pointer (not
@@ -762,11 +769,11 @@ impl TarballStream {
             // Fields are already raw pointers (see the struct-level note), so copying
             // them out before `heap::take(this)` is just a pointer copy — no
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
-            let task: *mut Task = (*this).extract_task.as_mut_ptr();
+            let task: *mut Task = (*this).extraction.extract_task.as_mut_ptr();
             let network: *mut NetworkTask = (*this).network_task;
             let manager: *mut PackageManager = (*this).package_manager;
 
-            (*this).close_output_file();
+            (*this).extraction.close_output_file();
 
             // The HTTP thread has delivered the final `has_more=false` chunk
             // (that's the only way `closed` gets set) and `notify()` does not
@@ -783,21 +790,21 @@ impl TarballStream {
             let http_err = (*this).http_err;
 
             // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
-            // `(*this).extract_task` is a raw `*mut Task` (not `&mut`), so this
+            // `(*this).extraction.extract_task` is a raw `*mut Task` (not `&mut`), so this
             // is the only writer — no aliasing with a stored reference.
-            // `populate_result` does not touch `(*this).extract_task`.
+            // `populate_result` does not touch `(*this).extraction.extract_task`.
             (*this).populate_result(task, http_err);
 
             // Temp-dir cleanup must happen before we release the stream or
-            // publish the task: both `(*this).tmpname` and
+            // publish the task: both `(*this).extraction.tmpname` and
             // `task.request.extract.tarball.temp_dir` become invalid once
             // `Drop` runs / the main thread recycles the Task.
             // SAFETY: task is live (see above).
-            if (*task).status != TaskStatus::Success && !(*this).tmpname.is_empty() {
+            if (*task).status != TaskStatus::Success && !(*this).extraction.tmpname.is_empty() {
                 // `populate_result` closes `dest` on the success path before the
                 // rename; the early-return failure paths leave it open, so close
                 // it here first — Windows can't remove an open directory.
-                if let Some(d) = (*this).dest.take() {
+                if let Some(d) = (*this).extraction.dest.take() {
                     d.close();
                 }
                 // SAFETY: task is live (see above). `request` is an untagged
@@ -805,7 +812,7 @@ impl TarballStream {
                 // implicit autoref through the raw-ptr deref) for the
                 // `ManuallyDrop` → `ExtractRequest` deref.
                 let _ = Dir::borrow(&(&(*task).request.extract).tarball.temp_dir)
-                    .delete_tree((*this).tmpname.as_bytes());
+                    .delete_tree((*this).extraction.tmpname.as_bytes());
             }
 
             if let Some(crate::Error::Http(err)) = (*task).err
@@ -880,7 +887,7 @@ impl TarballStream {
             if let Some(err) = self.fail {
                 if matches!(err, crate::Error::Http(_)) {
                     // Reported (or retried) by `run_tasks`; see `finish()`.
-                } else if self.invalid_name {
+                } else if self.extraction.invalid_name {
                     (*task).log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -897,13 +904,15 @@ impl TarballStream {
                             "{} extracting tarball for \"{}\"{}{} (at byte {} of {})",
                             err.name(),
                             bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
-                            if self.fail_detail.is_empty() {
+                            if self.extraction.fail_detail.is_empty() {
                                 ""
                             } else {
                                 ": "
                             },
-                            bun_fmt::EscapeControlChars(bstr::BStr::new(&self.fail_detail)),
-                            self.bytes_consumed,
+                            bun_fmt::EscapeControlChars(bstr::BStr::new(
+                                &self.extraction.fail_detail
+                            )),
+                            self.extraction.bytes_consumed,
                             self.content_length
                                 .as_ref()
                                 .map_or(&"unknown" as &dyn core::fmt::Display, |n| n),
@@ -941,11 +950,11 @@ impl TarballStream {
 
             if tarball.resolution.tag == ResolutionTag::Github {
                 'insert_tag: {
-                    if self.resolved_github_dirname.is_empty() {
+                    if self.extraction.resolved_github_dirname.is_empty() {
                         break 'insert_tag;
                     }
                     if bun_sys::File::openat(
-                        self.dest.unwrap(),
+                        self.extraction.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
                         O::WRONLY
                             | O::CREAT
@@ -953,16 +962,19 @@ impl TarballStream {
                             | if cfg!(windows) { 0 } else { O::NOFOLLOW },
                         0o664,
                     )
-                    .and_then(|f| f.write_all(self.resolved_github_dirname))
+                    .and_then(|f| f.write_all(self.extraction.resolved_github_dirname))
                     .is_err()
                     {
-                        let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
+                        let _ = bun_sys::unlinkat(
+                            self.extraction.dest.unwrap(),
+                            bun_core::zstr!(".bun-tag"),
+                        );
                     }
                 }
             }
 
             // Close the temp dir handle before renaming so Windows can move it.
-            if let Some(d) = self.dest.take() {
+            if let Some(d) = self.extraction.dest.take() {
                 d.close();
             }
 
@@ -971,10 +983,10 @@ impl TarballStream {
             let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
             let mut result = match tarball.move_to_cache_directory(
                 &mut (*task).log,
-                StagedEntry::new(tarball.temp_dir, self.tmpname.as_zstr()),
+                StagedEntry::new(tarball.temp_dir, self.extraction.tmpname.as_zstr()),
                 name,
                 basename,
-                self.resolved_github_dirname,
+                self.extraction.resolved_github_dirname,
                 &integrity,
             ) {
                 Ok(r) => r,
@@ -991,7 +1003,7 @@ impl TarballStream {
                     "[{}] Streamed {} tarball → {} entries<r>",
                     bun_fmt::for_terminal(bstr::BStr::new(name)),
                     bun_fmt::size(self.bytes_received, Default::default()),
-                    self.entry_count,
+                    self.extraction.entry_count,
                 );
                 Output::flush();
             }
@@ -1019,10 +1031,10 @@ impl TarballStream {
 
 impl Drop for TarballStream {
     fn drop(&mut self) {
-        if let Some(out) = self.out.take() {
+        if let Some(out) = self.extraction.out.take() {
             out.fd().close();
         }
-        if let Some(d) = self.dest {
+        if let Some(d) = self.extraction.dest {
             d.close();
         }
     }

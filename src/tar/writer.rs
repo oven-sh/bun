@@ -3,7 +3,8 @@
 
 use crate::error::{Error, Result};
 use crate::header::Block;
-use bun_core::strings;
+use bun_alloc::AllocError;
+use bun_core::{slice_to_nul, strings};
 
 /// Where the bytes go. The size of each write is part of the contract: behind a compressor it
 /// decides what the compressed bytes are.
@@ -14,7 +15,7 @@ pub trait Output {
 impl Output for Vec<u8> {
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.try_reserve(bytes.len())
-            .map_err(|_| Error::OutOfMemory)?;
+            .map_err(|_| Error::Alloc(AllocError))?;
         self.extend_from_slice(bytes);
         Ok(())
     }
@@ -34,6 +35,16 @@ pub enum Names {
     Binary,
     /// Windows: UTF-8 with its characters composed, and `\` turned into `/`.
     Utf8,
+}
+
+impl Names {
+    pub fn for_host() -> Self {
+        if cfg!(windows) {
+            Self::Utf8
+        } else {
+            Self::Binary
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -90,10 +101,7 @@ impl<O: Output> Writer<O> {
     pub fn header(&mut self, file: &File<'_>) -> Result<()> {
         self.finish_entry()?;
 
-        let given = match strings::index_of_char_usize(file.path, 0) {
-            Some(end) => file.path.get(..end).unwrap_or_default(),
-            None => file.path,
-        };
+        let given = slice_to_nul(file.path);
         let converted;
         let (path, binary) = match self.names {
             Names::Binary => (given, !given.is_ascii()),
@@ -119,13 +127,19 @@ impl<O: Output> Writer<O> {
         }
         let mtime_fits = (0..USTAR_MTIME_MAX).contains(&file.mtime);
         if !mtime_fits {
-            let mut digits = itoa_buffer();
-            add_record(&mut pax, b"mtime", format_int(&mut digits, file.mtime))?;
+            add_record(
+                &mut pax,
+                b"mtime",
+                itoa::Buffer::new().format(file.mtime).as_bytes(),
+            )?;
         }
         if file.size >= USTAR_SIZE_END {
-            let mut digits = itoa_buffer();
             let size = i64::try_from(file.size).unwrap_or(i64::MAX);
-            add_record(&mut pax, b"size", format_int(&mut digits, size))?;
+            add_record(
+                &mut pax,
+                b"size",
+                itoa::Buffer::new().format(size).as_bytes(),
+            )?;
         }
 
         if !pax.is_empty() {
@@ -195,32 +209,6 @@ fn padding_for(size: u64) -> u64 {
     0x1ff & size.wrapping_neg()
 }
 
-fn itoa_buffer() -> [u8; 20] {
-    [0; 20]
-}
-
-fn format_int(buffer: &mut [u8; 20], value: i64) -> &[u8] {
-    let mut at = buffer.len();
-    let mut left = value.unsigned_abs();
-    loop {
-        at = at.saturating_sub(1);
-        if let Some(slot) = buffer.get_mut(at) {
-            *slot = b'0'.wrapping_add((left % 10) as u8);
-        }
-        left /= 10;
-        if left == 0 {
-            break;
-        }
-    }
-    if value < 0 {
-        at = at.saturating_sub(1);
-        if let Some(slot) = buffer.get_mut(at) {
-            *slot = b'-';
-        }
-    }
-    buffer.get(at..).unwrap_or_default()
-}
-
 /// `<length> <key>=<value>\n`, where the length counts its own digits too.
 fn add_record(pax: &mut Vec<u8>, key: &[u8], value: &[u8]) -> Result<()> {
     let without_length = key.len().saturating_add(value.len()).saturating_add(3);
@@ -236,12 +224,9 @@ fn add_record(pax: &mut Vec<u8>, key: &[u8], value: &[u8]) -> Result<()> {
         digits = digits.saturating_add(1);
     }
     let length = without_length.saturating_add(digits);
-    pax.try_reserve(length).map_err(|_| Error::OutOfMemory)?;
-    let mut buffer = itoa_buffer();
-    pax.extend_from_slice(format_int(
-        &mut buffer,
-        i64::try_from(length).unwrap_or(i64::MAX),
-    ));
+    pax.try_reserve(length)
+        .map_err(|_| Error::Alloc(AllocError))?;
+    pax.extend_from_slice(itoa::Buffer::new().format(length).as_bytes());
     pax.push(b' ');
     pax.extend_from_slice(key);
     pax.push(b'=');

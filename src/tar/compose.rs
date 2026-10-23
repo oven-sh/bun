@@ -7,6 +7,7 @@
 mod tables;
 
 use crate::error::{Error, Result};
+use bun_alloc::AllocError;
 use tables::{COMBINING_CLASSES, COMPOSING_BLOCKS, COMPOSITIONS};
 
 /// More combining marks than this on one character make the name count as unconvertible.
@@ -49,7 +50,7 @@ fn may_compose(c: u32) -> bool {
 fn decode(bytes: &[u8]) -> Result<Option<Vec<u32>>> {
     let mut out = Vec::new();
     out.try_reserve(bytes.len())
-        .map_err(|_| Error::OutOfMemory)?;
+        .map_err(|_| Error::Alloc(AllocError))?;
     let mut rest = bytes;
     let continuation = |b: u8| (b & 0xc0 == 0x80).then_some(u32::from(b & 0x3f));
     let three = |a: u8, b: u8, c: u8| {
@@ -248,7 +249,7 @@ pub fn compose(name: &[u8]) -> Result<Option<Vec<u32>>> {
     };
     let mut out = Vec::new();
     out.try_reserve(chars.len())
-        .map_err(|_| Error::OutOfMemory)?;
+        .map_err(|_| Error::Alloc(AllocError))?;
     Ok(compose_chars(&chars, &mut out).map(|()| out))
 }
 
@@ -266,7 +267,7 @@ fn push_utf8(out: &mut Vec<u8>, c: u32) {
 pub(crate) fn windows_name(name: &[u8]) -> Result<Option<Vec<u8>>> {
     let mut out = Vec::new();
     out.try_reserve(name.len())
-        .map_err(|_| Error::OutOfMemory)?;
+        .map_err(|_| Error::Alloc(AllocError))?;
     if name.is_ascii() {
         out.extend_from_slice(name);
     } else {
@@ -288,7 +289,7 @@ pub(crate) fn windows_name(name: &[u8]) -> Result<Option<Vec<u8>>> {
 /// Appends `name` as Windows sees it. `is_utf8` is [`crate::Entry::path_is_utf8`].
 pub fn to_utf16(name: &[u8], is_utf8: bool, out: &mut Vec<u16>) -> Result<()> {
     out.try_reserve(name.len())
-        .map_err(|_| Error::OutOfMemory)?;
+        .map_err(|_| Error::Alloc(AllocError))?;
     if is_utf8 && !name.is_ascii() {
         if let Some(chars) = compose(name)? {
             for c in chars {

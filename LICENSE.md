@@ -22,6 +22,7 @@ Bun statically links these libraries:
 |---------|---------|
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
 | [`brotli`](https://github.com/google/brotli) | MIT |
+| [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
 | [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |

@@ -158,7 +158,6 @@ dependencies = [
 name = "bun_archive"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -1914,8 +1913,10 @@ dependencies = [
 name = "bun_tar"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "bun_core",
  "bun_zlib",
+ "itoa",
  "thiserror",
 ]
 

@@ -531,35 +531,30 @@ fn materialize(
 }
 
 fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> {
-    let mut reader = bun_archive::open_memory(bytes, false)?;
+    let fail = |err: tar::Error, message: &str| -> crate::Error {
+        if let tar::Error::Alloc(err) = err {
+            return err.into();
+        }
+        Status::clear();
+        Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
+        Global::exit(1);
+    };
+    let mut reader = bun_archive::open_memory(bytes, false)
+        .map_err(|err| fail(err, "failed to read tarball"))?;
     loop {
-        let entry = match reader.next_entry() {
-            Ok(Some(entry)) => entry,
-            Ok(None) => break,
-            Err(err) => {
-                Status::clear();
-                let message = match err {
-                    tar::Error::UnrecognizedFormat => "failed to read tarball",
-                    _ => "failed to read archive header",
-                };
-                Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
-                Global::exit(1);
-            }
+        let Some(entry) = reader
+            .next_entry()
+            .map_err(|err| fail(err, "failed to read archive header"))?
+        else {
+            break;
         };
         if bun_archive::entry_kind(entry) != bun_sys::FileKind::File {
             continue;
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        #[cfg(windows)]
-        let wide_path = {
-            let mut wide = Vec::new();
-            strings::to_utf8_list_with_type(Vec::new(), bun_archive::os_path(entry, &mut wide)?)?
-        };
-        #[cfg(windows)]
-        let path = wide_path.as_slice();
-        #[cfg(not(windows))]
-        let path = entry.path();
+        let path = bun_archive::display_path(entry)?;
+        let path: &[u8] = &path;
         // npm tarballs root everything under one folder (usually `package/`).
         let rel = match strings::index_of_char(path, b'/') {
             Some(i) => &path[i as usize + 1..],
@@ -571,8 +566,8 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         let rel = rel.to_vec();
         let mut data = Vec::new();
         if let Err(err) = reader.read_data(size, &mut data) {
-            if err == tar::Error::OutOfMemory {
-                return Err(bun_alloc::AllocError.into());
+            if let tar::Error::Alloc(err) = err {
+                return Err(err.into());
             }
             Status::clear();
             Output::err_generic(

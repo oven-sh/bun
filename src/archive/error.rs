@@ -30,6 +30,15 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
+impl From<bun_tar::Error> for Error {
+    fn from(e: bun_tar::Error) -> Self {
+        match e {
+            bun_tar::Error::Alloc(e) => Self::Alloc(e),
+            _ => Self::Fail,
+        }
+    }
+}
+
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
         Self::Sys(e.into())

@@ -1,6 +1,7 @@
 //! The gzip container (RFC 1952). DEFLATE itself is zlib's.
 
 use crate::error::{Error, Result};
+use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_zlib::{InflateDecoder, ReturnCode, crc32_bytes};
 
@@ -100,7 +101,7 @@ impl Decoder {
     pub fn new() -> Result<Self> {
         Ok(Self {
             state: State::Fixed,
-            inflate: InflateDecoder::new(RAW_DEFLATE).map_err(|_| Error::OutOfMemory)?,
+            inflate: InflateDecoder::new(RAW_DEFLATE).map_err(|_| Error::Alloc(AllocError))?,
             flags: 0,
             small: [0; 10],
             small_len: 0,
@@ -147,8 +148,8 @@ impl Decoder {
     }
 
     /// Appends to `out` until it holds `limit` bytes. Returns how much of `input` was consumed.
-    /// What was decompressed before an error is handed over first, and the error comes from the
-    /// next call. From then on every call returns it.
+    /// A call that fails appends nothing, so an archive smaller than `limit` is checked in full
+    /// before any of it is seen. From then on every call returns the same error.
     pub fn decode(
         &mut self,
         input: &[u8],
@@ -168,10 +169,8 @@ impl Decoder {
                 Ok(Some(progress)) => return Ok((pos, progress)),
                 Err(error) => {
                     self.state = State::Failed(error);
-                    if out.len() == before {
-                        return Err(error);
-                    }
-                    return Ok((pos, Progress::OutputFull));
+                    out.truncate(before);
+                    return Err(error);
                 }
             }
         }
@@ -279,7 +278,7 @@ impl Decoder {
                         self.state = State::Trailer;
                         Ok(None)
                     }
-                    ReturnCode::MemError => Err(Error::OutOfMemory),
+                    ReturnCode::MemError => Err(Error::Alloc(AllocError)),
                     _ => Err(Error::GzipDecompressionFailed),
                 }
             }
@@ -324,7 +323,7 @@ impl<O: crate::writer::Output> Encoder<O> {
         let mut buffer = Vec::new();
         buffer
             .try_reserve_exact(ENCODER_BUFFER)
-            .map_err(|_| Error::OutOfMemory)?;
+            .map_err(|_| Error::Alloc(AllocError))?;
         let extra_flags = match level {
             9 => 2,
             1 => 4,
@@ -334,7 +333,7 @@ impl<O: crate::writer::Output> Encoder<O> {
         Ok(Self {
             out,
             deflate: bun_zlib::DeflateEncoder::new(i32::from(level), RAW_DEFLATE, 8, 0)
-                .map_err(|_| Error::OutOfMemory)?,
+                .map_err(|_| Error::Alloc(AllocError))?,
             buffer,
             crc: 0,
             size: 0,
@@ -365,7 +364,7 @@ impl<O: crate::writer::Output> Encoder<O> {
             match code {
                 ReturnCode::Ok => {}
                 ReturnCode::StreamEnd => return Ok(()),
-                ReturnCode::MemError => return Err(Error::OutOfMemory),
+                ReturnCode::MemError => return Err(Error::Alloc(AllocError)),
                 _ => return Err(Error::GzipCompressionFailed),
             }
         }

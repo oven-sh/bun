@@ -1929,18 +1929,13 @@ pub(crate) fn pack(
             fail_write_tarball(err, dest);
         }
     };
-    let names = if cfg!(windows) {
-        tar::writer::Names::Utf8
-    } else {
-        tar::writer::Names::Binary
-    };
     let mut writer: TarballWriter<'_> = tar::writer::Writer::new(
         tar::gzip::Encoder::new(
             &mut write_tarball as &mut dyn FnMut(&[u8]),
             compression_level,
         )
         .unwrap_or_else(|err| archive_write_failed(err)),
-        names,
+        tar::writer::Names::for_host(),
     );
 
     // append removed items from `pack_queue` with their file size
@@ -3107,9 +3102,8 @@ pub(crate) mod bindings {
         }
         let mut entries_info: Vec<EntryInfo> = Vec::new();
 
-        let mut reader = bun_core::handle_oom(
-            bun_archive::open_memory(&tarball, false).map_err(|_| bun_alloc::AllocError),
-        );
+        let mut reader = bun_archive::open_memory(&tarball, false)
+            .map_err(|err| global.throw(format_args!("failed to read tarball: {err}")))?;
         let mut read_buf: Vec<u8> = Vec::new();
 
         loop {
@@ -3120,18 +3114,9 @@ pub(crate) mod bindings {
                     return Err(global.throw(format_args!("failed to read archive header: {err}")));
                 }
             };
-            #[cfg(windows)]
-            let pathname_string = {
-                let mut wide = Vec::new();
-                let pathname_w = bun_core::handle_oom(
-                    bun_archive::os_path(entry, &mut wide).map_err(|_| bun_alloc::AllocError),
-                );
-                let result =
-                    bun_core::handle_oom(strings::to_utf8_list_with_type(Vec::new(), pathname_w));
-                BunString::clone_utf8(&result)
-            };
-            #[cfg(not(windows))]
-            let pathname_string = BunString::clone_utf8(entry.path());
+            let pathname_string = BunString::clone_utf8(&bun_core::handle_oom(
+                bun_archive::display_path(entry).map_err(|_| bun_alloc::AllocError),
+            ));
 
             let kind = bun_archive::entry_kind(entry);
             let size: usize = usize::try_from(entry.size()).expect("int cast");

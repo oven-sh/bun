@@ -60,8 +60,8 @@ pub enum Error {
     GzipCompressionFailed,
     #[error("gzip trailer mismatch: bad CRC32 or uncompressed size")]
     GzipTrailerMismatch,
-    #[error("Out of memory")]
-    OutOfMemory,
+    #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
 }
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;

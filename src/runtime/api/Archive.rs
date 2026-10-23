@@ -90,14 +90,6 @@ impl Archive {
     }
 }
 
-/// Entry pathname as owned UTF-8 bytes, from the UTF-16 name the entry has on Windows.
-#[cfg(windows)]
-fn entry_pathname_utf8(entry: &tar::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    let mut wide = Vec::new();
-    let path = bun_archive::os_path(entry, &mut wide).map_err(|_| bun_alloc::AllocError)?;
-    bun_core::strings::to_utf8_list_with_type(Vec::new(), path)
-}
-
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     let Ok(mut reader) = bun_archive::open_memory(data, false) else {
@@ -235,16 +227,11 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
     };
 
-    let names = if cfg!(windows) {
-        tar::writer::Names::Utf8
-    } else {
-        tar::writer::Names::Binary
-    };
-    let mut writer = tar::writer::Writer::new(Vec::<u8>::new(), names);
+    let mut writer = tar::writer::Writer::new(Vec::<u8>::new(), tar::writer::Names::for_host());
     let fail = |what: &str, err: tar::Error| {
         global.throw_invalid_arguments(format_args!(
             "Failed to create tarball: {}",
-            if err == tar::Error::OutOfMemory {
+            if matches!(err, tar::Error::Alloc(_)) {
                 "OutOfMemory"
             } else {
                 what
@@ -919,11 +906,13 @@ pub(crate) struct FilesContext {
 impl FilesContext {
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
         let read_error = |err: tar::Error| match err {
-            tar::Error::OutOfMemory => Err(bun_alloc::AllocError),
+            tar::Error::Alloc(err) => Err(err),
             err => Ok(FilesResult::ArchiveErr(err)),
         };
-        let mut reader = bun_archive::open_memory(self.store.shared_view(), false)
-            .map_err(|_| bun_alloc::AllocError)?;
+        let mut reader = match bun_archive::open_memory(self.store.shared_view(), false) {
+            Ok(reader) => reader,
+            Err(err) => return read_error(err),
+        };
 
         let mut entries: FileEntryList = Vec::new();
 
@@ -937,13 +926,9 @@ impl FilesContext {
                 continue;
             }
 
-            // POSIX: the raw header/pax bytes.
-            #[cfg(not(windows))]
-            let pathname = entry_ref.path();
-            #[cfg(windows)]
-            let pathname_owned = entry_pathname_utf8(entry_ref)?;
-            #[cfg(windows)]
-            let pathname: &[u8] = &pathname_owned;
+            let pathname =
+                bun_archive::display_path(entry_ref).map_err(|_| bun_alloc::AllocError)?;
+            let pathname: &[u8] = &pathname;
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1167,7 +1152,10 @@ fn extract_to_disk_filtered(
     glob_patterns: Option<&[GlobPattern]>,
 ) -> crate::Result<u32> {
     use bun_archive::lib;
-    let mut reader = bun_archive::open_memory(file_buffer, false)?;
+    let mut reader = bun_archive::open_memory(file_buffer, false).map_err(|err| match err {
+        tar::Error::Alloc(err) => crate::Error::Alloc(err),
+        _ => crate::Error::ReadError,
+    })?;
 
     // Open/create target directory using bun.sys
     let cwd = Fd::cwd();
@@ -1201,14 +1189,9 @@ fn extract_to_disk_filtered(
             Ok(Some(entry)) => entry,
             Err(_) => return Err(crate::Error::ReadError),
         };
-        // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
-        #[cfg(not(windows))]
-        let raw_pathname = entry_ref.path();
-        #[cfg(windows)]
-        let raw_pathname_owned = entry_pathname_utf8(entry_ref)
+        let raw_pathname = bun_archive::display_path(entry_ref)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-        #[cfg(windows)]
-        let raw_pathname: &[u8] = &raw_pathname_owned;
+        let raw_pathname: &[u8] = &raw_pathname;
 
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
         if raw_pathname.len() >= normalized_buf.len() {

@@ -1659,7 +1659,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // We cannot unwrap a require wrapped in a try/catch because
                     // import statements cannot be wrapped in a try/catch and
                     // require cannot return a promise.
-                    && !handles_import_errors;
+                    && !handles_import_errors
+                    // require() of a JSON file returns its value, not a module namespace.
+                    && !strings::has_suffix_comptime(pathname, b".json");
 
                 if should_unwrap_require {
                     let import_record_index = self.add_import_record_by_range_and_path(

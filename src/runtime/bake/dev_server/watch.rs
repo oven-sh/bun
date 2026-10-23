@@ -106,6 +106,10 @@ impl DevServer {
 
             match kind {
                 bun_watcher::Kind::File => {
+                    // kqueue: `chmod` and `utimes`. The text of the file is the same.
+                    if event.op == bun_watcher::Op::METADATA {
+                        continue;
+                    }
                     if event.op.contains(bun_watcher::Op::DELETE)
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {

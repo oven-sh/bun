@@ -489,6 +489,67 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent.each([
+    ["registers in the order of the plugins", "", 0],
+    ["fails the build when it rejects", `throw new Error("setup failed");`, 1],
+  ])("a plugin setup() that returns a pending promise %s", async (_, afterWaiting, expectedExitCode) => {
+    using dir = tempDir("bake-production-async-plugin", {
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `
+        import { who } from "virtual:who";
+        export default () => "resolved by " + who;
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        const virtual = (name, wait) => ({
+          name,
+          async setup(build) {
+            console.log(name + " starts");
+            await wait?.();
+            build.onResolve({ filter: /^virtual:who$/ }, () => ({ path: "who", namespace: name }));
+            build.onLoad({ filter: /./, namespace: name }, () => ({
+              contents: "export const who = " + JSON.stringify(name),
+              loader: "js",
+            }));
+            console.log(name + " ends");
+          },
+        });
+        const wait = async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          ${afterWaiting}
+        };
+        export default {
+          app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [virtual("first", wait), virtual("second")] },
+        };
+      `,
+    });
+
+    const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .quiet()
+      .throws(false);
+    const setups = stdout
+      .toString()
+      .split(/\r?\n/)
+      .filter(line => /^(first|second) /.test(line));
+    if (expectedExitCode === 0) {
+      expect(setups).toEqual(["first starts", "first ends", "second starts", "second ends"]);
+      expect(await Bun.file(path.join(String(dir), "dist", "index.html")).text()).toContain("resolved by first");
+    } else {
+      expect(setups).toEqual(["first starts"]);
+      expect(stderr.toString()).toContain("setup failed");
+    }
+    expect(exitCode).toBe(expectedExitCode);
+  });
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

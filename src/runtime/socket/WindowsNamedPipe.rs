@@ -193,8 +193,8 @@ impl WindowsNamedPipe {
     ///
     /// The context frees itself from a task it queues when [`on_close`] releases
     /// the connection's ref. A handler can close the socket and then spin the
-    /// event loop before it returns (`expect().resolves` blocks on a promise
-    /// that way), which runs that task. A callback that uses `self` after it
+    /// event loop before it returns (a macro that returns a promise is waited
+    /// for that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
     /// callback is done. The writer does the same around an in-flight write,
     /// and `connect`/`open` around the connect.

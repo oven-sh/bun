@@ -4736,6 +4736,17 @@ impl VirtualMachine {
         bun_core::reload_process(should_clear_terminal, may_return);
     }
 
+    /// A file changed. Runs as a task, inside `EventLoop::tick()`.
+    pub(crate) fn reload_from_task(&mut self) {
+        // `load_preloads` runs the event loop until each preload has loaded, which only the top
+        // level may do: `report_exception_in_hot_reloaded_module_if_needed` reloads after this tick.
+        if self.hot_reload == HotReload::Hot && !self.preload.is_empty() {
+            self.hot_reload_deferred = true;
+            return;
+        }
+        self.reload(None);
+    }
+
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HotReload::Watch {

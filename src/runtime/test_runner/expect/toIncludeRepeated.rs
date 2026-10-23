@@ -12,8 +12,7 @@ impl Expect {
         count: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // toIncludeRepeated bypasses get_value (reads `captured_value_get_cached` directly,
-        // no `.resolves`/`.rejects` handling), so cannot use the full `matcher_prelude`.
+        // Not `matcher_prelude`: the arguments are checked before the value is read.
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
@@ -38,11 +37,8 @@ impl Expect {
 
         let count_as_num = count.to_u32();
 
-        let Some(expect_string) = super::js::captured_value_get_cached(this_value) else {
-            return Err(global.throw(format_args!(
-                "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
-            )));
-        };
+        let expect_string =
+            this.get_value(global, this_value, "toIncludeRepeated", "<green>expected<r>")?;
 
         if !expect_string.is_string() {
             return Err(global.throw(format_args!(

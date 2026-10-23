@@ -29,7 +29,7 @@ test("await fetch(req) throws if req.body is already consumed (arrayBuffer)", as
   });
 
   await new Response(req.body).arrayBuffer();
-  expect(() => fetch(req)).toThrow();
+  await expect(() => fetch(req)).toThrow();
   expect(req.bodyUsed).toBe(true);
 });
 
@@ -40,7 +40,7 @@ test("await fetch(req) throws if req.body is already consumed (text)", async () 
   });
 
   await new Response(req.body).text();
-  expect(() => fetch(req)).toThrow();
+  await expect(() => fetch(req)).toThrow();
   expect(req.bodyUsed).toBe(true);
 });
 
@@ -51,7 +51,7 @@ test("await fetch(req) throws if req.body is already consumed (stream that has b
   });
 
   await req.body!.getReader().read();
-  expect(() => fetch(req)).toThrow();
+  await expect(() => fetch(req)).toThrow();
   expect(req.bodyUsed).toBe(true);
 });
 
@@ -62,6 +62,6 @@ test("await fetch(req) throws if req.body is already consumed (stream)", async (
   });
 
   req.body!.getReader();
-  expect(() => fetch(req)).toThrow();
+  await expect(() => fetch(req)).toThrow();
   expect(req.bodyUsed).toBe(true);
 });

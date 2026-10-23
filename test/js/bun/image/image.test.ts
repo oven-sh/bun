@@ -1157,7 +1157,7 @@ describe("Bun.Image", () => {
       expect(Math.abs(px.data[cx * 4] - 119)).toBeLessThan(40);
       // Explicit "dataurl" arg accepted, anything else throws.
       expect(await new Bun.Image(src).placeholder("dataurl")).toBe(url);
-      expect(() => new Bun.Image(src).placeholder("hash" as any)).toThrow(/dataurl/);
+      await expect(() => new Bun.Image(src).placeholder("hash" as any)).toThrow(/dataurl/);
     });
 
     test(".jpeg({progressive: true}) emits SOF2 (multi-scan)", async () => {

@@ -126,9 +126,7 @@ impl Yes {
             .expect("YesTask set in start()");
         // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
         // the interpreter arena, so the address is stable across the enqueue
-        // and the later main-thread callback. `enqueue` ticks the event loop
-        // and may re-enter shell dispatch — we hold no `&mut` derived from
-        // `interp` across the call.
+        // and the later main-thread callback.
         unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }
@@ -225,7 +223,6 @@ impl YesTask {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mut mini) => {
-                    (*mini.loop_).tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
                             EventLoopTask::Mini(at) => {
@@ -233,7 +230,7 @@ impl YesTask {
                             }
                             EventLoopTask::Js(_) => unreachable!(),
                         });
-                    mini.get_mut().enqueue_task_concurrent(at);
+                    mini.get_mut().enqueue_task_after_yield(at);
                 }
             }
         }

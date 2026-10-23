@@ -6,6 +6,7 @@ use crate::bake::jsc;
 use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use core::ptr::NonNull;
+use std::collections::VecDeque;
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
@@ -13,6 +14,13 @@ pub(crate) struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
     pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
+    /// The `setup` functions that `run_plugin_setups` has yet to call, in the order of the
+    /// plugins. The order in which they finish decides which plugin sees a module first, so each
+    /// one waits for the promise of the one before it.
+    pub(crate) plugin_setups: VecDeque<bun_jsc::Strong>,
+    /// The promise of the `setup()` call that is under way. `plugin` is complete, and a bundle
+    /// may start, once this is `None` and `plugin_setups` is empty.
+    pub(crate) pending_plugin_setup: Option<bun_jsc::Strong>,
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
@@ -49,6 +57,8 @@ impl SplitBundlerOptions {
     /// `PluginJscExt::destroy` is the paired destructor of `Plugin::create`
     /// in `parse_plugin_array`: it unprotects the JSCell.
     pub(crate) fn destroy_plugin(&mut self) {
+        self.plugin_setups.clear();
+        self.pending_plugin_setup = None;
         if let Some(p) = self.plugin.take() {
             Plugin::destroy(p.as_ptr());
         }
@@ -61,17 +71,13 @@ impl SplitBundlerOptions {
     ) -> JsResult<()> {
         // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
         // so `plugins: []` still leaves `self.plugin = Some(_)`.
-        let plugin: NonNull<Plugin> = match self.plugin {
-            Some(p) => p,
-            None => {
-                let p = Plugin::create(global, crate::api::js_bundler::BunPluginTarget::Bun);
-                let p = NonNull::new(p)
-                    .expect("JSBundlerPlugin__create returns a non-null protected JSCell");
-                self.plugin = Some(p);
-                p
-            }
-        };
-        let empty_object = JSValue::create_empty_object(global, 0);
+        if self.plugin.is_none() {
+            let p = Plugin::create(global, crate::api::js_bundler::BunPluginTarget::Bun);
+            self.plugin = Some(
+                NonNull::new(p)
+                    .expect("JSBundlerPlugin__create returns a non-null protected JSCell"),
+            );
+        }
 
         let mut iter = plugin_array.array_iterator(global)?;
         while let Some(plugin_config) = iter.next()? {
@@ -101,12 +107,25 @@ impl SplitBundlerOptions {
                     )));
                 }
             };
+            self.plugin_setups
+                .push_back(bun_jsc::Strong::create(function, global));
+        }
+        self.run_plugin_setups(global)
+    }
 
+    /// Calls the `setup` functions in turn, up to one that returns a pending promise. It never
+    /// waits: the caller does, and calls this again once it has cleared `pending_plugin_setup`.
+    pub(crate) fn run_plugin_setups(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        while self.pending_plugin_setup.is_none() {
+            let Some(function) = self.plugin_setups.pop_front() else {
+                break;
+            };
+            let plugin = self.plugin.expect("parse_plugin_array created it");
             // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
             // deref. Handle held live in `self.plugin` (protected JSCell).
             let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
-                function,
-                empty_object,
+                function.get(),
+                JSValue::create_empty_object(global, 0),
                 JSValue::NULL,
                 false,
                 true,
@@ -114,17 +133,11 @@ impl SplitBundlerOptions {
 
             if let Some(promise) = plugin_result.as_any_promise() {
                 promise.set_handled(global.vm());
-                // TODO: remove this call, replace with a promise list that must
-                // be resolved before the first bundle task can begin.
-                // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
-                // live for the lifetime of the global object.
-                global
-                    .bun_vm()
-                    .as_mut()
-                    .wait_for_promise(promise)
-                    .map_err(|stopped| stopped.throw(global))?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
-                    bun_jsc::PromiseResult::Pending => unreachable!("wait_for_promise returned Ok"),
+                    bun_jsc::PromiseResult::Pending => {
+                        self.pending_plugin_setup =
+                            Some(bun_jsc::Strong::create(plugin_result, global));
+                    }
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}
                     bun_jsc::PromiseResult::Rejected(err) => {
                         return Err(global.throw_value(err));

@@ -335,7 +335,7 @@ describe("FileHandle", () => {
       expect(await fd.readv(buffers, 0)).toEqual({ bytesRead: 20, buffers });
     }
     expect(handle.close).toHaveBeenCalled();
-    expect(async () => await handle.read(Buffer.alloc(10))).toThrow("Bad file descriptor");
+    await expect(async () => await handle.read(Buffer.alloc(10))).toThrow("Bad file descriptor");
   });
 
   it("FileHandle#write returns object", async () => {
@@ -6239,7 +6239,7 @@ it("open flags verification", async () => {
   const invalid = 4_294_967_296;
   expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   expect(() => fs.openSync(__filename, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
-  expect(async () => await fs.promises.open(__filename, invalid)).toThrow(RangeError);
+  await expect(async () => await fs.promises.open(__filename, invalid)).toThrow(RangeError);
 
   expect(() => fs.open(__filename, 4294967298.5, () => {})).toThrow(
     RangeError(`The value of "flags" is out of range. It must be an integer. Received 4294967298.5`),
@@ -6259,7 +6259,7 @@ it("open mode verification", async () => {
   const invalid = 4_294_967_296;
   expect(() => fs.open(__filename, 0, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   expect(() => fs.openSync(__filename, 0, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
-  expect(async () => await fs.promises.open(__filename, 0, invalid)).toThrow(RangeError);
+  await expect(async () => await fs.promises.open(__filename, 0, invalid)).toThrow(RangeError);
 
   expect(() => fs.open(__filename, 0, 4294967298.5, () => {})).toThrow(
     RangeError(`The value of "mode" is out of range. It must be an integer. Received 4294967298.5`),

@@ -529,7 +529,7 @@ describe("fs.watch", () => {
         reject("timeout");
       }, 3000);
     });
-    expect(promise).resolves.toBe("change");
+    await expect(promise).resolves.toBe("change");
   });
 
   // on windows 0o200 will be readable (match nodejs behavior)
@@ -1237,7 +1237,7 @@ describe("fs.promises.watch", () => {
         clearInterval(interval);
       }
     })();
-    expect(promise).resolves.toBe("rename");
+    await expect(promise).resolves.toBe("rename");
   });
 
   test("should work with symlink dir", async () => {
@@ -1265,7 +1265,7 @@ describe("fs.promises.watch", () => {
         clearInterval(interval);
       }
     })();
-    expect(promise).resolves.toBe("rename");
+    await expect(promise).resolves.toBe("rename");
   });
 
   test("should work with symlink", async () => {
@@ -1288,7 +1288,7 @@ describe("fs.promises.watch", () => {
         clearInterval(interval);
       }
     })();
-    expect(promise).resolves.toBe("change");
+    await expect(promise).resolves.toBe("change");
   });
 
   test("yields events with a null prototype", async () => {

@@ -37,18 +37,18 @@ describe("Zstandard compression", async () => {
     },
   ] as const;
 
-  it("throws with invalid level", () => {
+  it("throws with invalid level", async () => {
     expect(() => zstdCompressSync(new Uint8Array(123), { level: 0 })).toThrowErrorMatchingInlineSnapshot(
       `"Compression level must be between 1 and 22"`,
     );
-    expect(() => zstdCompress(new Uint8Array(123), { level: 0 })).toThrowErrorMatchingInlineSnapshot(
+    await expect(() => zstdCompress(new Uint8Array(123), { level: 0 })).toThrowErrorMatchingInlineSnapshot(
       `"Compression level must be between 1 and 22"`,
     );
   });
 
-  it("throws with invalid input", () => {
+  it("throws with invalid input", async () => {
     expect(() => zstdDecompressSync("wow such compressed")).toThrow();
-    expect(() => zstdDecompress("veryyy such compressed")).toThrow();
+    await expect(() => zstdDecompress("veryyy such compressed")).toThrow();
     const valid = zstdCompressSync(Buffer.from("wow such compressed"));
     valid[0] = 0;
     valid[valid.length - 1] = 0;
@@ -674,7 +674,7 @@ describe("sync compression argument handling", () => {
     }
     for (const level of [0, 23, NaN, 2 ** 32 + 1, "4294967297", 4294967297n, { valueOf: () => 2 ** 32 + 1 }]) {
       for (const compress of [zstdCompress, zstdCompressSync]) {
-        expect(() => compress(input, { level } as any)).toThrow("Compression level must be between 1 and 22");
+        await expect(() => compress(input, { level } as any)).toThrow("Compression level must be between 1 and 22");
       }
     }
   });

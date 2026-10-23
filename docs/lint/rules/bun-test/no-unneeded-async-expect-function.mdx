@@ -57,14 +57,14 @@ test("rejects an empty name", async () => {
 });
 ```
 
-Without `.rejects` or `.resolves` the function is needed, so it isn't reported. `toThrow` calls it and waits for its promise. Given the promise itself, it fails with `Expected value must be a function`:
+Without `.rejects` or `.resolves` the function is needed, so it isn't reported. `toThrow` calls it and returns a promise that settles after the function's promise has. Given the promise itself, it fails with `Expected value must be a function`:
 
 {/* good */}
 ```ts
 import { expect, test } from "bun:test";
 
-test("rejects an empty name", () => {
-  expect(async () => {
+test("rejects an empty name", async () => {
+  await expect(async () => {
     await saveUser({ name: "" });
   }).toThrow("name is required");
 });

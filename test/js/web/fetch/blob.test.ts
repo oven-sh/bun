@@ -125,7 +125,7 @@ test("blob: can be fetched", async () => {
   expect(url).toStartWith("blob:");
   expect(await fetch(url).then(r => r.text())).toBe("BunFoo");
   URL.revokeObjectURL(url);
-  expect(async () => {
+  await expect(async () => {
     await fetch(url);
   }).toThrow();
 });
@@ -137,7 +137,7 @@ test("blob: URL has Content-Type", async () => {
   const resp = await fetch(url);
   expect(resp.headers.get("Content-Type")).toBe("text/javascript;charset=utf-8");
   URL.revokeObjectURL(url);
-  expect(async () => {
+  await expect(async () => {
     await fetch(url);
   }).toThrow();
 });
@@ -159,7 +159,7 @@ test("blob: can be imported", async () => {
   const { supportsTypescript } = await import(url);
   expect(supportsTypescript()).toBe(true);
   URL.revokeObjectURL(url);
-  expect(async () => {
+  await expect(async () => {
     await import(url);
   }).toThrow();
 });

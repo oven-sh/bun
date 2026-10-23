@@ -2038,11 +2038,11 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(await new Response(source(chunks())).text()).toBe(text);
   });
 
-  it("a detached chunk throws", () => {
+  it("a detached chunk throws", async () => {
     const chunk = new Uint8Array([1, 2, 3]);
     structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
     // The chunk array is available synchronously, so the failure is synchronous too.
-    expect(() => Bun.readableStreamToBytes(source([new Uint8Array([9]), chunk]))).toThrow(
+    await expect(() => Bun.readableStreamToBytes(source([new Uint8Array([9]), chunk]))).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_STATE",
         message: "Invalid state: Cannot validate on a detached buffer",
@@ -3394,7 +3394,7 @@ describe("Bun.readableStreamTo* on an already used stream", () => {
   test("new Response(stream) after consumption still throws", async () => {
     const stream = makeStream();
     await Bun.readableStreamToText(stream);
-    expect(() => new Response(stream).arrayBuffer()).toThrow();
+    await expect(() => new Response(stream).arrayBuffer()).toThrow();
   });
 });
 

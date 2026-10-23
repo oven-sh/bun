@@ -157,7 +157,7 @@ describe("issue #26143 - https GET request with body hangs", () => {
 
     try {
       // Without allowGetBody, this should throw
-      expect(async () => {
+      await expect(async () => {
         await fetch(`http://localhost:${port}/test`, {
           method: "GET",
           headers: {

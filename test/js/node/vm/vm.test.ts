@@ -571,9 +571,9 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     const result = fn("Promise.resolve(true);", context);
     expect(await result).toBe(true);
   });
-  test("can reject a promise", () => {
+  test("can reject a promise", async () => {
     const context = createContext({});
-    expect(async () => await fn("Promise.reject(new TypeError('Oops!'));", context)).toThrow({
+    await expect(async () => await fn("Promise.reject(new TypeError('Oops!'));", context)).toThrow({
       name: "TypeError",
       message: "Oops!",
     });
@@ -2969,14 +2969,14 @@ test("SourceTextModule#evaluate() arms the timeout when the number is boxed as a
 });
 
 // A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
-// wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as
-// ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).
+// wait must unwind to the run and surface as ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep
+// ticking over the pending termination (a hang).
 // In a child, like the other unbounded waits above.
 test.concurrent("timeout during a nested event-loop wait beneath the script", async () => {
   const code = `
-    const vm = require("node:vm"); const { expect } = require("bun:test");
+    const vm = require("node:vm"); const { runNestedEventLoopUntilSettled: wait } = require("bun:internal-for-testing");
     const never = new Promise(() => {}); const iv = setInterval(() => {}, 1);
-    try { vm.runInNewContext("expect(never).resolves.toBe(1)", { expect, never }, { timeout: 100 }); console.log("returned"); }
+    try { vm.runInNewContext("wait(never)", { wait, never }, { timeout: 100 }); console.log("returned"); }
     catch (e) { console.log(e.code); } finally { clearInterval(iv); }
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });

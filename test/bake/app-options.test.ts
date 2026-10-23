@@ -379,3 +379,165 @@ test.concurrent("Bun.serve({ app }) reports an unsupported app router file", asy
   expect(stdout).toBe("200 page\n");
   expect(exitCode).toBe(0);
 });
+
+// Bun.serve() never runs the event loop to wait for a plugin. Requests wait instead.
+test.concurrent("Bun.serve({ app }) returns before a pending plugin setup() settles", async () => {
+  using dir = tempDir("bake-app-async-plugin", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+    "routes/index.ts": `
+      import { first } from "virtual:first";
+      import { second } from "virtual:second";
+      import { both } from "virtual:both";
+      export default () => new Response([first, second, both].join(" "));
+    `,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const events = [];
+      const gate = Promise.withResolvers();
+      const virtual = (name, wait) => ({
+        name,
+        async setup(build) {
+          events.push(name + " starts");
+          await wait;
+          build.onResolve({ filter: new RegExp("^virtual:(both|" + name + ")$") }, args => ({
+            path: args.path.slice("virtual:".length),
+            namespace: name,
+          }));
+          build.onLoad({ filter: /./, namespace: name }, args => ({
+            contents: "export const " + args.path + " = " + JSON.stringify(name),
+            loader: "js",
+          }));
+          events.push(name + " ends");
+        },
+      });
+      setImmediate(() => events.push("immediate"));
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: { fileSystemRouterTypes: [fsr], plugins: [virtual("first", gate.promise)] },
+          plugins: [virtual("second")],
+        },
+      });
+      events.push("Bun.serve() returned");
+      // This request arrives while the first plugin is pending.
+      const response = fetch(server.url);
+      while (server.pendingRequests === 0) await new Promise(resolve => setImmediate(resolve));
+      gate.resolve();
+      console.log(JSON.stringify({ body: await (await response).text(), again: await (await fetch(server.url)).text(), events }));
+      await server.stop(true);
+      process.exit(0);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // The plugins register in the order they are listed in, so the first one gets "virtual:both".
+  expect(JSON.parse(stdout.trim().split("\n").at(-1) || "null")).toEqual({
+    body: "first second first",
+    again: "first second first",
+    events: ["first starts", "Bun.serve() returned", "immediate", "first ends", "second starts", "second ends"],
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each([
+  [
+    "the pending one rejects",
+    `{ name: "fails", setup: () => gate.promise.then(() => Promise.reject(new Error("setup failed"))) }`,
+  ],
+  [
+    "the next one throws",
+    `{ name: "waits", setup: () => gate.promise }, { name: "fails", setup() { throw new Error("setup failed"); } }`,
+  ],
+  [
+    "the next one rejects",
+    `{ name: "waits", setup: () => gate.promise }, { name: "fails", async setup() { throw new Error("setup failed"); } }`,
+  ],
+])("Bun.serve({ app }) reports a plugin setup() that fails later: %s", async (_, plugins) => {
+  using dir = tempDir("bake-app-async-plugin-rejects", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+    "routes/index.ts": `export default () => new Response("ok");`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const gate = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: { fileSystemRouterTypes: [fsr] },
+          plugins: [${plugins}, { name: "not reached", setup: () => console.log("the setup() after it ran") }],
+        },
+      });
+      const waiting = fetch(server.url);
+      while (server.pendingRequests === 0) await new Promise(resolve => setImmediate(resolve));
+      gate.resolve();
+      console.log(JSON.stringify({ waiting: (await waiting).status, later: await (await fetch(server.url)).text() }));
+      await server.stop(true);
+      process.exit(0);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Failed to load plugins for Bun.serve:");
+  expect(stderr).toContain("setup failed");
+  expect(
+    stdout
+      .trim()
+      .split("\n")
+      .map(line => JSON.parse(line)),
+  ).toEqual([{ waiting: 500, later: "Plugin Error" }]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a plugin setup() that settles after server.stop() finds no dev server", async () => {
+  using dir = tempDir("bake-app-async-plugin-stopped", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+    "routes/index.ts": `export default () => new Response("ok");`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      for (const settle of ["resolve", "reject"]) {
+        const gate = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0,
+          development: true,
+          app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [{ name: "late", setup: () => gate.promise }] },
+        });
+        await server.stop(true);
+        Bun.gc(true);
+        gate[settle](new Error("too late"));
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log("done");
+      process.exit(0);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("done\n");
+  expect(stderr).toContain("too late");
+  expect(exitCode).toBe(0);
+});

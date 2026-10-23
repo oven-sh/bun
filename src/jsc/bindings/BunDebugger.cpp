@@ -21,8 +21,6 @@
 #include "InspectorBunFrontendDevServerAgent.h"
 #include "InspectorHTTPServerAgent.h"
 
-extern "C" void Bun__tickWhilePaused(bool*);
-
 namespace Bun {
 using namespace JSC;
 using namespace WebCore;
@@ -57,6 +55,7 @@ static bool bunControllerInstalled = false;
 // connection has since disconnected and been removed from inspectorConnections.
 static bool bunControllerHasEverConnected = false;
 extern "C" void Debugger__didConnect();
+extern "C" bool Debugger__isWaitingForConnection();
 
 class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
 public:
@@ -294,6 +293,53 @@ public:
                     wait.condition.waitFor(wait.lock, Seconds(1));
                 }
             }
+        }
+    }
+
+    // inspector.waitForDebugger(): the inspected thread sleeps, with script on its stack, until a
+    // frontend says to go on. Like runWhilePaused it runs no event loop: it connects the frontends
+    // that attach meanwhile and dispatches what they send.
+    static void handleMessagesWhileWaitingForConnection(Zig::GlobalObject* global)
+    {
+        auto& context = *global->scriptExecutionContext();
+        auto snapshot = [&] {
+            Locker<Lock> locker(inspectorConnectionsLock);
+            return inspectorConnections->get(context.identifier());
+        };
+
+        while (Debugger__isWaitingForConnection()) {
+            auto connections = snapshot();
+            for (auto& connection : connections) {
+                ConnectionStatus status = connection->status.load();
+                if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting)
+                    continue;
+                connection->receiveMessagesOnInspectorThread(context, global, true);
+                if (!Debugger__isWaitingForConnection())
+                    return;
+            }
+
+            // connect() and sendMessageToInspectorFromDebuggerThread() publish their work before they
+            // take this lock to notify, so work that is not seen here wakes the wait below. The
+            // timeout is the same safety net as in runWhilePaused.
+            auto& wait = pausedWait();
+            Locker<Lock> waitLocker(wait.lock);
+            bool hasWork = false;
+            for (auto& connection : snapshot()) {
+                ConnectionStatus status = connection->status.load();
+                if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting)
+                    continue;
+                if (status == ConnectionStatus::Pending) {
+                    hasWork = true;
+                    break;
+                }
+                Locker<Lock> locker(connection->jsThreadMessagesLock);
+                if (!connection->jsThreadMessages.isEmpty()) {
+                    hasWork = true;
+                    break;
+                }
+            }
+            if (!hasWork)
+                wait.condition.waitFor(wait.lock, Seconds(1));
         }
     }
 
@@ -588,7 +634,6 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
 
     return static_cast<unsigned int>(globalObject->scriptExecutionContext()->identifier());
 }
-extern "C" void Bun__tickWhilePaused(bool*);
 
 extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, bool pauseOnStart)
 {
@@ -623,6 +668,12 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     if (pauseOnStart) {
         waitingForConnection = true;
     }
+}
+
+extern "C" void BunDebugger__handleMessagesWhileWaitingForConnection(ScriptExecutionContextIdentifier scriptId)
+{
+    auto* context = ScriptExecutionContext::getScriptExecutionContext(scriptId);
+    BunInspectorConnection::handleMessagesWhileWaitingForConnection(static_cast<Zig::GlobalObject*>(context->jsGlobalObject()));
 }
 
 extern "C" void BunDebugger__willHotReload()
@@ -891,9 +942,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_postNodeInspectorControl, (JSGlobalObject * 
 // the debugger thread's acknowledgement here is required, not just tidy.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFrame*))
 {
-    // close() called from a callback that runs inside waitForDebugger()'s
-    // event-loop tick must disarm the Rust-side wait (wait_for_connection /
-    // poll_ref), or the wait loop spins forever against a stopped server.
+    // close() from code that a frontend evaluates inside waitForDebugger() must
+    // disarm the Rust-side wait (wait_for_connection / poll_ref), or the wait
+    // never ends: the server it waits for has stopped.
     Debugger__abandonNodeInspectorWait();
 
     auto& state = nodeInspectorState();

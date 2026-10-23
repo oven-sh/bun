@@ -318,6 +318,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     // @ts-expect-error
     b.class({ rustPath: "T", construct: {}, static: { x: { getter: b.i32, passThis: true } } }),
   ).toThrow("x: a static getter has no passThis");
+  // @ts-expect-error
+  expect(() => b.class({ rustPath: "T", construct: {}, static: { x: { before: "y" } } })).toThrow(
+    "x: a static function has no before",
+  );
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { mutates: true } } })).toThrow(
     "a refCounted class has no mutates",
   );
@@ -1887,6 +1891,8 @@ describe("classes", () => {
       "listen",
       "notify",
       "plus",
+      "incrementBelow100",
+      "notifyBelow100",
       "constructor",
     ]);
     expect(Object.getOwnPropertyNames(TestCounter)).toEqual([
@@ -2086,6 +2092,17 @@ describe("classes", () => {
     expect(made).toBeInstanceOf(TestCounter);
     expect(made.plus(new TestCounter(2))).toBe(42);
     expect(made.plus(made)).toBe(80);
+  });
+
+  it("before: its result replaces the call", () => {
+    const counter = new TestCounter(98);
+    let notified = 0;
+    counter.listen(() => void notified++);
+    expect([counter.incrementBelow100(1), counter.notifyBelow100(), notified]).toEqual([99, 99, 1]);
+    expect([counter.incrementBelow100(1), counter.count]).toEqual([100, 100]);
+    expect([counter.incrementBelow100(1), counter.count]).toEqual([-1, 100]);
+    expect(() => counter.notifyBelow100()).toThrow(new RangeError("the count is at 100"));
+    expect(notified).toBe(1);
   });
 
   it("holds a value in an internal field and lets JavaScript re-enter", () => {

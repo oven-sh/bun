@@ -234,6 +234,17 @@ export const TestCounter = b.class({
     notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** `other` may be `this`. */
     plus: { args: { other: b.self }, returns: b.i32 },
+    /** `before`: at 100 or more it stays as it is, and the result is -1. */
+    incrementBelow100: { args: { by: b.i32 }, returns: b.i32, rustName: "increment", before: "refuse_at_100" },
+    /** The same for a function that takes `this_value` and a capability, and can throw. */
+    notifyBelow100: {
+      returns: b.i32,
+      capability: "js",
+      throws: true,
+      passThis: true,
+      rustName: "notify",
+      before: "throw_at_100",
+    },
   },
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },

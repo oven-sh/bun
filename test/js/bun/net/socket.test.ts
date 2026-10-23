@@ -29,7 +29,7 @@ describe.concurrent("socket", () => {
     const data = jest.fn();
     const connectError = jest.fn(() => {});
     {
-      expect(
+      await expect(
         async () =>
           await Bun.connect({
             fd: getMaxFD() + 1024,
@@ -1030,23 +1030,23 @@ it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });
 
-it("should throw on empty hostname from truthy non-string value", () => {
+it("should throw on empty hostname from truthy non-string value", async () => {
   const socket = { data() {}, open() {}, close() {} };
   // A truthy value whose toString() returns "" should throw, not crash
   for (const hostname of [[], new String("")]) {
     expect(() => Bun.listen({ hostname: hostname as any, port: 0, socket })).toThrow('Expected a non-empty "hostname"');
-    expect(() => Bun.connect({ hostname: hostname as any, port: 0, socket })).toThrow(
+    await expect(() => Bun.connect({ hostname: hostname as any, port: 0, socket })).toThrow(
       'Expected a non-empty "hostname"',
     );
   }
 });
 
-it("should throw on empty unix path from truthy non-string value", () => {
+it("should throw on empty unix path from truthy non-string value", async () => {
   const socket = { data() {}, open() {}, close() {} };
   // unix uses a strict string type in bindgen, so non-string values are rejected before
   // reaching the empty-string check — the error message differs from hostname
   expect(() => Bun.listen({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
-  expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
+  await expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
 describe.each([
@@ -1061,8 +1061,8 @@ describe.each([
     expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: makeTls() as any, socket })).toThrow(message);
   });
 
-  it("Bun.connect throws instead of opening a plaintext connection", () => {
-    expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: makeTls() as any, socket })).toThrow(message);
+  it("Bun.connect throws instead of opening a plaintext connection", async () => {
+    await expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: makeTls() as any, socket })).toThrow(message);
   });
 
   it("upgradeTLS throws", async () => {
@@ -2292,8 +2292,8 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
 
 // A socket over a Windows named pipe frees its native context from a task
 // that is queued when the socket closes. A handler can close the socket and
-// then spin the event loop before it returns (`expect().resolves` blocks on
-// the promise and runs queued tasks), so the context is gone by the time the
+// then spin the event loop before it returns (which runs queued tasks), so
+// the context is gone by the time the
 // libuv read callback that invoked the handler gets control back. The
 // callback must keep the context alive until it is done with it.
 describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
@@ -2301,7 +2301,7 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
   // from the EOF read callback, "data" from the data read callback.
   function fixture(trigger: "end" | "data") {
     return /* js */ `
-      import { expect } from "bun:test";
+      import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
 
       const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
       const serverOpened = Promise.withResolvers();
@@ -2312,7 +2312,7 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
         socket.end();
         // Blocks until the promise settles. Every queued task, including the
         // one that frees the native context of this socket, runs before this returns.
-        expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+        runNestedEventLoopUntilSettled(new Promise(resolve => setImmediate(resolve)));
       }
 
       using server = Bun.listen({
@@ -6662,16 +6662,17 @@ it("a view of shared memory as a tls option is refused", () => {
   }
 });
 
-// expect(promise).resolves ticks the loop while the dispatch that called the handler is still on the stack.
+// The wait ticks the loop while the dispatch that called the handler is still on the stack.
 // The outer dispatch reads the closed socket again, so the inner ticks must not free it.
 describe.concurrent("a handler that closes its socket and then waits for a promise", () => {
   it("doesn't crash the dispatch that called it", async () => {
     const source = `
+      import { runNestedEventLoopUntilSettled } from "bun:internal-for-testing";
       import { expect, test } from "bun:test";
 
       // JS can't observe when the loop finishes the close, so tick the loop from the handler for a short time.
       function waitInsideHandler() {
-        expect(Bun.sleep(20)).resolves.toBeUndefined();
+        runNestedEventLoopUntilSettled(Bun.sleep(20));
       }
 
       test("data() closes the accepted socket", async () => {

@@ -785,5 +785,15 @@ BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onResolveInputStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onRejectInputStream);
 
+BUN_DECLARE_HOST_FUNCTION(Bun__Expect__onSettled);
+BUN_DECLARE_HOST_FUNCTION(Bun__Expect__onCustomMatcherResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__Expect__onCustomMatcherReject);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__JSBundler__onPluginSetupResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__JSBundler__onPluginSetupReject);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__DevServer__onPluginSetupResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__DevServer__onPluginSetupReject);
+
 
 #endif

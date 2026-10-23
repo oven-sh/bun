@@ -285,7 +285,7 @@ describeWithContainer(
         { id: 2, name: "Jane", age: 25 },
       ];
 
-      expect(() => sql`DELETE FROM ${sql(random_name)} ${sql(users, "id")}`.execute()).toThrow(SyntaxError);
+      await expect(() => sql`DELETE FROM ${sql(random_name)} ${sql(users, "id")}`.execute()).toThrow(SyntaxError);
     });
   },
 );

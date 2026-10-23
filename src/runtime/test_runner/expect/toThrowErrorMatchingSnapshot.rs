@@ -56,7 +56,7 @@ impl Expect {
 
         let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());
 
-        let Some(value): Option<JSValue> = this.fn_to_err_string_or_undefined(
+        let thrown = match this.fn_to_err_string_or_undefined(
             global,
             this.get_value(
                 global,
@@ -64,8 +64,12 @@ impl Expect {
                 "toThrowErrorMatchingSnapshot",
                 "<green>properties<r><d>, <r>hint",
             )?,
-        )?
-        else {
+            false,
+        )? {
+            Ok(thrown) => thrown,
+            Err(promise) => return Ok(promise),
+        };
+        let Some(value): Option<JSValue> = thrown else {
             let signature = get_signature("toThrowErrorMatchingSnapshot", "", false);
             return throw!(
                 this,

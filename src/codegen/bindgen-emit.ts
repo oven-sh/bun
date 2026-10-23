@@ -1605,10 +1605,13 @@ ${
 
   for (const method of type.methods) {
     const isStatic = method.receiver === "static";
-    const call = `<${rustPath}>::${method.rustName}(${[
+    const body = `<${rustPath}>::${method.rustName}(${[
       ...leading(method.receiver, method.passThis, method.capability),
       ...rustArguments(method),
     ].join(", ")})`;
+    const call = method.before
+      ? `match <${rustPath}>::${method.before}(${leading(method.receiver, false, method.capability).join(", ")}) { Some(result) => result, None => ${body} }`
+      : body;
     thunks += rustThunk(
       methodSymbolName(type, method),
       [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(method, scope)],

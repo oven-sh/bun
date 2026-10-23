@@ -77,10 +77,10 @@ test.skipIf(isWindows)("which with an absolute path at the platform path length 
 
 test("which rlly long", async () => {
   const longstr = "a".repeat(100000);
-  expect(async () => await $`${longstr}`.throws(true)).toThrow();
+  await expect(async () => await $`${longstr}`.throws(true)).toThrow();
 });
 
 test("which PATH rlly long", async () => {
   const longstr = "a".repeat(100000);
-  expect(async () => await $`PATH=${longstr} slkdfjlsdkfj`.throws(true)).toThrow();
+  await expect(async () => await $`PATH=${longstr} slkdfjlsdkfj`.throws(true)).toThrow();
 });

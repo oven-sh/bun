@@ -678,7 +678,7 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     });
     expect(build.success).toBe(true);
     expect(late).toBeFunction();
-    expect(() => late!()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    await expect(() => late!()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
   });
 
   // A plugin that calls defer() without awaiting it and answers straight away must not corrupt the pass's

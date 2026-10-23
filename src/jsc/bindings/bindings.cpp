@@ -6564,6 +6564,11 @@ CPP_DECL void JSC__JSGlobalObject__getCallerSrcLoc(JSC::JSGlobalObject* globalOb
     Bun__CallFrame__getCallerSrcLoc(JSC::getVM(globalObject).topCallFrame, globalObject, outSourceURL, outLine, outColumn);
 }
 
+CPP_DECL JSC::CallFrame* JSC__JSGlobalObject__topCallFrame(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).topCallFrame;
+}
+
 extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)
 {
     if (!object) [[unlikely]] {

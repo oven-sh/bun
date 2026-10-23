@@ -240,17 +240,17 @@ it("evaluate() with statement sequence throws SyntaxError (use an IIFE)", async 
   expect(await view.evaluate("(() => { let x = 1; return x + 1 })()")).toBe(2);
 });
 
-it("scroll(NaN/Infinity) throws before sending", () => {
+it("scroll(NaN/Infinity) throws before sending", async () => {
   // NaN would permanently poison m_pendingScrollDx/Dy (NaN + anything = NaN)
   // and hit UB at the static_cast<int32_t> in CGEventCreateScrollWheelEvent.
   // The check in JSWebViewPrototype.cpp throws before sendOp — no IPC sent,
   // nothing to await. "Scroll actually works after" is covered by the
   // dedicated scroll tests; here we just verify the guard.
   using view = new Bun.WebView({ width: 200, height: 200 });
-  expect(() => view.scroll(0, NaN)).toThrow(/must be finite/);
-  expect(() => view.scroll(Infinity, 0)).toThrow(/must be finite/);
-  expect(() => view.scroll(-Infinity, 0)).toThrow(/must be finite/);
-  expect(() => view.scroll(0, 0 / 0)).toThrow(/must be finite/);
+  await expect(() => view.scroll(0, NaN)).toThrow(/must be finite/);
+  await expect(() => view.scroll(Infinity, 0)).toThrow(/must be finite/);
+  await expect(() => view.scroll(-Infinity, 0)).toThrow(/must be finite/);
+  await expect(() => view.scroll(0, 0 / 0)).toThrow(/must be finite/);
 });
 
 it("Symbol.dispose / Symbol.asyncDispose call close()", async () => {
@@ -408,16 +408,16 @@ it("screenshot format options", async () => {
 
   // WebP rejected on WebKit — NSBitmapImageRep has no WebP in its enum.
   // Thrown synchronously (arg validation), not promise-rejection.
-  expect(() => view.screenshot({ format: "webp" })).toThrow(/webp.*chrome/i);
+  await expect(() => view.screenshot({ format: "webp" })).toThrow(/webp.*chrome/i);
 
   // quality validation — NaN/Infinity are rejected (isfinite check).
-  expect(() => view.screenshot({ quality: 101 } as any)).toThrow(/quality.*0.*100/);
-  expect(() => view.screenshot({ quality: NaN } as any)).toThrow(/quality.*0.*100/);
-  expect(() => view.screenshot({ quality: Infinity } as any)).toThrow(/quality.*0.*100/);
-  expect(() => view.screenshot({ format: "gif" } as any)).toThrow(/png.*jpeg.*webp/i);
+  await expect(() => view.screenshot({ quality: 101 } as any)).toThrow(/quality.*0.*100/);
+  await expect(() => view.screenshot({ quality: NaN } as any)).toThrow(/quality.*0.*100/);
+  await expect(() => view.screenshot({ quality: Infinity } as any)).toThrow(/quality.*0.*100/);
+  await expect(() => view.screenshot({ format: "gif" } as any)).toThrow(/png.*jpeg.*webp/i);
 
   // cdp() is Chrome-only.
-  expect(() => view.cdp("Page.enable")).toThrow(/chrome/i);
+  await expect(() => view.cdp("Page.enable")).toThrow(/chrome/i);
 });
 
 it("screenshot encoding options", async () => {
@@ -922,7 +922,7 @@ it("second evaluate() while pending rejects with INVALID_STATE", async () => {
   // Fire two concurrently — the second should throw synchronously
   // (not return a promise).
   const p1 = view.evaluate("1+1");
-  expect(() => view.evaluate("2+2")).toThrow(/pending/i);
+  await expect(() => view.evaluate("2+2")).toThrow(/pending/i);
   await p1;
 });
 
@@ -945,7 +945,7 @@ it("close() makes subsequent calls throw", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate("data:text/html,hi");
   view.close();
-  expect(() => view.navigate("data:text/html,bye")).toThrow(/closed/i);
+  await expect(() => view.navigate("data:text/html,bye")).toThrow(/closed/i);
   // Second close is a no-op.
   view.close();
 });

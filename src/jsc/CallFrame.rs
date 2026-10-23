@@ -213,6 +213,7 @@ impl<const MAX: usize> Arguments<MAX> {
     }
 }
 
+#[derive(Clone)]
 pub struct CallerSrcLoc {
     pub str: bun_core::String,
     pub line: c_uint,
@@ -227,6 +228,12 @@ impl JSGlobalObject {
         let mut column: c_uint = 0;
         JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
         CallerSrcLoc { str, line, column }
+    }
+
+    /// The frame of the host function that is running, for one that is not handed it. Gone once
+    /// that function returns.
+    pub fn host_call_frame(&self) -> &CallFrame {
+        JSC__JSGlobalObject__topCallFrame(self).expect("a host function is running")
     }
 }
 
@@ -298,6 +305,7 @@ unsafe extern "C" {
         out_line: &mut c_uint,
         out_column: &mut c_uint,
     );
+    safe fn JSC__JSGlobalObject__topCallFrame(global: &JSGlobalObject) -> Option<&CallFrame>;
     #[cfg(debug_assertions)]
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;
 }

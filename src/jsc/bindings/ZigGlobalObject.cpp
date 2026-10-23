@@ -4612,6 +4612,20 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
     } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
+    } else if (handler == Bun__Expect__onSettled) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__onSettled;
+    } else if (handler == Bun__Expect__onCustomMatcherResolve) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__onCustomMatcherResolve;
+    } else if (handler == Bun__Expect__onCustomMatcherReject) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__onCustomMatcherReject;
+    } else if (handler == Bun__JSBundler__onPluginSetupResolve) {
+        return GlobalObject::PromiseFunctions::Bun__JSBundler__onPluginSetupResolve;
+    } else if (handler == Bun__JSBundler__onPluginSetupReject) {
+        return GlobalObject::PromiseFunctions::Bun__JSBundler__onPluginSetupReject;
+    } else if (handler == Bun__DevServer__onPluginSetupResolve) {
+        return GlobalObject::PromiseFunctions::Bun__DevServer__onPluginSetupResolve;
+    } else if (handler == Bun__DevServer__onPluginSetupReject) {
+        return GlobalObject::PromiseFunctions::Bun__DevServer__onPluginSetupReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

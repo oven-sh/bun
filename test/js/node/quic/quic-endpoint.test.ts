@@ -35,7 +35,7 @@ describe("QuicEndpoint client-engine mode", () => {
     raw.close();
 
     // The engine is raw now; an h3 (default-ALPN) connect cannot reuse it.
-    expect(() => connect(server.address!, { endpoint, verifyPeer: "manual" } as SessionOptions)).toThrow(
+    await expect(() => connect(server.address!, { endpoint, verifyPeer: "manual" } as SessionOptions)).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_STATE" }),
     );
     await endpoint.close();

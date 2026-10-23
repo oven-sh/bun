@@ -2,8 +2,12 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
 
+/** After `.resolves` or `.rejects` a matcher returns a promise, and runs once `received` has settled. */
+const afterReceivedSettles = { before: "resume_when_received_settles" } as const;
 /** `expect(received).toBeTrue()` */
-const matcher = { returns: b.any, passThis: true, ...js } as const;
+const matcher = { returns: b.any, passThis: true, ...js, ...afterReceivedSettles } as const;
+/** It also needs to know, by then, where it was called from. */
+const inlineSnapshotMatcher = { ...matcher, before: "resume_at_call_site_when_received_settles" } as const;
 /** `expect(received).toBe(expected)` */
 const matcherWithExpected = { ...matcher, args: { expected: b.any } } as const;
 /** `expect(mock).toHaveBeenCalledWith(...expected)` */
@@ -77,13 +81,13 @@ export const Expect = b.class({
   call: { args: { value: b.any, message: b.any }, returns: b.self, ...js },
   internalFields: ["capturedValue"],
   proto: {
-    fail: { args: { message: b.any }, returns: b.any, ...js },
+    fail: { args: { message: b.any }, returns: b.any, ...js, ...afterReceivedSettles },
     lastCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_last_called_with" },
     lastReturnedWith: { ...matcherWithExpected, rustName: "to_have_last_returned_with" },
     not: { getter: b.self, passThis: true },
     nthCalledWith: { ...matcherWithNthCallArguments, rustName: "to_have_been_nth_called_with" },
     nthReturnedWith: { ...matcherWithNthExpected, rustName: "to_have_nth_returned_with" },
-    pass: { args: { message: b.any }, returns: b.any, ...js },
+    pass: { args: { message: b.any }, returns: b.any, ...js, ...afterReceivedSettles },
     rejects: { getter: b.self, capability: "heap", throws: true, passThis: true },
     resolves: { getter: b.self, capability: "heap", throws: true, passThis: true },
     toBe: matcherWithExpected,
@@ -158,7 +162,7 @@ export const Expect = b.class({
     toIncludeRepeated: { ...matcher, args: { substring: b.any, count: b.any } },
     toMatch: matcherWithExpected,
     /** The snapshot is written over the call's arguments in the source, where `(undefined)` is not `()`. */
-    toMatchInlineSnapshot: { ...matcher, args: { args: b.any.variadic }, length: 1 },
+    toMatchInlineSnapshot: { ...inlineSnapshotMatcher, args: { args: b.any.variadic }, length: 1 },
     toMatchObject: matcherWithExpected,
     toMatchSnapshot: { ...matcher, args: { propertyMatchers: b.any, hint: b.any }, length: 1 },
     toReturn: { ...matcherWithExpected, rustName: "to_have_returned" },
@@ -168,7 +172,7 @@ export const Expect = b.class({
     toThrow: matcherWithExpected,
     toThrowError: { ...matcherWithExpected, rustName: "to_throw" },
     /** As `toMatchInlineSnapshot`. */
-    toThrowErrorMatchingInlineSnapshot: { ...matcher, args: { args: b.any.variadic }, length: 1 },
+    toThrowErrorMatchingInlineSnapshot: { ...inlineSnapshotMatcher, args: { args: b.any.variadic }, length: 1 },
     toThrowErrorMatchingSnapshot: { ...matcher, args: { hint: b.any } },
   },
   static: {

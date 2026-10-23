@@ -233,6 +233,6 @@ describe("ByteBlobLoader", () => {
     const stream = blob.stream();
     const result = stream.json();
     expect(result.then).toBeFunction();
-    expect(async () => await result).toThrow();
+    await expect(async () => await result).toThrow();
   });
 });

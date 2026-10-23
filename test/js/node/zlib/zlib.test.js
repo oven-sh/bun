@@ -752,7 +752,7 @@ it.each([
   expect(() => zlib[decompSync](truncated)).toThrow();
 
   // Async truncated input test
-  expect(async () => await decomp_p(truncated)).toThrow();
+  await expect(async () => await decomp_p(truncated)).toThrow();
 
   const syncFlushOpt = { finishFlush: zlib.constants.Z_SYNC_FLUSH };
 

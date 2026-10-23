@@ -393,7 +393,7 @@ test("non-TLS origin redirect through HTTPS proxy forwards every hop through the
 });
 
 test("unsupported protocol", async () => {
-  expect(
+  await expect(
     fetch("https://httpbin.org/get", {
       proxy: "ftp://asdf.com",
     }),

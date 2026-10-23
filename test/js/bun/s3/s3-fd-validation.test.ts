@@ -1,16 +1,16 @@
 import { expect, test } from "bun:test";
 
-test("S3Client.write does not crash with out-of-range float as path", () => {
+test("S3Client.write does not crash with out-of-range float as path", async () => {
   // @ts-expect-error
-  expect(() => Bun.S3Client.write(-1.5379890021597998e308, "data")).toThrow();
+  await expect(() => Bun.S3Client.write(-1.5379890021597998e308, "data")).toThrow();
   // @ts-expect-error
-  expect(() => Bun.S3Client.write(1e308, "data")).toThrow();
+  await expect(() => Bun.S3Client.write(1e308, "data")).toThrow();
   // @ts-expect-error
-  expect(() => Bun.S3Client.write(Infinity, "data")).toThrow();
+  await expect(() => Bun.S3Client.write(Infinity, "data")).toThrow();
   // @ts-expect-error
-  expect(() => Bun.S3Client.write(-Infinity, "data")).toThrow();
+  await expect(() => Bun.S3Client.write(-Infinity, "data")).toThrow();
   // @ts-expect-error
-  expect(() => Bun.S3Client.write(NaN, "data")).toThrow();
+  await expect(() => Bun.S3Client.write(NaN, "data")).toThrow();
 });
 
 test("S3 file type option containing CR/LF or other control characters is not reflected into upload request headers", async () => {

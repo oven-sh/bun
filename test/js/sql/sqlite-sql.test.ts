@@ -398,7 +398,7 @@ describe("Connection & Initialization", () => {
       const result = await sql`SELECT * FROM test`;
       expect(result).toHaveLength(1);
 
-      expect(async () => await sql`INSERT INTO test VALUES (2)`.execute()).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await sql`INSERT INTO test VALUES (2)`.execute()).toThrowErrorMatchingInlineSnapshot(
         `"attempt to write a readonly database"`,
       );
 
@@ -760,7 +760,7 @@ describe("Connection & Initialization", () => {
       expect(sql.options.readonly).toBe(true);
       expect(sql.options.filename).toBe(dbPath);
 
-      expect(async () => await sql`SELECT 1`.execute()).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await sql`SELECT 1`.execute()).toThrowErrorMatchingInlineSnapshot(
         `"unable to open database file"`,
       );
 
@@ -1378,9 +1378,9 @@ describe("Template Literal Security", () => {
   test("dynamic table names are not allowed in template literals", async () => {
     const tableName = "users";
 
-    expect(async () => await sql`CREATE TABLE ${tableName} (id INTEGER)`.execute()).toThrowErrorMatchingInlineSnapshot(
-      `"near "?": syntax error"`,
-    );
+    await expect(
+      async () => await sql`CREATE TABLE ${tableName} (id INTEGER)`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"near "?": syntax error"`);
 
     await sql.unsafe(`CREATE TABLE ${tableName} (id INTEGER)`);
     const tables = await sql`SELECT name FROM sqlite_master WHERE type='table' AND name='users'`;
@@ -1403,7 +1403,7 @@ describe("Template Literal Security", () => {
   test("dynamic SQL structure is not allowed in template literals", async () => {
     const columns = "id INTEGER, name TEXT";
 
-    expect(
+    await expect(
       async () => await sql`CREATE TABLE dynamic_structure (${columns})`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"near "?": syntax error"`);
 
@@ -1438,14 +1438,14 @@ describe("Template Literal Security", () => {
     expect(result[0].name).toBe("Alice");
 
     const table = "identifier_test";
-    expect(async () => await sql`SELECT * FROM ${table}`.execute()).toThrowErrorMatchingInlineSnapshot(
+    await expect(async () => await sql`SELECT * FROM ${table}`.execute()).toThrowErrorMatchingInlineSnapshot(
       `"near "?": syntax error"`,
     );
   });
 
   test("sql([...]) helper not allowed when 'where in' appears only in string literal", async () => {
     const sql = new SQL("sqlite://:memory:");
-    expect(
+    await expect(
       async () => await sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and IN commands"`);
     await sql.close();
@@ -1600,7 +1600,7 @@ describe("Transactions", () => {
   // SQLite doesn't support read-only transactions via BEGIN syntax
   // It only supports DEFERRED (default), IMMEDIATE, and EXCLUSIVE
   test("read-only transactions throw appropriate error", async () => {
-    expect(
+    await expect(
       async () =>
         await sql.begin("readonly", async tx => {
           return await tx`SELECT * FROM accounts`;
@@ -2142,47 +2142,47 @@ describe("Helper argument validation", () => {
 
   test("functions are invalid values in helper", async () => {
     const fn = () => 123;
-    expect(
+    await expect(
       async () => await sql`INSERT INTO helper_invalid ${sql({ id: 1, text_val: fn })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("plain objects (JSON) are invalid values in helper", async () => {
     const obj = { a: 1, b: "two" };
-    expect(
+    await expect(
       async () => await sql`INSERT INTO helper_invalid ${sql({ id: 2, text_val: obj as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("Map and Set are invalid values in helper", async () => {
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO helper_invalid ${sql({ id: 3, text_val: new Map([["k", "v"]]) as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO helper_invalid ${sql({ id: 4, text_val: new Set([1, 2, 3]) as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("Response, Request, Blob, File are invalid values in helper", async () => {
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO helper_invalid ${sql({ id: 5, text_val: new Response("ok") as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO helper_invalid ${sql({ id: 6, text_val: new Request("https://example.com") as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO helper_invalid ${sql({ id: 7, blob_val: new Blob(["hello"]) as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO helper_invalid ${sql({ id: 8, blob_val: new File(["body"], "a.txt") as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
@@ -2197,16 +2197,16 @@ describe("Helper argument validation", () => {
   });
 
   test("Promise, Date, RegExp are invalid in helper", async () => {
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO helper_invalid ${sql({ id: 10, text_val: Promise.resolve("x") as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
-    expect(
+    await expect(
       async () => await sql`INSERT INTO helper_invalid ${sql({ id: 11, text_val: new Date() as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
-    expect(
+    await expect(
       async () => await sql`INSERT INTO helper_invalid ${sql({ id: 12, text_val: /abc/ as any })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
@@ -2223,7 +2223,7 @@ describe("Helper argument validation", () => {
     await sqlSafe`CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)`;
 
     const big = BigInt("9223372036854775808"); // 2^63, just out of int64 range
-    expect(
+    await expect(
       async () => await sqlSafe`INSERT INTO t ${sql({ id: 1, n: big })}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"BigInt value '9223372036854775808' is out of range"`);
     await sqlSafe.close();
@@ -2293,7 +2293,7 @@ describe("Helper argument validation", () => {
     expect(result6[2].optional).toBe(null);
 
     // Insert with all undefined except one column should throw
-    expect(
+    await expect(
       async () =>
         await sql`INSERT INTO insert_undefined_test ${sql({ id: undefined, name: undefined, optional: undefined })}`.execute(),
     ).toThrow("Insert needs to have at least one column with a defined value");
@@ -2314,15 +2314,15 @@ describe("Helper argument validation", () => {
     expect(result).toEqual([{ id: "test-id", foo: "default-foo" }]);
   });
 
-  test("invalid keys for helper throw immediately", () => {
+  test("invalid keys for helper throw immediately", async () => {
     const obj = { id: 1, text_val: "x" };
-    expect(() => sql`INSERT INTO helper_invalid ${sql(obj, Symbol("k") as any)}`).toThrowErrorMatchingInlineSnapshot(
-      `"Keys must be strings or numbers: Symbol(k)"`,
-    );
-    expect(() => sql`UPDATE helper_invalid SET ${sql(obj, 1n as any)} WHERE id = 1`).toThrowErrorMatchingInlineSnapshot(
-      `"Keys must be strings or numbers: 1"`,
-    );
-    expect(
+    await expect(
+      () => sql`INSERT INTO helper_invalid ${sql(obj, Symbol("k") as any)}`,
+    ).toThrowErrorMatchingInlineSnapshot(`"Keys must be strings or numbers: Symbol(k)"`);
+    await expect(
+      () => sql`UPDATE helper_invalid SET ${sql(obj, 1n as any)} WHERE id = 1`,
+    ).toThrowErrorMatchingInlineSnapshot(`"Keys must be strings or numbers: 1"`);
+    await expect(
       () => sql`INSERT INTO helper_invalid ${sql(obj, function bad() {} as any)}`,
     ).toThrowErrorMatchingInlineSnapshot(`"Keys must be strings or numbers: function bad() {}"`);
   });
@@ -2347,22 +2347,22 @@ describe("Helper argument validation", () => {
 
   test("WHERE IN helper rejects multiple columns", async () => {
     const items = [{ a: 1, b: 2 }];
-    expect(
+    await expect(
       async () => await sql`SELECT 1 WHERE 1 IN ${sql(items, "a", "b")}`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Cannot use WHERE IN helper with multiple columns"`);
   });
 
   test("UPDATE helper rejects array of objects", async () => {
     const items = [{ text_val: "a" }, { text_val: "b" }];
-    expect(
+    await expect(
       async () => await sql`UPDATE helper_invalid SET ${sql(items)} WHERE id = 1`.execute(),
     ).toThrowErrorMatchingInlineSnapshot(`"Cannot use array of objects for UPDATE"`);
   });
 
   test("invalid values in WHERE IN helper are rejected", async () => {
-    expect(async () => await sql`SELECT 1 WHERE 1 IN ${sql([() => {}])}`.execute()).toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+    await expect(
+      async () => await sql`SELECT 1 WHERE 1 IN ${sql([() => {}])}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 });
 
@@ -2519,7 +2519,7 @@ describe("Connection management", () => {
   test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    expect(async () => await sql.reserve()).toThrowErrorMatchingInlineSnapshot(
+    await expect(async () => await sql.reserve()).toThrowErrorMatchingInlineSnapshot(
       `"This adapter doesn't support connection reservation"`,
     );
 
@@ -2529,15 +2529,15 @@ describe("Connection management", () => {
   test("distributed transactions throw for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    expect(() => sql.beginDistributed("test-tx", async () => {})).toThrowErrorMatchingInlineSnapshot(
+    await expect(() => sql.beginDistributed("test-tx", async () => {})).toThrowErrorMatchingInlineSnapshot(
       `"This adapter doesn't support distributed transactions."`,
     );
 
-    expect(() => sql.commitDistributed("test-tx")).toThrowErrorMatchingInlineSnapshot(
+    await expect(() => sql.commitDistributed("test-tx")).toThrowErrorMatchingInlineSnapshot(
       `"SQLite doesn't support distributed transactions."`,
     );
 
-    expect(() => sql.rollbackDistributed("test-tx")).toThrowErrorMatchingInlineSnapshot(
+    await expect(() => sql.rollbackDistributed("test-tx")).toThrowErrorMatchingInlineSnapshot(
       `"SQLite doesn't support distributed transactions."`,
     );
 

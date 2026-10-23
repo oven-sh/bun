@@ -123,14 +123,14 @@ describe("fs.Dir", () => {
           await dir.close();
         });
 
-        it('attempts to close again will throw "Directory handle was closed"', () => {
+        it('attempts to close again will throw "Directory handle was closed"', async () => {
           expect(() => dir.closeSync()).toThrow("Directory handle was closed");
-          expect(() => dir.close()).toThrow("Directory handle was closed");
+          await expect(() => dir.close()).toThrow("Directory handle was closed");
         });
 
-        it("attempts to read will throw", () => {
+        it("attempts to read will throw", async () => {
           expect(() => dir.readSync()).toThrow("Directory handle was closed");
-          expect(() => dir.read()).toThrow("Directory handle was closed");
+          await expect(() => dir.read()).toThrow("Directory handle was closed");
         });
       }); // </when closed>
     }); // </when an empty directory is opened>

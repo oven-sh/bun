@@ -23,10 +23,10 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
 
       // Wrong number of arguments
 
-      expect(async () => await client.send("SET", ["key"])).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.send("SET", ["key"])).toThrowErrorMatchingInlineSnapshot(
         `"ERR wrong number of arguments for 'set' command"`,
       ); // Missing value argument
-      expect(async () => await client.send("INVALID_COMMAND", ["a"])).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.send("INVALID_COMMAND", ["a"])).toThrowErrorMatchingInlineSnapshot(
         `"ERR unknown command 'INVALID_COMMAND', with args beginning with: 'a' "`,
       ); // Invalid command
     });
@@ -76,24 +76,24 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
 
       // undefined key
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.get(undefined)).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.get(undefined)).toThrowErrorMatchingInlineSnapshot(
         `"Expected key to be a string or buffer for 'get'."`,
       );
 
       // null key
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.get(null)).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.get(null)).toThrowErrorMatchingInlineSnapshot(
         `"Expected key to be a string or buffer for 'get'."`,
       );
 
       // undefined value
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.set("valid-key", undefined)).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.set("valid-key", undefined)).toThrowErrorMatchingInlineSnapshot(
         `"Expected value to be a string or buffer or number for 'set'."`,
       );
 
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(
         `"Expected value to be a string or buffer or number for 'set'."`,
       );
     });
@@ -103,19 +103,21 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
 
       // Undefined command
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.send(undefined, [])).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.send(undefined, [])).toThrowErrorMatchingInlineSnapshot(
         `"ERR unknown command 'undefined'"`,
       );
 
       // Invalid args type
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.send("GET", "not-an-array")).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.send("GET", "not-an-array")).toThrowErrorMatchingInlineSnapshot(
         `"Arguments must be an array"`,
       );
 
       // Non-string command
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.send(123, [])).toThrowErrorMatchingInlineSnapshot(`"ERR unknown command '123'"`);
+      await expect(async () => await client.send(123, [])).toThrowErrorMatchingInlineSnapshot(
+        `"ERR unknown command '123'"`,
+      );
     });
   });
 
@@ -170,7 +172,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       }
 
       // Error type handling
-      expect(async () => await client.send("HGET", [])).toThrowErrorMatchingInlineSnapshot(
+      await expect(async () => await client.send("HGET", [])).toThrowErrorMatchingInlineSnapshot(
         `"ERR wrong number of arguments for 'hget' command"`,
       ); // Missing key and field
 
@@ -261,7 +263,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       client.close();
 
       // This command should fail
-      expect(async () => await client.get(key)).toThrowErrorMatchingInlineSnapshot(`"Connection has failed"`);
+      await expect(async () => await client.get(key)).toThrowErrorMatchingInlineSnapshot(`"Connection has failed"`);
     });
 
     test("should handle binary data", async () => {

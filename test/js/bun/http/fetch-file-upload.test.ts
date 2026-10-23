@@ -225,6 +225,7 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
 test("missing file throws the expected error", async () => {
   Bun.gc(true);
   // Run this 1000 times to check for GC bugs
+  const assertions: Promise<void>[] = [];
   withoutAggressiveGC(() => {
     const body = Bun.file(import.meta.dir + "/fetch123123231123.js.txt");
     for (let i = 0; i < 1000; i++) {
@@ -234,9 +235,10 @@ test("missing file throws the expected error", async () => {
         proxy: "http://localhost:3000",
       });
       expect(Bun.peek.status(resp)).toBe("rejected");
-      expect(resp).rejects.toThrow("no such file or directory");
+      assertions.push(expect(resp).rejects.toThrow("no such file or directory"));
     }
   });
+  await Promise.all(assertions);
   // The rejection tracker keeps each promise alive until the end of the tick
   // (a microtask is not enough), so yield one before forcing the collection.
   await Bun.sleep(0);

@@ -5,14 +5,14 @@ describe("UTF-8 BOM should be ignored", () => {
     const blob = new Response(new Blob([Buffer.from([0xef, 0xbb, 0xbf])]));
 
     expect(await blob.text()).toHaveLength(0);
-    expect(async () => await blob.json()).toThrow();
+    await expect(async () => await blob.json()).toThrow();
   });
 
   test("handles UTF8 BOM + emoji", async () => {
     const blob = new Response(new Blob([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("🌎")]));
 
     expect(await blob.text()).toHaveLength(2);
-    expect(async () => await blob.json()).toThrow();
+    await expect(async () => await blob.json()).toThrow();
   });
 
   describe("Blob", () => {

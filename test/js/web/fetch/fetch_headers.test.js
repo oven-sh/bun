@@ -25,13 +25,13 @@ describe("Headers", async () => {
   });
 
   it("Header names must be valid", async () => {
-    expect(() => fetch(url, { headers: { "a\tb:c": "foo" } })).toThrow("Invalid header name: 'a\tb:c'");
-    expect(() => fetch(url, { headers: { "❤️": "foo" } })).toThrow("Invalid header name: '❤️'");
+    await expect(() => fetch(url, { headers: { "a\tb:c": "foo" } })).toThrow("Invalid header name: 'a\tb:c'");
+    await expect(() => fetch(url, { headers: { "❤️": "foo" } })).toThrow("Invalid header name: '❤️'");
   });
 
   it("Header values must be valid", async () => {
-    expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Header 'x-test' has invalid value");
-    expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value");
+    await expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Header 'x-test' has invalid value");
+    await expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value");
   });
 
   it("Header values in the latin-1 range are valid regardless of internal string representation", async () => {

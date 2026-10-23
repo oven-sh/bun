@@ -2,8 +2,6 @@
 import { expect } from "bun:test";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
-// Plain `await`, not `expect().rejects`: that matcher ticks the event loop from
-// inside the call and reorders exit handling.
 async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
   try {
     await promise;

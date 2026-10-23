@@ -29,9 +29,9 @@ describe("S3Client static method argument validation", () => {
     expect(() => fn(0, ...extra)).toThrow(expected);
   });
 
-  test("S3Client.write requires data", () => {
+  test("S3Client.write requires data", async () => {
     // @ts-expect-error
-    expect(() => Bun.S3Client.write("some-key")).toThrow(
+    await expect(() => Bun.S3Client.write("some-key")).toThrow(
       expect.objectContaining({ code: "ERR_MISSING_ARGS", message: "Expected a Blob-y thing to upload" }),
     );
   });

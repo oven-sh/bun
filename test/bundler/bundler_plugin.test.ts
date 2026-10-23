@@ -2092,4 +2092,186 @@ describe("bundler", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // Bun.build() returns its promise at once. It never runs the event loop to wait for a plugin.
+  describe("a setup() that returns a pending promise", () => {
+    const files = { "/entry.js": `import value from "virtual:value"; console.log(value);` };
+    const virtual = (build: Bun.PluginBuilder, value: string) => {
+      build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path, namespace: "virtual" }));
+      build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+        contents: `export default ${value}`,
+        loader: "js",
+      }));
+    };
+
+    test("doesn't settle inside the call, and the build waits for it", async () => {
+      const events: string[] = [];
+      const building = Bun.build({
+        entrypoints: ["/entry.js"],
+        files,
+        plugins: [
+          {
+            name: "slow",
+            async setup(build) {
+              events.push("setup starts");
+              await new Promise(resolve => setImmediate(resolve));
+              virtual(build, `"from the plugin"`);
+              events.push("setup ends");
+            },
+          },
+        ],
+      });
+      events.push("Bun.build() returned");
+      expect(building).toBeInstanceOf(Promise);
+      const result = await building;
+      expect(events).toEqual(["setup starts", "Bun.build() returned", "setup ends"]);
+      expect(await result.outputs[0].text()).toContain("from the plugin");
+    });
+
+    test("the next setup() runs after it, and the options are read after the last one", async () => {
+      const events: string[] = [];
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      const result = await Bun.build({
+        entrypoints: ["/entry.js"],
+        files,
+        plugins: [
+          {
+            name: "first",
+            async setup(build) {
+              events.push("first starts");
+              await tick();
+              virtual(build, `"first"`);
+              events.push("first ends");
+            },
+          },
+          {
+            name: "second",
+            setup(build) {
+              events.push("second");
+              virtual(build, `"second"`);
+            },
+          },
+          {
+            name: "third",
+            async setup(build) {
+              events.push("third starts");
+              await tick();
+              build.config.banner = "// from the third plugin";
+              events.push("third ends");
+            },
+          },
+        ],
+      });
+      expect(events).toEqual(["first starts", "first ends", "second", "third starts", "third ends"]);
+      const text = await result.outputs[0].text();
+      expect(text).toStartWith("// from the third plugin");
+      expect(text).toContain(`"first"`);
+    });
+
+    test("onStart() promises settle before the first onLoad()", async () => {
+      const events: string[] = [];
+      await Bun.build({
+        entrypoints: ["/entry.js"],
+        files,
+        plugins: [
+          {
+            name: "starts",
+            setup(build) {
+              build.onStart(async () => {
+                await new Promise(resolve => setImmediate(resolve));
+                events.push("onStart");
+              });
+              build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path, namespace: "virtual" }));
+              build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+                events.push("onLoad");
+                return { contents: "export default 1", loader: "js" };
+              });
+            },
+          },
+        ],
+      });
+      expect(events).toEqual(["onStart", "onLoad"]);
+    });
+
+    test("its rejection rejects the build, and no later setup() runs", async () => {
+      let ranSecond = false;
+      const building = Bun.build({
+        entrypoints: ["/entry.js"],
+        files,
+        plugins: [
+          {
+            name: "fails",
+            async setup() {
+              await new Promise(resolve => setImmediate(resolve));
+              throw new Error("setup failed");
+            },
+          },
+          { name: "second", setup: () => void (ranSecond = true) },
+        ],
+      });
+      await expect(building).rejects.toThrow("setup failed");
+      expect(ranSecond).toBe(false);
+    });
+
+    test("an error behind it rejects the build", async () => {
+      const slow = { name: "slow", setup: () => new Promise<void>(resolve => setImmediate(resolve)) };
+      await expect(
+        Bun.build({ entrypoints: ["/entry.js"], files, plugins: [slow, { name: "", setup() {} }] }),
+      ).rejects.toThrow("Expected plugin to have a non-empty name");
+      await expect(
+        Bun.build({ entrypoints: ["/entry.js"], files, plugins: [slow], format: "nope" as any }),
+      ).rejects.toThrow();
+    });
+
+    test("an error before it is still thrown by the call", () => {
+      const slow = { name: "slow", setup: () => new Promise<void>(() => {}) };
+      expect(() => Bun.build({ entrypoints: ["/entry.js"], files, plugins: [{ name: "", setup() {} }, slow] })).toThrow(
+        "Expected plugin to have a non-empty name",
+      );
+      expect(() => Bun.build({ entrypoints: ["/entry.js"], files, target: "nope" as any, plugins: [slow] })).toThrow(
+        "Expected target to be one of",
+      );
+    });
+
+    test("config.target is read before the plugins run", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/entry.js"],
+        files: { "/entry.js": `console.log(typeof Bun, require("node:fs"));` },
+        target: "bun",
+        plugins: [
+          {
+            name: "retargets",
+            async setup(build) {
+              await new Promise(resolve => setImmediate(resolve));
+              build.config.target = "browser";
+            },
+          },
+        ],
+      });
+      expect(await result.outputs[0].text()).toStartWith("// @bun");
+    });
+
+    test("a build that waits for a promise nobody can settle is collected with it", async () => {
+      let collected = 0;
+      const registry = new FinalizationRegistry(() => void collected++);
+      const count = 20;
+      (function start() {
+        for (let i = 0; i < count; i++) {
+          const config = {
+            entrypoints: ["/entry.js"],
+            files,
+            plugins: [{ name: "never", setup: () => new Promise<void>(() => {}) }],
+          };
+          registry.register(config, undefined);
+          void Bun.build(config);
+        }
+      })();
+      // None of them is collected when the build holds on to its state.
+      for (let i = 0; i < 100 && collected <= count / 2; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(collected).toBeGreaterThan(count / 2);
+    });
+  });
 });

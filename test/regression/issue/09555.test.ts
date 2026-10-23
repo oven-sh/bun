@@ -157,7 +157,7 @@ describe("#09555", () => {
     expect(() => response.body?.getReader()).toThrow();
     const methods = ["arrayBuffer", "blob", "formData", "json", "text"];
     for (const method of methods) {
-      expect(() => response[method]()).toThrow();
+      await expect(() => response[method]()).toThrow();
     }
   });
 });

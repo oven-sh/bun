@@ -3165,7 +3165,7 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     expect(state.heard).toEqual([]);
     expect(await servesTag(held)).toBe(false);
     // The host's handle to the closed server is inert, not dangerous.
-    expect(() => server.stop(true)).not.toThrow();
+    await expect(() => server.stop(true)).not.toThrow();
     expect(() => server.reload({ fetch: () => new Response("held") })).not.toThrow();
     expect(await servesTag(held)).toBe(false);
   });

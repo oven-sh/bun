@@ -141,8 +141,6 @@ function gate() {
   });
 }
 
-// `expect(promise).rejects` on a pending promise re-enters the event loop (#33261). A continuation after
-// `await sql.listen()` runs inside a socket callback, where that drops the outer dispatch's remaining events.
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;
@@ -486,7 +484,7 @@ describe.concurrent("listen", () => {
     const tooLong = (channel: string) => invalidChannel(channel, "must be at most 63 bytes");
     expect(await rejection(sql.listen(ascii63 + "c", () => {}))).toMatchObject(tooLong(ascii63 + "c"));
     expect(await rejection(sql.listen(cjk66, () => {}))).toMatchObject(tooLong(cjk66));
-    expect(() => sql.notify(cjk66)).toThrow(expect.objectContaining(tooLong(cjk66)));
+    await expect(() => sql.notify(cjk66)).toThrow(expect.objectContaining(tooLong(cjk66)));
 
     await sql.listen(ascii63, () => {});
     await sql.listen(cjk63, () => {});
@@ -943,10 +941,6 @@ describe.concurrent("reconnect", () => {
     const got = Promise.withResolvers<string>();
     await sql.listen("ch", got.resolve, repaired.after(2));
 
-    // Plain awaits rather than expect().rejects: that one runs the event loop
-    // re-entrantly (#33261), and this code is still inside the dropped
-    // connection's data callback; on Windows the inner run frees the socket
-    // under it (#39643).
     const outcome = (promise: Promise<unknown>) =>
       promise.then(
         () => "resolved",
@@ -1076,9 +1070,9 @@ describe.concurrent("arguments", () => {
     );
     expect(await rejection(sql.listen("ch", 1 as any))).toMatchObject(invalidCallback("onnotify"));
     expect(await rejection(sql.listen("ch", callback, 1 as any))).toMatchObject(invalidCallback("onlisten"));
-    expect(() => sql.notify("", "p")).toThrow(expect.objectContaining(emptyChannel));
-    expect(() => sql.notify("ch", null as any)).toThrow(expect.objectContaining(invalidPayload("null")));
-    expect(() => sql.notify("ch", 1 as any)).toThrow(expect.objectContaining(invalidPayload("type number (1)")));
+    await expect(() => sql.notify("", "p")).toThrow(expect.objectContaining(emptyChannel));
+    await expect(() => sql.notify("ch", null as any)).toThrow(expect.objectContaining(invalidPayload("null")));
+    await expect(() => sql.notify("ch", 1 as any)).toThrow(expect.objectContaining(invalidPayload("type number (1)")));
   });
 
   test("non-Postgres adapters reject with a clear error", async () => {

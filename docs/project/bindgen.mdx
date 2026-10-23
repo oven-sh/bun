@@ -592,6 +592,9 @@ function, two members of `proto` and `static` that share a name, and a property 
 a native function of the struct (`close` is `do_close` beside a native `close`). Two keys can
 also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
 `_` of the property is dropped: `_idleStart` is `get_idle_start`.
+`before: "name"` on a native function names a member that is called first, with the receiver and the
+`capability` parameter. It returns an `Option` of what the function returns. `Some` is the result of the
+call, and the function does not run.
 `setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An
 accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` on a getter overrides the
 class's.

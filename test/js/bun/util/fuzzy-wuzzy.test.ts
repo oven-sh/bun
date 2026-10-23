@@ -449,14 +449,14 @@ const modules = [
 
 for (const mod of modules) {
   describe(mod, () => {
-    test("call", () => {
-      expect(async () => await callAllMethods(require(mod), `require("${mod}")`)).not.toThrow();
+    test("call", async () => {
+      await expect(async () => await callAllMethods(require(mod), `require("${mod}")`)).not.toThrow();
     });
-    test("construct", () => {
-      expect(async () => await constructAllConstructors(require(mod), `require("${mod}")`)).not.toThrow();
+    test("construct", async () => {
+      await expect(async () => await constructAllConstructors(require(mod), `require("${mod}")`)).not.toThrow();
     });
-    test("construct-subclass", () => {
-      expect(
+    test("construct-subclass", async () => {
+      await expect(
         async () => await constructAllConstructorsWithSubclassing(require(mod), `require("${mod}")`),
       ).not.toThrow();
     });
@@ -510,18 +510,20 @@ for (const [Global, name] of globals) {
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("call", async () => {
       await Bun.sleep(1);
-      expect(async () => await callAllMethods(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
+      await expect(async () => await callAllMethods(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
       await Bun.sleep(1);
     });
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("construct", async () => {
       await Bun.sleep(1);
-      expect(async () => await constructAllConstructors(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
+      await expect(
+        async () => await constructAllConstructors(Global, Global === Bun ? "Bun" : "globalThis"),
+      ).not.toThrow();
       await Bun.sleep(1);
     });
     test.skipIf(isWindows && Global === Bun)("construct-subclass", async () => {
       await Bun.sleep(1);
-      expect(
+      await expect(
         async () => await constructAllConstructorsWithSubclassing(Global, Global === Bun ? "Bun" : "globalThis"),
       ).not.toThrow();
       await Bun.sleep(1);

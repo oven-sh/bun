@@ -9,21 +9,21 @@ test("blob.write() throws for data-backed blob", () => {
   );
 });
 
-test("Bun.write() throws for a data-backed blob destination", () => {
+test("Bun.write() throws for a data-backed blob destination", async () => {
   const blob = new Blob(["Hello, world!"]) as any;
-  expect(() => Bun.write(blob, "x")).toThrowErrorMatchingInlineSnapshot(
+  await expect(() => Bun.write(blob, "x")).toThrowErrorMatchingInlineSnapshot(
     `"Cannot write to a Blob backed by bytes, which are always read-only"`,
   );
   // The destination is checked before the data argument is.
   // @ts-expect-error the data argument is left out on purpose
-  expect(() => Bun.write(blob)).toThrowErrorMatchingInlineSnapshot(
+  await expect(() => Bun.write(blob)).toThrowErrorMatchingInlineSnapshot(
     `"Cannot write to a Blob backed by bytes, which are always read-only"`,
   );
 });
 
 test("Bun.file(path).write() does not throw", async () => {
   const file = Bun.file(path.join(tempDirWithFiles("bun-write", { a: "Hello, world!" }), "a"));
-  expect(() => file.write(new Blob(["Hello, world!!"]) as any)).not.toThrow();
+  await expect(() => file.write(new Blob(["Hello, world!!"]) as any)).not.toThrow();
   expect(await file.text()).toBe("Hello, world!!");
 });
 

@@ -29,10 +29,17 @@ impl TestingAPIs {
         let old_folder = old_folder_bunstr.to_utf8();
         let new_folder = new_folder_bunstr.to_utf8();
 
-        // `git_diff_internal` routes through `bun_spawn::sync`, which on
-        // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
-        // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-        let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
+        // `git_diff_internal` routes through `bun_spawn::sync`, which on Windows runs
+        // `WindowsOptions.loop_` until the child has exited. Script is on the stack, so that
+        // cannot be the thread's event loop: use the isolated one of `Bun.spawnSync`.
+        let vm: *mut bun_jsc::virtual_machine::VirtualMachine = global.bun_vm().as_mut();
+        // SAFETY: `vm` is the live per-thread VM; `spawn_sync_event_loop` only stores the address
+        // of its argument.
+        let Some(sync_loop) = (unsafe { (*vm).rare_data().spawn_sync_event_loop(&mut *vm) }) else {
+            return Err(global.throw(format_args!("failed to create an event loop")));
+        };
+        let sync_loop = sync_loop.prepare(vm.cast());
+        let mut loop_ = bun_jsc::AnyEventLoop::js(sync_loop.event_loop_ptr().cast());
         let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
             Ok(d) => d,
             Err(e) => return Err(global.throw_error(e, "failed to make diff")),

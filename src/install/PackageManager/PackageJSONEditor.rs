@@ -628,6 +628,7 @@ pub(crate) fn steers_catalogs_to_latest(manager: &PackageManager) -> bool {
 
 /// A catalog entry that's only used through an override keeps its range, because no dependency
 /// reports a version back to it.
+/// So does an entry whose range links a workspace package: its dependencies bind to that package.
 #[cold]
 #[inline(never)]
 pub(crate) fn steer_used_catalogs_to_latest(
@@ -636,6 +637,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
 ) -> Result<(), bun_alloc::AllocError> {
     // see note in `edit_update_no_args` — always avoid the store
     let _guard = ExprDisabler::scope();
+    let link_workspace_packages = manager.options.link_workspace_packages;
     let log = manager.log_mut();
     let package_json_cache = &mut manager.workspace_package_json_cache;
     let lockfile = parsed.unwrap_or(&mut *manager.lockfile);
@@ -678,11 +680,25 @@ pub(crate) fn steer_used_catalogs_to_latest(
                 }) else {
                     return Ok(());
                 };
-                lockfile.catalogs.steer_to_latest(
-                    &mut string_buf,
-                    strings::trim(catalog_name, &strings::WHITESPACE_CHARS),
-                    name,
-                )
+                let catalog_name = strings::trim(catalog_name, &strings::WHITESPACE_CHARS);
+                let buf = string_buf.bytes.as_slice();
+                let links_workspace = (lockfile.catalogs.find(buf, catalog_name, name))
+                    .and_then(|entry| entry.version.try_npm())
+                    .is_some_and(|npm| {
+                        bun_install::lockfile::linked_workspace_path(
+                            link_workspace_packages,
+                            &lockfile.workspace_paths,
+                            &lockfile.workspace_versions,
+                            semver::string::Builder::string_hash(npm.name.slice(buf)),
+                            &npm.version,
+                            buf,
+                        )
+                        .is_some()
+                    });
+                if links_workspace {
+                    return Ok(());
+                }
+                (lockfile.catalogs).steer_to_latest(&mut string_buf, catalog_name, name)
             })?;
         }
     }

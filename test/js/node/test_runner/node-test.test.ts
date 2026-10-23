@@ -1,7 +1,21 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
+
+// A fixture that states what Node does is run on Node too. The reference is
+// the Node version that bun reports: not any other `node` on PATH, and not
+// the `node` shim that `bun run` puts there, which is bun.
+const referenceNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout, exitCode } = spawnSync({
+    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
+    env: bunEnv,
+    stderr: "ignore",
+  });
+  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
+})();
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -325,6 +339,12 @@ describe("node:test", () => {
   });
 });
 
+// A fixture runs as a file that runs alone. When `bun test --parallel` runs this file, the fixture must not get the id of that worker.
+const fixtureEnv = { ...bunEnv };
+delete fixtureEnv.BUN_TEST_WORKER_ID;
+delete fixtureEnv.JEST_WORKER_ID;
+delete fixtureEnv.NODE_TEST_WORKER_ID;
+
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
   const {
@@ -333,7 +353,7 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     stderr: stderrStream,
   } = spawn({
     cmd: [bunExe(), "test", ...args, ...testPaths],
-    env: { ...bunEnv, ...env },
+    env: { ...fixtureEnv, ...env },
     stderr: "pipe",
   });
   const [exitCode, stdout, stderr] = await Promise.all([
@@ -343,6 +363,106 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+async function runTestsOnNode(filenames: string[]) {
+  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
+  await using proc = spawn({
+    cmd: [referenceNode!, "--test", ...testPaths],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  return { exitCode, stdout, stderr };
+}
+
+// Each of these tests starts one or two debug+ASAN bun processes, and the tests run at the same time: they get the
+// same headroom as the tests of the largest fixtures above.
+describe.concurrent("t.workerId", () => {
+  test("is 1 for a file that runs alone", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["34-worker-id.js"]);
+    expect(stderr).toContain(" 3 pass");
+    // `bun test` does not set Node's variable: libraries take it as the sign of Node's runner.
+    expect(stdout).toContain("ENV undefined\n");
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 0, stderr: expect.stringContaining(" 0 fail") });
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("is 1 for a file that runs alone on node", async () => {
+    const { exitCode, stdout } = await runTestsOnNode(["34-worker-id.js"]);
+    // 3 tests and 1 subtest.
+    expect(stdout).toContain("pass 4");
+    expect({ exitCode, stdout }).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("fail 0") });
+  });
+
+  test("is the index of the worker with --parallel", async () => {
+    // Each file ends only when it saw the other file start, so the two files run on two workers at the same time.
+    const file = (own: string, other: string) => `
+      const test = require("node:test");
+      const fs = require("node:fs");
+      test("waits for the other file", async t => {
+        fs.writeFileSync(${JSON.stringify(own)}, "");
+        while (!fs.existsSync(${JSON.stringify(other)})) await new Promise(resolve => setImmediate(resolve));
+        console.log("IDS=" + [t.workerId, process.env.BUN_TEST_WORKER_ID, process.env.JEST_WORKER_ID].join(","));
+      });
+    `;
+    using dir = tempDir("node-test-worker-id-parallel", {});
+    const [a, b] = [join(String(dir), "a.started"), join(String(dir), "b.started")];
+    await Bun.write(join(String(dir), "a.test.js"), file(a, b));
+    await Bun.write(join(String(dir), "b.test.js"), file(b, a));
+    await using proc = spawn({
+      // The wait of each file includes the start of the second worker, so it gets the time that this test has.
+      cmd: [bunExe(), "test", "--parallel=2", "--timeout=30000"],
+      env: { ...fixtureEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect((stdout + stderr).match(/IDS=\S+/g)?.sort()).toEqual(["IDS=1,1,1", "IDS=2,2,2"]);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  describe("in a file that run() starts", () => {
+    // The parent has the id 7. Node's runner gives the file that it starts its own id.
+    async function seenOn(exe: string) {
+      using dir = tempDir("node-test-worker-id-run", {
+        "run.js": `
+          const { run } = require("node:test");
+          (async () => {
+            const seen = [];
+            const stream = run({ files: [process.argv[2]], env: { ...process.env, NODE_TEST_WORKER_ID: "7" } });
+            for await (const { type, data } of stream) {
+              if (type === "test:stdout" && data.message.startsWith("ENV ")) seen.push(data.message.trim());
+              if (type === "test:fail") seen.push("FAIL " + data.name);
+            }
+            console.log("SEEN=" + JSON.stringify(seen));
+          })();
+        `,
+      });
+      const fixture = join(import.meta.dirname, "fixtures", "34-worker-id.js");
+      await using proc = spawn({
+        cmd: [exe, join(String(dir), "run.js"), fixture],
+        env: fixtureEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { seen: stdout.match(/^SEEN=.*$/m)?.[0], stderr, exitCode };
+    }
+
+    test("is 1", async () => {
+      expect(await seenOn(bunExe())).toEqual({ seen: `SEEN=["ENV 1"]`, stderr: "", exitCode: 0 });
+    }, 30_000);
+
+    test.skipIf(!referenceNode)(
+      "is 1 on node",
+      async () => {
+        expect(await seenOn(referenceNode!)).toMatchObject({ seen: `SEEN=["ENV 1"]`, exitCode: 0 });
+      },
+      30_000,
+    );
+  });
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

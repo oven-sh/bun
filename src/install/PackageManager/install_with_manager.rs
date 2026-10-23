@@ -972,6 +972,11 @@ pub fn install_with_manager(
                 || !manager.update_requests.is_empty()
                 || !matches!(load_result, lockfile::LoadResult::Ok { .. }));
 
+        let changes_places = had_any_diffs
+            || matches!(
+                manager.subcommand,
+                Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
+            );
         let mut summary = if isolated {
             install_isolated_packages(
                 manager,
@@ -989,6 +994,7 @@ pub fn install_with_manager(
                 install_root_dependencies,
                 log_level,
                 None,
+                changes_places.then_some(&lockfile_before_clean),
             )?
         };
         summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
@@ -999,11 +1005,7 @@ pub fn install_with_manager(
         // `bun install --filter` must not touch the folders of the workspaces that it leaves out.
         removes_collapsed_copies = summary.fail == 0
             && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
-            && (had_any_diffs
-                || matches!(
-                    manager.subcommand,
-                    Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
-                ));
+            && changes_places;
         summary
     };
 

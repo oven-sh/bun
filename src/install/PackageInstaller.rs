@@ -104,6 +104,9 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
+    /// The lockfile as it was before `clean`, if this run changes what bun.lock places.
+    pub(crate) before_clean: Option<&'a Lockfile>,
+
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
 
@@ -1541,6 +1544,16 @@ impl<'a> PackageInstaller<'a> {
         self.trees[tree_id as usize].inside_replaced_folder = inside;
     }
 
+    /// Returns true if `before_clean` has a tarball or a git package of this name.
+    fn had_other_source(&self, name_hash: PackageNameHash) -> bool {
+        self.before_clean.is_some_and(|before| {
+            let resolutions = before.packages.items_resolution();
+            (before.packages_named(name_hash).iter())
+                .map(|&id| resolutions[id as usize].tag)
+                .any(|tag| tag.is_git() || tag.is_tarball())
+        })
+    }
+
     /// Call when you mutate the length of `lockfile.packages`
     pub(crate) fn fix_cached_lockfile_package_slices(&mut self) {
         // These `RawSlice<T>` fields alias into `self.lockfile.packages`
@@ -2020,7 +2033,11 @@ impl<'a> PackageInstaller<'a> {
                 &self.metas[package_id as usize].integrity,
                 self.manager().skips_verify(resolution.tag),
                 &self.root_node_modules_folder,
-            );
+            )
+            // `verify` passes for a tarball or a git checkout of this name and version.
+            || (resolution.tag == resolution::Tag::Npm
+                && self.had_other_source(pkg_name_hash)
+                && installer.has_other_bun_tag(&self.root_node_modules_folder));
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
             self.node.complete_one();

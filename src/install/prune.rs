@@ -1,4 +1,4 @@
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell};
 use core::ops::Range;
 use std::borrow::Cow;
 use std::io::Write as _;
@@ -22,7 +22,7 @@ use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
-use crate::package_install::{StagingLock, StagingPath};
+use crate::package_install::{BUN_TAG, StagingLock, StagingPath, tarball_tag_matches};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
@@ -920,9 +920,9 @@ struct HoistedTree<'a> {
     expected: Vec<(&'a [u8], PackageID)>,
     quiet: bool,
     kept_mismatched: Cell<bool>,
-    checked: RefCell<DynamicBitSet>,
-    matched: RefCell<DynamicBitSet>,
-    missing: RefCell<DynamicBitSet>,
+    kept_other_source: Cell<bool>,
+    /// What `installed` answered for each place of `expected` that was asked about.
+    verdicts: Vec<Cell<Option<Installed>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -930,6 +930,8 @@ enum Installed {
     Matches,
     Missing,
     Mismatch,
+    /// The folder of a registry package has a `.bun-tag`: Bun extracted it from a tarball or git.
+    OtherSource,
 }
 
 impl<'a> HoistedTree<'a> {
@@ -976,20 +978,16 @@ impl<'a> HoistedTree<'a> {
             };
         }
 
-        let checked = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let matched = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let missing = handle_oom(DynamicBitSet::init_empty(expected.len()));
         HoistedTree {
             lockfile,
             trees,
             folders,
             paths,
-            expected,
             quiet,
             kept_mismatched: Cell::new(false),
-            checked: RefCell::new(checked),
-            matched: RefCell::new(matched),
-            missing: RefCell::new(missing),
+            kept_other_source: Cell::new(false),
+            verdicts: vec![Cell::new(None); expected.len()],
+            expected,
         }
     }
 
@@ -1033,9 +1031,13 @@ impl<'a> HoistedTree<'a> {
             return true;
         }
         self.kept_mismatched.set(true);
+        if installed == Installed::OtherSource {
+            self.kept_other_source.set(true);
+        }
         if !self.quiet {
             let why = match installed {
                 Installed::Missing => "is missing",
+                Installed::OtherSource => "has a .bun-tag but bun.lock expects a registry package",
                 _ => "is not the version bun.lock expects",
             };
             bun_core::warn!(
@@ -1088,22 +1090,11 @@ impl<'a> HoistedTree<'a> {
         alias: &[u8],
         pkg_id: PackageID,
     ) -> Installed {
-        if self.checked.borrow().is_set(idx) {
-            return if self.matched.borrow().is_set(idx) {
-                Installed::Matches
-            } else if self.missing.borrow().is_set(idx) {
-                Installed::Missing
-            } else {
-                Installed::Mismatch
-            };
+        if let Some(installed) = self.verdicts[idx].get() {
+            return installed;
         }
         let installed = self.installed(tree_id, alias, pkg_id);
-        self.checked.borrow_mut().set(idx);
-        match installed {
-            Installed::Matches => self.matched.borrow_mut().set(idx),
-            Installed::Missing => self.missing.borrow_mut().set(idx),
-            Installed::Mismatch => {}
-        }
+        self.verdicts[idx].set(Some(installed));
         installed
     }
 
@@ -1151,14 +1142,29 @@ impl<'a> HoistedTree<'a> {
                     return Installed::Mismatch;
                 };
                 let expected = res.npm().version.fmt(buf).to_string();
-                name == expected_name
-                    && without_build(&version) == without_build(expected.as_bytes())
+                if name != expected_name
+                    || without_build(&version) != without_build(expected.as_bytes())
+                {
+                    return Installed::Mismatch;
+                }
+                let tag = sys::File::read_from(package.fd(), BUN_TAG);
+                if !tag.is_err_and(|err| err.get_errno() == E::ENOENT) {
+                    return Installed::OtherSource;
+                }
+                true
             }
             ResolutionTag::Git | ResolutionTag::Github => {
                 sys::File::read_from(package.fd(), b".bun-tag")
                     .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
             }
-            ResolutionTag::Folder | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                let integrity = &self.lockfile.packages.items_meta()[pkg_id as usize].integrity;
+                installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)
+                    // An install with `--no-verify` leaves an empty tag.
+                    && sys::File::read_from(package.fd(), BUN_TAG)
+                        .is_ok_and(|tag| tarball_tag_matches(&tag, integrity, true))
+            }
+            ResolutionTag::Folder => {
                 installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)
             }
             _ => false,
@@ -1372,7 +1378,9 @@ fn plan_hoisted(
         }
     }
 
-    if hoisted.kept_mismatched.get() && !quiet {
+    if hoisted.kept_other_source.get() && !quiet {
+        bun_core::note!("remove the folder with the .bun-tag and run 'bun install' first");
+    } else if hoisted.kept_mismatched.get() && !quiet {
         bun_core::note!("run 'bun install' first");
     }
 }
@@ -1732,6 +1740,11 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         );
     }
 
+    if new.kept_other_source.get() && !quiet {
+        bun_core::note!(
+            "remove the folder with the .bun-tag and run 'bun install', then 'bun prune'"
+        );
+    }
     remove_planned(plan, Layout::Hoisted, manager);
 }
 
@@ -1828,6 +1841,20 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
         let found = places.binary_search_by_key(&place, |&(key, _)| key);
         found.ok().map(|i| places[i].1)
     };
+    let judge: OnceCell<HoistedTree<'_>> = OnceCell::new();
+    // Returns true if the folder that serves `alias` to tree `id` today has a `.bun-tag`.
+    let other_source_above = |id: usize, alias: &[u8], name_hash: u64| {
+        let mut above = trees[id].parent as usize;
+        while above < trees.len() {
+            if let Some(pkg_id) = today(tree::place_key(folders[above], name_hash)) {
+                let judge = judge.get_or_init(|| HoistedTree::init(lockfile, true));
+                let installed = judge.installed(above as tree::Id, alias, pkg_id);
+                return installed == Installed::OtherSource;
+            }
+            above = trees[above].parent as usize;
+        }
+        false
+    };
     let mut plan = Plan::default();
     for (id, older) in trees.iter().enumerate().skip(1) {
         let only_older: Vec<u64> = (older.dependencies.get(rows).iter())
@@ -1865,6 +1892,7 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
                 entry.kind != EntryKind::Directory
                     || !only_older.contains(&name_hash)
                     || tarball_may_contain(manager, cache, owner, entry.alias)
+                    || other_source_above(id, entry.alias, name_hash)
             },
             &mut plan,
         );

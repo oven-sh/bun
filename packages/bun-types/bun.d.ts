@@ -5375,6 +5375,8 @@ declare module "bun" {
      * `false` opens the file read-only: writes to the array stay private
      * to this process (copy-on-write) and never reach the file, so a
      * read-only file or a file on a read-only filesystem can be mapped.
+     * On Linux, `sync: true` takes precedence: the mapping is shared and
+     * the file is opened read-write.
      * @default true
      */
     shared?: boolean;

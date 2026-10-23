@@ -142,13 +142,14 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
       using dir = tempDir("mmap-readonly", {
         "readonly.bin": new Uint8Array([1, 2, 3, 4]),
         "map.js": `
+          import { readFileSync } from "node:fs";
           const file = process.argv[2];
           const out = {};
           const map = Bun.mmap(file, { shared: false });
           out.private = Array.from(map);
           map[0] = 9;
           out.privateAfterWrite = Array.from(map);
-          out.fileAfterWrite = Array.from(require("fs").readFileSync(file));
+          out.fileAfterWrite = Array.from(readFileSync(file));
           for (const [name, options] of [["default", undefined], ["shared", { shared: true }]]) {
             try {
               Bun.mmap(file, options);

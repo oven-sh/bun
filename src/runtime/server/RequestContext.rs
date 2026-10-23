@@ -3796,13 +3796,15 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
+        // For .slice()-driven ranges, promote to 206 unless the user set a
+        // status of their own (not 200 or 206) and no Content-Range. Whether
+        // a header list exists does not count: a read of `headers` makes one.
+        // For an incoming Range: header (sendfile.total > 0) we always 206.
         if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
-            // For .slice()-driven ranges, only promote to 206 if the user
-            // also set Content-Range (preserves the old contract). For an
-            // incoming Range: header (sendfile.total > 0) we always 206.
-            needs_content_range = needs_content_range && (sendfile.total > 0 || has_content_range);
+            needs_content_range = needs_content_range
+                && (sendfile.total > 0 || has_content_range || matches!(status, 200 | 206));
             if needs_content_range {
                 status = 206;
             }
@@ -3814,10 +3816,12 @@ where
             // `.deref()` here would resolve (via DerefMut) to the inherent
             // `FetchHeaders::deref` and double-free the C++ object.
             drop(headers_);
-        } else if needs_content_range {
-            status = 206;
-            self.do_write_status(status);
         } else {
+            needs_content_range =
+                needs_content_range && (sendfile.total > 0 || matches!(status, 200 | 206));
+            if needs_content_range {
+                status = 206;
+            }
             self.do_write_status(status);
         }
 

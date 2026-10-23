@@ -2349,11 +2349,7 @@ pub mod formatter {
                                 // then skip the second % so we dont hit it again
                                 slice = &slice[slice.len().min((i + 1) as usize)..];
                                 len = slice.len() as u32;
-                                // Start the next iteration at `slice[1]`,
-                                // not `slice[0]`. (This is itself an
-                                // off-by-one vs the WHATWG spec; tracked
-                                // separately.)
-                                i = 1;
+                                i = 0;
                                 continue;
                             }
                             _ => {

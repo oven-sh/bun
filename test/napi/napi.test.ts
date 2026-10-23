@@ -1472,6 +1472,45 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("node_api_create_buffer_from_arraybuffer", () => {
+    it("returns a fixed-length Buffer that is empty while a resizable ArrayBuffer ends before it", async () => {
+      const output = await checkSameOutput("test_create_buffer_from_arraybuffer", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "fixed: isBuffer=true sameArrayBuffer=true bytes=3,4,5,6",
+        "fixed: warm=2800000 length=4 byteLength=4 byteOffset=2 first=7 sum=28 arrayBuffer=1,2,7,7,7,7,7,8,0,0,0,0,0,0,0,0",
+        "fixed: empty at the end: length=0 byteOffset=16",
+        "fixed: preventExtensions=ok",
+        "resizable: isBuffer=true sameArrayBuffer=true",
+        "resizable: preventExtensions=TypeError",
+        "resizable: warm=5600000 length=8 byteLength=8 byteOffset=196608 first=7 sum=56",
+        "resizable: shrunk: length=0 byteLength=0 byteOffset=0 first=undefined sum=0",
+        "resizable: shrunk, filled: length=0 byteLength=0 byteOffset=0 first=undefined sum=0",
+        "resizable: grown: length=8 byteLength=8 byteOffset=196608 first=0 sum=0",
+        "resizable: grown, filled: length=8 byteLength=8 byteOffset=196608 first=3 sum=24",
+        "resizable: grown again: length=8 byteLength=8 byteOffset=196608 first=3 sum=24",
+        "resizable: subarray: isBuffer=true length=4 byteOffset=196610",
+        "resizable: detached: length=0 byteLength=0 byteOffset=0 first=undefined sum=0",
+        "same page: warm=5600000 length=8 byteLength=8 byteOffset=16 first=7 sum=56",
+        "same page: shrunk: length=0 byteLength=0 byteOffset=0 first=undefined sum=0",
+        "same page: shrunk, filled: length=0 byteLength=0 byteOffset=0 first=undefined sum=0",
+        "same page: grown: length=8 byteLength=8 byteOffset=16 first=0 sum=0",
+        "same page: empty at the end: length=0 byteOffset=64",
+        "same page: empty at the end, shrunk: length=0 byteOffset=0",
+      ]);
+    });
+
+    // Bun only: bun:jsc shows the Structure, and Node returns napi_invalid_arg for a SharedArrayBuffer.
+    it("gives the Buffer the Structure that Buffer.from gives it", async () => {
+      const output = await runOn(bunExe(), "test_create_buffer_from_arraybuffer_structure", []);
+      expect(output.trim().split(/\r?\n/)).toEqual([
+        "fixed: isBuffer=true sameArrayBuffer=true sameStructureAsBufferFrom=true",
+        "resizable: isBuffer=true sameArrayBuffer=true sameStructureAsBufferFrom=true",
+        "growable shared: isBuffer=true sameArrayBuffer=true sameStructureAsBufferFrom=true",
+        "resizable and growable shared: true, fixed and resizable: false",
+      ]);
+    });
+  });
+
   describe("node_api experimental", () => {
     it("node_api_set_prototype sets [[Prototype]]", async () => {
       const output = await checkSameOutput("test_node_api_set_prototype", []);

@@ -2042,6 +2042,18 @@ static napi_value test_napi_null_value_args(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// create_buffer_from_arraybuffer(arraybuffer, byte_offset, byte_length): Buffer
+static napi_value
+create_buffer_from_arraybuffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  size_t byte_offset = info[1].As<Napi::Number>().Uint32Value();
+  size_t byte_length = info[2].As<Napi::Number>().Uint32Value();
+  napi_value result;
+  NODE_API_CALL(env, node_api_create_buffer_from_arraybuffer(
+                         env, info[0], byte_offset, byte_length, &result));
+  return result;
+}
+
 static napi_value test_napi_null_env_and_result(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -4842,6 +4854,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_null_value_args);
+  REGISTER_FUNCTION(env, exports, create_buffer_from_arraybuffer);
   REGISTER_FUNCTION(env, exports, test_napi_null_env_and_result);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_object_coercion);

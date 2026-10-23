@@ -1,4 +1,5 @@
 use core::ffi::{c_int, c_void};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 /// Terminal size as reported by the tty (`struct winsize` on POSIX).
 #[repr(C)]
@@ -93,4 +94,87 @@ impl Drop for RawModeGuard {
 
 unsafe extern "C" {
     unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void, drain: c_int) -> c_int;
+}
+
+/// DEC private modes (`CSI ? Pm h/l`) that a caller records here when it sets them on stdout's terminal. A mode outlives the process, so an exit writes the reset of each recorded one.
+pub mod dec {
+    /// `?2004`: bracketed paste (the terminal marks where a paste starts and ends).
+    pub const BRACKETED_PASTE: u8 = 1 << 0;
+}
+
+/// `(mode bit, reset sequence)` for every [`dec`] mode.
+const DEC_MODES: [(u8, &[u8]); 1] = [(dec::BRACKETED_PASTE, b"\x1b[?2004l")];
+
+/// The [`dec`] modes that are set now. Atomic: [`reset_active_dec_modes`] reads it in a signal handler.
+static ACTIVE_DEC_MODES: AtomicU8 = AtomicU8::new(0);
+
+/// Call before writing the set sequences of `modes`, so that an exit from then on resets them.
+pub fn mark_dec_modes_set(modes: u8) {
+    ACTIVE_DEC_MODES.fetch_or(modes, Ordering::Relaxed);
+}
+
+/// Call after writing the reset sequences of `modes`.
+pub fn mark_dec_modes_reset(modes: u8) {
+    ACTIVE_DEC_MODES.fetch_and(!modes, Ordering::Relaxed);
+}
+
+/// Writes the reset of each mode still set. Async-signal-safe: every exit that goes through `bun_restore_stdio` calls it, its signal handler included.
+pub fn reset_active_dec_modes() {
+    let active = ACTIVE_DEC_MODES.swap(0, Ordering::Relaxed);
+    if active == 0 || !crate::output::is_stdout_tty() {
+        return;
+    }
+    for (bit, reset) in DEC_MODES {
+        if active & bit != 0 {
+            write_stdout_raw(reset);
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ttyResetActiveDecModes() {
+    reset_active_dec_modes();
+}
+
+#[cfg(unix)]
+fn write_stdout_raw(mut bytes: &[u8]) {
+    // SAFETY: plain libc calls on stack-local, fully initialized values.
+    unsafe {
+        // With SIGTTOU blocked, the write does not stop a background job on a TOSTOP terminal in the middle of its exit.
+        let mut ttou: libc::sigset_t = crate::ffi::zeroed();
+        let mut old: libc::sigset_t = crate::ffi::zeroed();
+        libc::sigemptyset(&raw mut ttou);
+        libc::sigaddset(&raw mut ttou, libc::SIGTTOU);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &raw const ttou, &raw mut old);
+        while !bytes.is_empty() {
+            let rc = libc::write(libc::STDOUT_FILENO, bytes.as_ptr().cast(), bytes.len());
+            if rc < 0 {
+                if crate::ffi::errno() == libc::EINTR {
+                    continue;
+                }
+                break;
+            }
+            bytes = &bytes[rc as usize..];
+        }
+        libc::pthread_sigmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
+    }
+}
+
+#[cfg(windows)]
+fn write_stdout_raw(bytes: &[u8]) {
+    use crate::windows_sys as w;
+    let Some(handle) = w::GetStdHandle(w::STD_OUTPUT_HANDLE) else {
+        return;
+    };
+    let mut written: w::DWORD = 0;
+    // SAFETY: `bytes` outlives the synchronous call; `lpOverlapped` may be null for a non-OVERLAPPED handle.
+    unsafe {
+        let _ = w::kernel32::WriteFile(
+            handle,
+            bytes.as_ptr(),
+            bytes.len() as w::DWORD,
+            &raw mut written,
+            core::ptr::null_mut(),
+        );
+    }
 }

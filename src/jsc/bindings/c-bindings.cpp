@@ -659,6 +659,8 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 #endif
 
 extern "C" void Bun__onExit();
+// bun_core::tty: async-signal-safe; writes the reset of each DEC private mode (bracketed paste) that is still set.
+extern "C" void Bun__ttyResetActiveDecModes();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
@@ -680,6 +682,7 @@ extern "C" void bun_restore_stdio()
 {
 
 #if !OS(WINDOWS)
+    Bun__ttyResetActiveDecModes();
 
     // Only suppress the restore when Bun is a pipeline producer (stdout is a
     // pipe, not a TTY) and it didn't touch termios itself. That's the #29592

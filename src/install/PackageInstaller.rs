@@ -1331,6 +1331,9 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// The entry of the cache that a package which `can_enqueue_install_task` is linked from.
+    // Every package of every install asks for it. `describe_linked` is a second caller, and must
+    // not take it out of line for the first.
+    #[inline(always)]
     fn cache_entry_name(
         &self,
         package_id: PackageID,

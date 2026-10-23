@@ -67,6 +67,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<uint64_t>(JSC::startOfFixedExecutableMemoryPool<uintptr_t>()))));
 }
+
+// The labels around JSC's offlineasm code (LLInt, vmEntry*), which its .pdata record covers.
+extern "C" {
+void jsc_llint_begin();
+void jsc_llint_end();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLLIntCodeRange,
+    (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue begin = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&jsc_llint_begin)));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue end = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&jsc_llint_end)));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* range = JSC::constructEmptyObject(globalObject);
+    range->putDirect(vm, JSC::Identifier::fromString(vm, "begin"_s), begin);
+    range->putDirect(vm, JSC::Identifier::fromString(vm, "end"_s), end);
+    return JSValue::encode(range);
+}
 #endif
 
 // Test-only stand-in for JsRef::Weak; the address is only meaningful until that cell is swept.
@@ -130,6 +151,11 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
     object->putDirectNativeFunction(
         vm, globalObject, JSC::Identifier::fromString(vm, "startOfFixedExecutableMemoryPool"_s), 0,
         jsFunctionStartOfFixedExecutableMemoryPool, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "llintCodeRange"_s), 0,
+        jsFunctionLLIntCodeRange, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 #endif
 

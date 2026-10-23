@@ -24,6 +24,11 @@ const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
+const clearInspectorHeapSnapshots = $newCppFunction(
+  "JSInspectorProfiler.cpp",
+  "jsFunction_clearInspectorHeapSnapshots",
+  0,
+);
 
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
 // WebSocket server that speaks the V8 Chrome DevTools Protocol (see
@@ -426,6 +431,7 @@ function collectCoverageScripts(): any[] | Error {
 
 class Session extends EventEmitter {
   #connected = false;
+  #connectedToMainThread = false;
   #profilerEnabled = false;
   #preciseCoverageEnabled = false;
   #preciseCoverageCallCount = false;
@@ -459,6 +465,7 @@ class Session extends EventEmitter {
       throw $ERR_INSPECTOR_ALREADY_CONNECTED();
     }
     this.#connected = true;
+    this.#connectedToMainThread = false;
   }
 
   connectToMainThread() {
@@ -466,10 +473,12 @@ class Session extends EventEmitter {
       throw $ERR_INSPECTOR_NOT_WORKER();
     }
     this.connect();
+    this.#connectedToMainThread = true;
   }
 
   disconnect() {
     if (!this.#connected) return;
+    if (!this.#connectedToMainThread) clearInspectorHeapSnapshots();
     if (isCPUProfilerRunning()) stopCPUProfiler();
     if (this.#preciseCoverageEnabled) {
       stopPreciseCoverage();
@@ -477,6 +486,7 @@ class Session extends EventEmitter {
     }
     this.#profilerEnabled = false;
     this.#connected = false;
+    this.#connectedToMainThread = false;
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();

@@ -8,6 +8,7 @@
 #include <JavaScriptCore/ControlFlowProfiler.h>
 #include <JavaScriptCore/FunctionHasExecutedCache.h>
 #include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
@@ -15,6 +16,14 @@
 #include <wtf/JSONValues.h>
 
 using namespace JSC;
+
+JSC_DECLARE_HOST_FUNCTION(jsFunction_clearInspectorHeapSnapshots);
+JSC_DEFINE_HOST_FUNCTION(jsFunction_clearInspectorHeapSnapshots, (JSGlobalObject * globalObject, CallFrame*))
+{
+    if (auto* profiler = globalObject->vm().heapProfiler())
+        profiler->clearSnapshots();
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))

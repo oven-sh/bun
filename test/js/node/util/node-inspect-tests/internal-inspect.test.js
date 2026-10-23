@@ -1,7 +1,8 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 import util from "util";
+import vm from "vm";
 
 test("no assertion failures", () => {
   // Errors in accessors are not triggered
@@ -155,6 +156,193 @@ test.each([
     // scaled with the length: about 1s for the large one in a release build.
     expect(largeMs).toBeLessThan(smallMs * 20 + 50);
   });
+});
+
+// Map and Set iterators are shown through the native previewEntries
+// (UtilInspect.cpp). It reads what the iterator has left from the storage of
+// the collection and never calls next(). So the iterator stays where it is, and
+// user code that replaces next() or Symbol.iterator does not run. The expected
+// strings are what Node.js prints.
+test("util.inspect shows what a Map or Set iterator has left", () => {
+  const map = new Map([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+  ]);
+  const set = new Set([1, 2, 3]);
+
+  const entries = map.entries();
+  entries.next();
+  expect(util.inspect(entries)).toBe("[Map Entries] { [ 'b', 2 ], [ 'c', 3 ] }");
+  expect(util.inspect(entries)).toBe("[Map Entries] { [ 'b', 2 ], [ 'c', 3 ] }");
+  expect(entries.next()).toEqual({ value: ["b", 2], done: false });
+
+  const keys = map.keys();
+  keys.next();
+  keys.next();
+  expect(util.inspect(keys)).toBe("[Map Iterator] { 'c' }");
+
+  const values = map.values();
+  values.next();
+  expect(util.inspect(values)).toBe("[Map Iterator] { 2, 3 }");
+
+  const setValues = set.values();
+  setValues.next();
+  expect(util.inspect(setValues)).toBe("[Set Iterator] { 2, 3 }");
+
+  const setEntries = set.entries();
+  setEntries.next();
+  expect(util.inspect(setEntries)).toBe("[Set Entries] { [ 2, 2 ], [ 3, 3 ] }");
+
+  // An iterator that reported done stays empty, also when the collection grows.
+  for (const _ of entries);
+  for (const _ of setValues);
+  map.set("d", 4);
+  set.add(4);
+  expect(util.inspect(entries)).toBe("[Map Entries] {  }");
+  expect(util.inspect(setValues)).toBe("[Set Iterator] {  }");
+
+  expect(util.inspect(new Map().entries())).toBe("[Map Entries] {  }");
+  expect(util.inspect(new Set().values())).toBe("[Set Iterator] {  }");
+
+  const fromOtherRealm = vm.runInNewContext("const i = new Map([[1, 2], [3, 4]]).entries(); i.next(); i");
+  expect(util.inspect(fromOtherRealm)).toBe("[Map Entries] { [ 3, 4 ] }");
+});
+
+test("util.inspect of a Map or Set iterator follows delete(), clear() and growth of the collection", () => {
+  const map = new Map([
+    ["a", 1],
+    ["b", 2],
+    ["c", 3],
+    ["d", 4],
+  ]);
+  let iterator = map.entries();
+  iterator.next();
+  map.delete("b");
+  map.set("e", 5);
+  expect(util.inspect(iterator)).toBe("[Map Entries] { [ 'c', 3 ], [ 'd', 4 ], [ 'e', 5 ] }");
+
+  const cleared = new Map([
+    ["a", 1],
+    ["b", 2],
+  ]);
+  iterator = cleared.entries();
+  iterator.next();
+  cleared.clear();
+  cleared.set("z", 26);
+  expect(util.inspect(iterator)).toBe("[Map Entries] { [ 'z', 26 ] }");
+
+  // This iterator exists before the Map has any storage to point at.
+  const late = new Map();
+  iterator = late.entries();
+  late.set("x", 1);
+  expect(util.inspect(iterator)).toBe("[Map Entries] { [ 'x', 1 ] }");
+
+  // Growth and deletes rehash the storage. The iterator still points at the first table.
+  const grown = new Map([
+    [0, 0],
+    [1, 1],
+  ]);
+  iterator = grown.keys();
+  iterator.next();
+  for (let i = 2; i < 40; i++) grown.set(i, i);
+  for (let i = 2; i < 36; i++) grown.delete(i);
+  expect(util.inspect(iterator)).toBe("[Map Iterator] { 1, 36, 37, 38, 39 }");
+  expect([...iterator]).toEqual([1, 36, 37, 38, 39]);
+
+  const set = new Set([1, 2, 3, 4, 5, 6]);
+  iterator = set.values();
+  iterator.next();
+  iterator.next();
+  set.delete(1);
+  set.delete(4);
+  set.add(7);
+  expect(util.inspect(iterator)).toBe("[Set Iterator] { 3, 5, 6, 7 }");
+  expect([...iterator]).toEqual([3, 5, 6, 7]);
+});
+
+test("util.inspect of a Map or Set iterator counts the items it leaves out from where the iterator is", () => {
+  const map = new Map();
+  for (let i = 0; i < 150; i++) map.set(i, i);
+
+  let iterator = map.keys();
+  for (let i = 0; i < 20; i++) iterator.next();
+  expect(util.inspect(iterator, { maxArrayLength: 2 })).toBe("[Map Iterator] { 20, 21, ... 128 more items }");
+  expect(util.inspect(iterator, { breakLength: Infinity })).toEndWith(", 118, 119, ... 30 more items }");
+
+  iterator = map.entries();
+  for (let i = 0; i < 148; i++) iterator.next();
+  expect(util.inspect(iterator, { maxArrayLength: 1 })).toBe("[Map Entries] { [ 148, 148 ], ... 1 more item }");
+  expect(util.inspect(iterator, { maxArrayLength: 0 })).toBe("[Map Entries] { ... 2 more items }");
+  expect(util.inspect(iterator, { maxArrayLength: -1 })).toBe("[Map Entries] { ... 2 more items }");
+  for (const maxArrayLength of [2, 3, Infinity, null]) {
+    expect(util.inspect(iterator, { maxArrayLength })).toBe("[Map Entries] { [ 148, 148 ], [ 149, 149 ] }");
+  }
+
+  iterator = new Set(map.keys()).entries();
+  for (let i = 0; i < 147; i++) iterator.next();
+  expect(util.inspect(iterator, { maxArrayLength: 1 })).toBe("[Set Entries] { [ 147, 147 ], ... 2 more items }");
+});
+
+test("util.inspect of a Map or Set iterator does not run a replaced next() or Symbol.iterator", async () => {
+  // The replaced functions never report done. On a build that calls them, the
+  // guard ends the child process and the output shows how far it got.
+  const fixture = /* js */ `
+    const util = require("node:util");
+    let calls = 0;
+    function guard() {
+      if (++calls > 5000) {
+        console.log("RUNAWAY calls=" + calls);
+        process.exit(2);
+      }
+    }
+    function* endless() {
+      for (;;) {
+        guard();
+        yield ["k", "v"];
+      }
+    }
+    const map = new Map([["a", 1], ["b", 2]]);
+    const set = new Set([1, 2]);
+    const iterators = {
+      "map.entries()": map.entries(),
+      "map.keys()": map.keys(),
+      "map.values()": map.values(),
+      "map[Symbol.iterator]()": map[Symbol.iterator](),
+      "set.entries()": set.entries(),
+      "set.values()": set.values(),
+      "set[Symbol.iterator]()": set[Symbol.iterator](),
+    };
+    Object.getPrototypeOf(map.entries()).next = () => (guard(), { value: ["k", "v"], done: false });
+    Object.getPrototypeOf(set.values()).next = () => (guard(), { value: "v", done: false });
+    for (const method of ["entries", "keys", "values", Symbol.iterator]) {
+      Map.prototype[method] = endless;
+      Set.prototype[method] = endless;
+    }
+    for (const name in iterators) console.log(name, util.inspect(iterators[name]));
+    console.log("calls=" + calls);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "map.entries() [Map Entries] { [ 'a', 1 ], [ 'b', 2 ] }",
+      "map.keys() [Map Iterator] { 'a', 'b' }",
+      "map.values() [Map Iterator] { 1, 2 }",
+      "map[Symbol.iterator]() [Map Entries] { [ 'a', 1 ], [ 'b', 2 ] }",
+      "set.entries() [Set Entries] { [ 1, 1 ], [ 2, 2 ] }",
+      "set.values() [Set Iterator] { 1, 2 }",
+      "set[Symbol.iterator]() [Set Iterator] { 1, 2 }",
+      "calls=0",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
 });
 
 //! non-standard property, should this be kept?

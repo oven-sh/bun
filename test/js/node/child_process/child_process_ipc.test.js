@@ -164,7 +164,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
   });
 
   // node v26.3.0 emits all its held messages at once, so it loses the ones behind the first once() listener.
-  describe("once() in a loop gets every message", () => {
+  describe.each(["json", "advanced"])("once() in a loop gets every message (%s)", serialization => {
     // "pong" answers a message sent after the first one arrived, so it is the last message.
     async function takeUntilPong(target) {
       const got = [(await once(target, "message"))[0]];
@@ -177,6 +177,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       using dir = tempDir("ipc-once-parent", { "child.js": burstThenPong });
       const child = fork(path.join(String(dir), "child.js"), {
         env: bunEnv,
+        serialization,
         stdio: ["ignore", "ignore", "inherit", "ipc"],
       });
       await withChild(child, async () => {
@@ -192,7 +193,7 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
           takeUntilPong(process).then(got => process.send({ got }));
         `,
       });
-      const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
+      const child = fork(path.join(String(dir), "child.js"), { env: bunEnv, serialization });
       await withChild(child, async () => {
         const { promise, resolve } = Promise.withResolvers();
         child.on("message", m => (m === "ping" ? child.send("pong") : resolve(m.got)));

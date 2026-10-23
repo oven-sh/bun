@@ -11,6 +11,46 @@ test("stubs", () => {
   expect(perf.performance.eventLoopUtilization()).toBeObject();
 });
 
+// https://github.com/oven-sh/bun/issues/23041
+test("nodeTiming reports offsets from timeOrigin, not epoch timestamps", () => {
+  const nt = perf.performance.nodeTiming;
+
+  expect(nt.name).toBe("node");
+  expect(nt.entryType).toBe("node");
+  // A "node" entry is the timeOrigin reference, so startTime is 0 in Node.
+  expect(nt.startTime).toBe(0);
+  expect(nt.duration).toBeNumber();
+
+  // timeOrigin is epoch-scale; the milestones are offsets from it, so they must
+  // not themselves be epoch timestamps.
+  expect(perf.performance.timeOrigin).toBeGreaterThan(1e12);
+  for (const key of ["nodeStart", "v8Start", "environment", "bootstrapComplete", "loopStart", "idleTime"] as const) {
+    expect(nt[key]).toBeNumber();
+    expect(nt[key]).toBeLessThan(1e12);
+  }
+  expect(nt.loopExit).toBe(-1);
+
+  // Node exposes the entry accessors as own enumerable properties.
+  expect(Object.keys(nt)).toEqual(expect.arrayContaining(["name", "entryType", "startTime", "duration"]));
+
+  const json = nt.toJSON();
+  // duration is a live reading, so assert its type and drop it before comparing.
+  expect(json.duration).toBeNumber();
+  delete json.duration;
+  expect(json).toEqual({
+    name: "node",
+    entryType: "node",
+    startTime: 0,
+    nodeStart: nt.nodeStart,
+    v8Start: nt.v8Start,
+    bootstrapComplete: nt.bootstrapComplete,
+    environment: nt.environment,
+    loopStart: nt.loopStart,
+    loopExit: nt.loopExit,
+    idleTime: nt.idleTime,
+  });
+});
+
 test("doesn't throw", () => {
   expect(() => performance.mark("test")).not.toThrow();
   expect(() => performance.measure("test", "test")).not.toThrow();

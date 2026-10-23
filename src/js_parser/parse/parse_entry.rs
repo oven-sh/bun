@@ -1021,11 +1021,14 @@ impl<'a> Parser<'a> {
                 p.import_records.items(),
                 p.symbols.as_slice(),
             );
-            p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
-                rc_options,
-                opt_out,
-                import_bindings,
-            )));
+            // Without a state, the visit pass is the one of a build without the flag.
+            if let bun_react_compiler::ImportBindings::Bindings(import_bindings) = import_bindings {
+                p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
+                    rc_options,
+                    opt_out,
+                    import_bindings,
+                )));
+            }
         }
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);

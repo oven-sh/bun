@@ -4591,6 +4591,206 @@ test("react-compiler compiles branches that have nothing in them", async () => {
   expect(exitCode).toBe(0);
 });
 
+// A file that imports `c` from the compiler runtime is the output of the compiler. Upstream compiles no function
+// of it (`shouldSkipCompilation` in Entrypoint/Program.ts). Only a named import of `c` counts, under any local
+// name. The runtime is `react/compiler-runtime` for React 19 and the package `react-compiler-runtime` for React 17
+// and 18. Upstream asks for the one of its `target` option. There is no such option here, so both count.
+test("react-compiler leaves a file as written that imports `c` from the compiler runtime", async () => {
+  const component = `
+    export function Label({ color, text }) {
+      const style = { color };
+      return <span style={style}>{text}</span>;
+    }
+  `;
+  const compiledAlready = {
+    // The output of babel-plugin-react-compiler 1.0.0 for a component, with the JSX left in.
+    // Compiled again, it has a second memo cache: `let $0 = _c2(5); let $ = _c(10);`.
+    "babel-output": `
+      import { c as _c } from "react/compiler-runtime";
+      import { useState } from "react";
+      export function Counter(t0) {
+        const $ = _c(10);
+        const { step, label } = t0;
+        const [n, setN] = useState(0);
+        let t1;
+        if ($[0] !== label) {
+          t1 = { color: label };
+          $[0] = label;
+          $[1] = t1;
+        } else {
+          t1 = $[1];
+        }
+        const style = t1;
+        let t2;
+        if ($[2] !== n || $[3] !== step) {
+          t2 = () => setN(n + step);
+          $[2] = n;
+          $[3] = step;
+          $[4] = t2;
+        } else {
+          t2 = $[4];
+        }
+        const onClick = t2;
+        let t3;
+        if ($[5] !== label || $[6] !== n || $[7] !== onClick || $[8] !== style) {
+          t3 = <button style={style} onClick={onClick}>{label}:{n}</button>;
+          $[5] = label;
+          $[6] = n;
+          $[7] = onClick;
+          $[8] = style;
+          $[9] = t3;
+        } else {
+          t3 = $[9];
+        }
+        return t3;
+      }
+    `,
+    // The same component as a library ships it for React 17 and 18: `target: "18"`, and the JSX compiled.
+    "library-output": `
+      import { c as _c } from "react-compiler-runtime";
+      import { useState } from "react";
+      import { jsxs as _jsxs } from "react/jsx-runtime";
+      export function Counter(t0) {
+        const $ = _c(10);
+        const { step, label } = t0;
+        const [n, setN] = useState(0);
+        let t1;
+        if ($[0] !== label) {
+          t1 = { color: label };
+          $[0] = label;
+          $[1] = t1;
+        } else {
+          t1 = $[1];
+        }
+        const style = t1;
+        let t2;
+        if ($[2] !== n || $[3] !== step) {
+          t2 = () => setN(n + step);
+          $[2] = n;
+          $[3] = step;
+          $[4] = t2;
+        } else {
+          t2 = $[4];
+        }
+        const onClick = t2;
+        let t3;
+        if ($[5] !== label || $[6] !== n || $[7] !== onClick || $[8] !== style) {
+          t3 = /*#__PURE__*/ _jsxs("button", { style: style, onClick: onClick, children: [label, ":", n] });
+          $[5] = label;
+          $[6] = n;
+          $[7] = onClick;
+          $[8] = style;
+          $[9] = t3;
+        } else {
+          t3 = $[9];
+        }
+        return t3;
+      }
+    `,
+    // The output of `bun build --react-compiler` for a hook. Compiled again, its memo cache is in a memo block
+    // of the second one: `if ($0[0] !== title) { let $ = _c(5); ... }`. `_c` is a hook, and React gives the
+    // caches of a component out in the order of the calls: a component that calls `useTitle` twice then gets
+    // the wrong cache in its second render, and React 19 throws "nextDeps.join is not a function".
+    "bun-output": `
+      import { useEffect } from "react";
+      import { c as _c } from "react/compiler-runtime";
+      export function useTitle(title) {
+        let $ = _c(5);
+        let t0;
+        if ($[0] !== title)
+          t0 = () => console.log(title), $[0] = title, $[1] = t0;
+        else
+          t0 = $[1];
+        let onClick = t0;
+        let t1, t2;
+        if ($[2] !== title)
+          t1 = () => {
+            document.title = title;
+          }, t2 = [title], $[2] = title, $[3] = t1, $[4] = t2;
+        else
+          t1 = $[3], t2 = $[4];
+        useEffect(t1, t2);
+        return onClick;
+      }
+    `,
+    "named": `import { c as _c } from "react/compiler-runtime";${component}`,
+    "same-local-name": `import { c } from "react/compiler-runtime";${component}`,
+    "string-name": `import { "c" as cache } from "react/compiler-runtime";${component}`,
+    "second-specifier": `import { other, c as _c } from "react/compiler-runtime";${component}`,
+    "after-a-statement": `export const before = 1; import { c as _c } from "react/compiler-runtime";${component}`,
+    "runtime-of-react-18": `import { c as _c } from "react-compiler-runtime";${component}`,
+    // No directive asks for what the file is left out of.
+    "with-use-memo": `
+      import { c as _c } from "react/compiler-runtime";
+      export function label({ color, text }) {
+        "use memo";
+        const style = { color };
+        return <span style={style}>{text}</span>;
+      }
+    `,
+  };
+  const notCompiledYet = {
+    "other-specifier": `import { other as c } from "react/compiler-runtime";${component}`,
+    "default-import": `import c from "react/compiler-runtime";${component}`,
+    "default-as-c": `import { default as c } from "react/compiler-runtime";${component}`,
+    "namespace-import": `import * as c from "react/compiler-runtime";${component}`,
+    "re-export": `export { c } from "react/compiler-runtime";${component}`,
+    "other-module": `import { c as _c } from "./compiler-runtime";${component}`,
+  };
+  const sources = { ...compiledAlready, ...notCompiledYet };
+  using dir = tempDir(
+    "react-compiler-compiled-already",
+    Object.fromEntries(Object.entries(sources).map(([name, source]) => [`${name}.jsx`, source])),
+  );
+
+  const build = async (target: "browser" | "bun", reactCompiler: boolean) => {
+    const result = await Bun.build({
+      entrypoints: Object.keys(sources).map(name => join(String(dir), `${name}.jsx`)),
+      root: String(dir),
+      target,
+      external: ["*"],
+      reactCompiler,
+    });
+    const outputs = result.outputs.map(async output => [
+      output.path.slice("./".length, -".js".length),
+      await output.text(),
+    ]);
+    return Object.fromEntries(await Promise.all(outputs)) as Record<string, string>;
+  };
+  // The compiler memoizes for a browser and takes the state and the handlers out for a server.
+  const asWritten: Record<string, string[]> = {};
+  for (const target of ["browser", "bun"] as const) {
+    const withCompiler = await build(target, true);
+    const withoutCompiler = await build(target, false);
+    asWritten[target] = Object.keys(withCompiler)
+      .filter(name => withCompiler[name] === withoutCompiler[name])
+      .sort();
+  }
+
+  const expected = Object.keys(compiledAlready).sort();
+  expect(asWritten).toEqual({ browser: expected, bun: expected });
+});
+
+// Upstream's fixture for the same rule, built as the fixtures are: every error of the compiler ends the build.
+// Its memo cache is what a hook returns, `useMemoCache()`, and the compiler lets no function write to that.
+test.skipIf(!isDebug && !isASAN)("react-compiler builds upstream's fixture of a compiled file", async () => {
+  const build = (reactCompiler: boolean) =>
+    Bun.build({
+      entrypoints: [join(import.meta.dir, "react-compiler-fixtures", "skip-useMemoCache.js")],
+      target: "browser",
+      external: ["*"],
+      reactCompiler,
+      // @ts-expect-error test-only option, not in bun-types
+      reactCompilerParseTestPragmas: true,
+      throw: false,
+    });
+  const withCompiler = await build(true);
+  const withoutCompiler = await build(false);
+
+  expect(withCompiler.logs.map(log => String(log.message))).toEqual([]);
+  expect(await withCompiler.outputs[0].text()).toBe(await withoutCompiler.outputs[0].text());
+});
+
 // The parser has a stack check. The lowering, which takes more of the stack for a
 // level of the source than the parser does, had none: `bun build --react-compiler`
 // died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800

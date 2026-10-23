@@ -284,7 +284,8 @@ fn is_function_name_initializer_exception<'a>(
     initializer.is_some_and(|it| unwrap_expression(e) == it)
 }
 
-/// oxlint's `is_value_import_used_only_as_type`: a value may shadow an import that the file only uses as a type.
+/// oxlint's `is_value_import_used_only_as_type`: a value may shadow an import that the file only uses as a type. JSX isn't a
+/// use of `React` there.
 fn oxlint_is_import_used_only_as_type<'a>(
     variable: &Variable<'a>,
     shadowed: &Variable<'a>,
@@ -293,7 +294,8 @@ fn oxlint_is_import_used_only_as_type<'a>(
     variable.is_value
         && import_of(shadowed.definition).is_some()
         && *used_only_as_type.get_or_insert_with(shadowed.symbol, || {
-            let mut references = shadowed.symbol.references().peekable();
+            let references = shadowed.symbol.references();
+            let mut references = references.filter(|it| !it.is_jsx_pragma()).peekable();
             let is_type = |it: Reference<'a>| {
                 it.is_type() && !it.is_value() || reference_contains_type_query(it)
             };

@@ -7087,6 +7087,30 @@ export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
       });
     });
 
+    // This is what oxlint 1.87.0 reports.
+    test("JSX isn't a use of a `React` that's otherwise only used as a type, so a value may shadow it", async () => {
+      const source = (use: string) => `import * as React from "react";
+export type Props = React.ComponentProps<"button">;
+export const element = <div />;
+${use}export async function load() {
+  const React = await import("react");
+  return React.version;
+}
+`;
+      const { stdout, exitCode } = await lint(
+        {
+          ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "no-shadow": "error" } }`,
+          "type.tsx": source(""),
+          "value.tsx": source("export const version = React.version;\n"),
+        },
+        ["-f", "unix"],
+      );
+      expect(stdout.split("\n").filter(it => it.includes("no-shadow"))).toEqual([
+        "value.tsx:6:9: 'React' is already declared in the upper scope. [Error/eslint(no-shadow)]",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     // The mark is set on the variable that the plugin sees, not on oxlint's.
     test("`markVariableAsUsed` in a plugin doesn't silence oxlint's no-unused-vars", async () => {
       const files = {

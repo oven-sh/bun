@@ -423,6 +423,47 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // From ESLint 9.39.5 and 10.12.0 with @typescript-eslint/parser 8.71.1. `Promise` is only a type in the parser's libraries.
+  // ESLint's own parser has no libraries.
+  test.each([
+    ["9.39.5", "a.ts", "through Foo:4 baz:5, Promise 1 4 2"],
+    ["10.12.0", "a.ts", "through Promise:2 Foo:4 baz:5, Promise 1 4"],
+    ["9.39.5", "a.js", "through Promise:1 baz:2, Promise none"],
+    ["10.12.0", "a.js", "through Promise:1 baz:2, Promise none"],
+  ])(
+    "before ESLint 10, a value resolves to a type of TypeScript's libraries: eslint %s, %s",
+    async (version, name, expected) => {
+      const { raw } = await lint(
+        {
+          "eslint.config.mjs": `const globals = {
+              create: context => ({
+                "Program:exit"(node) {
+                  const scope = context.sourceCode.scopeManager.globalScope;
+                  const line = it => it.identifier.loc.start.line;
+                  const through = scope.through.map(it => it.identifier.name + ":" + line(it)).join(" ");
+                  const references = scope.set.get("Promise")?.references.map(line).join(" ") ?? "none";
+                  context.report({ node, message: "through " + through + ", Promise " + references });
+                },
+              }),
+            };
+            export default [{
+              files: ["a.*"],
+              languageOptions: { ecmaVersion: 5, sourceType: "script" },
+              plugins: { demo: { rules: { globals } } },
+              rules: { "demo/globals": "error" },
+            }];`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+          "a.ts":
+            "function f<T>(): Promise<T> {\n  return Promise.resolve({} as T);\n}\ntype A = () => Promise<Foo>;\nbaz(f);\n",
+          "a.js": "Promise.resolve(1);\nbaz();\n",
+        },
+        ["-f", "json", name],
+      );
+      expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual([expected]);
+    },
+    timeout,
+  );
+
   // From ESLint 8.57.1, 9.39.5 and 10.12.0. `unicorn/prefer-string-slice` of eslint-plugin-unicorn 56 passes a number.
   test.each([
     ["8.57.1", "1 + 2;\n", "", 0],

@@ -7043,6 +7043,42 @@ h();
       });
     });
 
+    // From ESLint 8.57.1 with @typescript-eslint/parser 7.18.0, and 9.39.5 and 10.12.0 with 8.71.1. `Promise` and `Symbol`
+    // are only types in the parser's libraries.
+    test.each([
+      ["8.57.1", ".eslintrc.json", ["globalThis", "document", "Foo"]],
+      ["8.57.1", "eslint.config.mjs", ["globalThis", "document", "Foo"]],
+      ["9.39.5", "eslint.config.mjs", ["globalThis", "document", "Foo"]],
+      ["10.12.0", "eslint.config.mjs", ["Promise", "Symbol", "globalThis", "document", "Foo"]],
+    ])(
+      "before ESLint 10, a value resolves to a type of TypeScript's libraries: eslint %s, %s",
+      async (version, config, names) => {
+        const configs: Record<string, string> = {
+          ".eslintrc.json": JSON.stringify({
+            root: true,
+            parser: "@typescript-eslint/parser",
+            rules: { "no-undef": "error" },
+          }),
+          "eslint.config.mjs": `export default [{
+            files: ["**/*.ts"],
+            languageOptions: { ecmaVersion: 5, sourceType: "script" },
+            rules: { "no-undef": "error" },
+          }];`,
+        };
+        const { raw } = await lint(
+          {
+            [config]: configs[config],
+            "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+            "a.ts":
+              "var a = [Promise.resolve(1), Symbol(), new Map(), globalThis, document];\ntype B = Promise<Foo>;\n",
+          },
+          ["-f", "json", "a.ts"],
+        );
+        const messages = JSON.parse(raw)[0].messages as { message: string }[];
+        expect(messages.map(it => it.message)).toEqual(names.map(name => `'${name}' is not defined.`));
+      },
+    );
+
     // From ESLint 8.57.1 and 9.39.5.
     test.each([
       ["8.57.1", ["String(x)", "Number(x)", "Number(x)", "Boolean(x)", "String(x)", "s = String(s)"], []],

@@ -36,7 +36,6 @@ function asyncIterator({ next: nextFunction, return: returnFunction }: TimerAsyn
 }
 
 function setTimeout(after = 1, value?, options: TimerOptions = {}) {
-  const arguments_ = [].concat(value ?? []);
   try {
     // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
     // warning, not throw an error. So we can't call validateNumber as that will throw if the number
@@ -68,7 +67,7 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
-    const timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
+    const timeout = setTimeoutGlobal(() => resolve(value), after);
     if (!reference) {
       timeout?.unref?.();
     }

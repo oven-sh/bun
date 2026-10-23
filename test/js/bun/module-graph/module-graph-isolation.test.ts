@@ -476,9 +476,15 @@ const dir = String(
       export const serve = () => Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, routes: Object.fromEntries(pages.map((page, i) => ["/" + i, page])) });
     `,
     "disposed-while-building-pages.mjs": `
-      import { heapStats } from "bun:jsc";
+      import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
       const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
       const servers = () => { Bun.gc(true); const counts = heapStats().objectTypeCounts; return (counts.HTTPServer ?? 0) + (counts.DebugHTTPServer ?? 0); };
+      // The host's own requests, made out here: what a socket of the host hears with does not close over the server
+      // it dials, so one that has closed and is not collected yet does not keep that server.
+      const asks = (port, paths, answered) => {
+        for (const path of paths)
+          Bun.connect({ hostname: "127.0.0.1", port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() { answered.add(path); }, close() {}, error() {} } }).catch(() => {});
+      };
       const use = async () => {
         const graph = new Bun.ModuleGraph();
         const app = await graph.import(import.meta.dir + "/serves-html-routes.mjs");
@@ -487,24 +493,65 @@ const dir = String(
         // done. That is a later turn's business: the build seen here is still going when dispose() runs.
         // (All of them can be done before a turn here sees one. Such a server shows nothing.)
         const answered = new Set();
-        for (const path of app.paths)
-          Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() { answered.add(path); }, close() {}, error() {} } }).catch(() => {});
+        asks(server.port, app.paths, answered);
         await until(() => server.pendingRequests >= 1 || answered.size === app.paths.length);
         const building = server.pendingRequests >= 1;
         graph.dispose();
         if (!building) console.error("every build was done before a turn saw one");
         return building;
       };
-      // (One first, so the class's own cells are there before counting.)
-      await use();
-      let none;
-      await until(() => { const before = none; return (none = servers()) === before; });
+      // The class's own cells: what is counted while the host has one server, less that one.
+      const none = (() => {
+        const one = Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => new Response() });
+        const others = servers() - 1;
+        one.stop(true);
+        return others;
+      })();
       for (let i = 0; i < 3; ) if (await use()) i++;
-      // (No more than before, not as many: the first one may have outlived that reading.)
-      let turns = 0;
-      await until(() => servers() <= none || ++turns === 2000);
-      console.log(servers() <= none ? "collected" : "kept " + (servers() - none));
+      // Its builds keep a server, however long they take. Once they are done a collection frees it, or leaves it
+      // with no root reaching it: a collection does not promise to free what nothing refers to (its scan of the
+      // machine stack may still see it).
+      let kept = [], look = 500;
+      const start = performance.now();
+      await until(() => {
+        if (servers() <= none) return true;
+        if (performance.now() - start < look) return false;
+        const reached = serversARootReaches();
+        if (reached.length > 0 && (look *= 2) <= 16_000) return false;
+        kept = reached;
+        return true;
+      });
+      if (kept.length === 0 && servers() > none) console.error("a server is still in the heap, and no root reaches it");
+      console.log(kept.length === 0 ? "released" : "kept " + kept.length + ": " + kept.join("; "));
       process.exit(0);
+      // Every server a root reaches, with the shortest path from that root. (The class's prototype is not one: it
+      // wraps nothing. A root that an output constraint adds follows from whatever marked what it hangs off, so it
+      // is not one either.)
+      function serversARootReaches() {
+        const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
+        const classOf = new Map(), outgoing = new Map(), from = new Map(), queue = [], instances = [];
+        for (let i = 0; i < nodes.length; i += 7) {
+          const kind = nodeClassNames[nodes[i + 2]];
+          classOf.set(nodes[i], kind);
+          if ((kind === "HTTPServer" || kind === "DebugHTTPServer") && Number(nodes[i + 6]) !== 0) instances.push(nodes[i]);
+        }
+        for (let e = 0; e < edges.length; e += 4) {
+          const type = edgeTypes[edges[e + 2]];
+          const via = type === "Property" || type === "Variable" ? "." + edgeNames[edges[e + 3]] : type === "Index" ? "[" + edges[e + 3] + "]" : "";
+          (outgoing.get(edges[e]) ?? outgoing.set(edges[e], []).get(edges[e])).push([edges[e + 1], via]);
+        }
+        for (let i = 0; i < roots.length; i += 3) {
+          const why = String(labels[roots[i + 1]]);
+          if (!from.has(roots[i]) && !why.includes("DOMGCOutput")) (from.set(roots[i], [null, "{root: " + why + "}"]), queue.push(roots[i]));
+        }
+        for (let at = 0; at < queue.length; at++)
+          for (const [to, via] of outgoing.get(queue[at]) ?? []) if (!from.has(to)) (from.set(to, [queue[at], via]), queue.push(to));
+        return instances.filter(id => from.has(id)).map(id => {
+          const hops = [];
+          for (let at = id; at !== null; at = from.get(at)[0]) hops.unshift(from.get(at)[1] + " " + classOf.get(at));
+          return hops.slice(0, 16).join(" -> ");
+        });
+      }
     `,
     "makes-modules.cjs": `
       const Module = require("node:module");
@@ -3733,7 +3780,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
   });
   test("a server whose HTML routes were still being built is released with it", async () => {
-    expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "collected", exitCode: 0 });
+    expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "released", exitCode: 0 });
   });
   test("and the plugins those builds borrowed from it stay the server's", async () => {
     await using proc = Bun.spawn({
@@ -3746,7 +3793,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       killSignal: "SIGKILL",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "collected", exitCode: 0 });
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "released", exitCode: 0 });
   });
   test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
     expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({

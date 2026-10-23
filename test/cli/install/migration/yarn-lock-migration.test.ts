@@ -3800,17 +3800,17 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
 // until an install has the package.
 describe.concurrent("yarn.lock entries of packages that only their own package.json describes", () => {
   const commit = "0123456789abcdef0123456789abcdef01234567";
+  // The second name and its path are too long for a lockfile string to hold them inline: they are in the buffers
+  // of the row.
+  const bin = { tool: "cli.js", "tool-with-a-long-name": "bin/tool-with-a-long-name.js" };
+  const bins = Object.keys(bin);
   const files = {
-    "package.json": JSON.stringify({
-      name: "tool",
-      version: "1.0.0",
-      bin: { tool: "cli.js" },
-      scripts: { postinstall: "exit 0" },
-    }),
+    "package.json": JSON.stringify({ name: "tool", version: "1.0.0", bin, scripts: { postinstall: "exit 0" } }),
     "cli.js": "#!/usr/bin/env node\n",
+    "bin/tool-with-a-long-name.js": "#!/usr/bin/env node\n",
   };
   // What a fresh resolve of each of these dependencies records.
-  const described = { hasInstallScript: true, bin: { tool: "cli.js" } };
+  const described = { hasInstallScript: true, bin };
 
   let repo: Awaited<ReturnType<typeof hostedGitRepository>>;
   beforeAll(async () => {
@@ -3898,7 +3898,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
       return {
         errors: stderr.split("\n").filter(line => line.startsWith("error")),
         bins: fs.existsSync(bin)
-          ? [...new Set(fs.readdirSync(bin).map(name => name.replace(/\.(exe|bunx)$/, "")))]
+          ? [...new Set(fs.readdirSync(bin).map(name => name.replace(/\.(exe|bunx)$/, "")))].sort()
           : [],
         row: fs.existsSync(lock)
           ? (Bun.JSONC.parse(fs.readFileSync(lock, "utf8")) as { packages: Record<string, unknown[]> }).packages[
@@ -3919,7 +3919,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
   test.each(cases)("%s: bun install --linker %s links the bin and records it", async (kind, linker) => {
     using server = await fixture(kind);
     using cache = tempDir("yarn-migration-described-cache", {});
-    const linked = { errors: [], bins: ["tool"], row: described, blocked: true, saved: true, exitCode: 0 };
+    const linked = { errors: [], bins, row: described, blocked: true, saved: true, exitCode: 0 };
 
     using first = server.project();
     expect(await server.run(String(first), String(cache), "install", "--linker", linker)).toEqual({
@@ -3947,7 +3947,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
     using server = await fixture(kind);
     using cache = tempDir("yarn-migration-described-cache", {});
     using dir = server.project();
-    const frozen = { errors: [], bins: ["tool"], row: null, blocked: true, saved: false, exitCode: 0 };
+    const frozen = { errors: [], bins, row: null, blocked: true, saved: false, exitCode: 0 };
     expect(await server.run(String(dir), String(cache), "install", "--frozen-lockfile", "--linker", linker)).toEqual({
       ...frozen,
       requests: server.download,
@@ -3977,7 +3977,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
       fs.rmSync(join(String(dir), "yarn.lock"));
       expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
         errors: [],
-        bins: ["tool"],
+        bins,
         row: described,
         blocked: true,
         saved: true,
@@ -4026,14 +4026,14 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
       const cache = join(String(caches), "second");
       expect(await server.run(String(dir), cache, "pm", "migrate")).toEqual({
         ...quiet,
-        bins: ["tool"],
+        bins,
         row: unread,
         saved: false,
       });
       fs.rmSync(join(String(dir), "yarn.lock"));
       expect(await server.run(String(dir), cache, "install", "--linker", linker)).toEqual({
         errors: [],
-        bins: ["tool"],
+        bins,
         row: described,
         blocked: false,
         saved: true,
@@ -4056,7 +4056,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
       });
       expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
         errors: [],
-        bins: ["tool"],
+        bins,
         row: described,
         blocked: true,
         saved: true,
@@ -4074,7 +4074,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
       using dir = server.project();
       expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
         errors: [],
-        bins: ["tool"],
+        bins,
         row: described,
         blocked: true,
         saved: true,
@@ -4084,12 +4084,41 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
     },
   );
 
+  test.each(cases)("%s: bun add --linker %s of another package describes the row", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    const manifest = join(String(dir), "package.json");
+    const { dependencies } = JSON.parse(fs.readFileSync(manifest, "utf8"));
+    fs.writeFileSync(
+      join(String(dir), "vendor", "other.tgz"),
+      await githubTarball("package", {
+        "package.json": JSON.stringify({ name: "other", version: "2.0.0", bin: { other: "cli.js" } }),
+        "cli.js": files["cli.js"],
+      }),
+    );
+
+    expect(await server.run(String(dir), String(cache), "add", "file:./vendor/other.tgz", "--linker", linker)).toEqual({
+      errors: [],
+      bins: ["other", ...bins],
+      row: described,
+      blocked: true,
+      saved: true,
+      requests: server.download,
+      exitCode: 0,
+    });
+    expect(JSON.parse(fs.readFileSync(manifest, "utf8")).dependencies).toEqual({
+      ...dependencies,
+      other: "file:./vendor/other.tgz",
+    });
+  });
+
   test.each(cases)("%s: --linker %s records the bin in bun.lockb", async (kind, linker) => {
     using server = await fixture(kind);
     using cache = tempDir("yarn-migration-described-cache", {});
     using dir = server.project();
     fs.writeFileSync(join(String(dir), "bunfig.toml"), "[install]\nsaveTextLockfile = false\n");
-    const linked = { errors: [], bins: ["tool"], row: null, blocked: true, saved: true, exitCode: 0 };
+    const linked = { errors: [], bins, row: null, blocked: true, saved: true, exitCode: 0 };
     expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
       ...linked,
       requests: server.download,
@@ -4111,7 +4140,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
     using cache = tempDir("yarn-migration-described-cache", {});
     using dir = server.project();
     fs.writeFileSync(join(String(dir), "bunfig.toml"), '[install]\nlinker = "isolated"\nglobalStore = true\n');
-    const linked = { errors: [], bins: ["tool"], row: described, blocked: true, saved: true, exitCode: 0 };
+    const linked = { errors: [], bins, row: described, blocked: true, saved: true, exitCode: 0 };
     const entry = () => {
       const store = join(String(dir), "node_modules", ".bun");
       const [name] = fs.readdirSync(store).filter(name => name.startsWith("tool@"));

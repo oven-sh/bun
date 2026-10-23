@@ -28,7 +28,7 @@ const libraryFunctions = readFileSync(
   .map(text => ({ name: /^(?:export )?function (\w+)/.exec(text)?.[1] ?? "", text }));
 const namesWhere = (holds: (text: string) => boolean) =>
   new Set(libraryFunctions.filter(({ name, text }) => name !== "" && holds(text)).map(({ name }) => name));
-const takesComparator = namesWhere(text => /^.*\bcomparator: unknown\)/.test(text));
+const takesComparator = namesWhere(text => /^[^{]*\bcomparator: unknown,?\s*\)/.test(text));
 // The searches in long runs are rare, so the library asks for a call there.
 const asksForCalls = namesWhere(text => text.includes("$callNoInline<"));
 

@@ -520,7 +520,15 @@ export async function run(
   cwd: string,
   env?: Record<string, string | undefined>,
 ): Promise<ProcessResult> {
-  await using child = Bun.spawn({ cmd, cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+  // A toy program whose feature was removed aborts, and CI's runner fails a test file beside which a core file appears.
+  const withoutCoreDump = isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd];
+  await using child = Bun.spawn({
+    cmd: withoutCoreDump,
+    cwd,
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   return { stdout, stderr, exitCode };
 }

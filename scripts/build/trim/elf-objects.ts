@@ -100,7 +100,8 @@ function readObjectTables(
     if (!isGlobal && !mayMove.test(section)) continue;
     const name = stringAt(strings, symbols.readUInt32LE(index * 24));
     if (isGlobal) result.definitions.push([name, section]);
-    if (mayMove.test(section)) result.named.push([name, section]);
+    // AArch64's mapping symbols, $x and $d, mark where code and data begin.
+    if (mayMove.test(section) && !name.startsWith("$")) result.named.push([name, section]);
   }
   const targets: (string | undefined)[] = new Array(count);
   const targetOf = (index: number) => {

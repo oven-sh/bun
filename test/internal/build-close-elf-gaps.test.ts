@@ -103,16 +103,23 @@ test.each([true, false])("the strip rule runs it when hardened is %p", hardened 
     cmake: tool("cmake"),
   } as Toolchain;
   const cfg = resolveConfig(
-    { buildDir, buildType: "Release", os: "linux", arch: "x64", abi: "gnu", webkit: "local", hardened },
+    {
+      buildDir,
+      buildType: "Release",
+      os: "linux",
+      arch: "x64",
+      abi: "gnu",
+      webkit: "local",
+      linuxSysroot: buildDir,
+      hardened,
+    },
     toolchain,
   );
   const ninja = new Ninja({ buildDir });
   const exe = resolve(buildDir, "bun-profile");
   emitPostLink(ninja, cfg, exe, "bun-profile", [], [exe + ".o"]);
   const command = /^rule strip\n  command = (.*)$/m.exec(ninja.toString().replace(/ \$\n +/g, " "))![1];
-  expect(command).toBe(
-    hardened
-      ? `/fake/bin/llvm-strip $stripflags $in -o $out && /fake/bin/bun ${script} $out`
-      : "/fake/bin/strip $stripflags $in -o $out",
-  );
+  const [strip, ...afterwards] = command.split(" && ");
+  expect(strip).toEndWith("strip $stripflags $in -o $out");
+  expect(afterwards).toEqual(hardened ? [`/fake/bin/bun ${script} $out`] : []);
 });

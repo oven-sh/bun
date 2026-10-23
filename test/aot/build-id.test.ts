@@ -4,13 +4,14 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
-    cmd,
+    cmd: withoutCoreDump(cmd),
     cwd,
     env: { ...bunEnv, ...env },
     stdin: "ignore",

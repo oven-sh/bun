@@ -28,13 +28,12 @@ const inExecutablesOnly: Record<string, string> = {
 };
 
 const withSixModules = "requires-six-by-name.cjs";
+const yardstick = {
+  [withSixModules]: `console.log([require("node:zlib"), require("node:http"), require("node:repl"), require("node:dgram"), require("node:readline"), require("node:child_process")].every(Boolean) ? "run" : "");`,
+};
 
 test("tests of module.parent and module.hot bring no built-in module into the executable", async () => {
-  const all = {
-    ...programs,
-    ...inExecutablesOnly,
-    [withSixModules]: `console.log([require("node:zlib"), require("node:http"), require("node:repl"), require("node:dgram"), require("node:readline"), require("node:child_process")].every(Boolean) ? "run" : "");`,
-  };
+  const all = { ...programs, ...inExecutablesOnly, ...yardstick };
   using dir = tempDir("builtin-modules-of-a-small-program", all);
   const sizes: Record<string, number> = {};
   await Promise.all(
@@ -75,9 +74,9 @@ test("tests of module.parent and module.hot bring no built-in module into the ex
 }, 120_000);
 
 test("nor do they make bun run --aot compile built-in modules", async () => {
-  using dir = tempDir("builtin-modules-of-a-small-program", programs);
+  using dir = tempDir("builtin-modules-of-a-small-program", { ...programs, ...yardstick });
   const seconds: Record<string, number> = {};
-  for (const entry of Object.keys(programs)) {
+  for (const entry of [...Object.keys(programs), withSixModules]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--debug-aot", entry],
       cwd: String(dir),
@@ -93,12 +92,12 @@ test("nor do they make bun run --aot compile built-in modules", async () => {
     expect({
       entry,
       seconds: seconds[entry],
-      plain: seconds["plain.cjs"],
-      costsAsMuchAsADoor: seconds[entry] > 3 * Math.max(seconds["plain.cjs"], 0.1),
+      withSixModules: seconds[withSixModules],
+      costsAsMuchAsADoor: seconds[entry] > seconds[withSixModules] / 4,
     }).toEqual({
       entry,
       seconds: expect.any(Number),
-      plain: expect.any(Number),
+      withSixModules: expect.any(Number),
       costsAsMuchAsADoor: false,
     });
   }

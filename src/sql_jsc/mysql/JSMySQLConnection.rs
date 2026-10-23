@@ -392,21 +392,21 @@ impl JSMySQLConnection {
         Ok(js_value)
     }
 
-    pub fn do_flush(this: &Self) {
+    pub fn flush(this: &Self) {
         this.register_auto_flusher();
     }
 
-    pub fn do_close(this: &Self, _: &mut JsScope<'_>) {
+    pub fn close(this: &Self, _: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
     }
 
-    pub fn do_hold(this: &Self) {
+    pub fn hold(this: &Self) {
         this.timers.set_checked_out(true);
         this.reset_connection_timeout();
     }
 
-    pub fn do_unhold(this: &Self, _: &mut JsScope<'_>) {
+    pub fn unhold(this: &Self, _: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.timers.set_checked_out(false);
         this.on_queue_changed();
@@ -769,7 +769,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // SAFETY: `this` is live and that ref is outstanding.
         let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         // usockets frees this socket at end-of-tick; drop the stored pointer
-        // now so nothing (timer callbacks, do_close) dereferences it after
+        // now so nothing (timer callbacks, close) dereferences it after
         // the free.
         this.connection_mut()
             .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));

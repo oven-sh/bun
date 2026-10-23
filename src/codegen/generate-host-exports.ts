@@ -60,7 +60,7 @@ const scanRoots = [
 ];
 
 // ───────────────────────── module-path resolver ─────────────────────────────
-// Same walk as generate-classes.ts::rustModuleResolver — map an absolute .rs
+// Map an absolute .rs
 // file to its `crate::a::b` path by following `mod foo;` declarations from
 // each crate's `lib.rs`. We need this so the emitted thunk can name the impl
 // fn by its fully-qualified path from inside `bun_runtime::generated_host_exports`.

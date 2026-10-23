@@ -164,6 +164,42 @@ devTest("css import another css file", {
     await c.style("body").color.expect.toBe("red");
   },
 });
+devTest("css import after an unknown at-rule is not served again", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @tailwind base;
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toBe(`/* second.css */
+h1 {
+  color: #00f;
+}
+
+/* styles.css */
+@tailwind base;
+
+body {
+  color: red;
+}
+`);
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

@@ -148,6 +148,13 @@ impl CreateOptions {
             clap::param!("--verbose                      Too many logs"),
             clap::param!("--no-package-json              Disable package.json transforms"),
             clap::param!("--open                         On finish, start bun & open in-browser"),
+            clap::param!(
+                "--use-system-ca                Use the system's trusted certificate authorities"
+            ),
+            clap::param!(
+                "--use-openssl-ca               Use OpenSSL's default CA store instead of the bundled one"
+            ),
+            clap::param!("--use-bundled-ca               Use bundled CA store"),
             clap::param!("<POS>...                       "),
         ];
         let mut diag = clap::Diagnostic::default();
@@ -165,6 +172,8 @@ impl CreateOptions {
                 return Err(err.into());
             }
         };
+
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         let mut positionals = args.positionals().to_vec();
         if !positionals.is_empty() && (positionals[0] == b"c" || positionals[0] == b"create") {
@@ -1087,15 +1096,15 @@ impl CreateCommand {
 
         if let Some(bun_exe) = bun_exe {
             let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = if ignore_scripts {
-                &[bun_exe, b"install", b"--ignore-scripts"]
-            } else {
-                &[bun_exe, b"install"]
-            };
-            Output::flush();
-            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d> install");
+            let mut install_args: Vec<&[u8]> = vec![bun_exe, b"install"];
             if ignore_scripts {
-                bun_core::pretty!(" --ignore-scripts");
+                install_args.push(b"--ignore-scripts");
+            }
+            install_args.extend(Global::ca_store_flag().map(|flag| flag.as_bytes()));
+            Output::flush();
+            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d>");
+            for arg in &install_args[1..] {
+                bun_core::pretty!(" {}", bstr::BStr::new(arg));
             }
             bun_core::pretty!("<r>\n");
             Output::flush();

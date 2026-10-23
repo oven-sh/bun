@@ -184,7 +184,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--use-system-ca                       Use the system's trusted certificate authorities"
     ),
-    clap::param!("--use-openssl-ca                      Use OpenSSL's default CA store"),
+    clap::param!(
+        "--use-openssl-ca                      Use OpenSSL's default CA store instead of the bundled one"
+    ),
     clap::param!("--use-bundled-ca                      Use bundled CA store"),
     clap::param!("-h, --help                            Print this help menu"),
     RUNTIME_FLAGS_PARAM,

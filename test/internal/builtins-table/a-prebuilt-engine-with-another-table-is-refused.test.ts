@@ -36,20 +36,12 @@ async function generateAgainst(prebuiltGenerated: string, sources: readonly stri
   return { exitCode, errors, tableOfBuiltins: existsSync(written) ? readFileSync(written, "utf8") : "" };
 }
 
+// What a prebuilt engine was compiled with. The generators and the schema are those of the engine that src/codegen/engine-directory.ts finds.
 function copyOfEngine(): { root: ReturnType<typeof tempDir>; generatedCopy: string } {
   const root = tempDir("prebuilt-engine", {});
-  const javaScriptCore = resolve(generated!, "..", "..", "..");
-  const javaScriptCoreCopy = join(String(root), "Source", "JavaScriptCore");
-  for (const path of [
-    "aot/ir/AOTSchema.def",
-    "aot/ir/schema",
-    "aot/ir/generator",
-    "aot/builtins/generated",
-    "aot/builtins/verified-overloads.txt",
-  ]) {
-    cpSync(join(javaScriptCore, path), join(javaScriptCoreCopy, path), { recursive: true });
-  }
-  return { root, generatedCopy: join(javaScriptCoreCopy, "aot", "builtins", "generated") };
+  const generatedCopy = join(String(root), "generated");
+  cpSync(generated!, generatedCopy, { recursive: true });
+  return { root, generatedCopy };
 }
 
 test.skipIf(generated === undefined)(
@@ -90,8 +82,7 @@ test.skipIf(generated === undefined)(
   async () => {
     const { root, generatedCopy } = copyOfEngine();
     using _ = root;
-    const rows = join(generatedCopy, "AOTBuiltinTableBuiltins.cpp");
-    writeFileSync(rows, `${readFileSync(rows, "utf8")}\n// Written from other natives.\n`);
+    writeFileSync(join(generatedCopy, "AOTBuiltinTableBuiltins.cpp"), "// Written from other natives.\n");
     const { exitCode, errors } = await generateAgainst(generatedCopy);
     expect(errors).not.toContain("AOTBuiltinTableBuiltins.cpp");
     expect(exitCode).toBe(0);

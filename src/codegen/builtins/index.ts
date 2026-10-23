@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
 import { serializeBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import { loadFeatures } from "../../../scripts/build/trim/features.ts";
 import type { FeatureModel } from "../../../scripts/build/trim/types.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
-import { loadSchema, type Schema } from "../aot-schema/load.ts";
-import { SchemaError, SchemaErrors } from "../aot-schema/source.ts";
+import type { Schema } from "../../../vendor/WebKit/Source/JavaScriptCore/aot/ir/generator/load.ts";
 import { builtinFunctionIds } from "../builtin-function-ids.ts";
+import { engineDirectory, engineFile } from "../engine-directory.ts";
 import { nativeCalls, type EngineFunctions } from "../builtins-manifest-model.ts";
 import { nativeCallListStamp } from "../generate-js2native.ts";
 import { argParse, writeIfNotChanged } from "../helpers.ts";
@@ -50,6 +50,15 @@ import { compareBytes } from "./paths.ts";
 import { readVerifiedHashes, reportStaleEntries } from "./verification.ts";
 import { targetPlatforms, type BuiltinPath, type TargetPlatform } from "./vocabulary.ts";
 
+const { loadSchema }: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/ir/generator/load.ts") =
+  await import(engineFile("ir/generator/load.ts"));
+const {
+  SchemaError,
+  SchemaErrors,
+}: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/ir/generator/source.ts") = await import(
+  engineFile("ir/generator/source.ts")
+);
+
 export interface GenerateOptions {
   bunRoot: string;
   javaScriptCore: string | null;
@@ -76,6 +85,8 @@ interface EmittedCode extends EngineCode {
 interface CommandLine {
   options: GenerateOptions;
   codegenPath: string;
+  /** Where the files go that the engine is compiled with, when this build compiles the engine. */
+  engineOut: string | null;
   isCheck: boolean;
 }
 
@@ -84,22 +95,13 @@ const ownBunRoot = resolve(import.meta.dir, "..", "..", "..");
 const usage =
   "usage: bun src/codegen/builtins/index.ts --codegen-path=<dir> " +
   `--target=<${targetPlatforms.join("|")}> --sources=<crate>=<a.bind.ts>,.. ` +
-  "(--javascriptcore=<Source/JavaScriptCore> | --prebuilt-generated=<dir>) " +
-  "[--types-only=<b.bind.ts>,..] [--check]";
+  "(--javascriptcore=<Source/JavaScriptCore> [--engine-out=<dir>] | --prebuilt-generated=<dir>) " +
+  "[--engine-directory=<Source/JavaScriptCore/aot>] [--types-only=<b.bind.ts>,..] [--check]";
 
 const singleRoot = (root: string): { Engine: string; Host: string } => ({ Engine: root, Host: root });
 
-function generatedDirectoryOf({ javaScriptCore, prebuiltGenerated }: GenerateOptions): string {
-  if (javaScriptCore !== null) return join(javaScriptCore, "aot", "builtins", "generated");
-  if (prebuiltGenerated !== null) return prebuiltGenerated;
-  throw new GeneratorError("the table needs a JavaScriptCore checkout or the generated folder of a prebuilt WebKit");
-}
-
-const engineDirectoryOf = (options: GenerateOptions): string =>
-  resolve(generatedDirectoryOf(options), "..", "..", "..");
-
 const verifiedHashesOf = (options: GenerateOptions): Set<string> =>
-  readVerifiedHashes(verifiedListPaths(options.bunRoot, engineDirectoryOf(options)));
+  readVerifiedHashes(verifiedListPaths(options.bunRoot, dirname(engineDirectory)));
 
 function findPlacements(staticTableMembers: readonly SourcedDeclaration[]): Map<string, BuiltinPath> {
   const placements = new Map<string, BuiltinPath>();
@@ -142,7 +144,10 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
 
 async function loadEngine(options: GenerateOptions, problems: Problems): Promise<EngineDeclarations> {
   if (options.javaScriptCore !== null) return collectEngine(options.javaScriptCore, problems);
-  const file = join(generatedDirectoryOf(options), engineDeclarationsName);
+  if (options.prebuiltGenerated === null) {
+    throw new GeneratorError("the table needs a JavaScriptCore checkout or what a prebuilt WebKit was compiled with");
+  }
+  const file = join(options.prebuiltGenerated, engineDeclarationsName);
   return parseEngineDeclarations(readFileSync(file, "utf8"), file);
 }
 
@@ -229,7 +234,7 @@ export async function generate(options: GenerateOptions): Promise<GeneratedFiles
   const declarations = await collectDeclarations(options, engine, problems);
   problems.throwIfAny();
 
-  const schema = loadSchema(join(engineDirectoryOf(options), "aot", "ir", "AOTSchema.def"));
+  const schema = loadSchema(join(engineDirectory, "ir", "AOTSchema.def"));
   const features = loadFeatures(options.bunRoot);
   checkEngineFeatures(engine, features);
   const model = buildModel({
@@ -279,11 +284,10 @@ function describeFirstDifference(found: string, written: string): string {
   return `line ${index + 1} is ${shownLineOf(foundLines[index])}, and this tree writes ${shownLineOf(writtenLines[index])}`;
 }
 
-const remedyForCheckout = "run src/codegen/builtins/index.ts without --check and check the result in";
 const remedyForPrebuilt =
   "this WebKit was compiled with another list of the built-ins that its own code names than the one this tree declares: " +
   "a change to an entry that the engine declares or that aot/builtins/host-roles.builtins.ts lists needs a build of WebKit. " +
-  "Build with --webkit=local, or pin a release of WebKit whose aot/builtins/generated was written from this tree";
+  "Build with --webkit=local, or pin a release of WebKit that was built from this tree's declarations";
 
 function checkFilesAreCurrent(directory: string, files: ReadonlyMap<string, string>, remedy: string): void {
   const problems = new Problems();
@@ -310,6 +314,8 @@ function readCommandLine(): CommandLine {
     "target",
     "sources",
     "javascriptcore",
+    "engine-out",
+    "engine-directory",
     "prebuilt-generated",
     "types-only",
     "check",
@@ -327,6 +333,8 @@ function readCommandLine(): CommandLine {
   const sources = textOf("sources");
   const javaScriptCore = directoryOf("javascriptcore");
   const prebuiltGenerated = directoryOf("prebuilt-generated");
+  const engineOut = directoryOf("engine-out");
+  const isCheck = flags.check === true;
   const hasOneEngine = (javaScriptCore === null) !== (prebuiltGenerated === null);
   if (target === undefined || codegenPath === null || sources === null || !hasOneEngine) {
     throw new GeneratorError(usage);
@@ -341,17 +349,16 @@ function readCommandLine(): CommandLine {
       typesOnly: listOf(textOf("types-only") ?? ""),
     },
     codegenPath,
-    isCheck: flags.check === true,
+    engineOut,
+    isCheck,
   };
 }
 
 async function main(): Promise<void> {
-  const { options, codegenPath, isCheck } = readCommandLine();
-  const { engine, table, codegen, dump, undescribedResultsSummary } = await generate(options);
-  const generatedDirectory = generatedDirectoryOf(options);
-  if (options.javaScriptCore === null) checkFilesAreCurrent(generatedDirectory, engine, remedyForPrebuilt);
-  else if (isCheck) checkFilesAreCurrent(generatedDirectory, new Map([...engine, ...table]), remedyForCheckout);
-  else writeFiles(generatedDirectory, new Map([...engine, ...table]));
+  const { options, codegenPath, engineOut, isCheck } = readCommandLine();
+  const { engine, codegen, dump, undescribedResultsSummary } = await generate(options);
+  if (options.prebuiltGenerated !== null) checkFilesAreCurrent(options.prebuiltGenerated, engine, remedyForPrebuilt);
+  else if (engineOut !== null && !isCheck) writeFiles(engineOut, engine);
   if (!isCheck) writeFiles(codegenPath, codegen);
   console.error(`builtins table: ${undescribedResultsSummary}`);
   reportStaleEntries(dump, verifiedHashesOf(options));

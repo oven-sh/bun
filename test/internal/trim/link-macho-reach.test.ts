@@ -310,13 +310,13 @@ const reachCases: Record<string, ReachCase> = {
       __attribute__((noinline)) const char *feature_words(void) { return "words that a member of an archive names too"; }
       int more(int x) { return feature_target(x) + feature_words()[x & 7]; }
     `,
-    main: `int archive_member_with_long_name(int); int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : archive_member_with_long_name(argc) == 35 + 'o' ? 0 : 1; }`,
+    main: `int member_of_an_archive_with_long_name(int); int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : member_of_an_archive_with_long_name(argc) == 35 + 'o' ? 0 : 1; }`,
     files: {
-      "archive_member_with_long_name.c": `int feature_target(int); int archive_member_with_long_name(int x) { return feature_target(x) + "words that a member of an archive names too"[x]; }`,
+      "member_of_an_archive_with_long_name.c": `int feature_target(int); int member_of_an_archive_with_long_name(int x) { return feature_target(x) + "words that a member of an archive names too"[x]; }`,
     },
-    objects: ["feature_code", "entry", "more", "archive_member_with_long_name", "embedder", "main"],
-    archived: ["archive_member_with_long_name"],
-    retained: ["feature_target", "archive_member_with_long_name"],
+    objects: ["feature_code", "entry", "more", "member_of_an_archive_with_long_name", "embedder", "main"],
+    archived: ["member_of_an_archive_with_long_name"],
+    retained: ["feature_target", "member_of_an_archive_with_long_name"],
   },
   "a no_dead_strip section": {
     more: `

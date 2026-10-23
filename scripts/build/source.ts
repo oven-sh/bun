@@ -198,7 +198,8 @@ export interface SourceGroup {
   cxxflags?: string[];
   /** Header to precompile for this group's C++ TUs (absolute or relative to srcDir), built with the group's C++ flags. */
   pch?: string;
-  chainedPch?: Array<{ header: string; base: string }>;
+  /** Each on top of `base`, which stands in front of it in the list or is `pch`. Without a base: a second header precompiled by itself. */
+  chainedPch?: Array<{ header: string; base?: string }>;
   /** Generated files every TU of the group waits for before its first compile. The depfiles track the exact set afterwards. Absolute. */
   orderOnly?: string[];
   /** false: the objects only feed `steps` executables that name this group; they are not part of bun's link. Default true. */
@@ -1461,14 +1462,18 @@ function emitDirect(
     const pchByHeader = new Map<string, PrecompiledHeader>();
     if (g.pch !== undefined && groupPch !== undefined) pchByHeader.set(g.pch, groupPch);
     for (const { header, base } of g.chainedPch ?? []) {
-      const basePch = pchByHeader.get(base);
+      const basePch = base === undefined ? undefined : pchByHeader.get(base);
       assert(
-        basePch !== undefined,
+        base === undefined || basePch !== undefined,
         `${name}: ${header} builds on ${base}, which ${g.name} has not precompiled before it`,
       );
       pchByHeader.set(
         header,
-        pch(n, cfg, resolve(srcDir, header), { flags: flags.cxx, orderOnlyInputs: [groupReady], base: basePch }),
+        pch(n, cfg, resolve(srcDir, header), {
+          flags: flags.cxx,
+          orderOnlyInputs: [groupReady],
+          ...(basePch !== undefined && { base: basePch }),
+        }),
       );
     }
 

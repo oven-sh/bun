@@ -25,6 +25,7 @@ try {
     AOT_TESTS: webkitAotFile(cfg, "tests"),
     AOT_SCHEMA: webkitAotFile(cfg, "AOTSchema.def"),
     AOT_BUILTINS_GENERATED: webkitAotFile(cfg, "builtins-generated"),
+    AOT_ENGINE_DIRECTORY: webkitAotFile(cfg, "directory"),
   };
   for (const [name, path] of Object.entries(paths)) process.stdout.write(`${name}=${path}\n`);
 } catch (error) {

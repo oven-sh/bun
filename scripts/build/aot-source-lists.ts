@@ -20,6 +20,8 @@ export interface DeclaredAotLists {
   programSources: string[];
   shellSources: string[];
   tableExportedHeaders: string[];
+  /** Names: a build writes them into one folder of its own. */
+  tableExportedGeneratedHeaders: string[];
 }
 
 export interface WrittenAotLists extends AotSourceLists, DeclaredAotLists {}
@@ -100,6 +102,9 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
     programSources: evaluated.list("JavaScriptCore_AOT_PROGRAM_SOURCES"),
     shellSources: evaluated.list("JavaScriptCore_AOT_SHELL_SOURCES"),
     tableExportedHeaders: evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS"),
+    tableExportedGeneratedHeaders: evaluated
+      .list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS")
+      .map(path => basename(path)),
   };
 }
 
@@ -205,7 +210,11 @@ export function findAotSourceListProblems(javaScriptCore: string): string[] {
   const sources = present.filter(path => !listedElsewhere.has(path));
 
   const exported = [...written.exportedHeaders, ...written.tableExportedHeaders];
-  const exportedNames = new Set([...exported.map(path => basename(path)), ...written.schemaExportedHeaders]);
+  const exportedNames = new Set([
+    ...exported.map(path => basename(path)),
+    ...written.schemaExportedHeaders,
+    ...written.tableExportedGeneratedHeaders,
+  ]);
   const problems = [
     ...describeDifference(
       sourcesTxt,

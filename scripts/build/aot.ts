@@ -10,6 +10,8 @@ import type { ObjectFormat } from "./trim/types.ts";
 export interface EngineSources {
   /** `Source/JavaScriptCore` of the checkout this graph compiles. Undefined when it links a prebuilt WebKit. */
   javaScriptCore: string | undefined;
+  /** `Source/JavaScriptCore/aot`, of the checkout or of the prebuilt WebKit. The generators are files of it. */
+  directory: string;
   schema: string;
   /** `aot/ir/generator/index.ts`. The engine has it, so that its own cmake build and this one run the same. */
   schemaGenerator: string;
@@ -245,7 +247,6 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
     inputs: [
       script,
       ...sources.builtinsTableCodegen.filter(path => path !== script),
-      ...sources.aotSchemaCodegen,
       ...sources.bindgen,
       ...sources.js,
       ...sources.jsCodegen,
@@ -280,9 +281,10 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
         `--codegen-path=${cfg.codegenDir}`,
         `--target=${builtinTableTarget(cfg)}`,
         `--sources=${sources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
-        engine.javaScriptCore === undefined
-          ? `--prebuilt-generated=${engine.builtinsGeneratedDirectory}`
-          : `--javascriptcore=${engine.javaScriptCore}`,
+        `--engine-directory=${engine.directory}`,
+        ...(engine.javaScriptCore === undefined
+          ? [`--prebuilt-generated=${engine.builtinsGeneratedDirectory}`]
+          : [`--javascriptcore=${engine.javaScriptCore}`, `--engine-out=${engine.builtinsGeneratedDirectory}`]),
         typesOnlyFlag(cfg, sources),
       ]),
     },

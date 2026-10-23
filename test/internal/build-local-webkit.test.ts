@@ -121,11 +121,11 @@ describe("which builds compile WebKit", () => {
   });
 
   test("WebKit's AoT files are at the same path in the tarball and in the checkout", () => {
-    const names: WebKitAotFile[] = ["AOTSchema.def", "schema-generator", "builtins-generated", "tests"];
+    const names: WebKitAotFile[] = ["directory", "AOTSchema.def", "schema-generator", "tests"];
     const under = (aot: string) => [
+      aot,
       join(aot, "ir", "AOTSchema.def"),
       join(aot, "ir", "generator", "index.ts"),
-      join(aot, "builtins", "generated"),
       join(aot, "tests"),
     ];
 
@@ -137,6 +137,10 @@ describe("which builds compile WebKit", () => {
       under(join(dest, "Source", "JavaScriptCore", "aot")),
     );
     expect(webkitTestAotPath(prebuilt)).toBe(join(dest, "bin", "testaot"));
+    // What the prebuilt engine was compiled with comes with it. A build that compiles the engine makes its own.
+    expect(webkitAotFile(prebuilt, "builtins-generated")).toBe(
+      join(dest, "Source", "JavaScriptCore", "aot", "builtins", "generated"),
+    );
     // Nothing is written into the tarball.
     expect(webkitEngineSources(prebuilt)).toMatchObject({
       javaScriptCore: undefined,
@@ -148,6 +152,7 @@ describe("which builds compile WebKit", () => {
     const local = linux({ localDeps: `WebKit=${join("/elsewhere", "WebKit")}` });
     const jsc = join(resolve("/elsewhere", "WebKit"), "Source", "JavaScriptCore");
     expect(names.map(name => webkitAotFile(local, name))).toEqual(under(join(jsc, "aot")));
+    expect(webkitAotFile(local, "builtins-generated")).toStartWith(local.buildDir);
     expect(webkitTestAotPath(local)).toBe(join(local.buildDir, "testaot"));
   });
 });
@@ -246,13 +251,12 @@ const checkout = {
     set(JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTWire.h")
     set(JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEnumNames.cpp")
     set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS aot/builtins/array.builtins.ts)
-    set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS aot/builtins/generated/AOTBuiltinIDs.h)
-    set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES aot/builtins/generated/AOTBuiltinTableBuiltins.cpp)
+    set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinIDs.h")
+    set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES "\${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableEngineBindings.cpp")
     list(APPEND JavaScriptCore_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
     list(APPEND JavaScriptCore_SOURCES \${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES} \${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES})
     list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES "\${JavaScriptCore_AOT_GENERATED_DIR}")
     list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
-        "\${JAVASCRIPTCORE_DIR}/aot/builtins/generated"
         "\${JAVASCRIPTCORE_DIR}/aot/ir"
     )
     set(JavaScriptCore_AOT_EXPORTED_HEADERS)
@@ -267,6 +271,7 @@ const checkout = {
   "Source/JavaScriptCore/aot/Sources.txt": `aot/ir/AOTValue.cpp @no-unify\n`,
   "Source/JavaScriptCore/aot/ir/AOTSchema.def": "",
   "Source/JavaScriptCore/aot/ir/generator/index.ts": "",
+  "Source/JavaScriptCore/aot/builtins/generator/engine.ts": "",
   "Source/JavaScriptCore/aot/ir/generator/package.json": "",
   "Source/JavaScriptCore/aot/ir/AOTValue.cpp": "",
   "Source/JavaScriptCore/aot/runtime/AOTNoFeatureRemoved.cpp": "",
@@ -373,7 +378,7 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "JSC/inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp",
       // What the generators of aot/ write.
       "B/JavaScriptCore/DerivedSources/aot/AOTSchemaEnumNames.cpp",
-      "JSC/aot/builtins/generated/AOTBuiltinTableBuiltins.cpp",
+      "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinTableEngineBindings.cpp",
       "JSC/llint/LowLevelInterpreter.cpp",
     ]);
     expect(group("JavaScriptCore").includes).toEqual([
@@ -381,7 +386,6 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "JSC/runtime",
       "B/JavaScriptCore/DerivedSources",
       "B/JavaScriptCore/DerivedSources/aot",
-      "JSC/aot/builtins/generated",
       "JSC/aot/ir",
       "WTF/",
       "B/bmalloc/Headers",
@@ -474,13 +478,14 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         "JSC/aot/builtins/array.builtins.ts",
         "JSC/builtins/MapPrototype.js",
         "JSC/CMakeLists.txt",
+        "JSC/aot/builtins/generator/engine.ts",
       ]),
     );
     expect(engine.builtinTableOutputs.map(short)).toEqual(
       expect.arrayContaining([
-        "JSC/aot/builtins/generated/AOTBuiltinIDs.h",
-        "JSC/aot/builtins/generated/AOTBuiltinTableBuiltins.cpp",
-        "JSC/aot/builtins/generated/AOTBuiltinEngineDeclarations.json",
+        "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinIDs.h",
+        "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinTableEngineBindings.cpp",
+        "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinEngineDeclarations.json",
       ]),
     );
   });

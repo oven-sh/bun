@@ -269,35 +269,28 @@
     "windows": 62
   },
   "aot/bad-time/bad-time-1.test.ts": {
-    "default": 141189
+    "default": 42333
   },
   "aot/bad-time/bad-time-2.test.ts": {
-    "default": 141771,
-    "asan": 55709
+    "default": 44333
   },
   "aot/bad-time/bad-time-3.test.ts": {
-    "default": 146196,
-    "asan": 145260
+    "default": 41666
   },
   "aot/bad-time/bad-time-4.test.ts": {
-    "default": 143350,
-    "asan": 24881
+    "default": 40000
   },
   "aot/bad-time/bad-time-5.test.ts": {
-    "default": 149708,
-    "asan": 24497
+    "default": 39333
   },
   "aot/bad-time/bad-time-6.test.ts": {
-    "default": 140087,
-    "asan": 164889
+    "default": 39333
   },
   "aot/bad-time/bad-time-7.test.ts": {
-    "default": 150019,
-    "asan": 163443
+    "default": 36666
   },
   "aot/bad-time/bad-time-8.test.ts": {
-    "default": 173826,
-    "asan": 79442
+    "default": 32666
   },
   "aot/base-call-this.test.ts": {
     "default": 6910,
@@ -1304,211 +1297,166 @@
     "musl": 7535
   },
   "aot/collector-stress/full-1.test.ts": {
-    "default": 195515,
-    "asan": 232650
+    "default": 24666
   },
   "aot/collector-stress/full-10.test.ts": {
-    "default": 98530,
-    "asan": 222248
+    "default": 19000
   },
   "aot/collector-stress/full-11.test.ts": {
-    "default": 89591,
-    "asan": 92114
+    "default": 18333
   },
   "aot/collector-stress/full-12.test.ts": {
-    "default": 72249,
-    "asan": 204280
+    "default": 23000
   },
   "aot/collector-stress/full-13.test.ts": {
-    "default": 72795,
-    "asan": 81728
+    "default": 22666
   },
   "aot/collector-stress/full-14.test.ts": {
-    "default": 78213,
-    "asan": 92109
+    "default": 23333
   },
   "aot/collector-stress/full-15.test.ts": {
-    "default": 128952,
-    "asan": 134673
+    "default": 24000
   },
   "aot/collector-stress/full-16.test.ts": {
-    "default": 76891,
-    "asan": 154068
+    "default": 22666
   },
   "aot/collector-stress/full-17.test.ts": {
-    "default": 75308
+    "default": 22666
   },
   "aot/collector-stress/full-18.test.ts": {
-    "default": 85756,
-    "asan": 156218
+    "default": 26333
   },
   "aot/collector-stress/full-19.test.ts": {
-    "default": 78535,
-    "asan": 283138
+    "default": 39000
   },
   "aot/collector-stress/full-2.test.ts": {
-    "default": 89147,
-    "asan": 261736
+    "default": 24000
   },
   "aot/collector-stress/full-20.test.ts": {
-    "default": 84868,
-    "asan": 246894
+    "default": 85000
   },
   "aot/collector-stress/full-21.test.ts": {
-    "default": 82559,
-    "asan": 229953
+    "default": 74666
   },
   "aot/collector-stress/full-22.test.ts": {
-    "default": 95775,
-    "asan": 308658
+    "default": 24333
   },
   "aot/collector-stress/full-23.test.ts": {
-    "default": 89345
+    "default": 27000
   },
   "aot/collector-stress/full-24.test.ts": {
-    "default": 80753,
-    "asan": 246458
+    "default": 25000
   },
   "aot/collector-stress/full-25.test.ts": {
-    "default": 182741,
-    "asan": 71302
+    "default": 72000
   },
   "aot/collector-stress/full-26.test.ts": {
-    "default": 81289,
-    "asan": 180527
+    "default": 21666
   },
   "aot/collector-stress/full-27.test.ts": {
-    "default": 75003,
-    "asan": 246137
+    "default": 21000
   },
   "aot/collector-stress/full-28.test.ts": {
-    "default": 89341,
-    "asan": 272003
+    "default": 60000
   },
   "aot/collector-stress/full-29.test.ts": {
-    "default": 80453,
-    "asan": 271547
+    "default": 21666
   },
   "aot/collector-stress/full-3.test.ts": {
-    "default": 219970,
-    "asan": 341398
+    "default": 21333
   },
   "aot/collector-stress/full-30.test.ts": {
-    "default": 78692,
-    "asan": 141662
+    "default": 32333
   },
   "aot/collector-stress/full-4.test.ts": {
-    "default": 104926,
-    "asan": 227299
+    "default": 19000
   },
   "aot/collector-stress/full-5.test.ts": {
-    "default": 76680,
-    "asan": 89452
+    "default": 23333
   },
   "aot/collector-stress/full-6.test.ts": {
-    "default": 76379,
-    "asan": 209682
+    "default": 24000
   },
   "aot/collector-stress/full-7.test.ts": {
-    "default": 84663,
-    "asan": 92578
+    "default": 17333
   },
   "aot/collector-stress/full-8.test.ts": {
-    "default": 80666
+    "default": 36000
   },
   "aot/collector-stress/full-9.test.ts": {
-    "default": 81023,
-    "asan": 241022
+    "default": 24000
   },
   "aot/collector-stress/json-parse-full-at-every-allocation.test.ts": {
-    "default": 118978
+    "default": 75333
   },
   "aot/collector-stress/json-parse-full-at-every-second-allocation.test.ts": {
-    "default": 73103
+    "default": 56666
   },
   "aot/collector-stress/json-parse-young-at-every-allocation.test.ts": {
-    "default": 124462
+    "default": 117333
   },
   "aot/collector-stress/json-parse-young-at-every-second-allocation.test.ts": {
-    "default": 121042
+    "default": 87333
   },
   "aot/collector-stress/young-1.test.ts": {
-    "default": 125088,
-    "asan": 254804
+    "default": 62666
   },
   "aot/collector-stress/young-10.test.ts": {
-    "default": 107044,
-    "asan": 241634
+    "default": 24666
   },
   "aot/collector-stress/young-11.test.ts": {
-    "default": 112056,
-    "asan": 239936
+    "default": 23666
   },
   "aot/collector-stress/young-12.test.ts": {
-    "default": 177340,
-    "asan": 245775
+    "default": 24333
   },
   "aot/collector-stress/young-13.test.ts": {
-    "default": 102947,
-    "asan": 225564
+    "default": 22666
   },
   "aot/collector-stress/young-14.test.ts": {
-    "default": 104545
+    "default": 23333
   },
   "aot/collector-stress/young-15.test.ts": {
-    "default": 104992,
-    "asan": 248952
+    "default": 24666
   },
   "aot/collector-stress/young-16.test.ts": {
-    "default": 172923,
-    "asan": 168526
+    "default": 27000
   },
   "aot/collector-stress/young-17.test.ts": {
-    "default": 116934,
-    "asan": 281616
+    "default": 28333
   },
   "aot/collector-stress/young-18.test.ts": {
-    "default": 108410,
-    "asan": 267079
+    "default": 29666
   },
   "aot/collector-stress/young-19.test.ts": {
-    "default": 109697,
-    "asan": 294482
+    "default": 29333
   },
   "aot/collector-stress/young-2.test.ts": {
-    "default": 290863,
-    "asan": 436399
+    "default": 28666
   },
   "aot/collector-stress/young-20.test.ts": {
-    "default": 123152,
-    "asan": 266444
+    "default": 31000
   },
   "aot/collector-stress/young-3.test.ts": {
-    "default": 290936,
-    "asan": 373000
+    "default": 31000
   },
   "aot/collector-stress/young-4.test.ts": {
-    "default": 290973,
-    "asan": 226082
+    "default": 33333
   },
   "aot/collector-stress/young-5.test.ts": {
-    "default": 105882,
-    "asan": 231568
+    "default": 35333
   },
   "aot/collector-stress/young-6.test.ts": {
-    "default": 111560,
-    "asan": 241286
+    "default": 31666
   },
   "aot/collector-stress/young-7.test.ts": {
-    "default": 115230,
-    "asan": 252482
+    "default": 32333
   },
   "aot/collector-stress/young-8.test.ts": {
-    "default": 106347
+    "default": 32333
   },
   "aot/collector-stress/young-9.test.ts": {
-    "default": 121670,
-    "asan": 246622
+    "default": 32000
   },
   "aot/collector.test.ts": {
     "default": 2977,
@@ -2408,9 +2356,7 @@
     "windows": 42555
   },
   "aot/generated-code.test.ts": {
-    "default": 166072,
-    "asan": 593,
-    "musl": 185923,
+    "default": 137000,
     "windows": 63
   },
   "aot/generated-constant-expressions.test.ts": {
@@ -2653,91 +2599,100 @@
     "windows": 60
   },
   "aot/heat/cold-1.test.ts": {
-    "default": 283177,
-    "musl": 642566
+    "default": 41000,
+    "musl": 164000
   },
   "aot/heat/cold-2.test.ts": {
-    "default": 291200,
-    "asan": 292671,
-    "musl": 945831
+    "default": 44666,
+    "musl": 178664
   },
   "aot/heat/cold-3.test.ts": {
-    "default": 273338,
-    "musl": 1396126
+    "default": 39666,
+    "musl": 158664
   },
   "aot/heat/cold-4.test.ts": {
-    "default": 283404,
-    "musl": 1149647
+    "default": 37666,
+    "musl": 150664
   },
   "aot/heat/cold-5.test.ts": {
-    "default": 261920,
-    "musl": 1418289
+    "default": 34333,
+    "musl": 137332
   },
   "aot/heat/cold-6.test.ts": {
-    "default": 283927,
-    "musl": 872469
+    "default": 35000,
+    "musl": 140000
   },
   "aot/heat/cold-7.test.ts": {
-    "default": 260579,
-    "musl": 877432
+    "default": 44666,
+    "musl": 178664
   },
   "aot/heat/cold-8.test.ts": {
-    "default": 284254,
-    "musl": 1416170
+    "default": 36000,
+    "musl": 144000
   },
   "aot/heat/hot-1.test.ts": {
-    "default": 291208,
-    "musl": 1232984
+    "default": 53333,
+    "musl": 213332
   },
   "aot/heat/hot-2.test.ts": {
-    "default": 278054,
-    "musl": 1104254
+    "default": 57333,
+    "musl": 229332
   },
   "aot/heat/hot-3.test.ts": {
-    "default": 291141,
-    "musl": 722943
+    "default": 50666,
+    "musl": 202664
   },
   "aot/heat/hot-4.test.ts": {
-    "default": 291079,
-    "musl": 1226971
+    "default": 43333,
+    "musl": 173332
   },
   "aot/heat/hot-5.test.ts": {
-    "default": 291183,
-    "musl": 1022869
+    "default": 42666,
+    "musl": 170664
   },
   "aot/heat/hot-6.test.ts": {
-    "default": 291264,
-    "musl": 1162867
+    "default": 49666,
+    "musl": 198664
   },
   "aot/heat/hot-7.test.ts": {
-    "default": 291108
+    "default": 57000,
+    "musl": 228000
   },
   "aot/heat/hot-8.test.ts": {
-    "default": 291168
+    "default": 44000,
+    "musl": 176000
   },
   "aot/heat/neither-1.test.ts": {
-    "default": 272933
+    "default": 46666,
+    "musl": 186664
   },
   "aot/heat/neither-2.test.ts": {
-    "default": 274240
+    "default": 50666,
+    "musl": 202664
   },
   "aot/heat/neither-3.test.ts": {
-    "default": 291235
+    "default": 43000,
+    "musl": 172000
   },
   "aot/heat/neither-4.test.ts": {
-    "default": 270878
+    "default": 38666,
+    "musl": 154664
   },
   "aot/heat/neither-5.test.ts": {
-    "default": 291161
+    "default": 43333,
+    "musl": 173332
   },
   "aot/heat/neither-6.test.ts": {
-    "default": 275229
+    "default": 44666,
+    "musl": 178664
   },
   "aot/heat/neither-7.test.ts": {
-    "default": 291122
+    "default": 53333,
+    "musl": 213332
   },
   "aot/heat/neither-8.test.ts": {
-    "default": 291209
+    "default": 44333,
+    "musl": 177332
   },
   "aot/host-classes.test.ts": {
     "default": 19022,
@@ -3957,7 +3912,7 @@
     "default": 2279
   },
   "aot/relations-who-keeps.test.ts": {
-    "default": 41311
+    "default": 14333
   },
   "aot/removable-statements.test.ts": {
     "default": 116

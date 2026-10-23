@@ -188,6 +188,7 @@ function engineAt(javaScriptCore: string | undefined): EngineSources {
     schemaGeneratedDirectory: javaScriptCore === undefined ? undefined : "/fake/build/DerivedSources/aot",
     schemaOutputs: javaScriptCore === undefined ? [] : ["/fake/build/DerivedSources/aot/AOTSchemaOperations.h"],
     schemaUsers: ["/fake/engine/aot/ir/AOTProgram.cpp"],
+    directory: "/fake/engine/aot",
     builtinsGeneratedDirectory: "/fake/engine/aot/builtins/generated",
     builtinTableInputs: ["/fake/engine/aot/builtins/array.def"],
     builtinTableOutputs: ["/fake/engine/aot/builtins/generated/AOTBuiltinTableBuiltins.cpp"],
@@ -201,7 +202,6 @@ const prebuilt = engineAt(undefined);
 function noSources(lists: Partial<Sources> = {}): Sources {
   return sourceLists({
     removableFeatures: [],
-    aotSchemaCodegen: [],
     aotRust: [],
     builtinsTableCodegen: [],
     bindgen: [],

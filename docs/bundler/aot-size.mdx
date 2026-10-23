@@ -180,7 +180,7 @@ These built-ins block `--trim` too. Only a call that your program can reach coun
 
 An executable only runs a file that's in it. `import()`, `require()` and `new Worker()` of any other file throw `ERR_MODULE_NOT_FOUND` at run time. A debugger only starts in an executable that's built with `--compile-inspector`: without it, `inspector.open()` from `node:inspector` starts nothing, so it blocks nothing.
 
-These block nothing, because the compiler sees the name: `globalThis.fetch`, `typeof globalThis.fetch`, `process.env.HOME` and `process.getBuiltinModule("node:fs")`. `value.constructor` and `cookies[name]` block nothing either. `cookies[name]` can have a cost of its own: see [Look up by key with a `Map`](#look-up-by-key-with-a-map).
+These block nothing, because the compiler sees the name: `globalThis.fetch`, `typeof globalThis.fetch`, `process.env.HOME` and `process.getBuiltinModule("node:fs")`. `value.constructor` and `settings[name]` block nothing either. `settings[name]` can have a cost of its own: see [Look up by key with a `Map`](#look-up-by-key-with-a-map).
 
 An `import()` or a `require()` of a package that wasn't installed at build time blocks nothing either. The build warns about it, and the call throws at run time, so it loads nothing.
 
@@ -192,7 +192,7 @@ A computed key on `process`, as in `process[name]` or `name in process`, has a p
 aot: trim: uses process (escapes, so any member may be used)
 ```
 
-A read such as `process[name]` also costs what `cookies[name]` costs. And if the key turns out to be `"dlopen"`, the native addon that your program loads can ask for a feature that `--trim` removed.
+A read such as `process[name]` also costs what `settings[name]` costs. And if the key turns out to be `"dlopen"`, the native addon that your program loads can ask for a feature that `--trim` removed.
 
 `Bun` is different. A member of `Bun` counts as used where your code names it on `Bun`: `Bun.file(path)`, `const { file } = Bun`, `import { file } from "bun"`. `Bun[name]`, `{ ...Bun }`, `for (const name in Bun)`, `console.log(Bun)` and passing `Bun` to code that the compiler can't follow name no member, so they keep nothing. Every name is still there, and `typeof Bun[name]` is what it is under `bun run`. Calling a member that nothing names throws the error in [Using a removed feature](#using-a-removed-feature). To keep one, name it somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature).
 
@@ -255,8 +255,9 @@ The flag only takes care of the `eval` row in [What blocks `--trim`](#what-block
 A program that blocks nothing can still include more than it needs. The sign is a long run of `uses property` lines with methods that your code never mentions.
 
 ```ts lookup.ts icon="/icons/typescript.svg"
-const cookies: Record<string, string> = JSON.parse(process.argv[2]!);
-console.log(cookies[process.argv[3]!]);
+const settings: Record<string, unknown> = JSON.parse(process.argv[2]!);
+const value = settings[process.argv[3]!];
+console.log(typeof value === "function" ? value() : value);
 ```
 
 ```bash terminal icon="terminal"
@@ -267,15 +268,16 @@ bun check --aot --explain=trim ./lookup.ts
 aot: trim: the compiler can see every API this program uses
 aot: trim: uses property localeCompare
 aot: trim: uses property toLocaleString
-aot: trim: locales: all, because the locale isn't a constant (Array.prototype.toLocaleString) at lookup.ts:2:13
-aot: trim: kept Intl.Collator and localeCompare (intl): used (String.prototype.localeCompare) at lookup.ts:2:13
+aot: trim: locales: all, because the locale isn't a constant (Array.prototype.toLocaleString) at lookup.ts:2:15
+aot: trim: kept Intl.Collator and localeCompare (intl): used (String.prototype.localeCompare) at lookup.ts:2:15
 ```
 
-A key finds more than the object's own properties. If it's `"toLocaleString"`, `cookies[key]` is the method that the object inherits. The compiler can't tell what the key will be. It can't tell what `JSON.parse` returns either: an object, an array, a string or a number. So the list has every method of every built-in class, and Bun keeps them all. Some of them are large: `toLocaleString` and `localeCompare` need the locale data of `Intl`. `lookup.ts` is 43 MB. With a `Map`, which has no inherited keys, it's 26 MB. On macOS, where the locale data comes with the system, the difference is smaller.
+A key finds more than the object's own properties. If it's `"toLocaleString"`, `settings[key]` is the method that the object inherits, and this program calls what it finds. The compiler can't tell what the key will be. It can't tell what `JSON.parse` returns either: an object, an array, a string or a number. So the list has every method of every built-in class, and Bun keeps them all. Some of them are large: `toLocaleString` and `localeCompare` need the locale data of `Intl`. `lookup.ts` is 47 MB. With a `Map`, which has no inherited keys, it's 27 MB. On macOS, where the locale data comes with the system, the difference is smaller.
 
 These lookups cost little or nothing:
 
 - The key is a number, as in `list[i]`.
+- Nothing calls what the lookup finds. `console.log(settings[key])` prints `[Function: toLocaleString]`, and for that Bun keeps the name and not the code behind it.
 - The compiler can see where the object was created, as with an object literal or an instance of one of your classes. Then the key only finds what that object inherits. For `{ theme: "dark" }[key]`, that's the methods of `Object.prototype`.
 
 Hono and zod have lookups of the expensive kind, which is why they're over 40 MB in the table above. You can't rewrite a dependency, but you can [list the locales](#locales) that your program needs.

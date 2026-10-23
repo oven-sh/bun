@@ -48,10 +48,6 @@ const patterns = {
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
   },
-  /** the generator of the AoT compiler's IR schema */
-  aotSchemaCodegen: {
-    paths: ["src/codegen/aot-schema/*.ts"],
-  },
   /** the generator of the table of built-ins, with Bun's own declarations and data files */
   builtinsTableCodegen: {
     paths: ["src/codegen/builtins/**/*.{ts,txt}"],

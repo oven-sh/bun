@@ -9,7 +9,7 @@
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
@@ -249,6 +249,7 @@ const TIMINGS_META_DATA = "timings:";
 //           ├── jsc[.exe]                (WebKit's shell, when shipped)
 //           ├── testaot[.exe]            (the engine's AoT test program, when shipped)
 //           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
+//           ├── aot-engine/              (the engine's generators and its schema, for the tests that import them)
 //           ├── verified-overloads.txt   (the engine's list for test/aot/builtins/differential.test.ts)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
@@ -348,6 +349,21 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     rmSync(staged, { recursive: true, force: true });
     cpSync(engineTests, staged, { recursive: true });
     files.push("aot-tests");
+  }
+  // What src/codegen/engine-directory.ts looks for: tests import the generators, which are files of the engine.
+  const engineDirectory = webkitAotFile(cfg, "directory");
+  if (existsSync(join(engineDirectory, "builtins", "generator"))) {
+    const staged = resolve(buildDir, "aot-engine");
+    rmSync(staged, { recursive: true, force: true });
+    for (const part of [
+      ["builtins", "generator"],
+      ["ir", "generator"],
+      ["ir", "schema"],
+      ["ir", "AOTSchema.def"],
+    ]) {
+      cpSync(join(engineDirectory, ...part), join(staged, ...part), { recursive: true });
+    }
+    files.push("aot-engine");
   }
   const verifiedOverloads = webkitAotFile(cfg, "verified-overloads.txt");
   if (existsSync(verifiedOverloads)) files.push(verifiedOverloads);

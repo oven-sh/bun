@@ -6,7 +6,13 @@ import { basename, extname, join } from "node:path";
 import { sharedCacheDir } from "../../../scripts/build/config.ts";
 import { prebuiltDirPrefix, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
 import { serializeBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
-import { featureNamed, loadFeatures, serializeFeatureModel, type FeatureModel, type FeatureName } from "../../../scripts/build/trim/features.ts";
+import {
+  featureNamed,
+  loadFeatures,
+  serializeFeatureModel,
+  type FeatureModel,
+  type FeatureName,
+} from "../../../scripts/build/trim/features.ts";
 import type { Library } from "../../../scripts/build/trim/libraries.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
@@ -41,15 +47,24 @@ function findGuardHeader(): GuardHeader | undefined {
   for (const checkout of checkouts) {
     if (checkout === undefined) continue;
     const engine = join(checkout, "Source", "JavaScriptCore", "aot");
-    const folders = [join(engine, "runtime"), join(engine, "builtins"), join(engine, "builtins", "generated")];
+    // A build writes what the generators make into a folder of its own: scripts/build/aot-paths.ts prints which.
+    const generated = process.env.AOT_BUILTINS_GENERATED ?? join(engine, "builtins", "generated");
+    const folders = [join(engine, "runtime"), join(engine, "builtins"), generated];
     const path = join(folders[0]!, "AOTRemovableFeature.h");
     const featureListPath = join(folders[2]!, "AOTBuiltinFeatures.h");
     if (existsSync(path) && existsSync(featureListPath)) {
-      return { path, featureListPath, includes: [...folders, join(checkout, "Source", "WTF")].map(folder => `-I${folder}`) };
+      return {
+        path,
+        featureListPath,
+        includes: [...folders, join(checkout, "Source", "WTF")].map(folder => `-I${folder}`),
+      };
     }
   }
   const buildFolder = join(repositoryRoot, "build");
-  const caches = [sharedCacheDir(repositoryRoot), ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "cache"))];
+  const caches = [
+    sharedCacheDir(repositoryRoot),
+    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "cache")),
+  ];
   const prefix = prebuiltDirPrefix(WEBKIT_VERSION);
   for (const cache of caches) {
     for (const name of childrenOf(cache)) {
@@ -58,7 +73,8 @@ function findGuardHeader(): GuardHeader | undefined {
       const folder = join(include, "JavaScriptCore");
       const path = join(folder, "AOTRemovableFeature.h");
       const featureListPath = join(folder, "AOTBuiltinFeatures.h");
-      if (existsSync(path) && existsSync(featureListPath)) return { path, featureListPath, includes: [`-I${folder}`, `-I${include}`] };
+      if (existsSync(path) && existsSync(featureListPath))
+        return { path, featureListPath, includes: [`-I${folder}`, `-I${include}`] };
     }
   }
   return undefined;
@@ -72,13 +88,20 @@ export const guardHeaderSkipReason: string | undefined =
 
 function findBuiltinUses(): string | undefined {
   const buildFolder = join(repositoryRoot, "build");
-  const codegenFolders = [process.env.BUN_CODEGEN_DIR, ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "codegen"))];
-  return codegenFolders.flatMap(folder => (folder === undefined ? [] : [join(folder, "builtin-uses.json")])).find(path => existsSync(path));
+  const codegenFolders = [
+    process.env.BUN_CODEGEN_DIR,
+    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "codegen")),
+  ];
+  return codegenFolders
+    .flatMap(folder => (folder === undefined ? [] : [join(folder, "builtin-uses.json")]))
+    .find(path => existsSync(path));
 }
 
 export const builtinUsesPath: string | undefined = findBuiltinUses();
 export const builtinUsesSkipReason: string | undefined =
-  builtinUsesPath === undefined ? "there is no builtin-uses.json: not under $BUN_CODEGEN_DIR or the codegen folder of a build" : undefined;
+  builtinUsesPath === undefined
+    ? "there is no builtin-uses.json: not under $BUN_CODEGEN_DIR or the codegen folder of a build"
+    : undefined;
 
 const skipNotices = new Set<string>();
 
@@ -89,16 +112,30 @@ export function skipNotice(file: string, reason: string): void {
   console.error(notice);
 }
 
-export const featureFlags: string[] = [`-DExtra=${indexOf(Extra)}`, `-DOther=${indexOf(Other)}`, `-DThird=${indexOf(Third)}`];
-export const cxxFlags: string[] = ["-x", "c++", "-std=c++23", "-fno-exceptions", "-fno-rtti", "-DBUILDING_JSCONLY__=1", ...(guardHeader?.includes ?? [])];
+export const featureFlags: string[] = [
+  `-DExtra=${indexOf(Extra)}`,
+  `-DOther=${indexOf(Other)}`,
+  `-DThird=${indexOf(Third)}`,
+];
+export const cxxFlags: string[] = [
+  "-x",
+  "c++",
+  "-std=c++23",
+  "-fno-exceptions",
+  "-fno-rtti",
+  "-DBUILDING_JSCONLY__=1",
+  ...(guardHeader?.includes ?? []),
+];
 
 export const alphabet: string = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 export const manyFunctions = (prefix: string, count: number): string =>
   Array.from(
     { length: count },
-    (_, index) => `__attribute__((noinline)) int ${prefix}${index}(int x) { for (int i = 0; i < ${index + 3}; i++) x = x * ${index + 7} + i; return x ^ ${index}; }`,
+    (_, index) =>
+      `__attribute__((noinline)) int ${prefix}${index}(int x) { for (int i = 0; i < ${index + 3}; i++) x = x * ${index + 7} + i; return x ^ ${index}; }`,
   ).join("\n");
-export const callAll = (prefix: string, count: number): string => Array.from({ length: count }, (_, index) => `x += ${prefix}${index}(x);`).join(" ");
+export const callAll = (prefix: string, count: number): string =>
+  Array.from({ length: count }, (_, index) => `x += ${prefix}${index}(x);`).join(" ");
 
 const guardSource = String.raw`#ifdef __cplusplus
 extern "C" {
@@ -236,7 +273,10 @@ const programHeaderRoomAssembly = [
   ".text",
 ];
 
-export function embedderSource(format: ToyFormat, options?: { stateFromRust?: boolean; exit?: (code: string) => string }): string {
+export function embedderSource(
+  format: ToyFormat,
+  options?: { stateFromRust?: boolean; exit?: (code: string) => string },
+): string {
   const assembly = (lines: string[]) =>
     lines.length > 0 ? ["__asm__(", ...lines.map(line => JSON.stringify(`${line}\n`)), ");"] : [];
   const state = options?.stateFromRust ? [] : assembly(stateAssembly(format));
@@ -318,7 +358,16 @@ int main(int argc, char**) { return argc > 5 ? JSC::callRemovableBuiltin<JSC::Re
 };
 export const builtinEnteringOtherObjects: string[] = ["feature_code", "guarding", "other", "embedder", "main"];
 
-export const spellingsEntryPoints: string[] = ["aborts", "defaults", "host", "builtin", "called", "listed", "defined", "operation"];
+export const spellingsEntryPoints: string[] = [
+  "aborts",
+  "defaults",
+  "host",
+  "builtin",
+  "called",
+  "listed",
+  "defined",
+  "operation",
+];
 export const spellingsGuardFunctions: string[] = ["body"];
 export const spellingsStubs: string[] = ["Abort", "ReturnDefault", "Throw"];
 export const wholeSpellingsOutput = "1 1,0,0 1,0,0 1,0,0 0 1,7 1,0,0 1,0,0";
@@ -466,7 +515,11 @@ export interface ProcessResult {
 
 export const cleanExit: ProcessResult = { stdout: "", stderr: "", exitCode: 0 };
 
-export async function run(cmd: string[], cwd: string, env?: Record<string, string | undefined>): Promise<ProcessResult> {
+export async function run(
+  cmd: string[],
+  cwd: string,
+  env?: Record<string, string | undefined>,
+): Promise<ProcessResult> {
   await using child = Bun.spawn({ cmd, cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   return { stdout, stderr, exitCode };
@@ -561,7 +614,15 @@ export async function buildGuardCrate(folder: string, rustc: string, target?: st
   if (target !== undefined && !(await hasTargetLibraries(folder, rustc, target))) return undefined;
   writeFileSync(join(folder, "removable_features.rs"), removableFeaturesRustSource(model));
   const crateRoot = join(repositoryRoot, "src", "trim", "removable_features", "lib.rs");
-  const cmd = [rustc, "--crate-type", "rlib", "--crate-name", "bun_removable_features", ...rustFlags(folder, target), crateRoot];
+  const cmd = [
+    rustc,
+    "--crate-type",
+    "rlib",
+    "--crate-name",
+    "bun_removable_features",
+    ...rustFlags(folder, target),
+    crateRoot,
+  ];
   const built = await run(cmd, folder, { BUN_CODEGEN_DIR: folder });
   if (built.exitCode !== 0) throw new Error(`rustc failed on ${crateRoot}: ${built.stderr}`);
   return join(folder, "libbun_removable_features.rlib");

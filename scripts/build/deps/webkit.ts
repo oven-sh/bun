@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-6f092794";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-c5ffbfe2";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -138,7 +138,7 @@ export function webkitTestAotPath(cfg: Config): string {
 }
 
 export type WebKitAotFile =
-  "AOTSchema.def" | "schema-generator" | "builtins-generated" | "verified-overloads.txt" | "tests";
+  "directory" | "AOTSchema.def" | "schema-generator" | "builtins-generated" | "verified-overloads.txt" | "tests";
 
 /** A file or folder under JavaScriptCore's aot/ that Bun's build or tests read. The prebuilt tarball has it at the checkout's path. Absolute. It need not exist yet. */
 export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
@@ -147,12 +147,15 @@ export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
       ? join(prebuiltDestDir(cfg), "Source", "JavaScriptCore", "aot")
       : join(webkitLayout(cfg).JSC, "aot");
   switch (name) {
+    case "directory":
+      return aot;
     case "AOTSchema.def":
       return join(aot, "ir", "AOTSchema.def");
     case "schema-generator":
       return join(aot, "ir", "generator", "index.ts");
+    // What the engine is compiled with. A prebuilt WebKit brings what it was compiled with, for the generator to compare.
     case "builtins-generated":
-      return join(aot, "builtins", "generated");
+      return cfg.webkit === "prebuilt" ? join(aot, "builtins", "generated") : aotGeneratedDirectory(webkitLayout(cfg));
     case "verified-overloads.txt":
       return join(aot, "builtins", "verified-overloads.txt");
     case "tests":
@@ -167,7 +170,8 @@ export function webkitEngineSources(cfg: Config): EngineSources {
   const schema = webkitAotFile(cfg, "AOTSchema.def");
   const schemaGenerator = webkitAotFile(cfg, "schema-generator");
   const builtinsGeneratedDirectory = webkitAotFile(cfg, "builtins-generated");
-  const common = { schema, schemaGenerator, builtinsGeneratedDirectory };
+  const builtinsGenerator = join(webkitAotFile(cfg, "directory"), "builtins", "generator");
+  const common = { directory: webkitAotFile(cfg, "directory"), schema, schemaGenerator, builtinsGeneratedDirectory };
   if (cfg.webkit === "prebuilt") {
     return {
       ...common,
@@ -176,7 +180,7 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       schemaGeneratedDirectory: undefined,
       schemaOutputs: [],
       schemaUsers: [],
-      builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations)],
+      builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations), join(builtinsGenerator, "engine.ts")],
       builtinTableOutputs: [],
     };
   }
@@ -204,10 +208,13 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       ...lists.paths("JavaScriptCore_OBJECT_LUT_SOURCES"),
       join(wk.JSC, "aot", "builtins", "AOTBuiltinTable.cmake"),
       join(wk.JSC, "CMakeLists.txt"),
+      ...readdirSync(builtinsGenerator)
+        .filter(name => name.endsWith(".ts"))
+        .sort()
+        .map(name => join(builtinsGenerator, name)),
     ],
     builtinTableOutputs: [
       ...aotGeneratedFiles(lists, "BUILTIN_TABLE"),
-      ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES"),
       join(builtinsGeneratedDirectory, engineDeclarations),
     ],
   };
@@ -1672,15 +1679,17 @@ function jscSourceList(wk: WebKitBuild, lists: LibraryLists): { sources: string[
 
 interface AotPrefix {
   header: string;
-  base: string;
+  /** None: precompiled by itself, so that what it includes first stands in front of the standard library's headers. */
+  base?: string;
   directories: string[];
   files?: RegExp;
 }
 
 const aotPrefixes: AotPrefix[] = [
+  { header: "aot/support/AOTPrefix.h", directories: [] },
   {
     header: "aot/support/AOTCompilerPrefix.h",
-    base: "JavaScriptCorePrefix.h",
+    base: "aot/support/AOTPrefix.h",
     directories: ["analysis", "builtins", "ir", "passes", "pipeline", "place", "represent", "select", "valueflow"],
   },
   {
@@ -1691,7 +1700,7 @@ const aotPrefixes: AotPrefix[] = [
   },
   {
     header: "aot/support/AOTRuntimePrefix.h",
-    base: "JavaScriptCorePrefix.h",
+    base: "aot/support/AOTPrefix.h",
     directories: ["image", "object", "runtime", "stubs", "support"],
   },
 ];
@@ -1752,7 +1761,10 @@ function jscGroup(
     cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore"],
     cxxflags: jsc.cxx,
     pch: join(JSC, "JavaScriptCorePrefix.h"),
-    chainedPch: aotPrefixes.map(({ header, base }) => ({ header: join(JSC, header), base: join(JSC, base) })),
+    chainedPch: aotPrefixes.map(({ header, base }) => ({
+      header: join(JSC, header),
+      ...(base !== undefined && { base: join(JSC, base) }),
+    })),
     orderOnly: codegenReady,
   };
 }
@@ -1828,7 +1840,8 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
       outOfMemoryHook(wk, name),
     ],
     cxxflags: groupCompileFlags(cfg, wk.W, {
-      includes: jsc.includes,
+      // These programs link Bun's table of built-ins, and tests of testaot include its AOTBuiltinTableArrays.h.
+      includes: [...jsc.includes, cfg.codegenDir],
       cflags: [...jsc.targetFlags, `-DBUILDING_${name}`, "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
       cxxflags: jsc.cxx,
     }).cxx,

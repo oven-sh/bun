@@ -121,6 +121,19 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // DFG/FTL - DataView intrinsics (DataViewGetInt / DataViewGetFloat /
+  // DataViewSet, including the byteSize == 8 BigInt64 / BigUint64 case added
+  // in WebKit 317392@main)
+  "dataview-jit-get.js",
+  "dataview-jit-set.js",
+  "dataview-jit-neuter.js",
+  "dataview-get-cse.js",
+  "dataview-jit-bounds-checks.js",
+  "dataview-jit-unaligned-accesses.js",
+  "dataview-jit-bigint64.js",
+  "dataview-jit-bigint64-byte-offset.js",
+  "dataview-jit-bigint64-cse-and-aliasing.js",
+  "dataview-jit-bigint64-type-check-failures.js",
 ];
 
 const wasmFixtures = [

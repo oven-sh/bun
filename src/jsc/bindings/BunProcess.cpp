@@ -3086,19 +3086,28 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     // Note: files are always sync anyway.
     // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
 
-    // TODO: once console.* is wired up to write/read through the same buffering mechanism as FileSink for process.stdout, process.stderr, we can make this non-blocking for sockets on POSIX.
-    // Until then, we have to force it to be sync EVEN for sockets or else console.log() may flush at a different time than process.stdout.write.
+    // Turns off FileSink's coalescing of small writes. What a full pipe or socket refuses is still buffered, and console.* output goes behind it (m_stdioSinks).
     forceSync = true;
 #endif
     if (forceSync) {
         JSValue sink = resultObject->getIndex(globalObject, 1);
         RETURN_IF_EXCEPTION(scope, jsUndefined());
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
+        if (auto* sinkObject = sink.getObject())
+            uncheckedDowncast<Process>(processObject)->m_stdioSinks[fd - 1].set(vm, processObject, sinkObject);
     }
 
     JSValue stream = resultObject->getIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, jsUndefined());
     return stream;
+}
+
+extern "C" JSC::EncodedJSValue Bun__Process__getStdioSink(JSC::JSGlobalObject* lexicalGlobalObject, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSObject* sink = globalObject->hasProcessObject() ? globalObject->processObject()->m_stdioSinks[fd - 1].get() : nullptr;
+    return JSValue::encode(sink ? JSValue(sink) : jsUndefined());
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -3844,6 +3853,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
+    for (auto& sink : thisObject->m_stdioSinks)
+        visitor.append(sink);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);

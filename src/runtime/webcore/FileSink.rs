@@ -202,6 +202,34 @@ impl FileSink {
     }
 }
 
+unsafe extern "C" {
+    /// The `FileSink` wrapper behind `process.stdout` (1) / `process.stderr` (2), or `undefined` before that stream exists.
+    safe fn Bun__Process__getStdioSink(global: &JSGlobalObject, fd: i32) -> JSValue;
+}
+
+/// The writer of that sink, while it holds bytes a full pipe or socket refused.
+fn backed_up_stdio_writer(global: &JSGlobalObject, fd: i32) -> Option<&JsCell<IOWriter>> {
+    let this_ptr = JSSink::from_js(Bun__Process__getStdioSink(global, fd))?;
+    // SAFETY: `from_js` returned the wrapper's live `m_ctx`; `global`'s `Process` keeps the wrapper alive.
+    let writer = unsafe { &(*this_ptr).sink.writer };
+    // A writer whose poll failed to register is closed with bytes left, and nothing writes them.
+    #[cfg(unix)]
+    writer.get().get_poll()?;
+    writer.get().has_pending_data().then_some(writer)
+}
+
+#[unsafe(no_mangle)]
+fn __bun_stdio_sink_is_backed_up(global: &JSGlobalObject, fd: i32) -> bool {
+    backed_up_stdio_writer(global, fd).is_some()
+}
+
+/// The poll that is armed for the bytes already there writes `message` after them.
+#[unsafe(no_mangle)]
+fn __bun_stdio_sink_append(global: &JSGlobalObject, fd: i32, message: &[u8]) -> bool {
+    backed_up_stdio_writer(global, fd)
+        .is_some_and(|writer| writer.with_mut(|w| w.outgoing.write(message)).is_ok())
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     _global: *mut JSGlobalObject,

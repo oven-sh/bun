@@ -270,6 +270,13 @@ unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
     unsafe { &mut *vm_console(global) }
 }
 
+unsafe extern "Rust" {
+    /// Defined in `bun_runtime::webcore::file_sink`: the sink behind `process.stdout` (1) / `process.stderr` (2) holds bytes a full pipe or socket refused.
+    safe fn __bun_stdio_sink_is_backed_up(global: &JSGlobalObject, fd: i32) -> bool;
+    /// Appends `message` behind those bytes; `false`, with nothing appended, if there are none any more.
+    safe fn __bun_stdio_sink_append(global: &JSGlobalObject, fd: i32, message: &[u8]) -> bool;
+}
+
 static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
 
@@ -445,19 +452,27 @@ fn message_with_type_and_level_(
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
     // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
-    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
-    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
-    // arm below.
-    let raw_writer: &mut bun_core::io::Writer = unsafe {
+    // `ConsoleObject` for this VM; JS-thread-only.
+    let (raw_writer, fd): (&mut bun_core::io::Writer, i32) = unsafe {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-            (*console).error_writer()
+            ((*console).error_writer(), 2)
         } else {
-            (*console).writer()
+            ((*console).writer(), 1)
         }
     };
+    // As in Node, a message for a stream that is backed up is formatted first and then goes behind what the stream buffered.
+    let mut behind_sink = None;
     // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
-    let writer: &mut dyn bun_io::Write = raw_writer;
+    let writer: &mut dyn bun_io::Write = if __bun_stdio_sink_is_backed_up(global, fd) {
+        &mut **behind_sink.insert(scopeguard::guard(Vec::new(), move |message: Vec<u8>| {
+            if !__bun_stdio_sink_append(global, fd, &message) {
+                let _ = raw_writer.write_all(&message);
+                let _ = raw_writer.flush();
+            }
+        }))
+    } else {
+        raw_writer
+    };
 
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
@@ -544,12 +559,8 @@ fn message_with_type_and_level_(
             print_options,
         )?;
     } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
-        let _ = w.write_all(b"\n");
-        let _ = w.flush();
+        let _ = writer.write_all(b"\n");
+        let _ = writer.flush();
     } else if message_type != MessageType::Trace {
         let _ = writer.write_all(b"undefined\n");
     }

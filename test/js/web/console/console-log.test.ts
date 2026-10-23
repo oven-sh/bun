@@ -180,6 +180,18 @@ NamedError: console.error a named error
 `);
 });
 
+it("console.error() and console.warn() with no arguments print their newline on stderr", async () => {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", "console.error(); console.warn(); console.log();"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "\n", stderr: "\n\n" });
+  expect(exitCode).toBe(0);
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

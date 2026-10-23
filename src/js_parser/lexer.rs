@@ -136,7 +136,7 @@ pub struct ScanResult<'a> {
 /// p.lexer.restore(&snap);
 /// ```
 ///
-/// This struct is `Copy` and intentionally excludes `log`, `source`, `arena`
+/// This struct is `Copy` and intentionally excludes `source`, `arena`
 /// (shared/unique borrows that never change across a backtrack) and the three
 /// growable `Vec` buffers (captured as lengths only — `restore()` truncates).
 #[derive(Clone, Copy)]
@@ -172,6 +172,7 @@ pub struct LexerSnapshot<'a> {
     // Vec buffer lengths — restore() truncates back to these.
     pub(crate) all_comments_len: usize,
     pub(crate) comments_to_preserve_before_len: usize,
+    pub(crate) log_msgs_len: usize,
 }
 
 /// `'a` is the lifetime of the source contents (arena/source-owned slices like
@@ -358,11 +359,12 @@ impl<'a> Lexer<'a> {
             track_react_suppressions: self.track_react_suppressions,
             all_comments_len: self.all_comments.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
+            log_msgs_len: self.log().msgs.len(),
         }
     }
 
     /// Rewind to a prior `snapshot()`: copy each scalar field and
-    /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`arena`
+    /// truncate the Vecs to their snapshotted lengths. `source`/`arena`
     /// are left untouched.
     pub(crate) fn restore(&mut self, original: &LexerSnapshot<'a>) {
         // Keep this field list in sync with `snapshot()` and the Lexer struct fields.
@@ -404,6 +406,19 @@ impl<'a> Lexer<'a> {
         self.all_comments.truncate(original.all_comments_len);
         self.comments_to_preserve_before
             .truncate(original.comments_to_preserve_before_len);
+        if self.log().msgs.len() > original.log_msgs_len {
+            self.log().truncate(original.log_msgs_len);
+        }
+    }
+
+    /// Whether an error was logged after `snapshot` was taken.
+    #[inline]
+    pub(crate) fn logged_error_since(&self, snapshot: &LexerSnapshot<'a>) -> bool {
+        let msgs = &self.log().msgs;
+        msgs.len() > snapshot.log_msgs_len
+            && msgs[snapshot.log_msgs_len..]
+                .iter()
+                .any(|msg| msg.kind == bun_ast::Kind::Err)
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.

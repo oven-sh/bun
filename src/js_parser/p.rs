@@ -168,9 +168,6 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 pub(crate) struct ParserSnapshot<'a> {
     lexer: js_lexer::LexerSnapshot<'a>,
     comments_to_preserve_before: Vec<js_ast::G::Comment>,
-    log_msgs_len: usize,
-    log_errors: u32,
-    log_warnings: u32,
     allow_in: bool,
     allow_private_identifiers: bool,
     has_classic_runtime_warned: bool,
@@ -8200,9 +8197,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Everything the parse pass mutates, so that a speculative parse of an
     /// expression can be undone with [`Self::restore_parser_snapshot`]. The
     /// lexer-only backtracking in `parse_skip_typescript.rs` only covers
-    /// types: an expression also declares symbols, pushes scopes, records
-    /// dynamic imports and logs through `P::log()`, which ignores
-    /// `lexer.is_log_disabled`. Lists are captured as lengths and truncated
+    /// types: an expression also declares symbols, pushes scopes and records
+    /// dynamic imports. Lists are captured as lengths and truncated
     /// on restore; the attempt's arena allocations just become unreachable.
     /// The legal comments waiting for the next statement are moved out
     /// instead: a block body or `import()` drains them, so a length cannot
@@ -8210,13 +8206,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
         let comments_to_preserve_before =
             core::mem::take(&mut self.lexer.comments_to_preserve_before);
-        let log = self.log();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
             comments_to_preserve_before,
-            log_msgs_len: log.msgs.len(),
-            log_errors: log.errors,
-            log_warnings: log.warnings,
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
@@ -8245,11 +8237,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
-
-        let log = self.log();
-        log.msgs.truncate(snapshot.log_msgs_len);
-        log.errors = snapshot.log_errors;
-        log.warnings = snapshot.log_warnings;
 
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;

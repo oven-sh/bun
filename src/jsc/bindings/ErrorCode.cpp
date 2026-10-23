@@ -1686,6 +1686,58 @@ JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope& scope, JSC::JSGlobalObject*
     return {};
 }
 
+JSC::EncodedJSValue INVALID_HTTP_TOKEN(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral label, JSC::JSValue token)
+{
+    auto& vm = JSC::getVM(globalObject);
+    MessageBuilder builder;
+    builder.append(label, " must be a valid HTTP token [\""_s);
+    // The `%s` of Node's util.format(): String(token), but an object whose toString() is not user code is inspected.
+    bool inspected = false;
+    if (token.isObject() && !token.isCallable()) {
+        JSValue toString = asObject(token)->get(globalObject, vm.propertyNames->toString);
+        RELEASE_RETURN_IF_EXCEPTION(scope, {});
+        auto* function = dynamicDowncast<JSC::JSFunction>(toString);
+        inspected = !function || function->isHostFunction();
+    }
+    if (inspected) {
+        JSValueToStringSafe(globalObject, builder, token);
+    } else if (token.isSymbol()) {
+        builder.append(asSymbol(token)->tryGetDescriptiveString().value_or(String()));
+    } else if (token.isNumber() && !token.asNumber() && std::signbit(token.asNumber())) {
+        builder.append("-0"_s);
+    } else {
+        auto text = token.toWTFString(globalObject);
+        RELEASE_RETURN_IF_EXCEPTION(scope, {});
+        builder.append(text, token.isBigInt() ? "n"_s : ""_s);
+    }
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
+    builder.append("\"]"_s);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_HTTP_TOKEN, builder));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue HTTP_INVALID_HEADER_VALUE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, const WTF::String& name)
+{
+    MessageBuilder builder;
+    builder.append("Invalid value \""_s);
+    JSValueToStringSafe(globalObject, builder, value);
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
+    builder.append("\" for header \""_s, name, '"');
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, builder));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_CHAR(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral what, const WTF::String& field)
+{
+    MessageBuilder builder;
+    builder.append("Invalid character in "_s, what, " [\""_s, field, "\"]"_s);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_CHAR, builder));
+    scope.release();
+    return {};
+}
+
 } // namespace ERR
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)

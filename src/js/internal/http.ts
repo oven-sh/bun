@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, flattenRawHead, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -21,6 +21,13 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
     httpAllowHalfOpen: boolean,
   ) => void;
   setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
+  // The headers of writeHead(status, headers), checked in Node's order, as a [name, value, ...] list, and then the NodeHTTPRawHead bits. `out` gets the bits and the Content-Length number, also when it throws.
+  flattenRawHead: (
+    headers: unknown,
+    lenient: boolean,
+    uniqueHeaders: Set<string> | null | undefined,
+    out: Float64Array,
+  ) => (string | number)[];
   drainMicrotasks: () => void;
 };
 
@@ -99,6 +106,20 @@ export const enum NodeHTTPHeaderState {
   none,
   assigned,
   sent,
+}
+
+// What the lines of flattenRawHead() name. Must be kept in sync with kRawHead* in src/jsc/bindings/NodeHTTP.cpp.
+export const enum NodeHTTPRawHead {
+  contentLength = 1 << 0,
+  transferEncoding = 1 << 1,
+  chunked = 1 << 2,
+  date = 1 << 3,
+  keepAlive = 1 << 4,
+  /** `close` in a Connection line. */
+  close = 1 << 5,
+  /** A Connection line with no `close`. */
+  persist = 1 << 6,
+  trailer = 1 << 7,
 }
 
 function emitErrorNextTickIfErrorListenerNT(self, err, cb) {
@@ -551,6 +572,7 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
+  flattenRawHead,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,

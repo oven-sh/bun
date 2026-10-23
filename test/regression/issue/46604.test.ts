@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isIPv6 as hasIPv6 } from "harness";
+import { isIPv6 as hasIPv6, isWindows } from "harness";
 import dgram from "node:dgram";
 import { once } from "node:events";
 import { connect, createServer, Socket } from "node:net";
@@ -7,8 +7,9 @@ import { connect, createServer, Socket } from "node:net";
 // A socket's port is free as soon as destroy() returns, also from inside the
 // 'connect' handler or a continuation of it. On Windows 1.4.4 the fd close
 // waited for the end of the poll callback, so a listen on that port in the same
-// tick got EADDRINUSE until the socket's 'close' event.
-describe.concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
+// tick got EADDRINUSE until the socket's 'close' event. The deferral lived in
+// the libuv backend of usockets, which only Windows uses.
+describe.skipIf(!isWindows).concurrent.each(hasIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"])(
   "a destroyed socket's port is free at once (%s)",
   host => {
     function listenOn(port: number): Promise<string> {

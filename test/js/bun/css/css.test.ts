@@ -164,6 +164,179 @@ describe("css tests", () => {
     );
   });
 
+  describe("min() and max() with one argument", () => {
+    // min(x) and max(x) are x. A sum or a product is only valid inside a math function, so it
+    // is printed in calc().
+    minify_test(`a { width: min(1em + 2px) }`, `a{width:calc(1em + 2px)}`);
+    minify_test(`a { width: max(1em + 2px) }`, `a{width:calc(1em + 2px)}`);
+    minify_test(`a { width: min(-1px - 10%) }`, `a{width:calc(-1px - 10%)}`);
+    minify_test(`a { width: max(2 * min(1em, 2px)) }`, `a{width:calc(2*min(1em,2px))}`);
+    minify_test(`a { width: max(max(1px, 1em) / 2) }`, `a{width:calc(max(1px,1em)/2)}`);
+    minify_test(`a { width: max(2 * (1px + 10%)) }`, `a{width:calc(2px + 20%)}`);
+    minify_test(`a { width: min(calc(1px + 10%)) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { width: min(max(1px + 10%)) }`, `a{width:calc(1px + 10%)}`);
+    minify_test(`a { margin: min(1px + 10%) auto }`, `a{margin:calc(1px + 10%) auto}`);
+    minify_test(`a { inset: max(1px + 10%) }`, `a{inset:calc(1px + 10%)}`);
+    // <length>, <angle-percentage> and the at-rules that take a length.
+    minify_test(`a { border-spacing: max(1px + 1em) }`, `a{border-spacing:calc(1px + 1em)}`);
+    minify_test(`a { border-spacing: min(2 * max(1px, 1em)) }`, `a{border-spacing:calc(2*max(1px,1em))}`);
+    minify_test(`a { box-shadow: min(1em + 2px) 0 red }`, `a{box-shadow:calc(1em + 2px) 0 red}`);
+    minify_test(
+      `a { background: conic-gradient(red min(10deg + 10%), blue) }`,
+      `a{background:conic-gradient(red calc(10deg + 10%),#00f)}`,
+    );
+    minify_test(
+      `a { background: radial-gradient(max(1em + 2px) at center, red, blue) }`,
+      `a{background:radial-gradient(calc(1em + 2px),red,#00f)}`,
+    );
+    minify_test(
+      `@media (min-width: min(1em + 2px)) { a { color: red } }`,
+      `@media (width>=calc(1em + 2px)){a{color:red}}`,
+    );
+    minify_test(
+      `@container (width >= max(1em + 2px)) { a { color: red } }`,
+      `@container (width>=calc(1em + 2px)){a{color:red}}`,
+    );
+    minify_test(
+      `@property --x { syntax: "<length>"; inherits: false; initial-value: min(1px + 1em) }`,
+      `@property --x{syntax:"<length>";inherits:false;initial-value:calc(1px + 1em)}`,
+    );
+    // The value is the one that calc(x) parses to, so the two merge.
+    minify_test(`.a { width: min(1em + 2px) } .b { width: calc(1em + 2px) }`, `.a,.b{width:calc(1em + 2px)}`);
+    minify_test(`a { margin: min(1em + 2px) calc(1em + 2px) }`, `a{margin:calc(1em + 2px)}`);
+    // The targets have to support the calc() that is printed. Chrome has it since 26.
+    prefix_test(`.foo { width: 10px; width: min(1em + 2px) }`, `.foo { width: 10px; width: calc(1em + 2px); }`, {
+      chrome: 25 << 16,
+    });
+    prefix_test(`.foo { width: 10px; width: min(1em + 2px) }`, `.foo { width: calc(1em + 2px); }`, {
+      chrome: 26 << 16,
+    });
+    // An argument that folds to a value, or that is a math function, is returned as it is.
+    minify_test(`a { width: min(5px) }`, `a{width:5px}`);
+    minify_test(`a { width: min(1px + 2px) }`, `a{width:3px}`);
+    minify_test(`a { width: max(10% + 5%) }`, `a{width:15%}`);
+    minify_test(`a { width: max(min(1px, 1em)) }`, `a{width:min(1px,1em)}`);
+    minify_test(`a { line-height: min(1 + 2) }`, `a{line-height:3}`);
+    minify_test(`a { opacity: max(10% + 20%) }`, `a{opacity:.3}`);
+    minify_test(`a { transition-duration: min(1s + 500ms) }`, `a{transition-duration:1.5s}`);
+    minify_test(`a { rotate: max(90deg + 0.25turn) }`, `a{rotate:180deg}`);
+    // Inside another math function the argument still takes part in the fold.
+    minify_test(`a { width: min(1px + 10%, 1em + 5%) }`, `a{width:min(1px + 10%,1em + 5%)}`);
+    minify_test(`a { width: min(max(1px + 10%), 1em) }`, `a{width:min(1px + 10%,1em)}`);
+    minify_test(`a { width: calc(min(1px + 10%) * 2) }`, `a{width:calc(2px + 20%)}`);
+  });
+
+  describe("hypot() folding", () => {
+    // Rows that lightningcss has for hypot().
+    minify_test(`.foo { width: hypot() }`, `.foo{width:hypot()}`);
+    minify_test(`.foo { width: hypot(1px) }`, `.foo{width:1px}`);
+    minify_test(`.foo { width: hypot(1px, 2px) }`, `.foo{width:2.23607px}`);
+    minify_test(`.foo { width: hypot(1px, 2px, 3px) }`, `.foo{width:3.74166px}`);
+    minify_test(`.foo { width: calc(100px * hypot(3, 4)) }`, `.foo{width:500px}`);
+    // One argument: hypot(A) is the absolute value of A.
+    minify_test(`a { margin-left: hypot(-3px) }`, `a{margin-left:3px}`);
+    minify_test(`a { margin-left: hypot(-1in) }`, `a{margin-left:1in}`);
+    minify_test(`a { border-spacing: hypot(-3px) }`, `a{border-spacing:3px}`);
+    minify_test(`a { rotate: hypot(-90deg) }`, `a{rotate:90deg}`);
+    minify_test(
+      `a { background: conic-gradient(red hypot(-0.25turn), blue) }`,
+      `a{background:conic-gradient(red .25turn,#00f)}`,
+    );
+    minify_test(`a { transition-delay: hypot(-2s) }`, `a{transition-delay:2s}`);
+    minify_test(`a { line-height: hypot(-3) }`, `a{line-height:3}`);
+    minify_test(`a { opacity: hypot(-0.5) }`, `a{opacity:.5}`);
+    minify_test(`a { color: hsl(hypot(-120deg) 100% 50%) }`, `a{color:#0f0}`);
+    // The functions around it read the folded value.
+    minify_test(`a { margin-left: calc(hypot(-3px) + 1px) }`, `a{margin-left:4px}`);
+    minify_test(`a { width: calc(100% - hypot(-3px)) }`, `a{width:calc(100% - 3px)}`);
+    minify_test(`a { width: min(hypot(-3px), 1px) }`, `a{width:1px}`);
+    minify_test(`a { width: round(hypot(-7px), 5px) }`, `a{width:5px}`);
+    minify_test(`a { width: clamp(0px, hypot(-3px), 10px) }`, `a{width:3px}`);
+    minify_test(`a { line-height: pow(hypot(-2), 3) }`, `a{line-height:8}`);
+    // An argument that does not fold keeps hypot() around it.
+    minify_test(`a { margin-left: hypot(1em + 2px) }`, `a{margin-left:hypot(1em + 2px)}`);
+    minify_test(`a { border-spacing: hypot(1em + 2px) }`, `a{border-spacing:hypot(1em + 2px)}`);
+    minify_test(`a { margin-left: hypot(2 * min(1px, 1em)) }`, `a{margin-left:hypot(2*min(1px,1em))}`);
+    minify_test(`a { margin-left: hypot(min(-1px, -1em)) }`, `a{margin-left:hypot(min(-1px,-1em))}`);
+    minify_test(`a { margin-left: calc(1px + hypot(1px + 10%)) }`, `a{margin-left:calc(1px + hypot(1px + 10%))}`);
+    prefix_test(`.foo { width: 10px; width: hypot(1em + 2px) }`, `.foo { width: 10px; width: hypot(1em + 2px); }`, {
+      chrome: 119 << 16,
+    });
+    // A percentage of a length stays as written, as in abs(): its sign depends on what it refers to.
+    minify_test(`a { margin-left: hypot(-30%) }`, `a{margin-left:hypot(-30%)}`);
+    minify_test(`a { width: hypot(30%, 40%) }`, `a{width:hypot(30%,40%)}`);
+    minify_test(`a { width: hypot(20%, 30%, 60%) }`, `a{width:hypot(20%,30%,60%)}`);
+    minify_test(`a { background-position: hypot(20%, 30%, 60%) 0 }`, `a{background-position:hypot(20%,30%,60%) 0}`);
+    // A percentage that is a number folds.
+    minify_test(`a { opacity: hypot(-50%) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: hypot(50%) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: calc(10% + hypot(-50%)) }`, `a{opacity:.6}`);
+    minify_test(`a { opacity: hypot(20%, 30%, 60%) }`, `a{opacity:.7}`);
+    minify_test(`a { opacity: calc(10% + hypot(20%, 30%, 60%)) }`, `a{opacity:.8}`);
+    minify_test(`a { color: rgb(255 0 0 / hypot(-60%)) }`, `a{color:#f009}`);
+    minify_test(`a { color: rgb(255 0 0 / calc(hypot(50%) + 10%)) }`, `a{color:#f009}`);
+    // Two arguments in one unit fold to the value they had before.
+    minify_test(`a { margin-left: hypot(-3px, 4px) }`, `a{margin-left:5px}`);
+    minify_test(`a { line-height: hypot(3, 4) }`, `a{line-height:5}`);
+    minify_test(`a { transition-duration: hypot(3s, 4000ms) }`, `a{transition-duration:5s}`);
+    minify_test(`a { rotate: hypot(30deg, 40deg) }`, `a{rotate:50deg}`);
+    // Three or more arguments are converted to one unit before they are squared. 100grad and .25turn are 90deg.
+    minify_test(`a { rotate: hypot(.25turn, 135deg, 270deg) }`, `a{rotate:315deg}`);
+    minify_test(`a { rotate: hypot(270deg, 135deg, .25turn) }`, `a{rotate:315deg}`);
+    minify_test(`a { rotate: hypot(50grad, 100grad, 90deg) }`, `a{rotate:135deg}`);
+    minify_test(
+      `a { background: conic-gradient(red hypot(50grad, 100grad, 90deg), blue) }`,
+      `a{background:conic-gradient(red 135deg,#00f)}`,
+    );
+    minify_test(`a { color: hsl(hypot(.25turn, 135deg, 270deg) 100% 50%) }`, `a{color:#ff00bf}`);
+    minify_test(`a { width: hypot(2in, 3in, 6in) }`, `a{width:7in}`);
+    minify_test(`a { width: hypot(1em, 2em, 2em) }`, `a{width:3em}`);
+    minify_test(`a { rotate: hypot(20grad, 30grad, 60grad) }`, `a{rotate:70grad}`);
+    minify_test(`a { transition-duration: hypot(2s, 3s, 6000ms) }`, `a{transition-duration:7s}`);
+    minify_test(`a { line-height: hypot(2, 3, 6) }`, `a{line-height:7}`);
+    // The squares are added in f64: they cannot overflow, and the result does not depend on the order.
+    minify_test(`a { width: hypot(3e20px, 4e20px, 0px) }`, `a{width:500000000000000000000px}`);
+    minify_test(`a { width: hypot(3px, 3px, 8px) }`, `a{width:9.05539px}`);
+    minify_test(`a { width: round(down, hypot(3px, 5px, 1px, 1px), 1px) }`, `a{width:6px}`);
+    minify_test(`.a { width: hypot(1px, 2px, 34px) } .b { width: hypot(34px, 2px, 1px) }`, `.a,.b{width:34.0734px}`);
+    // NaN wins over infinity (WPT css/css-values/hypot-pow-sqrt-computed.html). A NaN that leaves the function is 0.
+    minify_test(`a { line-height: hypot(infinity, NaN) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: hypot(1, NaN, infinity) }`, `a{line-height:0}`);
+    // An argument that cannot be combined with the others leaves all of them as written.
+    minify_test(`a { width: hypot(1em, 1in, 2in) }`, `a{width:hypot(1em,1in,2in)}`);
+    minify_test(`a { width: hypot(-10px, 20%, 20%) }`, `a{width:hypot(-10px,20%,20%)}`);
+    minify_test(`a { width: hypot(-2px, -3px, min(1em, 6px)) }`, `a{width:hypot(-2px,-3px,min(1em,6px))}`);
+    minify_test(`a { width: hypot(-2, 3, 1px) }`, `a{width:hypot(-2,3,1px)}`);
+    minify_test(`a { line-height: hypot(-2, 3, sign(1em - 1px)) }`, `a{line-height:hypot(-2,3,sign(1em - 1px))}`);
+
+    test("Bun.color() reads the same folds", () => {
+      expect([
+        Bun.color("hsl(hypot(-120deg) 100% 50%)", "css"),
+        Bun.color("hsl(hypot(.25turn, 135deg, 270deg) 100% 50%)", "css"),
+        Bun.color("rgb(255 0 0 / hypot(-60%))", "css"),
+        Bun.color("rgb(255 0 0 / calc(10% + hypot(20%, 30%, 60%)))", "css"),
+      ]).toEqual(["#0f0", "#ff00bf", "#f009", "#f00c"]);
+    });
+  });
+
+  describe("abs() folding", () => {
+    // abs() folds when hypot() of one argument does: the sign of the value has to be known.
+    minify_test(`a { margin-left: abs(-3px) }`, `a{margin-left:3px}`);
+    minify_test(`a { line-height: abs(-3) }`, `a{line-height:3}`);
+    minify_test(`a { margin-left: abs(-30%) }`, `a{margin-left:abs(-30%)}`);
+    minify_test(`a { opacity: abs(-50%) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: calc(10% + abs(50%)) }`, `a{opacity:.6}`);
+    // A registered <percentage> is computed before it is substituted, so it is a number too.
+    minify_test(
+      `@property --p { syntax: "<percentage>"; inherits: false; initial-value: abs(-30%) }`,
+      `@property --p{syntax:"<percentage>";inherits:false;initial-value:30%}`,
+    );
+    minify_test(
+      `@property --p { syntax: "<percentage>"; inherits: false; initial-value: hypot(-30%) }`,
+      `@property --p{syntax:"<percentage>";inherits:false;initial-value:30%}`,
+    );
+  });
+
   describe("calc edge case", () => {
     // https://github.com/oven-sh/bun/issues/18064
     minify_test(

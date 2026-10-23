@@ -34,7 +34,7 @@ pub(crate) type FilenameStoreBacking =
 pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage, emitted at the declare site via
-// `bss_*!` macros (returns `*mut`). Each declare site owns its own storage:
+// `bss_*!` macros (returns `&'static`). Each declare site owns its own storage:
 // `crate::fs::FilenameStore` re-exports `filename_store_backing` from here so
 // it and `FilenameStoreAppender` share one store.
 bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
@@ -43,18 +43,17 @@ bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FIL
 /// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
 ///
 /// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
-/// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) on every
+/// (a `bss_singleton!` accessor: an `AtomicPtr` load and a null test) on every
 /// call. `add_entry` runs once per directory entry, so for the
 /// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
-/// `Once` atomic checks per directory. Resolving once up front and carrying the
-/// raw pointer across the loop drops that to a single check per `readdir`.
+/// checks per directory. Resolving once up front and carrying the reference across the loop drops that to a single check per `readdir`.
 pub struct FilenameStoreAppender {
-    backing: *mut FilenameStoreBacking,
+    backing: &'static FilenameStoreBacking,
 }
 impl FilenameStoreAppender {
     #[inline]
     pub(crate) fn new() -> Self {
-        // One `Once` check, hoisted out of the per-entry loop.
+        // One check, hoisted out of the per-entry loop.
         Self {
             backing: filename_store_backing(),
         }
@@ -63,14 +62,7 @@ impl FilenameStoreAppender {
 impl strings::Appender for FilenameStoreAppender {
     #[inline]
     fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-        // SAFETY: `backing` is the live process-lifetime `bss_string_list!`
-        // singleton; `BSSStringList::append` takes `*mut Self` and serializes on
-        // its inner mutex (no aliased `&mut` is ever formed). Returned slice
-        // borrows the singleton's never-freed storage.
-        let r = unsafe { FilenameStoreBacking::append(self.backing, &s)? };
-        // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
-        // (never freed); `Interned` is the canonical proof type for this widen.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
+        self.backing.append(&s)
     }
 }
 
@@ -331,9 +323,7 @@ pub mod dir_entry {
 
     impl EntryStore {
         #[inline]
-        pub(crate) fn instance() -> *mut EntryStoreBacking {
-            // returns the raw `*mut` singleton. Do NOT
-            // materialize a `&'static mut` here — concurrent callers would alias.
+        pub(crate) fn instance() -> &'static EntryStoreBacking {
             super::entry_store_backing()
         }
         /// Reserve an `Entry` slot in the store and return its uninitialized
@@ -349,10 +339,7 @@ pub mod dir_entry {
         #[inline(always)]
         pub(crate) fn append_uninit()
         -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_alloc::AllocError> {
-            // SAFETY: `instance()` is the live `'static` `bss_list!` singleton;
-            // `BSSList::append_uninit` takes `*mut Self` and serializes on its
-            // own inner mutex.
-            unsafe { EntryStoreBacking::append_uninit(Self::instance()) }
+            Self::instance().append_uninit()
         }
     }
 

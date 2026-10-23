@@ -594,11 +594,11 @@ impl Watcher {
             Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id, WatchItemKind::File);
-        // After the registration: every later change of the size has an event.
+        // Before the registration: a truncation that has an event then differs from this size.
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let size = file_size(fd).unwrap_or(0);
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id, WatchItemKind::File);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             // inotify needs a trailing NUL. When

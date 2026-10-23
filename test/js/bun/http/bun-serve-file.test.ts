@@ -2188,12 +2188,10 @@ console.log(
   expect(await stderr).toBe("");
   const { fullReads, readsAfterAbort, ...result } = JSON.parse(stdout.trim().split("\n").at(-1)!);
   expect(result).toEqual({ fullBytes: 16 * 1024 * 1024, queuedAtAbort: true, released: true });
-  // A read takes 64 KiB, so the whole file is 256 reads. The read of stdin is one more.
+  // A read takes 64 KiB, so the whole file is 256 reads.
   expect(fullReads).toBeGreaterThanOrEqual(64);
   expect(readsAfterAbort).toBeLessThan(8);
   expect(await proc.exited).toBe(0);
-  // TEMPORARY: shows the numbers of the fixture in the CI log. Not part of the change.
-  expect(stdout.trim().split("\n").at(-1)).toBe("temporary print");
 });
 
 test.skipIf(!isWindows)("aborted Response(Bun.file) stops reading its file mid-body", async () => {
@@ -2290,8 +2288,6 @@ console.log(
   expect(readsAfterLeave).toHaveLength(24);
   expect(result).toEqual({ released: true, intact: true });
   expect(exitCode).toBe(0);
-  // TEMPORARY: shows the numbers of the fixture in the CI log. Not part of the change.
-  expect(stdout.trim()).toBe("temporary print");
 });
 
 // A pipe has no end until its writer closes it. A response that nobody receives must not take its bytes.
@@ -2355,63 +2351,4 @@ console.log(server.port);
   proc.stdin.write("world");
   await proc.stdin.end();
   expect(await fetch(`http://127.0.0.1:${port}/second`).then(res => res.text())).toBe("world");
-});
-
-// TEMPORARY: shows in the CI log what an aborted response does to a pipe fd of the caller. Not part of the change.
-test.skipIf(!isWindows)("temporary print: Bun.file(3) of a pipe after an aborted response", async () => {
-  using dir = tempDir("serve-fd3-print", {
-    "fixture.ts": /* ts */ `
-import { fstatSync } from "node:fs";
-
-function state() {
-  try {
-    fstatSync(3);
-    return "open";
-  } catch (e) {
-    return e.code;
-  }
-}
-const aborted = Promise.withResolvers<void>();
-using server = Bun.serve({
-  port: 0,
-  hostname: "127.0.0.1",
-  fetch(req) {
-    req.signal.addEventListener("abort", () => aborted.resolve());
-    return new Response(Bun.file(3));
-  },
-});
-const before = state();
-const head = Promise.withResolvers<void>();
-const client = await Bun.connect({
-  hostname: "127.0.0.1",
-  port: server.port,
-  socket: {
-    open: socket => void socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"),
-    data: () => head.resolve(),
-    close: () => head.resolve(),
-    error: () => head.resolve(),
-  },
-});
-await head.promise;
-client.terminate();
-await aborted.promise;
-const atAbort = state();
-const deadline = performance.now() + 1000;
-let after = state();
-while (after === "open" && performance.now() < deadline) {
-  await new Promise(resolve => setImmediate(resolve));
-  after = state();
-}
-console.log(JSON.stringify({ before, atAbort, after }));
-`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdio: ["ignore", "pipe", "pipe", "pipe"],
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual("temporary print");
 });

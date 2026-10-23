@@ -406,7 +406,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           let count = Infinity;
           for (let attempt = 0; attempt < 25 && count > 2; attempt++) {
             Bun.gc(true);
-            await Bun.sleep(1);
+            await new Promise(resolve => setImmediate(resolve));
             count = heapStats().objectTypeCounts.GlobalObject;
           }
           console.log("live GlobalObjects:", count);

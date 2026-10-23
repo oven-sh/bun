@@ -278,11 +278,12 @@ pub(crate) fn get_prefix(selectors: &[Selector]) -> VendorPrefix {
 const BIT_NESTING_LEADING: usize = Feature::COUNT;
 const BIT_NESTING_INNER: usize = Feature::COUNT + 1;
 const BIT_SCOPE: usize = Feature::COUNT + 2;
-const BIT_COUNT: usize = Feature::COUNT + 3;
+const BIT_IS: usize = Feature::COUNT + 3;
+const BIT_COUNT: usize = Feature::COUNT + 4;
 
-/// A set of [`Feature`]s (one bit per discriminant) plus the `BIT_*` grouping bits.
+/// Two runs of [`Feature`] and `BIT_*` bits: the selector's own, then those inside `:is()`.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct FeatureSet([u64; BIT_COUNT.div_ceil(64)]);
+pub(crate) struct FeatureSet([u64; (2 * BIT_COUNT).div_ceil(64)]);
 
 impl FeatureSet {
     fn insert(&mut self, bit: usize) {
@@ -308,6 +309,8 @@ enum Requirement {
     },
     /// `:scope`. Checked as Shadow DOM v1 like `:host`, but keyed apart: it shipped years earlier.
     Scope,
+    /// `:is()`. Keyed apart from `:where()`: a prefix pass prints it as `:-webkit-any()`.
+    Is,
     /// No support data.
     Unknown,
 }
@@ -322,15 +325,20 @@ pub(crate) fn incompatibility(
     visit_incompatible(
         core::slice::from_ref(selector),
         targets,
-        &mut |requirement| {
-            match requirement {
-                Requirement::Feature(feature) => features.insert(feature as usize),
-                Requirement::Nesting { leading: true } => features.insert(BIT_NESTING_LEADING),
-                Requirement::Nesting { leading: false } => features.insert(BIT_NESTING_INNER),
-                Requirement::Scope => features.insert(BIT_SCOPE),
-                Requirement::Unknown => unknown = true,
-            }
-            !unknown
+        &mut |requirement, in_is| {
+            let bit = match requirement {
+                Requirement::Feature(feature) => feature as usize,
+                Requirement::Nesting { leading: true } => BIT_NESTING_LEADING,
+                Requirement::Nesting { leading: false } => BIT_NESTING_INNER,
+                Requirement::Scope => BIT_SCOPE,
+                Requirement::Is => BIT_IS,
+                Requirement::Unknown => {
+                    unknown = true;
+                    return false;
+                }
+            };
+            features.insert(if in_is { BIT_COUNT + bit } else { bit });
+            true
         },
     );
     if unknown {
@@ -343,14 +351,14 @@ pub(crate) fn incompatibility(
 }
 
 pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
-    visit_incompatible(selectors, targets, &mut |_| false)
+    visit_incompatible(selectors, targets, &mut |_, in_is| in_is)
 }
 
-/// Feeds each unmet [`Requirement`] of `selectors` to `sink` until `sink` returns `false`.
+/// Feeds unmet [`Requirement`]s to `sink` until it returns `false`. The flag: inside `:is()`.
 fn visit_incompatible(
     selectors: &[parser::Selector],
     targets: &Targets,
-    sink: &mut impl FnMut(Requirement) -> bool,
+    sink: &mut dyn FnMut(Requirement, bool) -> bool,
 ) -> bool {
     use Feature as F;
     for selector in selectors {
@@ -375,7 +383,7 @@ fn visit_incompatible(
                 } => match attribute_requirement(*case_sensitivity, *operator) {
                     Requirement::Feature(feature) => feature,
                     requirement => {
-                        if !sink(requirement) {
+                        if !sink(requirement, false) {
                             return false;
                         }
                         continue;
@@ -391,7 +399,7 @@ fn visit_incompatible(
                     } => match attribute_requirement(*case_sensitivity, *operator) {
                         Requirement::Feature(feature) => feature,
                         requirement => {
-                            if !sink(requirement) {
+                            if !sink(requirement, false) {
                                 return false;
                             }
                             continue;
@@ -415,7 +423,7 @@ fn visit_incompatible(
                         break 'brk F::Selectors2;
                     }
                     if data.ty == parser::NthType::Col || data.ty == parser::NthType::LastCol {
-                        if !sink(Requirement::Unknown) {
+                        if !sink(Requirement::Unknown, false) {
                             return false;
                         }
                         continue 'components;
@@ -440,7 +448,14 @@ fn visit_incompatible(
                         }
                         continue;
                     }
-                    F::IsSelector
+                    if !require_as(F::IsSelector, Requirement::Is, targets, sink)
+                        || !visit_incompatible(sels, targets, &mut |requirement, _| {
+                            sink(requirement, true)
+                        })
+                    {
+                        return false;
+                    }
+                    continue;
                 }
                 Component::Where(_) => F::IsSelector,
                 Component::Nesting => {
@@ -456,7 +471,7 @@ fn visit_incompatible(
                     continue;
                 }
                 Component::Any { .. } => {
-                    if !sink(Requirement::Unknown) {
+                    if !sink(Requirement::Unknown, false) {
                         return false;
                     }
                     continue;
@@ -577,7 +592,7 @@ fn visit_incompatible(
 
                         _ => {}
                     }
-                    if !sink(Requirement::Unknown) {
+                    if !sink(Requirement::Unknown, false) {
                         return false;
                     }
                     continue 'components;
@@ -620,7 +635,7 @@ fn visit_incompatible(
                         PseudoElement::Custom { .. } => {}
                         _ => {}
                     }
-                    if !sink(Requirement::Unknown) {
+                    if !sink(Requirement::Unknown, false) {
                         return false;
                     }
                     continue 'components;
@@ -646,7 +661,7 @@ fn visit_incompatible(
 fn require(
     feature: Feature,
     targets: &Targets,
-    sink: &mut impl FnMut(Requirement) -> bool,
+    sink: &mut dyn FnMut(Requirement, bool) -> bool,
 ) -> bool {
     require_as(feature, Requirement::Feature(feature), targets, sink)
 }
@@ -656,9 +671,9 @@ fn require_as(
     feature: Feature,
     requirement: Requirement,
     targets: &Targets,
-    sink: &mut impl FnMut(Requirement) -> bool,
+    sink: &mut dyn FnMut(Requirement, bool) -> bool,
 ) -> bool {
-    targets.is_compatible(feature) || sink(requirement)
+    targets.is_compatible(feature) || sink(requirement, false)
 }
 
 /// Whether the selector's first `&` prints in the leading form (`&div` swaps to `div&`: inner).

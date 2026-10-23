@@ -698,7 +698,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             let mut incompatible = SmallList::<IncompatibleSelectors, 1>::default();
             let mut i: u32 = 0;
             while i < sty.selectors.v.len() {
-                if selector::incompatibility(sty.selectors.v.at(i), context.targets).is_none() {
+                let current = core::slice::from_ref(sty.selectors.v.at(i));
+                if selector::is_compatible(current, context.targets) {
                     i += 1;
                     continue;
                 }

@@ -6043,6 +6043,81 @@ describe("css tests", () => {
       { chrome: 100 << 16 },
     );
 
+    // A prefix pass prints :is() as the unforgiving :-webkit-any() and leaves
+    // :where() as written, so :is() keys apart from :where() and its
+    // arguments count.
+    prefix_test(
+      ".c:is(.x, .y), .b:is(.x, .y) { color: red }",
+      `
+      .c:-webkit-any(.x, .y), .b:-webkit-any(.x, .y) {
+        color: red;
+      }
+
+      .c:is(.x, .y), .b:is(.x, .y) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":where(.a):is(.x, .y), .b:is(.x, .y) { color: red }",
+      `
+      :where(.a):-webkit-any(.x, .y) {
+        color: red;
+      }
+
+      :where(.a):is(.x, .y) {
+        color: red;
+      }
+
+      .b:-webkit-any(.x, .y) {
+        color: red;
+      }
+
+      .b:is(.x, .y) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ".p:is(:focus-visible, .a), .b:is(.x, .y) { color: red }",
+      `
+      .p:-webkit-any(:focus-visible, .a) {
+        color: red;
+      }
+
+      .p:is(:focus-visible, .a) {
+        color: red;
+      }
+
+      .b:-webkit-any(.x, .y) {
+        color: red;
+      }
+
+      .b:is(.x, .y) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ".p:is(:focus-visible, .a), .q:is(:focus-visible, .b) { color: red }",
+      `
+      .p:-webkit-any(:focus-visible, .a), .q:-webkit-any(:focus-visible, .b) {
+        color: red;
+      }
+
+      .p:is(:focus-visible, .a), .q:is(:focus-visible, .b) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
     // The `s` flag has no support data. An implied HTML case-insensitive
     // attribute prints without a flag and needs nothing more.
     prefix_test(

@@ -600,6 +600,10 @@ static void appendOutOfRangeReceived(JSC::JSGlobalObject* globalObject, MessageB
             builder.append(addNumericalSeparator(input.toWTFString(globalObject)));
             return;
         }
+        if (JSC::isNegativeZero(d)) {
+            builder.append("-0"_s);
+            return;
+        }
     } else if (input.isBigInt()) {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);

@@ -1,6 +1,7 @@
 use bun_lint_oxlint::ast_util::{get_identifier_name, get_inner_expression};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::{is_global, visible_module};
 
 /// Enforce consistent case for text encoding identifiers.
 pub struct TextEncodingIdentifierCase {
@@ -42,7 +43,7 @@ impl Rule for TextEncodingIdentifierCase {
 }
 
 impl TextEncodingIdentifierCase {
-    /// `s`: as it is written, which is the value unless it has an escape.
+    /// `s` is the source text, which equals the value unless it has an escape.
     fn check<'a>(&self, s: &'a [u8], span: Span, node: Node<'a>, cx: &Cx<'a, Self>) {
         let replacement = if s.eq_ignore_ascii_case(b"utf8") || s.eq_ignore_ascii_case(b"utf-8") {
             if self.with_dash || should_enforce_dash(node) { "utf-8" } else { "utf8" }
@@ -52,12 +53,40 @@ impl TextEncodingIdentifierCase {
             return;
         };
         if replacement.as_bytes() != s {
-            // Without the first and the last character, of the text between tags as well.
+            // The fix skips the first and last character, even for JSX text, which has no quotes.
             cx.report(span, TEXT_ENCODING_IDENTIFIER_CASE)
                 .data("good_encoding", replacement)
                 .data("bad_encoding", s)
-                .fix(|fixer| fixer.replace(span.shrink(1, 1), replacement));
+                .fix_where_safe(|| is_read_as_label(node), |fixer| fixer.replace(span.shrink(1, 1), replacement));
         }
+    }
+}
+
+/// True where both spellings behave the same: `fs.readFile(path, "utf-8")`, `new TextDecoder("utf8")`. Anywhere else
+/// the string could be compared with `decoder.encoding`, which is always `"utf-8"`, or sent as a `charset`. oxlint
+/// rewrites it everywhere.
+fn is_read_as_label(node: Node) -> bool {
+    const METHODS: [&str; 2] = ["readFile", "readFileSync"];
+    const MODULES: [&str; 4] = ["fs", "node:fs", "fs/promises", "node:fs/promises"];
+    let Node::Expr(e) = node else {
+        return false;
+    };
+    let Node::Expr(parent) = e.parent() else {
+        return false;
+    };
+    match parent.kind() {
+        ExprKind::New(call) => call.args().first() == Some(e) && is_global(call.callee(), "TextDecoder"),
+        ExprKind::Call(call) if call.args().get(1) == Some(e) && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread) => {
+            let callee = call.callee();
+            match callee.kind() {
+                ExprKind::Dot { obj, name, .. } => {
+                    name.name().is_any(&METHODS) && visible_module(obj).is_some_and(|it| it.is_any(&MODULES))
+                }
+                _ => matches!(callee.symbol().and_then(|it| it.declarations().next()), Some(Declaration::ImportSpec(it))
+                    if it.imported().name().is_any(&METHODS) && it.import().spec().is_any(&MODULES)),
+            }
+        }
+        _ => false,
     }
 }
 

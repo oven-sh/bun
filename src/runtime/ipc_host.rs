@@ -64,10 +64,10 @@ fn do_send_err(
     callback: JSValue,
     ex: JSValue,
     from: FromEnum,
-) -> JsResult<JSValue> {
+) -> JsResult<bool> {
     if callback.is_callable() {
         JSValue::call_next_tick_1(callback, global_object, ex)?;
-        return Ok(JSValue::FALSE);
+        return Ok(false);
     }
     if from == FromEnum::Process {
         let target = bun_jsc::JSFunction::create(
@@ -80,7 +80,7 @@ fn do_send_err(
             Default::default(),
         );
         JSValue::call_next_tick_1(target, global_object, ex)?;
-        return Ok(JSValue::FALSE);
+        return Ok(false);
     }
     // Bun.spawn().send() should throw an error (unless callback is passed)
     Err(global_object.throw_value(ex))
@@ -89,11 +89,10 @@ fn do_send_err(
 pub(crate) fn do_send(
     ipc: Option<&SendQueue>,
     global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
+    [mut message, mut handle, options_, mut callback]: [JSValue; 4],
     from: FromEnum,
     peer_pid: u32,
-) -> JsResult<JSValue> {
-    let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
+) -> JsResult<bool> {
     #[cfg(not(windows))]
     let _ = peer_pid;
 
@@ -299,11 +298,7 @@ pub(crate) fn do_send(
     }
 
     // in the success or backoff case, serializeAndSend will handle calling the callback
-    Ok(if status == SerializeAndSendResult::Success {
-        JSValue::TRUE
-    } else {
-        JSValue::FALSE
-    })
+    Ok(status == SerializeAndSendResult::Success)
 }
 
 #[bun_jsc::host_fn]
@@ -380,7 +375,14 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     };
     #[cfg(not(windows))]
     let peer_pid = 0;
-    do_send(ipc, global, frame, FromEnum::Process, peer_pid)
+    do_send(
+        ipc,
+        global,
+        frame.arguments_as_array::<4>(),
+        FromEnum::Process,
+        peer_pid,
+    )
+    .map(JSValue::from)
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so

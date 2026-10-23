@@ -41,15 +41,15 @@ fn is_lifecycle(name: &[u8], is_class: bool) -> bool {
     }
 }
 
-/// `quasis[0].value.raw`, which is written `written`. In espree's every line break is a line feed.
-fn raw_of_template<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
+/// `quasis[0].value.raw` for the source text `raw_text`. espree normalizes every line break in it to a line feed.
+fn raw_of_template<'a>(file: &File<'a>, raw_text: &'a [u8]) -> Cow<'a, [u8]> {
     match file.uses_typescript_parser() {
-        true => Cow::Borrowed(written),
-        false => strings::crlf_as_lf(written),
+        true => Cow::Borrowed(raw_text),
+        false => strings::crlf_as_lf(raw_text),
     }
 }
 
-/// `getName` of a `Literal` and of a `TemplateLiteral` without expressions. `None` for anything else.
+/// `getName` for a `Literal` or a `TemplateLiteral` without expressions. `None` for anything else.
 fn get_name(node: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     match node.kind() {
         ExprKind::Template(template) if template.exprs().is_empty() => {
@@ -65,9 +65,9 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
         KeyKind::Ident(name) | KeyKind::String(name) | KeyKind::Number(name) | KeyKind::ComputedNumber(name) => {
             Some(Cow::Borrowed(name.bytes()))
         }
-        // Of a template it is the text as it is written.
+        // For a template literal, use the raw source text.
         KeyKind::ComputedString(name) => Some(match file.slice(key.inner_span(file)) {
-            [b'`', written @ .., b'`'] => raw_of_template(file, written),
+            [b'`', raw_text @ .., b'`'] => raw_of_template(file, raw_text),
             _ => Cow::Borrowed(name.bytes()),
         }),
         KeyKind::Private(_) => None,
@@ -75,7 +75,7 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
     }
 }
 
-/// A listener of upstream, with the node that it is called with.
+/// One of upstream's listeners, with the node it's called with.
 #[derive(Copy, Clone)]
 enum Listener<'a> {
     /// `ClassDeclaration`, for a component.
@@ -98,7 +98,7 @@ enum Listener<'a> {
     VariableDeclarator(VarDecl<'a>),
 }
 
-/// When a listener is called: these are in the order of ESLint's traversal.
+/// When a listener is called. Sorting by this gives ESLint's traversal order.
 type Time = (u32, bool, Reverse<u32>);
 
 fn entering(node: Span) -> Time {
@@ -115,14 +115,15 @@ struct ClassInfo<'a> {
     object: Option<Expr<'a>>,
     /// `classNode.id`
     id: Option<Ident<'a>>,
-    /// Each with its `getName`.
+    /// Each property's span and `getName`.
     properties: Vec<(Span, Cow<'a, [u8]>)>,
     used_properties: FxHashSet<Cow<'a, [u8]>>,
     in_static: bool,
 }
 
 impl<'a> ClassInfo<'a> {
-    /// `addProperty(key)`, if `isKeyLiteralLike(node, key)`. A constructor has no key here, and is never reported.
+    /// `addProperty(key)`, if `isKeyLiteralLike(node, key)`. A constructor has no key in this AST, but it's never
+    /// reported anyway.
     fn add_key(&mut self, file: &'a File<'a>, key: Option<Key<'a>>) {
         self.properties.extend(key.and_then(|key| Some((key.inner_span(file), get_name_of_key(file, key)?))));
     }
@@ -133,7 +134,7 @@ impl<'a> ClassInfo<'a> {
         }
     }
 
-    /// What the listeners that neither make nor end a `classInfo` do.
+    /// Runs a listener that neither creates nor ends a `classInfo`.
     fn call(&mut self, listener: Listener<'a>, file: &'a File<'a>) {
         match listener {
             Listener::Property(node) => {
@@ -199,8 +200,8 @@ impl Rule for NoUnusedClassComponentMethods {
             .then_some(())
     }
 
-    /// Upstream has one `classInfo` and no stack: what is in a component can replace it or end it. So the listeners are
-    /// called in the order in which ESLint calls them.
+    /// Upstream has one `classInfo` and no stack, so anything nested in a component can replace or end it. To get the
+    /// same result, the listeners run in the order ESLint calls them.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let pragmas = Pragmas::new(file);

@@ -124,29 +124,37 @@ impl JSGlobalObject {
 
     #[cold]
     pub fn throw_string_too_long(&self) -> JsError {
+        self.throw_value(self.create_string_too_long_error())
+    }
+
+    pub fn create_string_too_long_error(&self) -> JSValue {
         const _: () = assert!(bun_core::string::WTF_STRING_MAX_LENGTH == 2147483647);
         self.err(
             crate::ErrorCode::STRING_TOO_LONG,
             format_args!("Cannot create a string longer than 2147483647 characters"),
         )
-        .throw()
+        .to_js()
     }
 
     /// Node's error for a failed allocation, as opposed to JSC's
     /// [`Self::throw_out_of_memory`].
     #[cold]
     pub fn throw_memory_allocation_failed(&self) -> JsError {
+        self.throw_value(self.create_memory_allocation_failed_error())
+    }
+
+    pub fn create_memory_allocation_failed_error(&self) -> JSValue {
         self.err(
             crate::ErrorCode::MEMORY_ALLOCATION_FAILED,
             format_args!("Failed to allocate memory"),
         )
-        .throw()
+        .to_js()
     }
 
     #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
-        JSGlobalObject__throwOutOfMemoryError(self);
+        let _ = self.throw_out_of_memory();
         JSValue::ZERO
     }
 
@@ -313,10 +321,6 @@ impl JSGlobalObject {
 
     pub fn throw_todo(&self, msg: &[u8]) -> JsError {
         let err = EncodedSlice::utf8(msg).to_error_instance(self);
-        if err.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
         let name_value = match BunString::static_("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
@@ -348,18 +352,11 @@ impl JSGlobalObject {
 
     /// Throw `TypeError: Illegal constructor` with
     /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`.
-    ///
-    /// Canonical body for hand-written `pub fn constructor` stubs whose
-    /// `.classes.ts` entry has `construct: true` but the class is not
-    /// user-instantiable. Matches the C++ default
-    /// (`JSDOMConstructorNotConstructable`) and Node.js.
-    ///
-    /// NOTE: do NOT add a stub that calls this when `.classes.ts` declares
-    /// `noConstructor: true` / `construct: false` — codegen omits the
-    /// `${T}Class__construct` thunk entirely, so the stub would be dead code.
     #[cold]
     pub fn throw_illegal_constructor(&self) -> JsError {
-        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.throw(self, format_args!("Illegal constructor"))
+        self.throw_value(
+            crate::ErrorCode::ILLEGAL_CONSTRUCTOR.fmt(self, format_args!("Illegal constructor")),
+        )
     }
 
     #[inline]
@@ -821,10 +818,6 @@ impl JSGlobalObject {
 
     pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
         let err = self.create_error_instance(message);
-        if err.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
         err.put(
             self,
             b"code",
@@ -844,43 +837,7 @@ impl JSGlobalObject {
     /// Note: If you are throwing an error within somewhere in the Bun API,
     /// chances are you should be using `.err(...).throw()` instead.
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
-        let instance = self.create_error_instance(args);
-        if instance.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
-        self.throw_value(instance)
-    }
-
-    /// Queue a native callback as a microtask. Callers supply the C-ABI
-    /// trampoline directly; the wrapper only erases the context pointer type.
-    pub fn queue_microtask_callback<C>(
-        &self,
-        ctx_val: *mut C,
-        function: unsafe extern "C" fn(*mut c_void),
-    ) {
-        crate::mark_binding();
-        JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
-    }
-
-    /// Queue `task` to run as a microtask; the queue owns the box until then
-    /// and the returned back-reference is valid until [`MicrotaskCallback::run`]
-    /// is entered. If the VM is torn down before the microtask queue drains,
-    /// the box is leaked along with the rest of the queue.
-    pub fn queue_microtask_boxed<T: MicrotaskCallback>(
-        &self,
-        task: Box<T>,
-    ) -> bun_ptr::BackRef<T, bun_ptr::Root> {
-        unsafe extern "C" fn run<T: MicrotaskCallback>(ctx: *mut c_void) {
-            // SAFETY: `ctx` is the `Box<T>` leaked below; the microtask queue
-            // invokes each callback exactly once.
-            T::run(unsafe { bun_core::heap::take(ctx.cast::<T>()) });
-        }
-        let task = bun_core::heap::into_raw(task);
-        self.queue_microtask_callback(task, run::<T>);
-        // SAFETY: `task` is the live leaked box; see the doc comment for the
-        // holder's obligation.
-        unsafe { bun_ptr::BackRef::from_root(task) }
+        self.throw_value(self.create_error_instance(args))
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -971,8 +928,8 @@ impl JSGlobalObject {
         })
     }
 
-    pub(crate) fn generate_heap_snapshot(&self) -> JSValue {
-        JSC__JSGlobalObject__generateHeapSnapshot(self)
+    pub(crate) fn generate_heap_snapshot(&self) -> JsResult<JSValue> {
+        crate::from_js_host_call(self, || JSC__JSGlobalObject__generateHeapSnapshot(self))
     }
 
     /// DEPRECATED — use [`TopExceptionScope`](crate::TopExceptionScope) to check for exceptions
@@ -1221,57 +1178,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    pub fn validate_big_int_range<T: bun_core::Integer>(
-        &self,
-        value: JSValue,
-        default: T,
-        range: IntegerRange,
-    ) -> JsResult<T> {
-        if value.is_undefined() || value.is_empty() {
-            return Ok(T::ZERO);
-        }
-
-        let min_t: i128 = range.min.max(T::MIN_I128);
-        let max_t: i128 = range.max.min(T::MAX_I128);
-        if value.is_big_int() {
-            if T::SIGNED {
-                if value.is_big_int_in_int64_range(
-                    i64::try_from(min_t).expect("int cast"),
-                    i64::try_from(max_t).expect("int cast"),
-                ) {
-                    return Ok(T::from_i64(value.to_int64()));
-                }
-            } else {
-                if value.is_big_int_in_uint64_range(
-                    u64::try_from(min_t).expect("int cast"),
-                    u64::try_from(max_t).expect("int cast"),
-                ) {
-                    return Ok(T::from_u64(value.to_uint64_no_truncate()));
-                }
-            }
-            return Err(self
-                .err(
-                    JscError::OUT_OF_RANGE,
-                    format_args!(
-                        "The value is out of range. It must be >= {} and <= {}.",
-                        min_t, max_t
-                    ),
-                )
-                .throw());
-        }
-
-        self.validate_integer_range::<T>(
-            value,
-            default,
-            IntegerRange {
-                min: min_t.max(i128::from(MIN_SAFE_INTEGER)),
-                max: max_t.min(i128::from(MAX_SAFE_INTEGER)),
-                field_name: range.field_name,
-                always_allow_zero: range.always_allow_zero,
-            },
-        )
-    }
-
     pub fn validate_integer_range<T: bun_core::Integer>(
         &self,
         value: JSValue,
@@ -1289,7 +1195,6 @@ impl JSGlobalObject {
 
         let field_name = range.field_name;
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
-        let always_allow_zero = range.always_allow_zero;
         // Pass the *unclamped* `range.min`/`range.max` to the range error
         // (not `min_t`/`max_t`). The bounds must fit in the formatter's `i64`
         // range; enforce that as a checked narrowing so an out-of-range bound
@@ -1301,9 +1206,6 @@ impl JSGlobalObject {
 
         if value.is_int32() {
             let int = value.to_int32();
-            if always_allow_zero && int == 0 {
-                return Ok(T::ZERO);
-            }
             if i128::from(int) < min_t || i128::from(int) > max_t {
                 return Err(self.throw_range_error(
                     i64::from(int),
@@ -1322,9 +1224,6 @@ impl JSGlobalObject {
             return Err(self.throw_invalid_property_type_value(field_name, b"number", value));
         }
         let f64_val = value.as_number();
-        if always_allow_zero && f64_val == 0.0 {
-            return Ok(T::ZERO);
-        }
 
         if f64_val.is_nan() {
             // node treats NaN as default
@@ -1534,15 +1433,6 @@ unsafe extern "C" {
         path: &BunString,
     ) -> bool;
 
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
-    // C++ only stores and forwards to `function` (never dereferenced as Rust data).
-    safe fn JSC__JSGlobalObject__queueMicrotaskCallback(
-        this: &JSGlobalObject,
-        ctx: *mut c_void,
-        function: unsafe extern "C" fn(*mut c_void),
-    );
-
     safe fn Bun__Process__emitWarning(
         global_object: &JSGlobalObject,
         warning: JSValue,
@@ -1637,9 +1527,4 @@ impl ScriptExecutionContextIdentifier {
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
-}
-
-/// A native microtask queued with [`JSGlobalObject::queue_microtask_boxed`].
-pub trait MicrotaskCallback: Sized + 'static {
-    fn run(self: Box<Self>);
 }

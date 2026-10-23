@@ -259,10 +259,12 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
-    /// 1. Convert libuv errno values into libc ones.
-    /// 2. Get the tag name as a string for printing.
+    /// The errno and its name for printing. A number outside the table is `EUNKNOWN`, as in `get_errno`.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
-        let e = self.resolve_system_errno()?;
+        if self.errno == 0 {
+            return None;
+        }
+        let e = SystemErrno::from_repr(self.errno).unwrap_or(SystemErrno::EUNKNOWN);
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
         Some((<&'static str>::from(e), e))
     }

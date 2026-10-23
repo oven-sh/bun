@@ -343,8 +343,6 @@ impl CopyFile {
     pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
     ) -> Result<(), crate::Error> {
-        use bun_sys::linux;
-
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
         if unknown_size {
@@ -377,47 +375,19 @@ impl CopyFile {
 
         loop {
             // TODO: this should use non-blocking I/O.
-            let written: isize = match USE {
+            let result = match USE {
                 TryWith::CopyFileRange => {
-                    // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
-                    unsafe {
-                        linux::copy_file_range(
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            dest_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                            0,
-                        )
-                    }
+                    bun_sys::copy_file_range(src_fd, None, dest_fd, None, remain, 0)
                 }
-                TryWith::Sendfile => {
-                    // SAFETY: raw sendfile(2); both fds owned by caller, null offset.
-                    unsafe {
-                        linux::sendfile(
-                            dest_fd.native(),
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                        )
-                    }
-                }
-                TryWith::Splice => {
-                    // SAFETY: raw splice(2); both fds owned by caller, null offsets.
-                    unsafe {
-                        libc::splice(
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            dest_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                            0,
-                        )
-                    }
-                }
+                TryWith::Sendfile => bun_sys::sendfile(src_fd, dest_fd, None, remain),
+                TryWith::Splice => bun_sys::splice(src_fd, dest_fd, remain, 0),
+            };
+            let (written, errno) = match result {
+                Ok(written) => (written, bun_sys::E::SUCCESS),
+                Err(err) => (0, err.get_errno()),
             };
 
-            match bun_sys::get_errno(written) {
+            match errno {
                 bun_sys::E::SUCCESS => {}
 
                 // XDEV: cross-device copy not supported
@@ -489,12 +459,12 @@ impl CopyFile {
             }
 
             // wrote zero bytes means EOF
-            total_written += u64::try_from(written).expect("int cast");
+            total_written += written as u64;
             if written == 0 {
                 break;
             }
             if !unknown_size {
-                remain = remain.saturating_sub(usize::try_from(written).expect("int cast"));
+                remain = remain.saturating_sub(written);
                 if remain == 0 {
                     break;
                 }
@@ -595,6 +565,7 @@ impl CopyFile {
                     .path()
                     .slice_z(&mut source_buf),
                 dest,
+                0,
             ) {
                 bun_sys::Result::Err(errno) => {
                     let err_path = self.destination_file_store.pathlike.path().slice().to_vec();
@@ -681,17 +652,13 @@ impl CopyFile {
                                         < SizeType::try_from(stat_size).expect("int cast")
                                 {
                                     // If this fails...well, there's not much we can do about it.
-                                    // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
-                                    let _ = unsafe {
-                                        bun_sys::c::truncate(
-                                            self.destination_file_store
-                                                .pathlike
-                                                .path()
-                                                .slice_z(&mut path_buf)
-                                                .as_ptr(),
-                                            i64::try_from(self.max_length).expect("int cast"),
-                                        )
-                                    };
+                                    let _ = bun_sys::truncate(
+                                        self.destination_file_store
+                                            .pathlike
+                                            .path()
+                                            .slice_z(&mut path_buf),
+                                        i64::try_from(self.max_length).expect("int cast"),
+                                    );
                                     self.read_len =
                                         SizeType::try_from(self.max_length).expect("int cast");
                                 } else {

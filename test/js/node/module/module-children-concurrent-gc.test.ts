@@ -4,12 +4,12 @@
 // Both sides must hold cellLock() so Vector growth cannot free the backing
 // buffer while the marker still holds a stale begin() pointer.
 //
-// require() of an already-cached module still calls
-// $evaluateCommonJSModule(existing, this), which appends to the referrer's
-// m_children, so a tight loop of `require("./c.cjs")` against a cached child
-// drives thousands of appends (and ~a dozen reallocations) while
-// collectContinuously keeps the concurrent marker repeatedly visiting the
-// same module via require.cache.
+// require() of an already-cached module does not append again (the child is
+// already in m_children), so the loop puts a fresh `new Module()` into
+// require.cache before each require(). Every call then appends a distinct
+// JSCommonJSModule, which drives a thousand appends (and ~a dozen
+// reallocations) while collectContinuously keeps the concurrent marker
+// repeatedly visiting the same module via require.cache.
 //
 // This race is not reliably observable as a crash in the default build
 // because the prebuilt debug WebKit uses bmalloc (USE_SYSTEM_MALLOC=0), so
@@ -31,7 +31,12 @@ test.skipIf(isWindows)(
       "c.cjs": `module.exports = 1;\n`,
       "p.cjs": `
         // ~12 reallocations of this module's m_children backing buffer.
-        for (let i = 0; i < 4000; i++) require("./c.cjs");
+        const Module = require("node:module");
+        const cPath = require.resolve("./c.cjs");
+        for (let i = 0; i < 1000; i++) {
+          require.cache[cPath] = new Module(cPath);
+          require("./c.cjs");
+        }
         // setterChildren: locks, clears the native Vector, stores the JS value.
         module.children = module.children;
         module.exports = module.children.length;
@@ -70,7 +75,7 @@ test.skipIf(isWindows)(
     // text. Debug/ASAN builds print a harmless "WARNING: ASAN interferes
     // with JSC signal handlers" banner on stderr, so only surface stderr
     // when the process failed.
-    expect(stdout.trim()).toBe("ok 1");
+    expect(stdout.trim()).toBe("ok 1000");
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   },

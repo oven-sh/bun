@@ -5444,9 +5444,9 @@ class A {
       { deadCodeElimination: false, minify: { syntax: true } },
       { deadCodeElimination: false, minifyWhitespace: true, minify: { syntax: true, whitespace: true } },
     ]) {
-      const output = new Bun.Transpiler(options).transformSync(`(function () {${source}})`);
-      // Indirect eval: the function is sloppy, like the CommonJS file it stands for.
-      expect({ options, result: (0, eval)(output)() }).toEqual({
+      const output = new Bun.Transpiler(options).transformSync(`function probe() {${source}}`);
+      // Indirect eval: the code around the functions is sloppy, like a CommonJS file.
+      expect({ options, result: (0, eval)(`(function () { ${output}; return probe(); })()`) }).toEqual({
         options,
         result: "object object object object object object undefined",
       });

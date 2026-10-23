@@ -2140,20 +2140,37 @@ declare module "bun" {
    *
    * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it is created by default.
    *
+   * An existing file is overwritten in place and truncated to the new length. It keeps its inode and hard links, and
+   * it keeps its permissions unless `mode` sets them. A file descriptor destination (a number or `Bun.file(fd)`) is
+   * written at its current position and is not truncated, except that an empty `input` that is not a file or a
+   * stream truncates it to zero length.
+   *
+   * The write is not atomic: concurrent writers to one path can interleave. For an atomic replace, write to a
+   * temporary path and `rename()` it over the destination. Writes to one path that overlap are not ordered either:
+   * an earlier write can finish after a later one. Start a write to a path after the previous write to it settles.
+   *
    * @category File System
    *
-   * @param destination The file or file path to write to
+   * @param destination The file, file path, or file descriptor to write to
    * @param input The data to copy into `destination`
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
-    destination: BunFile | S3File | PathLike,
+    destination: BunFile | S3File | PathLike | number,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
-       * If writing to a PathLike, set the permissions of the file.
+       * The permissions of the destination file, for example `0o600`.
+       *
+       * `mode` takes effect when `input` is a `BunFile`: the destination gets
+       * exactly this mode, whether Bun creates it or it already exists. When
+       * `input` is a `ReadableStream`, Bun uses `mode` only to create a file
+       * that does not exist, and the process umask applies.
+       *
+       * `mode` has no effect when `input` is a string, a `TypedArray`, an
+       * `ArrayBuffer`, an `Archive`, or a `Blob` that holds data.
        */
       mode?: number;
       /**
@@ -2171,16 +2188,19 @@ declare module "bun" {
    * Persist a {@link Response} or {@link Request} body to disk. The body is
    * streamed into the file as it arrives.
    *
-   * @param destination The file to write to. If the file doesn't exist, it is
-   * created; if it does, it is overwritten. If `input` is smaller than
-   * `destination`, `destination` is truncated.
+   * @param destination The file or file descriptor to write to. A
+   * `Bun.file(path)` that doesn't exist is created. One that exists is
+   * overwritten, and truncated if `input` is smaller. A file descriptor (a
+   * number or `Bun.file(fd)`) is written at its current position and is not
+   * truncated, except that an empty body that is not a file truncates it to
+   * zero length.
    * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
-    destination: BunFile,
+    destination: BunFile | number,
     input: Response | Request,
     options?: {
       /**
@@ -2230,15 +2250,17 @@ declare module "bun" {
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
    * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/).
    *
-   * @param destination The file to write to. If the file doesn't exist, it is
-   * created; if it does, it is overwritten. If `input` is smaller than
-   * `destination`, `destination` is truncated.
+   * @param destination The file or file descriptor to write to. A
+   * `Bun.file(path)` that doesn't exist is created. One that exists is
+   * overwritten, and truncated if `input` is smaller. A file descriptor (a
+   * number or `Bun.file(fd)`) is written at its current position and is not
+   * truncated.
    * @param input The file to copy from
    * @returns A promise that resolves with the number of bytes written.
    */
 
   function write(
-    destination: BunFile,
+    destination: BunFile | number,
     input: BunFile,
     options?: {
       /**
@@ -2714,6 +2736,19 @@ declare module "bun" {
 
     /**
      * Incremental writer for files and pipes.
+     *
+     * For a path-backed `BunFile`, this opens the file immediately and creates
+     * it if it does not exist (the parent directory must exist). Writes start
+     * at the beginning of the file. There is no append mode: to append, open
+     * the file with `fs.openSync(path, "a")` and call `Bun.file(fd).writer()`.
+     * The writer does not close a file descriptor that you passed in.
+     *
+     * @example
+     * ```ts
+     * const writer = Bun.file("output.txt").writer();
+     * writer.write("hello\n");
+     * await writer.end();
+     * ```
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
@@ -2759,7 +2794,23 @@ declare module "bun" {
      */
     write(
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
-      options?: { highWaterMark?: number },
+      options?: {
+        /**
+         * If `true`, create the parent directory if it doesn't exist.
+         *
+         * If `false`, the write rejects when the directory doesn't exist.
+         *
+         * @default true
+         */
+        createPath?: boolean;
+        /**
+         * Set the MIME type of this `BunFile`: the value of its `type`
+         * property, and the `Content-Type` of a `Response` made from the file.
+         * The file on disk does not record it. A string that is not a valid
+         * MIME type is ignored.
+         */
+        type?: string;
+      },
     ): Promise<number>;
 
     /**

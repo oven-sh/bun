@@ -426,23 +426,6 @@ impl<'p, 's> Checker<'p, 's> {
         (result.holds(), diagnostic)
     }
 
-    /// Returns the message `reportErrorResults` reports for the pair itself under 2684, without elaboration.
-    pub(super) fn relation_error_without_elaboration(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        error_node: FileSpan,
-    ) -> RelationDiagnostic {
-        let mut r = Relater::new(Relation::Assignable, self.cycles);
-        r.error_node = error_node;
-        self.report_error_results_for_pair(&mut r, source, target, Some(2684));
-        RelationDiagnostic {
-            at: error_node,
-            lines: lines_of(&r.error_chain, 0),
-            related: r.related_info,
-        }
-    }
-
     fn report_error_results_for_pair(
         &mut self,
         r: &mut Relater,

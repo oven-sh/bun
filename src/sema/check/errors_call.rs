@@ -961,17 +961,19 @@ impl Checker<'_, '_> {
         {
             let actual = self.this_argument_type(file, this_arg);
             if !self.related(actual, expected, relation) {
-                if report {
-                    let at = match (this_arg, decorator) {
-                        (None, Some(decorator_span)) => {
-                            (file, decorator_span.at_sign, decorator_span.end)
-                        }
-                        _ => self.span_of_parenthesized_expr(file, this_arg.unwrap_or(e)),
-                    };
-                    // 2684, or a more specific error.
-                    self.report_this_not_assignable(actual, expected, at);
+                if !report {
+                    return false;
                 }
-                return false;
+                let at = match (this_arg, decorator) {
+                    (None, Some(decorator_span)) => {
+                        (file, decorator_span.at_sign, decorator_span.end)
+                    }
+                    _ => self.span_of_parenthesized_expr(file, this_arg.unwrap_or(e)),
+                };
+                // 2684, or a more specific error. As below, this comparison can succeed.
+                if !self.check_this_assignable(actual, expected, at) {
+                    return false;
+                }
             }
         }
         let mut params = self.sig_params_with_first(sig, args.len().min(1));

@@ -8788,6 +8788,53 @@ export function h<T extends Model, N extends Extract<keyof Mutations<T>, string>
       expect(exitCode).toBe(1);
     });
 
+    // The same for `this`. In `g` and `two` nothing else is wrong, so the call has no error at all. In `k` the comparison
+    // that reports the error fails too.
+    test("continues with the arguments if the comparison that reports the error about `this` succeeds", async () => {
+      using dir = project({
+        "a.ts": `interface Model<M extends Record<string, unknown> = Record<string, unknown>> { mutations: M }
+type Mutations<T> = T extends Model<infer M> ? M : never;
+type Declared<T> = Extract<keyof Mutations<T>, string>;
+type Indexed<T extends Model> = Extract<keyof T["mutations"], string>;
+export function f<T extends Model, N extends Declared<T>>(o: { v: N; m(this: { v: Indexed<T> }, other: number): 1 }) {
+  return [o.m("a"), o.m("b")];
+}
+export function g<T extends Model, N extends Declared<T>>(o: { v: N; m(this: { v: Indexed<T> }, other: number): 1 }) {
+  const first: never = o.m(1);
+  return [first, o.m(2)];
+}
+export function h<T extends Model, N extends Declared<T>>(o: {
+  v: N;
+  m(this: { v: Indexed<T> }, other: number): 1;
+  m(this: { v: Indexed<T> }, other: boolean): 2;
+}) {
+  return [o.m("a"), o.m(true)];
+}
+export function two<T extends Model, N extends Declared<T>>(n: N) {
+  function pair<Name extends Indexed<T>>(name: Name, other: number): Name { return name; }
+  const first: never = pair(n, 1);
+  return [first, pair(n, 2)];
+}
+export function k<T extends Model>(o: Declared<T> & { m(this: Indexed<T>, other: number): void }) {
+  o.m("a");
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(6,15): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(6,25): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+        a.ts(9,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(17,15): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type 'string' is not assignable to parameter of type 'boolean'.
+        a.ts(21,9): error TS2322: Type 'Extract<keyof T["mutations"], string>' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(25,3): error TS2684: The 'this' context of type 'Extract<keyof Mutations<T>, string> & { m(this: Extract<keyof T["mutations"], string>, other: number): void; }' is not assignable to method's 'this' of type 'Extract<keyof T["mutations"], string>'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("checks the callee again after the quick type of a call, and after the test for a recursive call", async () => {
       using dir = project({
         "a.ts": `declare function fail(): never;

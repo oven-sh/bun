@@ -1003,8 +1003,9 @@ impl ServePlugins {
         // here would give it a tag that is invalidated by the writes to `self.state`
         // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
 
-        let plugin = JSBundler::Plugin::create(global, JSBundler::BunPluginTarget::Browser);
-        // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
+        let plugin = JSBundler::Plugin::create(global);
+        // SAFETY: `Plugin::create` returns a non-null, protected JSC cell, not a Rust allocation.
+        // `Plugin` is a zero-sized opaque type, so this `Box` owns no memory and frees nothing.
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {

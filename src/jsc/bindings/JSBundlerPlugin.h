@@ -60,7 +60,6 @@ public:
         Vector<FilterRegExp> fileNamespace = {};
         Vector<String> namespaces = {};
         Vector<Vector<FilterRegExp>> groups = {};
-        BunPluginTarget target { BunPluginTargetBun };
 
         Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
         {
@@ -101,7 +100,6 @@ public:
         Vector<FilterRegExp> fileNamespace = {};
         Vector<String> namespaces = {};
         Vector<Vector<FilterRegExp>> groups = {};
-        BunPluginTarget target { BunPluginTargetBun };
 
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
@@ -156,19 +154,17 @@ public:
     // and whatever its JS side delivers later is dropped.
     void tombstone();
 
-    BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+    BundlerPlugin(void* config, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
         , onLoadAsync(onLoadAsync)
         , onResolveAsync(onResolveAsync)
     {
-        this->target = target;
         this->config = config;
     }
 
     NamespaceList onLoad = {};
     NamespaceList onResolve = {};
     NativePluginList onBeforeParse = {};
-    BunPluginTarget target { BunPluginTargetBrowser };
 
     WriteBarrierList<JSC::JSPromise> deferredPromises = {};
     // The raw `NapiExternal*` stored in `NativePluginCallback` is dereferenced

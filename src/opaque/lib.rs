@@ -199,7 +199,7 @@ macro_rules! assert_ffi_layout {
 ///
 /// ```ignore
 /// bun_opaque::assert_ffi_discr!(BufferEncodingType, u8);   // C++ is `enum class : uint8_t`
-/// bun_opaque::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
+/// bun_opaque::assert_ffi_discr!(Loader, u8; Jsx = 0, Js = 1, Ts = 2);
 /// ```
 #[macro_export]
 macro_rules! assert_ffi_discr {

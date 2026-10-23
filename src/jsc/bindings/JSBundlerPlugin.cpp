@@ -125,12 +125,11 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
         void* config,
-        BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError = JSBundlerPlugin__addError,
         JSBundlerPluginOnLoadAsyncCallback onLoadAsync = JSBundlerPlugin__onLoadAsync,
         JSBundlerPluginOnResolveAsyncCallback onResolveAsync = JSBundlerPlugin__onResolveAsync)
     {
-        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target,
+        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config,
             addError,
             onLoadAsync,
             onResolveAsync);
@@ -171,10 +170,10 @@ public:
     }
 
 private:
-    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config, BunPluginTarget target,
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : Base(vm, structure)
-        , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
+        , plugin(BundlerPlugin(config, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
     {
     }
@@ -635,7 +634,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     });
 }
 
-extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
+extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject)
 {
     return JSBundlerPlugin::create(
         globalObject->vm(),
@@ -646,8 +645,7 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
             globalObject,
             // Null prototype, so an accessor on Object.prototype can't get this object as its receiver.
             jsNull()),
-        nullptr,
-        target);
+        nullptr);
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)

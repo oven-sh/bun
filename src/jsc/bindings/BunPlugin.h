@@ -28,7 +28,6 @@ public:
         // TODO: evaluate if using JSInternalFieldImpl(2) is faster
         Vector<JSC::Strong<JSC::RegExp>> filters = {};
         Vector<JSC::Strong<JSC::JSObject>> callbacks = {};
-        BunPluginTarget target { BunPluginTargetBun };
 
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func);
         JSObject* find(JSC::JSGlobalObject* globalObj, String& path);

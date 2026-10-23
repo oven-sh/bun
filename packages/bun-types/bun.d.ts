@@ -3737,6 +3737,17 @@ declare module "bun" {
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
+    /**
+     * Whether the standalone executable accepts `BUN_OPTIONS`, `BUN_BE_BUN`,
+     * `BUN_INSPECT`, `BUN_INSPECT_CONNECT_TO`, and `BUN_INSPECT_PRELOAD`.
+     * Flags embedded with `execArgv` still apply; other environment variables are unaffected.
+     * Disabling this requires a target for the current Bun version and cannot be combined with `executablePath`.
+     *
+     * Equivalent CLI flags: `--compile-env-options`, `--no-compile-env-options`
+     *
+     * @default true
+     */
+    envOptions?: boolean | undefined;
     executablePath?: string;
     outfile?: string;
     /**

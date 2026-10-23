@@ -986,7 +986,9 @@ bitflags::bitflags! {
         /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
-        // _padding: u19
+        /// Ignore runtime options supplied through the environment, including BUN_BE_BUN.
+        const DISABLE_ENV_OPTIONS           = 1 << 14;
+        // _padding: u17
     }
 }
 
@@ -2915,6 +2917,18 @@ pub fn to_executable(
     flags: Flags,
     runtime_options: RuntimeOptions,
 ) -> crate::Result<CompileResult> {
+    if flags.contains(Flags::DISABLE_ENV_OPTIONS) {
+        if !target.is_current_version() {
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "Disabling runtime environment options requires the current Bun version"
+            )));
+        }
+        if self_exe_path.is_some() {
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "Disabling runtime environment options cannot be combined with a custom executable path"
+            )));
+        }
+    }
     #[cfg(windows)]
     let _ = root_dir;
     let bytes = match to_bytes(
@@ -3104,8 +3118,11 @@ pub fn to_executable(
 
 impl StandaloneModuleGraph {
     /// Loads the standalone module graph from the executable, allocates it on the heap,
-    /// sets it globally, and returns the pointer.
-    pub fn from_executable() -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+    /// sets it globally, and returns the pointer. `should_load` inspects the
+    /// embedded flags before the graph is allocated or published globally.
+    pub fn from_executable(
+        should_load: impl FnOnce(Flags) -> bool,
+    ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
         #[cfg(windows)]
@@ -3140,6 +3157,9 @@ impl StandaloneModuleGraph {
         }
         // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
         let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
+        if !should_load(offsets.flags) {
+            return Ok(None);
+        }
         let graph = from_bytes_alloc(base, len, offsets)?;
         // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
         unsafe { &*graph }.prefetch_startup_pages();

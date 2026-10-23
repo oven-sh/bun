@@ -111,6 +111,10 @@ impl CompileTarget {
         self.eql(&CompileTarget::default())
     }
 
+    pub fn is_current_version(&self) -> bool {
+        self.version.eql(CompileTarget::default().version)
+    }
+
     /// Same os, arch and libc as this bun (a different bun version for this platform still counts).
     pub fn is_host_platform(&self) -> bool {
         let host = CompileTarget::default();

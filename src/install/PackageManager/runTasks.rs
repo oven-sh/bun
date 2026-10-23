@@ -15,8 +15,7 @@ use crate::patch_install::Callback as PatchTaskCallback;
 use crate::retry_timer;
 use crate::tarball_stream::TarballStream;
 use bun_install::{
-    DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
-    Repository,
+    DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
@@ -56,10 +55,7 @@ pub(crate) use add_error_or_warning_pretty;
 // A single trait with associated consts gating the
 // optional hooks (default-unreachable bodies), plus associated-const tags for
 // the `Ctx` identity checks. The trait branches on three `Ctx` identities
-// (`PackageInstaller`, `Store.Installer`, neither), but there are five impls
-// across three `Ctx` shapes: `PackageInstaller` (`HoistedRunTasksCallbacks`),
-// `Store::Installer` (`StoreRunTasksCallbacks`), and unit
-// (`VoidRunTasksCallbacks`, `ManifestsOnlyCallbacks`, `InstallWaitCallbacks`).
+// (`PackageInstaller`, `Store.Installer`, neither).
 pub trait RunTasksCallbacks {
     /// Mirrors `Ctx` (the `extract_ctx` value type).
     type Ctx;
@@ -68,42 +64,16 @@ pub trait RunTasksCallbacks {
     const MANIFESTS_ONLY: bool = false;
 
     const HAS_ON_EXTRACT: bool = false;
-    const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = false;
     const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = false;
-    const HAS_ON_RESOLVE: bool = false;
 
     /// `Ctx == *PackageInstaller`
     const IS_PACKAGE_INSTALLER: bool = false;
     /// `Ctx == *Store.Installer`
     const IS_STORE_INSTALLER: bool = false;
 
-    fn on_package_manifest_error(
-        _ctx: &mut Self::Ctx,
-        _name: &[u8],
-        _err: crate::Error,
-        _url: &[u8],
-    ) {
-        unreachable!()
-    }
-
-    // `onPackageDownloadError` is called with two distinct shapes depending
-    // on the `Ctx`: `task.task_id: Task::Id` for the store installer,
-    // `package_id: PackageID` otherwise. Static dispatch via two trait
-    // methods lets impls receive the correctly-typed id without a
-    // `Task::Id` round-trip pun.
     fn on_package_download_error_store(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
-        _name: &[u8],
-        _resolution: &bun_install::Resolution,
-        _err: crate::Error,
-        _url: &[u8],
-    ) {
-        unreachable!()
-    }
-    fn on_package_download_error_pkg(
-        _ctx: &mut Self::Ctx,
-        _package_id: PackageID,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
         _err: crate::Error,
@@ -128,10 +98,6 @@ pub trait RunTasksCallbacks {
     ) {
         unreachable!()
     }
-
-    fn on_resolve(_ctx: &mut Self::Ctx) {
-        unreachable!()
-    }
 }
 
 /// Type-erased view of a `RunTasksCallbacks` impl, so the ~2k-line body of
@@ -141,20 +107,14 @@ struct ErasedCallbacks {
     progress_bar: bool,
     manifests_only: bool,
     has_on_extract: bool,
-    has_on_package_manifest_error: bool,
     has_on_package_download_error: bool,
-    has_on_resolve: bool,
     is_package_installer: bool,
     is_store_installer: bool,
-    on_package_manifest_error: fn(*mut (), &[u8], crate::Error, &[u8]),
     on_package_download_error_store:
         fn(*mut (), Task::Id, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
-    on_package_download_error_pkg:
-        fn(*mut (), PackageID, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
     on_extract_package_installer:
         fn(*mut (), Task::Id, DependencyID, &mut bun_install::ExtractData, Options::LogLevel),
     on_extract_store_installer: fn(*mut (), Task::Id, &bun_install::ExtractData),
-    on_resolve: fn(*mut ()),
 }
 
 impl ErasedCallbacks {
@@ -170,26 +130,11 @@ impl ErasedCallbacks {
             progress_bar: C::PROGRESS_BAR,
             manifests_only: C::MANIFESTS_ONLY,
             has_on_extract: C::HAS_ON_EXTRACT,
-            has_on_package_manifest_error: C::HAS_ON_PACKAGE_MANIFEST_ERROR,
             has_on_package_download_error: C::HAS_ON_PACKAGE_DOWNLOAD_ERROR,
-            has_on_resolve: C::HAS_ON_RESOLVE,
             is_package_installer: C::IS_PACKAGE_INSTALLER,
             is_store_installer: C::IS_STORE_INSTALLER,
-            on_package_manifest_error: |c, name, err, url| {
-                C::on_package_manifest_error(ctx::<C>(c), name, err, url)
-            },
             on_package_download_error_store: |c, task_id, name, resolution, err, url| {
                 C::on_package_download_error_store(ctx::<C>(c), task_id, name, resolution, err, url)
-            },
-            on_package_download_error_pkg: |c, package_id, name, resolution, err, url| {
-                C::on_package_download_error_pkg(
-                    ctx::<C>(c),
-                    package_id,
-                    name,
-                    resolution,
-                    err,
-                    url,
-                )
             },
             on_extract_package_installer: |c, task_id, dependency_id, data, log_level| {
                 C::on_extract_package_installer(
@@ -203,7 +148,6 @@ impl ErasedCallbacks {
             on_extract_store_installer: |c, task_id, data| {
                 C::on_extract_store_installer(ctx::<C>(c), task_id, data)
             },
-            on_resolve: |c| C::on_resolve(ctx::<C>(c)),
         }
     }
 }
@@ -249,10 +193,7 @@ impl ErasedCallbacks {
         if !self.has_on_package_download_error {
             return Some(is_required);
         }
-        if !self.is_store_installer {
-            let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
-            (self.on_package_download_error_pkg)(ctx, package_id, name, resolution, err, url);
-        } else if is_required {
+        if is_required {
             (self.on_package_download_error_store)(ctx, task_id, name, resolution, err, url);
         } else {
             self.store_installer(ctx)
@@ -359,34 +300,13 @@ impl Drop for ReturnNetworkTask {
     }
 }
 
-/// `resolve_waiters_of_appended_package`, then tells the runtime if one of its imports was
-/// resolved.
-fn resolve_waiters_and_notify(
-    cb: &ErasedCallbacks,
-    manager: &mut PackageManager,
-    extract_ctx: *mut (),
-    task_id: Task::Id,
-    pkg: &Package,
-    install_peer: bool,
-) -> crate::Result<()> {
-    let any_root = Cell::new(false);
-    let result =
-        resolve_waiters_of_appended_package(manager, task_id, pkg, install_peer, &any_root);
-    if cb.has_on_resolve && any_root.get() {
-        (cb.on_resolve)(extract_ctx);
-    }
-    result
-}
-
 /// Resolves the dependencies that waited for `task_id` to `pkg`, and fills in the package's name
 /// where a dependency did not know it. Entries that a linker queued stay in the task's list.
-/// Sets `any_root` if an import of the runtime was resolved.
 pub(crate) fn resolve_waiters_of_appended_package(
     manager: &mut PackageManager,
     task_id: Task::Id,
     pkg: &Package,
     install_peer: bool,
-    any_root: &Cell<bool>,
 ) -> crate::Result<()> {
     // Recorded for a dependency that's enqueued on the same task later. See
     // `AppendedTaskPackageMap`.
@@ -405,7 +325,7 @@ pub(crate) fn resolve_waiters_of_appended_package(
                     pkg.name,
                     &pkg.resolution,
                 );
-                result = manager.process_dependency_list_item(&dep, Some(any_root), install_peer);
+                result = manager.process_dependency_list_item(&dep, install_peer);
                 if result.is_err() {
                     break;
                 }
@@ -710,38 +630,30 @@ fn run_tasks_erased(
                 let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
                 else {
                     // Handle non-retry-able errors.
-                    if cb.has_on_package_manifest_error {
-                        (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
-                        let _ = (manager.manifest_failures)
-                            .insert(task.task_id, ManifestFailure::already_reported());
-                    } else {
-                        // The dependency that reports it decides between error and warning.
-                        let is_required = manager.is_network_task_required(task.task_id)
-                            || manager.task_queue.contains_key(&task.task_id);
-                        let log_mark = manager.log_mut().msgs.len();
-                        add_error_or_warning_pretty!(
-                            manager.log_mut(),
-                            is_required,
-                            "{} downloading package manifest <b>{}<r>",
-                            DownloadFailure(err.name(), &task.response),
-                            bstr::BStr::new(name),
-                        );
+                    // The dependency that reports it decides between error and warning.
+                    let is_required = manager.is_network_task_required(task.task_id)
+                        || manager.task_queue.contains_key(&task.task_id);
+                    let log_mark = manager.log_mut().msgs.len();
+                    add_error_or_warning_pretty!(
+                        manager.log_mut(),
+                        is_required,
+                        "{} downloading package manifest <b>{}<r>",
+                        DownloadFailure(err.name(), &task.response),
+                        bstr::BStr::new(name),
+                    );
 
-                        let failure = ManifestFailure {
-                            is_unanswered: true,
-                            ..Default::default()
-                        };
-                        if !leave_failure_to_dependencies(
-                            cb,
-                            manager,
-                            extract_ctx,
-                            install_peer,
-                            task.task_id,
-                            log_mark,
-                            failure,
-                        )? {
-                            fail_update_requests(manager, task.task_id, name, None, is_required);
-                        }
+                    let failure = ManifestFailure {
+                        is_unanswered: true,
+                        ..Default::default()
+                    };
+                    if !leave_failure_to_dependencies(
+                        manager,
+                        install_peer,
+                        task.task_id,
+                        log_mark,
+                        failure,
+                    )? {
+                        fail_update_requests(manager, task.task_id, name, None, is_required);
                     }
 
                     return_network_task(task_ptr);
@@ -755,30 +667,6 @@ fn run_tasks_erased(
                     {
                         entry.missing_until = npm::Registry::manifest_expiry(&response.headers);
                     }
-                    if cb.has_on_package_manifest_error {
-                        let err: PackageManifestError = match response.status_code {
-                            400 => PackageManifestError::PackageManifestHTTP400,
-                            401 => PackageManifestError::PackageManifestHTTP401,
-                            402 => PackageManifestError::PackageManifestHTTP402,
-                            403 => PackageManifestError::PackageManifestHTTP403,
-                            404 => PackageManifestError::PackageManifestHTTP404,
-                            405..=499 => PackageManifestError::PackageManifestHTTP4xx,
-                            _ => PackageManifestError::PackageManifestHTTP5xx,
-                        };
-
-                        (cb.on_package_manifest_error)(
-                            extract_ctx,
-                            name,
-                            err.into(),
-                            &task.url_buf,
-                        );
-                        let _ = (manager.manifest_failures)
-                            .insert(task.task_id, ManifestFailure::already_reported());
-
-                        return_network_task(task_ptr);
-                        continue;
-                    }
-
                     // A dist-tag on the name of an unpublished workspace links the workspace, once
                     // `get_or_put_resolved_package` sees that the task has failed.
                     if response.status_code == 404
@@ -828,9 +716,7 @@ fn run_tasks_erased(
                         ..Default::default()
                     };
                     if !leave_failure_to_dependencies(
-                        cb,
                         manager,
-                        extract_ctx,
                         install_peer,
                         task.task_id,
                         log_mark,
@@ -912,13 +798,7 @@ fn run_tasks_erased(
                         {
                             let dependency_list = core::mem::take(dependency_list_entry);
 
-                            process_dependency_list_for_ctx(
-                                cb,
-                                manager,
-                                &dependency_list,
-                                extract_ctx,
-                                install_peer,
-                            )?;
+                            process_dependency_list(manager, &dependency_list, install_peer)?;
                         }
 
                         return_network_task(task_ptr);
@@ -1163,9 +1043,7 @@ fn run_tasks_erased(
         manager.decrement_pending_tasks();
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
-        let holds_log = task.tag == Task::Tag::PackageManifest
-            && task.status == Task::Status::Fail
-            && !cb.has_on_package_manifest_error;
+        let holds_log = task.tag == Task::Tag::PackageManifest && task.status == Task::Status::Fail;
         if !task.log.msgs.is_empty() && !holds_log {
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
             // not `&mut Writer` (the underlying `Writer` is the FFI shape).
@@ -1196,38 +1074,25 @@ fn run_tasks_erased(
                     let name = req.name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if cb.has_on_package_manifest_error {
-                        (cb.on_package_manifest_error)(
-                            extract_ctx,
-                            name,
-                            err,
-                            &req.network.url_buf,
-                        );
-                        let _ = (manager.manifest_failures)
-                            .insert(task.id, ManifestFailure::already_reported());
-                    } else {
-                        bun_ast::add_error_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "{} parsing package manifest for <b>{}<r>",
-                            err.name(),
-                            bstr::BStr::new(name),
-                        );
-                        let failure = ManifestFailure {
-                            spares_optional: false,
-                            ..Default::default()
-                        };
-                        leave_failure_to_dependencies(
-                            cb,
-                            manager,
-                            extract_ctx,
-                            install_peer,
-                            task.id,
-                            log_mark,
-                            failure,
-                        )?;
-                    }
+                    bun_ast::add_error_pretty!(
+                        manager.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "{} parsing package manifest for <b>{}<r>",
+                        err.name(),
+                        bstr::BStr::new(name),
+                    );
+                    let failure = ManifestFailure {
+                        spares_optional: false,
+                        ..Default::default()
+                    };
+                    leave_failure_to_dependencies(
+                        manager,
+                        install_peer,
+                        task.id,
+                        log_mark,
+                        failure,
+                    )?;
 
                     continue;
                 }
@@ -1255,13 +1120,7 @@ fn run_tasks_erased(
                 if let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id) {
                     let dependency_list = core::mem::take(dependency_list_entry);
 
-                    process_dependency_list_for_ctx(
-                        cb,
-                        manager,
-                        &dependency_list,
-                        extract_ctx,
-                        install_peer,
-                    )?;
+                    process_dependency_list(manager, &dependency_list, install_peer)?;
                 }
 
                 if let Some(name) = progress_name {
@@ -1380,14 +1239,7 @@ fn run_tasks_erased(
                     task.data_extract(),
                     log_level,
                 ) {
-                    resolve_waiters_and_notify(
-                        cb,
-                        manager,
-                        extract_ctx,
-                        task.id,
-                        &pkg,
-                        install_peer,
-                    )?;
+                    resolve_waiters_of_appended_package(manager, task.id, &pkg, install_peer)?;
                 } else if let Some(dependency_list_entry) =
                     manager.task_queue.get_mut(&Task::Id::for_manifest(
                         manager
@@ -1397,7 +1249,7 @@ fn run_tasks_erased(
                 {
                     // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
                     for item in core::mem::take(dependency_list_entry).iter() {
-                        manager.process_dependency_list_item(item, None, install_peer)?;
+                        manager.process_dependency_list_item(item, install_peer)?;
                     }
                 }
 
@@ -1415,11 +1267,6 @@ fn run_tasks_erased(
                     let err = task.err.unwrap_or(crate::Error::Failed);
                     let is_required = manager.is_network_task_required(task.id);
                     let waiters = forget_failed_git_task(manager, task.id, name);
-
-                    if cb.has_on_package_manifest_error {
-                        (cb.on_package_manifest_error)(extract_ctx, name, err, url);
-                        continue;
-                    }
 
                     if cb.is_store_installer {
                         // The isolated installer queued its entry contexts
@@ -1541,13 +1388,7 @@ fn run_tasks_erased(
                         .remove(&task.id)
                         .expect("infallible: task queued");
 
-                    process_dependency_list_for_ctx(
-                        cb,
-                        manager,
-                        &dependency_list,
-                        extract_ctx,
-                        install_peer,
-                    )?;
+                    process_dependency_list(manager, &dependency_list, install_peer)?;
                 }
 
                 name_progress(manager, name, DOWNLOAD);
@@ -1555,12 +1396,10 @@ fn run_tasks_erased(
             Task::Tag::GitCommit => {
                 let commit = task.request_git_commit();
                 let name = commit.name.slice();
-                let url = commit.url.slice();
                 // Pending while it ran, but not one of the N downloads the summary prints.
                 manager.total_tasks -= 1;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(crate::Error::Failed);
                     let is_required = manager.is_network_task_required(task.id);
                     // The repository (with `--offline`, its cached clone) has no such commit.
                     for waiter in forget_failed_git_task(manager, task.id, name).iter() {
@@ -1568,19 +1407,15 @@ fn run_tasks_erased(
                             manager.lockfile.unbind_refreshing(id);
                         }
                     }
-                    if cb.has_on_package_manifest_error {
-                        (cb.on_package_manifest_error)(extract_ctx, name, err, url);
-                    } else {
-                        add_error_or_warning(
-                            manager.log_mut(),
-                            is_required,
-                            format_args!(
-                                "no commit matching \"{}\" found for \"{}\" (but repository exists)",
-                                bun_core::fmt::escape_control_chars(commit.committish.slice()),
-                                bun_core::fmt::for_terminal(bstr::BStr::new(name)),
-                            ),
-                        );
-                    }
+                    add_error_or_warning(
+                        manager.log_mut(),
+                        is_required,
+                        format_args!(
+                            "no commit matching \"{}\" found for \"{}\" (but repository exists)",
+                            bun_core::fmt::escape_control_chars(commit.committish.slice()),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(name)),
+                        ),
+                    );
                     continue;
                 }
 
@@ -1593,13 +1428,7 @@ fn run_tasks_erased(
                     .task_queue
                     .remove(&task.id)
                     .expect("infallible: task queued");
-                process_dependency_list_for_ctx(
-                    cb,
-                    manager,
-                    &dependency_list,
-                    extract_ctx,
-                    install_peer,
-                )?;
+                process_dependency_list(manager, &dependency_list, install_peer)?;
             }
             Task::Tag::GitCheckout => {
                 // SAFETY: `task.tag == GitCheckout` — active union arm.
@@ -1680,14 +1509,7 @@ fn run_tasks_erased(
                     task.data_git_checkout(),
                     log_level,
                 ) {
-                    resolve_waiters_and_notify(
-                        cb,
-                        manager,
-                        extract_ctx,
-                        task.id,
-                        &pkg,
-                        install_peer,
-                    )?;
+                    resolve_waiters_of_appended_package(manager, task.id, &pkg, install_peer)?;
                 }
 
                 name_progress(manager, alias.slice(), DOWNLOAD);
@@ -2307,9 +2129,7 @@ impl PackageManager {
 /// when it's resolved. If no dependency asked for the manifest, `populate_manifest_cache` did, and
 /// its caller reads the log. In that case this returns false and leaves the log alone.
 fn leave_failure_to_dependencies(
-    cb: &ErasedCallbacks,
     manager: &mut PackageManager,
-    extract_ctx: *mut (),
     install_peer: bool,
     task_id: Task::Id,
     log_mark: usize,
@@ -2321,24 +2141,18 @@ fn leave_failure_to_dependencies(
     };
     manager.keep_manifest_failure(task_id, log_mark, failure);
     // `advance` tries the queued dependencies again. Only imports of the runtime wait in this list.
-    process_dependency_list_for_ctx(cb, manager, &waiting, extract_ctx, install_peer)?;
+    process_dependency_list(manager, &waiting, install_peer)?;
     Ok(true)
 }
 
-/// Resolves the rows that waited for a task, then calls `on_resolve` if a root dependency changed.
-fn process_dependency_list_for_ctx(
-    cb: &ErasedCallbacks,
+/// Resolves the rows that waited for a task.
+fn process_dependency_list(
     manager: &mut PackageManager,
     dependency_list: &TaskCallbackList,
-    extract_ctx: *mut (),
     install_peer: bool,
 ) -> crate::Result<()> {
-    let any_root = Cell::new(false);
     for item in dependency_list.iter() {
-        manager.process_dependency_list_item(item, Some(&any_root), install_peer)?;
-    }
-    if cb.has_on_resolve && any_root.get() {
-        (cb.on_resolve)(extract_ctx);
+        manager.process_dependency_list_item(item, install_peer)?;
     }
     Ok(())
 }

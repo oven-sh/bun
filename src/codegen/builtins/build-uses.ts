@@ -109,6 +109,18 @@ const objectHeaps: readonly Heap[] = [
 ];
 // Some properties lie in the state of a class: the elements of a typed array under their indexes, the lastIndex of a regular expression. A store or a definition by key writes there.
 const heapsBehindProperties: readonly Heap[] = ["TypedArrayElements", "RegExpState"];
+// Where the classes keep what their instances hold. An operand that may be any object may be an instance of any of them. What a protocol
+// reads of it the compiler knows by the type of the operand; what native code reads without one only the entry says.
+const heapsOfContentsOfClasses: readonly Heap[] = [
+  "TypedArrayStorage",
+  "TypedArrayElements",
+  "CollectionStorage",
+  "CollectionEntries",
+  "InternalFields",
+  "RegExpState",
+  "PromiseState",
+  "ExternalState",
+];
 const prototypeHeap: Heap = "PrototypeLinks";
 const noPlace: ModelPlace = { place: "None" };
 const noKey: ModelKey = { key: "None" };
@@ -1060,7 +1072,7 @@ function heapsOfClass({ slots, stateHeap }: ModelClass): readonly Heap[] {
   return heaps.length > 0 ? heaps : objectHeaps;
 }
 
-function heapsOfAccess({ parameter }: OperandState, access: ContentsAccess, isWrite: boolean): Heap[] {
+function heapsOfAccess({ parameter, protocols }: OperandState, access: ContentsAccess, isWrite: boolean): Heap[] {
   const types = [parameter.accepted, parameter.converted];
   const classes = instanceClassesOf(types);
   const heaps = Array.from(access.slots, slot => slot.heap);
@@ -1074,6 +1086,8 @@ function heapsOfAccess({ parameter }: OperandState, access: ContentsAccess, isWr
     const isAnyObject = types.some(mayBeObjectOutsideClasses);
     heaps.push(...heapsBehindProperties.filter(heap => isAnyObject || ofClasses.includes(heap)));
   }
+  const isReadByNativeCodeAlone = !isWrite && access.isEverySlot && protocols.size === 0;
+  if (isReadByNativeCodeAlone && types.some(mayBeObjectOutsideClasses)) heaps.push(...heapsOfContentsOfClasses);
   return hasObjectHeaps ? [...heaps, ...objectHeaps] : heaps;
 }
 

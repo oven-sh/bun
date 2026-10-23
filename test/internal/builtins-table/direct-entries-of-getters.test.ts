@@ -65,23 +65,39 @@ test("a getter that is also passed its wrapper is entered the same way", async (
   expect(directEntryOfGetter?.parameters.map(({ value }) => value)).toEqual(["Realm", "Receiver"]);
 });
 
-test("a getter for which the getter of the table does more is entered through the table", async () => {
+test("a getter that keeps its answer in a field is entered through the table", async () => {
   expect(
     await entriesOf(`
       internalFields: ["kept"],
       proto: {
         address: { getter: b.string, cache: true },
         kept: { internalField: "kept" },
-        peer: { getter: b.self, capability: "heap" },
-        size: { getter: b.any.returning("number"), capability: "heap" },
       },
     `),
   ).toEqual({
     "%Thing%.prototype.address": null,
     "%Thing%.prototype.kept": null,
-    "%Thing%.prototype.peer": null,
-    "%Thing%.prototype.size": null,
   });
+});
+
+test("a getter whose answer nothing proves is entered at its thunk too: compiled code tests the answer", async () => {
+  expect(
+    await entriesOf(`
+      proto: {
+        name: { getter: b.string.local, capability: "heap" },
+        peer: { getter: b.self, capability: "heap" },
+        size: { getter: b.any.returning("number"), capability: "heap" },
+      },
+    `),
+  ).toEqual({
+    "%Thing%.prototype.name": "Bun__Bindgen__ThingPrototypeGetter__name",
+    "%Thing%.prototype.peer": "Bun__Bindgen__ThingPrototypeGetter__peer",
+    "%Thing%.prototype.size": "Bun__Bindgen__ThingPrototypeGetter__size",
+  });
+  for (const field of [`b.string.local`, `b.self`, `b.any.returning("number")`]) {
+    const [signature] = (await accessorOf(`proto: { size: { getter: ${field}, capability: "heap" } }`)).signatures;
+    expect(signature.resultIsDeclaredOnly).toBe(true);
+  }
 });
 
 test("a pure getter touches no heap, throws nothing and writes nothing", async () => {

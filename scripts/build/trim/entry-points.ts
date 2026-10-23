@@ -1,6 +1,13 @@
 import { guardFeatureOf } from "./builtin-uses.ts";
 import { featureNamed } from "./features.ts";
-import { reverseEdges, type GraphFailure, type GraphReading, type RecordSection, type SectionGraph } from "./graph.ts";
+import {
+  nameInSource,
+  reverseEdges,
+  type GraphFailure,
+  type GraphReading,
+  type RecordSection,
+  type SectionGraph,
+} from "./graph.ts";
 import {
   guardOrigins,
   stubKinds,
@@ -283,7 +290,7 @@ export function findStaticTableEntryPoints(input: StaticTableInput): EntryPoint[
   const guardedBuiltins = collectGuardedBuiltins(input.model, input.uses);
   const tablesOfFunction = findFunctionsNamedInData(input);
   const named = [...tablesOfFunction.keys()].flatMap(entry => graph.names[entry]!.map(name => ({ entry, name })));
-  const demangledNames = input.demangle(named.map(({ name }) => name));
+  const demangledNames = input.demangle(named.map(({ name }) => nameInSource(graph, name)));
   const entryPoints: EntryPoint[] = [];
   named.forEach(({ entry }, index) => {
     const entrySection = graph.object[entry] + "\0" + graph.section[entry];
@@ -363,7 +370,7 @@ export function findCxxFunctionEntryPoints({
     if (names.length === 0 || !isCode(graph.output[entry]!)) continue;
     if (names.every(name => patterns.some(({ hint }) => name.includes(hint)))) hinted.push(entry);
   }
-  const demangledNames = demangle(hinted.flatMap(entry => graph.names[entry]!));
+  const demangledNames = demangle(hinted.flatMap(entry => graph.names[entry]!.map(name => nameInSource(graph, name))));
   const matched = new Set<string>();
   const definitions: EntryPointDefinition[] = [];
   let next = 0;

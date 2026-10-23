@@ -55,6 +55,13 @@
       "peakBytes": 4.0
     }
   },
+  "objects that one function makes and hands to one array": {
+    "millionInstructions": 75846,
+    "megabytes": 254,
+    "growth": {
+      "instructions": 3.36
+    }
+  },
   "one async function of many awaits": {
     "millionInstructions": 5778,
     "megabytes": 221,

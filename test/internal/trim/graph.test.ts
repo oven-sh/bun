@@ -24,6 +24,7 @@ import {
   shortestChains,
   type Edges,
   type GraphReading,
+  type ObjectFormat,
   type RecordSection,
   type SectionGraph,
   type SectionGraphParts,
@@ -1103,12 +1104,17 @@ describe("findCxxFunctionEntryPoints", () => {
   ];
   const asked: string[][] = [];
 
-  function find(cxxFunctions: Record<string, { hint: string; pattern: string }[]>) {
+  function find(
+    cxxFunctions: Record<string, { hint: string; pattern: string }[]>,
+    format: ObjectFormat = "elf",
+    namesInFormat = names,
+  ) {
     const reading: GraphReading = {
       graph: createSectionGraph({
         ...partsOf([[secure, plain, data, folded], [secure], [data], [], [], []]),
+        format,
         output: [".text", ".data.rel.ro", ".text", ".text", ".data", ".text"],
-        names,
+        names: namesInFormat,
       }),
       recordSections: [],
       resolve: () => undefined,
@@ -1155,6 +1161,13 @@ describe("findCxxFunctionEntryPoints", () => {
     expect(asked.flat()).toContain("_ZN3uWS3AppILb0EE3runEv");
   });
 
+  test("the demangler gets a Mach-O name without the underscore that the format puts in front", () => {
+    asked.length = 0;
+    const withUnderscore = names.map(list => list.map(name => "_" + name));
+    expect(find({ Sqlite: [secureApp] }, "macho", withUnderscore)).toStrictEqual(find({ Sqlite: [secureApp] }));
+    expect(asked[0]).toStrictEqual(asked[1]);
+  });
+
   test("a pattern that matches nothing is reported", () => {
     expect(find({ Sqlite: [{ hint: "uWS", pattern: "uWS::Gone<" }] })).toStrictEqual({
       entryPoints: [],
@@ -1195,10 +1208,11 @@ describe("findStaticTableEntryPoints", () => {
   function find(
     entries: BuiltinEntry[],
     names: string[][] = [["main"], ["table"], ["other"], ["_open"], ["_close"], ["text"]],
+    format: ObjectFormat = "elf",
   ) {
     const successors = [[open], [open, close, text], [open], [], [], []];
     const reading: GraphReading = {
-      graph: createSectionGraph({ ...partsOf(successors), output: outputs, names }),
+      graph: createSectionGraph({ ...partsOf(successors), format, output: outputs, names }),
       recordSections: [],
       resolve: () => undefined,
       failures: [],
@@ -1238,6 +1252,20 @@ describe("findStaticTableEntryPoints", () => {
     ]);
     expect(find([builtin(7, "Function", ["Node::jsSqliteOpen"], [always("Sqlite")])])).toEqual([]);
     expect(find([builtin(7, "Function", ["un::jsSqliteOpen"], [always("Sqlite")])])).toEqual([]);
+  });
+
+  test("the underscore that Mach-O puts in front of a name is not part of it, for a C function and for a mangled one", () => {
+    const names = [["_main"], ["_table"], ["_other"], ["_jsSqliteOpen"], ["__close"], ["_text"]];
+    const entries = [
+      builtin(7, "Function", ["jsSqliteOpen"], [always("Sqlite")]),
+      builtin(8, "Function", ["Bun::jsSqliteClose"], [always("Sqlite")]),
+    ];
+    expect(find(entries, names, "macho")).toStrictEqual([
+      record(table, open, 7),
+      record(otherTable, open, 7),
+      record(table, close, 8),
+    ]);
+    expect(find(entries, names, "elf")).toEqual([]);
   });
 
   test("a function that no entry names, and data that a table refers to, are no entry points", () => {

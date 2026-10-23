@@ -8,5 +8,7 @@ declare module "bun" {
       text: string,
       reviver?: (this: any, key: string, value: any, context: { source?: string }) => any,
     ): T;
+    // Without type parameters, so that `promise.then(JSON.parse)` still gives `any`.
+    parse(text: string, reviver?: (this: any, key: string, value: any, context: { source?: string }) => any): any;
   }
 }

@@ -1,57 +1,10 @@
-//! `path.posix` for 8-bit characters, eight of them at a time.
+//! `path.posix` for 8-bit characters. What looks at all of them is a kernel of `bun_highway`.
 
 use core::mem::MaybeUninit;
 use core::ops::Range;
 
 const SLASH: u8 = b'/';
 const DOT: u8 = b'.';
-
-/// Eight characters in a word, the first of them in its lowest byte.
-#[derive(Clone, Copy)]
-struct Block(u64);
-
-/// The highest bit of the byte of each character that was looked for.
-type Found = u64;
-
-const WIDTH: usize = 8;
-const LOWEST_BITS: u64 = 0x0101_0101_0101_0101;
-const ALL_BUT_HIGHEST_BITS: u64 = 0x7f7f_7f7f_7f7f_7f7f;
-
-impl Block {
-    /// SAFETY: The characters `at..at + WIDTH` are in `path`.
-    #[inline(always)]
-    unsafe fn read(path: &[u8], at: usize) -> Block {
-        debug_assert!(at + WIDTH <= path.len());
-        // SAFETY: forwarded.
-        let bytes = unsafe { path.as_ptr().add(at).cast::<[u8; WIDTH]>().read_unaligned() };
-        Block(u64::from_le_bytes(bytes))
-    }
-
-    #[inline(always)]
-    fn find(self, character: u8) -> Found {
-        let difference = self.0 ^ (LOWEST_BITS * u64::from(character));
-        // No sum carries into the next byte. It has the highest bit of a byte whose other bits are not all 0.
-        let has_lower_bits = (difference & ALL_BUT_HIGHEST_BITS) + ALL_BUT_HIGHEST_BITS;
-        !(has_lower_bits | difference | ALL_BUT_HIGHEST_BITS)
-    }
-
-    /// '.' is '/' without its lowest bit.
-    #[inline(always)]
-    fn find_slash_or_dot(self) -> Found {
-        const { assert!(DOT | 1 == SLASH) };
-        Block(self.0 | LOWEST_BITS).find(SLASH)
-    }
-}
-
-#[inline(always)]
-fn first_of(found: Found) -> usize {
-    found.trailing_zeros() as usize / 8
-}
-
-#[inline(always)]
-fn last_of(found: Found) -> usize {
-    found.ilog2() as usize / 8
-}
 
 /// Whether the part of `path` that starts at `start` is "." or "..".
 #[inline(always)]
@@ -62,81 +15,19 @@ fn is_dots_at(path: &[u8], start: usize) -> bool {
     )
 }
 
-/// `path` has more than `WIDTH` characters.
-#[inline(always)]
-fn is_tidy_by_blocks(path: &[u8]) -> bool {
-    let last = path.len() - WIDTH - 1;
-    let mut at = 0;
-    loop {
-        // SAFETY: at <= last, so the characters at..at + WIDTH + 1 are in `path`.
-        let (here, next) = unsafe { (Block::read(path, at), Block::read(path, at + 1)) };
-        // One bit for each '/' with a '/' or a '.' after it.
-        let mut suspects = here.find(SLASH) & next.find_slash_or_dot();
-        while suspects != 0 {
-            let after_slash = at + first_of(suspects) + 1;
-            if path[after_slash] == SLASH || is_dots_at(path, after_slash) {
-                return false;
-            }
-            suspects &= suspects - 1;
-        }
-        if at == last {
-            return true;
-        }
-        at = (at + WIDTH).min(last);
-    }
-}
-
 /// Whether no part of `path` between two slashes is empty, "." or "..".
 #[inline(always)]
 pub fn is_tidy_posix(path: &[u8]) -> bool {
-    let len = path.len();
-    if len == 0 || (path[0] == DOT && is_dots_at(path, 0)) {
-        return false;
-    }
-    if len > WIDTH {
-        return is_tidy_by_blocks(path);
-    }
-    for at in 1..len {
-        if path[at - 1] == SLASH && (path[at] == SLASH || is_dots_at(path, at)) {
-            return false;
-        }
-    }
-    true
-}
-
-/// The first '/' of `path[*at..limit]` in front of a part that is empty, "." or "..".
-#[inline(always)]
-fn first_untidy_slash_by_blocks(path: &[u8], at: &mut usize, limit: usize) -> Option<usize> {
-    while *at + WIDTH < limit {
-        // SAFETY: the characters *at..*at + WIDTH + 1 are in `path[..limit]`.
-        let (here, next) = unsafe { (Block::read(path, *at), Block::read(path, *at + 1)) };
-        let mut suspects = here.find(SLASH) & next.find_slash_or_dot();
-        while suspects != 0 {
-            let found = *at + first_of(suspects);
-            if path[found + 1] == SLASH || is_dots_at(path, found + 1) {
-                return Some(found);
-            }
-            suspects &= suspects - 1;
-        }
-        *at += WIDTH;
-    }
-    None
+    !path.is_empty()
+        && !(path[0] == DOT && is_dots_at(path, 0))
+        && bun_highway::index_of_untidy_slash(path).is_none()
 }
 
 /// Where the parts from `start` on that are kept as they are end: at a '/' in front of a part that is empty, "." or "..", or at `limit`, which is not behind a slash.
 #[inline(always)]
 fn end_of_tidy_parts(path: &[u8], start: usize, limit: usize) -> usize {
-    let mut at = start;
-    if let Some(found) = first_untidy_slash_by_blocks(path, &mut at, limit) {
-        return found;
-    }
-    while at + 1 < limit {
-        if path[at] == SLASH && (path[at + 1] == SLASH || is_dots_at(path, at + 1)) {
-            return at;
-        }
-        at += 1;
-    }
-    limit
+    // Only slashes follow `limit`, so a part that ends there ends there in `path` too.
+    bun_highway::index_of_untidy_slash(&path[start..limit]).map_or(limit, |found| start + found)
 }
 
 /// `normalize_string_t` in the crate root, with '/'.
@@ -241,47 +132,14 @@ pub fn resolve_absolute_posix_latin1<'b>(
     unsafe { core::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), 1 + length) }
 }
 
-/// The last of `path[..end]` that `find` finds in a block and `is_found` says it is.
-#[inline(always)]
-fn last_index_of(
-    path: &[u8],
-    mut end: usize,
-    find: impl Fn(Block) -> Found,
-    is_found: impl Fn(u8) -> bool,
-) -> Option<usize> {
-    debug_assert!(end <= path.len());
-    while end >= WIDTH {
-        // SAFETY: WIDTH <= end <= path.len().
-        let found = find(unsafe { Block::read(path, end - WIDTH) });
-        if found != 0 {
-            return Some(end - WIDTH + last_of(found));
-        }
-        end -= WIDTH;
-    }
-    while end > 0 {
-        end -= 1;
-        if is_found(path[end]) {
-            return Some(end);
-        }
-    }
-    None
-}
-
 #[inline(always)]
 fn last_slash(path: &[u8], end: usize) -> Option<usize> {
-    last_index_of(
-        path,
-        end,
-        |block| block.find(SLASH),
-        |character| character == SLASH,
-    )
+    bun_highway::last_index_of_slash(&path[..end])
 }
 
 #[inline(always)]
 fn last_slash_or_dot(path: &[u8], end: usize) -> Option<usize> {
-    last_index_of(path, end, Block::find_slash_or_dot, |character| {
-        character == SLASH || character == DOT
-    })
+    bun_highway::last_index_of_slash_or_dot(&path[..end])
 }
 
 /// `path.len()` less the slashes at its end, but at least `least`.
@@ -385,43 +243,6 @@ pub fn parse_posix_latin1(path: &[u8]) -> ParsedPosixLatin1 {
     }
 }
 
-/// How many characters `a` and `b` start with in common.
-#[inline(always)]
-fn common_prefix(a: &[u8], b: &[u8]) -> usize {
-    let shorter = a.len().min(b.len());
-    let mut at = 0;
-    while at + WIDTH <= shorter {
-        // SAFETY: at + WIDTH <= both lengths.
-        let (x, y) = unsafe { (Block::read(a, at), Block::read(b, at)) };
-        let difference = x.0 ^ y.0;
-        if difference != 0 {
-            return at + first_of(difference);
-        }
-        at += WIDTH;
-    }
-    while at < shorter && a[at] == b[at] {
-        at += 1;
-    }
-    at
-}
-
-#[inline(always)]
-fn count_slashes(path: &[u8]) -> usize {
-    let mut count = 0;
-    let mut at = 0;
-    while at + WIDTH <= path.len() {
-        // SAFETY: at + WIDTH <= path.len().
-        let block = unsafe { Block::read(path, at) };
-        count += block.find(SLASH).count_ones() as usize;
-        at += WIDTH;
-    }
-    while at < path.len() {
-        count += usize::from(path[at] == SLASH);
-        at += 1;
-    }
-    count
-}
-
 /// Whether [`crate::resolve_posix_t`] answers `path` as it is.
 #[inline(always)]
 pub fn is_resolved_posix(path: &[u8]) -> bool {
@@ -443,7 +264,7 @@ pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
     debug_assert!(is_resolved_posix(from) && is_resolved_posix(to));
     // Where the names of `from` start that are not in `to`, if there are any, and `rest`.
     let (left_from, rest) = 'found: {
-        let common = common_prefix(from, to);
+        let common = bun_highway::common_prefix_length(from, to);
         if common == from.len() {
             if common == to.len() {
                 break 'found (None, common);
@@ -470,7 +291,7 @@ pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
     };
     RelativePosixLatin1 {
         ups: match left_from {
-            Some(start) => 1 + count_slashes(&from[start..]),
+            Some(start) => 1 + bun_highway::count_slashes(&from[start..]),
             None => 0,
         },
         rest,

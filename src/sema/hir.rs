@@ -3190,7 +3190,10 @@ macro_rules! moved_lists {
         }
         macro_rules! owning {
             ($list:expr) => {
-                Cow::Owned(std::mem::take(&mut $list))
+                match $list.is_empty() {
+                    true => Cow::Borrowed(&[][..]),
+                    false => Cow::Owned(std::mem::take(&mut $list)),
+                }
             };
         }
         macro_rules! source_text {

@@ -391,14 +391,14 @@
     }
   },
   "host-classes/request-method": {
-    "typed": 99,
-    "untyped": 97,
-    "jit": 112.1
+    "typed": 68,
+    "untyped": 68,
+    "jit": 68
   },
   "host-classes/request-url-method-and-headers": {
-    "typed": 108,
-    "untyped": 107.9,
-    "jit": 186.7
+    "typed": 87.1,
+    "untyped": 88,
+    "jit": 142
   },
   "host-classes/request-url-read-again": {
     "typed": 10.1,
@@ -656,35 +656,27 @@
     }
   },
   "built-in/path-join": {
-    "typed": 486.8,
-    "untyped": 486.9,
-    "jit": 580.2,
-    "best": {
-      "typed": 486.7,
-      "untyped": 486.9
-    }
+    "typed": 482.5,
+    "untyped": 477.6,
+    "jit": 573.5
   },
   "built-in/path-normalize": {
-    "typed": 133.8,
-    "untyped": 133.7,
-    "jit": 202.9
+    "typed": 128.8,
+    "untyped": 116.8,
+    "jit": 185.5
   },
   "built-in/path-relative": {
-    "typed": 619.5,
-    "untyped": 622.6,
-    "jit": 714.7,
-    "best": {
-      "typed": 619.5,
-      "untyped": 622.5
-    }
+    "typed": 615.8,
+    "untyped": 609,
+    "jit": 707.3
   },
   "built-in/path-resolve": {
     "typed": 495.8,
-    "untyped": 495.8,
-    "jit": 563.2,
+    "untyped": 491.5,
+    "jit": 562.6,
     "best": {
       "typed": 495.6,
-      "untyped": 495.8
+      "untyped": 491.5
     }
   },
   "built-in/path-16-bit": {
@@ -969,6 +961,11 @@
     "typed": 320.0,
     "untyped": 319.9,
     "jit": 313.8
+  },
+  "bytes/store-parsed-numbers-through-a-data-view": {
+    "typed": 31,
+    "untyped": 46,
+    "jit": 21
   },
   "bytes/subarray-of-floats": {
     "typed": 549.4,

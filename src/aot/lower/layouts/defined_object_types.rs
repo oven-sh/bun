@@ -1,5 +1,3 @@
-#[cfg(test)]
-use core::sync::atomic::AtomicU64;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_sema::check::aot::{ObjectOrigin, TypeIdentity};
@@ -68,6 +66,8 @@ pub struct DefinedObjectTypes {
     names_of_types: ShardedMap<TypeId, NamesOfObjectType>,
     // What each file has worked out and is not yet lowered for good.
     names_of_files: Guarded<FxHashMap<FileId, Vec<(TypeId, NamesOfObjectType)>>>,
+    #[cfg(test)]
+    late_answers: late_answers::Choice,
 }
 
 // What the layout of an object type is known by.
@@ -147,7 +147,7 @@ impl DefinedObjectTypes {
         file: FileId,
     ) -> bool {
         #[cfg(test)]
-        if late_answers::is_late(ty, file) {
+        if self.late_answers.is_late(ty, file) {
             return false;
         }
         let Some(first_definers) = self.first_definers.get_ref(ty) else {
@@ -185,7 +185,7 @@ impl DefinedObjectTypes {
         file: FileId,
     ) -> bool {
         #[cfg(test)]
-        if late_answers::is_late(ty, file) {
+        if self.late_answers.is_late(ty, file) {
             return false;
         }
         let first_definers = self.first_definers.get_ref(ty);
@@ -196,21 +196,41 @@ impl DefinedObjectTypes {
 // In a build with many threads an earlier file may become known too late for any of the questions about it.
 #[cfg(test)]
 pub(crate) mod late_answers {
+    use core::cell::Cell;
     use core::hash::BuildHasher;
 
-    use super::{AtomicU64, DefinedObjectType, FileId, Ordering};
+    use super::{DefinedObjectType, FileId};
 
     pub(crate) const NONE: u64 = 0;
     pub(crate) const ALL: u64 = u64::MAX;
 
-    // Any other number: about half of the answers, another half for each number.
-    pub(crate) static CHOICE: AtomicU64 = AtomicU64::new(NONE);
+    thread_local! {
+        static CHOICE: Cell<u64> = const { Cell::new(NONE) };
+    }
 
-    pub(super) fn is_late(ty: &DefinedObjectType, file: FileId) -> bool {
-        match CHOICE.load(Ordering::Relaxed) {
-            NONE => false,
-            ALL => true,
-            choice => rustc_hash::FxBuildHasher.hash_one((choice, ty, file)) & (1 << 40) != 0,
+    // Any other number: about half of the answers, another half for each number. It holds for the builds that this thread starts in `run`.
+    pub(crate) fn with_choice<R>(choice: u64, run: impl FnOnce() -> R) -> R {
+        let outer = CHOICE.replace(choice);
+        let result = run();
+        CHOICE.set(outer);
+        result
+    }
+
+    pub(super) struct Choice(u64);
+
+    impl Default for Choice {
+        fn default() -> Choice {
+            Choice(CHOICE.get())
+        }
+    }
+
+    impl Choice {
+        pub(super) fn is_late(&self, ty: &DefinedObjectType, file: FileId) -> bool {
+            match self.0 {
+                NONE => false,
+                ALL => true,
+                choice => rustc_hash::FxBuildHasher.hash_one((choice, ty, file)) & (1 << 40) != 0,
+            }
         }
     }
 }

@@ -78,6 +78,14 @@ impl<'a> JsHeap<'a> {
     /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be.
     #[inline]
     pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
+        if (2..=JSString::MAX_LENGTH).contains(&latin1.len()) {
+            // SAFETY: all of the characters are written.
+            return unsafe {
+                self.create_latin1_string_with(latin1.len(), |to| {
+                    to.copy_from_nonoverlapping(latin1.as_ptr(), latin1.len());
+                })
+            };
+        }
         JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
     }
 

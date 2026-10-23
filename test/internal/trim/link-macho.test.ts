@@ -647,6 +647,31 @@ describeEachMachine("Mach-O $name", machine => {
     });
   });
 
+  describe("a table in data that holds the address of a built-in's C function", () => {
+    const builtins = [{ ...builtinUsing(spelledBuiltin, "toy.extra", Extra), nativeSymbols: ["entered"] }];
+    const objects = ["feature_code", "entry", "natives", "embedder", "main"];
+    const natives = `int entered(int); int (*const natives[1])(int) = { entered };`;
+    const mainCalling = (otherwise: string) => `
+      ${start}
+      extern int (*const natives[1])(int);
+      int main(int argc, char **argv) {
+        return argc > 6 && !Bun__removableFeatureState.removal[Extra] ? natives[argc - 7](argc) & 63 : ${otherwise};
+      }
+    `;
+
+    test.each([
+      ["alone", "0"],
+      ["beside a guard in code", `argc > 5 ? GUARDED_BUILTIN(Extra, ${spelledBuiltin}, entered, argc) & 63 : 0`],
+    ])("guards it, %s", async (_, otherwise) => {
+      using dir = tempDir("trim-macho-table", { ...sources, "natives.c": natives, "main.c": mainCalling(otherwise) });
+      const folder = String(dir);
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, folder, { objects, builtins });
+      expect(["entered", "feature_code", "natives"].map(featuresOf)).toEqual([[Extra], [Extra], undefined]);
+      expect(entryPointsText(folder, "program")).toMatch(/ entered \(entry\.o, \d+ bytes\) <- natives \(natives\.o, /);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+  });
+
   describe("what the executable exports", () => {
     test("belongs to the features that load code that can call it; an exported entry point has its own feature too", async () => {
       using dir = tempDir("trim-macho-exports", {

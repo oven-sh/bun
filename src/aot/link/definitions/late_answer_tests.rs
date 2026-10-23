@@ -1,5 +1,4 @@
 use core::fmt::Write;
-use core::sync::atomic::Ordering;
 
 use crate::ir::print_program;
 use crate::link::testing::{forward, link_units, with_lowered_units_without_bun_modules};
@@ -145,11 +144,12 @@ fn write_program() -> Vec<(String, String)> {
 
 // The text of the linked program, and how many definitions of layouts the files have written.
 fn link_with_late_answers(files: &[(&str, &str)], choice: u64) -> (String, usize) {
-    late_answers::CHOICE.store(choice, Ordering::Relaxed);
-    with_lowered_units_without_bun_modules(files, |units, projects| {
-        let written = units.iter().map(|unit| unit.layout_definitions.len()).sum();
-        let linked = link_units(units, projects, &forward).expect("the program links");
-        (print_program(&linked.program), written)
+    late_answers::with_choice(choice, || {
+        with_lowered_units_without_bun_modules(files, |units, projects| {
+            let written = units.iter().map(|unit| unit.layout_definitions.len()).sum();
+            let linked = link_units(units, projects, &forward).expect("the program links");
+            (print_program(&linked.program), written)
+        })
     })
 }
 

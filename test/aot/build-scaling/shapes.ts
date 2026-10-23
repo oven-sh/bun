@@ -213,6 +213,17 @@ export const shapes: Shape[] = [
         "for (let i = 0; i < 3; i++) console.log(large(globalThis.process.argv.length > 5 ? eval : function (x) { return x; }, o, p));\n",
     }),
   },
+  // Each object has a set of its own in the escape analysis, and a set had a bit for each object: objects x objects, with no limit.
+  {
+    name: "objects that one function makes and hands to one array",
+    counted: "objects",
+    size: 10000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function fill(x: number, all: { a: number }[]) {\n${lines(size, () => "  all.push({ a: x });")}}\nconst all: { a: number }[] = [];\nfill(all.length + 3, all);\nconsole.log(all.length);\n`,
+    }),
+  },
   {
     name: "one async function of many awaits",
     counted: "awaits",

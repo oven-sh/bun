@@ -187,6 +187,7 @@
   "bytes/encode-a-short-text-with-accents": 300000,
   "bytes/set-an-array-of-numbers-at-an-offset": 300000,
   "bytes/set-floats-at-an-offset": 300000,
+  "bytes/store-parsed-numbers-through-a-data-view": 4000000,
   "bytes/subarray-of-floats": 300000,
   "built-in/parse-a-row-of-rendered-elements": 20000,
   "built-in/stringify-a-long-text-with-nothing-to-escape": 40000,

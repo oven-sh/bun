@@ -390,6 +390,10 @@ export function propagateFeatureSets(
   return internFeatureSets(components, bits);
 }
 
+export function nameInSource({ format }: Pick<SectionGraph, "format">, symbol: string): string {
+  return format === "macho" && symbol.startsWith("_") ? symbol.slice(1) : symbol;
+}
+
 export function findEdge(graph: SectionGraph, from: number, to: number): number {
   if (!isNode(from, graph.count)) throw invalidNode("the source of an edge", from, graph.count);
   const end = graph.successorStart[from + 1]!;

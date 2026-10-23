@@ -630,10 +630,9 @@ const isLocked = (type: ClassType): boolean => type.columns.lockedObjects?.inclu
 const hasInstanceReceiver = (type: ClassType): boolean => !type.forBind;
 const headerOf = (type: ClassType): string => `Generated${type.origin!.namespace}.h`;
 
-// The getter of the table casts its receiver and calls this thunk.
+// The getter of the table casts its receiver and calls this thunk. What it holds the answer to in a build with assertions, compiled code tests itself.
 function directEntryOfGetter(type: ClassType, getter: Getter): DirectEntrySpec | undefined {
   if (getter.internalField !== undefined) return undefined;
-  if (checkedWordsOf(getter.type) !== null) return undefined;
   const symbol = getterSymbolName(type, getter);
   return {
     symbol,

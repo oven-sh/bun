@@ -1336,6 +1336,7 @@ name = "bun_node_path"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "bun_highway",
  "bun_paths",
  "bun_sys",
  "bytemuck",

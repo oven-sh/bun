@@ -5,7 +5,14 @@ import { BuildError } from "../error.ts";
 import { entriesById } from "./builtin-uses.ts";
 import { findWayToGuard } from "./declared-uses.ts";
 import type { EntryPointFailure } from "./entry-points.ts";
-import { chainTo, propagateFeatureSets, shortestChains, type GraphFailure, type SectionGraph } from "./graph.ts";
+import {
+  chainTo,
+  nameInSource,
+  propagateFeatureSets,
+  shortestChains,
+  type GraphFailure,
+  type SectionGraph,
+} from "./graph.ts";
 import { smallestGroupBytes } from "./partition.ts";
 import type { RangeFailure } from "./ranges.ts";
 import {
@@ -109,11 +116,11 @@ class Printer {
     this.builtinOf = context.uses === undefined ? new Map() : entriesById(context.uses);
     this.demangler = new Demangler(context.demangler);
     const printed = [...[...nodes].map(node => this.nameOf(node)), ...symbols];
-    this.demangler.demangle(printed.map(symbol => this.stripMachOUnderscore(symbol)));
+    this.demangler.demangle(printed.map(symbol => nameInSource(this.graph, symbol)));
   }
 
   demangledSymbol(symbol: string): string {
-    return this.demangler.demangle([this.stripMachOUnderscore(symbol)])[0]!;
+    return this.demangler.demangle([nameInSource(this.graph, symbol)])[0]!;
   }
 
   demangledName(node: number): string {
@@ -147,10 +154,6 @@ class Printer {
 
   private nameOf(node: number): string {
     return this.graph.names[node]?.[0] ?? this.graph.section[node]!;
-  }
-
-  private stripMachOUnderscore(symbol: string): string {
-    return this.graph.format === "macho" ? symbol.replace(/^_/, "") : symbol;
   }
 }
 

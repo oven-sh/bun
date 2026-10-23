@@ -603,6 +603,24 @@ pub(crate) fn resolve_node_linker(
 // Lockfile impl — load / clone / hoist / etc.
 // ────────────────────────────────────────────────────────────────────────────
 
+/// `<name>@<resolution>`, escaped for the terminal: how a diagnostic names a package.
+pub(crate) struct PackageLabel<'a> {
+    pub buf: &'a [u8],
+    pub name: SemverString,
+    pub resolution: &'a Resolution,
+}
+
+impl fmt::Display for PackageLabel<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}@{}",
+            bun_core::fmt::escape_control_chars(self.name.slice(self.buf)),
+            bun_core::fmt::for_terminal(self.resolution.fmt(self.buf, PathSep::Posix)),
+        )
+    }
+}
+
 impl Lockfile {
     pub(crate) fn is_empty(&self) -> bool {
         self.packages.len() == 0
@@ -927,6 +945,14 @@ impl Lockfile {
         (self.packages.items_dependencies().iter())
             .position(|dependencies| dependencies.contains(id))
             .map(|pkg_id| pkg_id as PackageID)
+    }
+
+    pub(crate) fn package_label(&self, id: PackageID) -> PackageLabel<'_> {
+        PackageLabel {
+            buf: self.buffers.string_bytes.as_slice(),
+            name: self.packages.items_name()[id as usize],
+            resolution: &self.packages.items_resolution()[id as usize],
+        }
     }
 
     pub(crate) fn has_equal_root_dependency(&self, dependency: &Dependency) -> bool {

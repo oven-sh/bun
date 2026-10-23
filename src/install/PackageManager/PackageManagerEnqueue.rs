@@ -2763,10 +2763,8 @@ fn reject_local_tarball_of_remote_package(
         bun_ast::Range::NONE,
         notes,
         format_args!(
-            "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarballs are only allowed in this project's package.json files",
-            bun_fmt::for_terminal(
-                packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix)
-            ),
+            "refusing to resolve \"{name}@{literal}\" declared by {}: local tarballs are only allowed in this project's package.json files",
+            this.lockfile.package_label(declarer),
         ),
     );
 }
@@ -2782,7 +2780,6 @@ fn reject_link_path_of_remote_package(
 ) {
     const REASON: &str = dependency::LINK_PATH_RULE;
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let packages = this.lockfile.packages.slice();
     let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
     let literal = bun_fmt::escape_control_chars(version.literal.slice(buf));
     match this.lockfile.get_parent_pkg_of_dependency(dependency_id) {
@@ -2790,12 +2787,8 @@ fn reject_link_path_of_remote_package(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "refusing to resolve \"{name}@{literal}\" declared by {}@{}: {REASON}",
-                bun_fmt::escape_control_chars(packages.items_name()[declarer as usize].slice(buf)),
-                bun_fmt::for_terminal(
-                    packages.items_resolution()[declarer as usize]
-                        .fmt(buf, bun_fmt::PathSep::Posix)
-                ),
+                "refusing to resolve \"{name}@{literal}\" declared by {}: {REASON}",
+                this.lockfile.package_label(declarer),
             ),
         ),
         None => this.log_mut().add_error_fmt(

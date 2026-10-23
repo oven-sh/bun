@@ -305,13 +305,14 @@ impl PackageManager {
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
-                                "failed to read package.json of \"{}@{}\" declared by {}@{}: {}",
+                                "failed to read package.json of \"{}@{}\" declared by {}: {}",
                                 bun_core::fmt::escape_control_chars(row.name.slice(buf)),
                                 bun_core::fmt::escape_control_chars(row.version.literal.slice(buf)),
-                                bun_core::fmt::escape_control_chars(package.name.slice(buf)),
-                                bun_core::fmt::for_terminal(
-                                    package.resolution.fmt(buf, bun_core::fmt::PathSep::Posix)
-                                ),
+                                crate::lockfile::PackageLabel {
+                                    buf,
+                                    name: package.name,
+                                    resolution: &package.resolution
+                                },
                                 bstr::BStr::new(err.name()),
                             ),
                         );

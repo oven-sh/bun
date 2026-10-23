@@ -9,12 +9,32 @@ use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{
-    DependencyID, GetJsonResult, PackageID, PackageNameHash, Resolution, invalid_package_id,
+    DependencyID, GetJsonResult, Lockfile, PackageID, PackageNameHash, Resolution,
+    invalid_package_id,
 };
 
 use super::PackageManager;
 use super::add_remove_with_filter::root_package_json_path;
 use super::options::LogLevel;
+
+/// ` (declared by <name>@<resolution>)`, or nothing for a dependency of the root.
+struct DeclaredBy<'a> {
+    lockfile: &'a Lockfile,
+    parent_id: PackageID,
+}
+
+impl core::fmt::Display for DeclaredBy<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.parent_id == 0 {
+            return Ok(());
+        }
+        write!(
+            f,
+            " (declared by {})",
+            self.lockfile.package_label(self.parent_id)
+        )
+    }
+}
 
 impl PackageManager {
     pub(crate) fn format_later_version_in_cache(
@@ -181,6 +201,10 @@ impl PackageManager {
                             },
                         );
                     }
+                    let declared_by = DeclaredBy {
+                        lockfile,
+                        parent_id: parent_id as PackageID,
+                    };
                     if missing_entry && root_has_workspaces == Some(true) {
                         // `bun add --catalog` refuses the name of the root and of a workspace.
                         let can_add = failed_dep.name_hash
@@ -200,22 +224,31 @@ impl PackageManager {
                                 .any(|k| k.slice(string_buf) == catalog_name);
                         if !catalog_exists {
                             Output::err_generic(
-                                "<b>{}@{}<r>: there is no catalog named \"{}\" in the root package.json",
+                                "<b>{}@{}<r>: there is no catalog named \"{}\" in the root package.json{}",
                                 (
                                     name,
                                     literal,
                                     bun_core::fmt::for_terminal(bstr::BStr::new(catalog_name)),
+                                    declared_by,
                                 ),
                             );
                         } else if is_default {
-                            Output::err_generic("<b>{}@{}<r> not in catalog", (name, literal));
+                            Output::err_generic(
+                                "<b>{}@{}<r> not in catalog{}",
+                                (name, literal, declared_by),
+                            );
                             if can_add {
                                 bun_core::pretty_errorln!("  bun add --catalog {}", name);
                             }
                         } else {
                             Output::err_generic(
-                                "<b>{}@{}<r> not in catalog \"{}\"",
-                                (name, literal, bstr::BStr::new(catalog_name)),
+                                "<b>{}@{}<r> not in catalog \"{}\"{}",
+                                (
+                                    name,
+                                    literal,
+                                    bun_core::fmt::for_terminal(bstr::BStr::new(catalog_name)),
+                                    declared_by,
+                                ),
                             );
                             if can_add {
                                 bun_core::pretty_errorln!(
@@ -233,14 +266,17 @@ impl PackageManager {
                         )
                     {
                         Output::err_generic(
-                            "<b>{}<r><d> failed to resolve<r>",
-                            (bun_core::fmt::for_terminal(
-                                failed_dep.version.literal.fmt(string_buf),
-                            ),),
+                            "<b>{}<r><d> failed to resolve<r>{}",
+                            (
+                                bun_core::fmt::for_terminal(
+                                    failed_dep.version.literal.fmt(string_buf),
+                                ),
+                                declared_by,
+                            ),
                         );
                     } else {
                         Output::err_generic(
-                            "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
+                            "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>{}",
                             (
                                 bun_core::fmt::for_terminal(bstr::BStr::new(
                                     failed_dep.name.slice(string_buf),
@@ -248,6 +284,7 @@ impl PackageManager {
                                 bun_core::fmt::for_terminal(
                                     failed_dep.version.literal.fmt(string_buf),
                                 ),
+                                declared_by,
                             ),
                         );
                     }

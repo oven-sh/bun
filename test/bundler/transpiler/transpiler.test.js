@@ -3693,6 +3693,16 @@ console.log(resolve.length)
           `export const foo = require.resolve("my-module")`,
         );
       });
+
+      it('require.resolve("my-" + "module") keeps the whole specifier', () => {
+        expectPrinted_(
+          `export const foo = require.resolve("my-" + "module")`,
+          `export const foo = require.resolve("my-module")`,
+        );
+        expect(new Bun.Transpiler().scan(`export const foo = require.resolve("my-" + "module")`).imports).toEqual([
+          { kind: "require-resolve", path: "my-module" },
+        ]);
+      });
     });
 
     it("define", () => {

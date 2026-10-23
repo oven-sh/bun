@@ -103,6 +103,31 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
+// `bun build` leaves this lookup to the call. The HMR runtime's `requireResolve(id)` returns
+// `id`, so no lookup happens there and the dev server keeps the build error.
+devTest("an unresolved require.resolve() in a function that is not called is a build error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      function find() { return require.resolve('./second'); }
+      console.log('value: ' + typeof find);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:42: error: Could not resolve: "./second"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("second.ts", `export const abc = "456";`);
+    });
+
+    await c.expectMessage("value: function");
+  },
+});
 // After a failed resolution, the dev server evicts the specifier's path and its parent from the
 // resolver's directory cache. Here one of those two paths ends in a slash.
 devTest("recovers from an unresolved import of a path that ends in a slash", {

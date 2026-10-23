@@ -5951,13 +5951,29 @@ impl VirtualMachine {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
-                    fs.top_level_dir(),
-                    &mut rollback,
-                ));
-                return bun_sys::Result::Err(err);
+            // chdir already moved the cwd; Node ignores the failed getcwd, so do not roll back.
+            bun_sys::Result::Err(_) => {
+                // A stale cache is not a base to join onto.
+                if bun_core::top_level_dir_is_stale() {
+                    return Ok(());
+                }
+                let prev = fs.top_level_dir();
+                let mut resolve_buf = bun_paths::path_buffer_pool::get();
+                match bun_paths::resolve_path::join_abs_string_buf_checked::<
+                    bun_paths::platform::Auto,
+                >(prev, &mut resolve_buf[..], &[to.as_bytes()])
+                {
+                    Some(resolved) => {
+                        let n = resolved.len();
+                        buf[..n].copy_from_slice(resolved);
+                        n
+                    }
+                    // Keep the old cwd and stop trusting it until getcwd succeeds.
+                    None => {
+                        bun_core::mark_top_level_dir_stale();
+                        return Ok(());
+                    }
+                }
             }
         };
         if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {

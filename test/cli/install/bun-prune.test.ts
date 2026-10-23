@@ -637,6 +637,83 @@ test.concurrent("refuses to run without a lockfile", async () => {
   expect(existsSync(junk)).toBeTrue();
 });
 
+// `bun install` saves no lockfile for a project without dependencies. A missing lockfile there means that nothing
+// is installed, so everything in node_modules is extraneous.
+test.concurrent("a project without dependencies needs no lockfile", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await write(packageJson, JSON.stringify({ name: "foo" }));
+  const junk = plant(packageDir, "node_modules/junk");
+
+  const check = await prune(packageDir, "--check");
+  expect(check.stderr).toBe("");
+  expect(lines(check.stdout)).toStrictEqual([BANNER, "", "- junk", CAN_BE_REMOVED(1, 1), APPLY_HINT()]);
+  expect(existsSync(junk)).toBeTrue();
+  expect(check.exitCode).toBe(1);
+
+  // A subfolder belongs to the same project.
+  mkdirSync(join(packageDir, "src"));
+  const removed = await prune({ dir: packageDir, cwd: join(packageDir, "src") });
+  expect(removed.stderr).toBe("");
+  expect(lines(removed.stdout)).toStrictEqual([BANNER, "", "- junk", REMOVED(1, 1)]);
+  expect(removed.exitCode).toBe(0);
+  expect(existsSync(junk)).toBeFalse();
+  expect(existsSync(join(packageDir, "bun.lock"))).toBeFalse();
+});
+
+// Nothing is deleted unless the root package.json shows by itself that the project has nothing to install. These
+// projects may have workspaces that are missing from disk, a package.json that was truncated, or a project above.
+const NOTHING_TO_PRUNE = "error: missing lockfile, nothing to prune\n" + NOTE;
+test.concurrent.each<[string, Record<string, string>, string, string]>([
+  [
+    "pnpm-workspace.yaml names a workspace",
+    {
+      "package.json": JSON.stringify({ name: "foo" }),
+      "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+      "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+    },
+    ".",
+    NOTHING_TO_PRUNE,
+  ],
+  [
+    "pnpm-workspace.yaml does not parse",
+    { "package.json": JSON.stringify({ name: "foo" }), "pnpm-workspace.yaml": "packages:\n  bad: [unclosed\n" },
+    ".",
+    NOTHING_TO_PRUNE,
+  ],
+  [
+    "package.json has a workspaces field",
+    { "package.json": JSON.stringify({ name: "foo", workspaces: ["packages/*"] }) },
+    ".",
+    NOTHING_TO_PRUNE,
+  ],
+  [
+    "package.json is empty",
+    { "package.json": "" },
+    ".",
+    "error: failed to parse '<dir>/package.json': file is empty\n" +
+      "note: restore package.json, or write {} to start without dependencies",
+  ],
+  [
+    "a project with dependencies is above the folder",
+    {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }),
+      "src/package.json": JSON.stringify({ name: "src" }),
+    },
+    "src",
+    "error: missing lockfile\nnote: <dir>/src/package.json has no dependencies, and a project is above it in <dir>",
+  ],
+])("refuses to run without a lockfile when %s", async (_, files, cwd, error) => {
+  using dir = tempDir("prune-refuses", files);
+  const project = join(String(dir), cwd);
+  const junk = plant(project, "node_modules/junk");
+
+  const { stdout, stderr, exitCode } = await prune({ dir: project, cwd: project });
+  expect(normalizeBunSnapshot(stderr, String(dir))).toBe(error);
+  expect(out(stdout)).toBe(BANNER);
+  expect(exitCode).toBe(1);
+  expect(existsSync(junk)).toBeTrue();
+});
+
 // pnpm#9796: hoisted keeps the root's workspace links under --production because they are root->workspace prod edges; the isolated per-importer dev link case is below.
 test.concurrent("workspaces: prunes workspace folders, keeps workspace links, runs from the root", async () => {
   const { packageDir: dir, packageJson } = await registry.createTestDir();
@@ -4498,7 +4575,7 @@ test.concurrent("a lockfile that fails to parse is an error and nothing is delet
   await write(join(dir, "bun.lock"), "{ this is not a lockfile");
 
   const { stdout, stderr, exitCode } = await prune(dir);
-  expect(stderr).toContain("error: failed to load lockfile: ");
+  expect(stderr).toContain("error: failed to parse lockfile: ");
   expect(out(stdout)).toMatchInlineSnapshot(`"bun prune <version> (<revision>)"`);
   expect(exitCode).toBe(1);
   expect(existsSync(junk)).toBeTrue();

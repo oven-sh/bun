@@ -459,7 +459,7 @@ impl LoadResultErr {
     /// Used by the commands that exit on this error. `bun install` continues and prints a different
     /// message.
     #[cold]
-    pub(crate) fn report(&self, log: &bun_ast::Log) {
+    pub fn report(&self, log: &bun_ast::Log) {
         if crate::migration::reported_unsupported_lockfile_version(self) {
             return;
         }
@@ -574,8 +574,7 @@ impl<'a> LoadResult<'a> {
         )
     }
 
-    // Callers reach this only after `handleLoadLockfileErrors` has exited on
-    // the `NotFound`/`Err` arms, so the variant is known-`Ok`.
+    // Callers rule out `NotFound` and `Err` before they call this.
     bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
 }
 
@@ -607,6 +606,23 @@ impl Lockfile {
     pub(crate) fn is_empty(&self) -> bool {
         self.packages.len() == 0
             || (self.packages.len() == 1 && self.packages.get(0).resolutions.len == 0)
+    }
+
+    /// Returns true if `dir` has a file by the name of a lockfile that `load_from_dir` reads or migrates.
+    pub(crate) fn exists_in(dir: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        [LockfileFormat::Text, LockfileFormat::Binary]
+            .map(LockfileFormat::filename)
+            .into_iter()
+            .chain(migration::OTHER_LOCKFILES.map(|(_, name)| name))
+            .any(|name| {
+                resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                    dir,
+                    &mut buf,
+                    &[name.as_bytes()],
+                )
+                .is_some_and(sys::exists_z)
+            })
     }
 
     pub fn load_from_cwd<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(

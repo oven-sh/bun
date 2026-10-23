@@ -221,6 +221,7 @@ pub use self::package_manager_options::Options;
 pub use self::install_with_manager::install_with_manager;
 pub use self::package_json_editor as PackageJSONEditor;
 pub use self::update_request::UpdateRequest;
+use self::workspace_manifests::ScratchManifests;
 pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;
 pub use super::package_installer::PackageInstaller;
 
@@ -1033,6 +1034,13 @@ pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCel
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What `LoadResult::Ok` holds besides the lockfile.
+type LoadedParts = (
+    lockfile::Migrated,
+    lockfile::Serializer::SerializerLoadResult,
+    lockfile::LockfileFormat,
+);
+
 impl PackageManager {
     pub(crate) fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
@@ -1043,7 +1051,7 @@ impl PackageManager {
     /// is a self-referential split borrow. Encapsulated here so callers stay
     /// in safe code: the returned `LoadResult` mutably borrows `self` for its
     /// lifetime, after which `self.lockfile` holds the loaded data.
-    pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
+    pub(crate) fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
         &mut self,
     ) -> lockfile::LoadResult<'_> {
         self.clear_cached_items_depending_on_lockfile_buffer();
@@ -1061,19 +1069,68 @@ impl PackageManager {
         }
     }
 
+    /// Exits if the lockfile exists and doesn't load. Returns `None` if there is no lockfile.
+    fn load_lockfile_or_exit_if_broken<const ATTEMPT_OTHER: bool>(
+        &mut self,
+    ) -> Option<LoadedParts> {
+        // Returning the `Ok` itself would keep `self` borrowed in the other arms of the callers.
+        match self.load_lockfile_from_cwd::<ATTEMPT_OTHER>() {
+            lockfile::LoadResult::Ok(ok) => Some((ok.migrated, ok.serializer_result, ok.format)),
+            lockfile::LoadResult::NotFound => None,
+            lockfile::LoadResult::Err(cause) => {
+                if self.options.log_level != package_manager_options::LogLevel::Silent {
+                    cause.report(self.log_mut());
+                }
+                Global::exit(1);
+            }
+        }
+    }
+
+    fn loaded_lockfile(
+        &mut self,
+        (migrated, serializer_result, format): LoadedParts,
+    ) -> lockfile::LoadResult<'_> {
+        lockfile::LoadResult::Ok(lockfile::LoadResultOk {
+            lockfile: &mut self.lockfile,
+            migrated,
+            serializer_result,
+            format,
+        })
+    }
+
     /// `nothing` is the end of the error message for a missing lockfile, e.g. "nothing to update".
-    pub fn load_lockfile_from_cwd_or_exit(&mut self, nothing: &str) {
-        let silent = self.options.log_level == package_manager_options::LogLevel::Silent;
-        match self.load_lockfile_from_cwd::<true>() {
-            lockfile::LoadResult::Ok(_) => return,
-            lockfile::LoadResult::NotFound if !silent => {
-                Output::err_generic("missing lockfile, {s}", (nothing,));
+    /// Returns `NotFound`, with the root alone in `self.lockfile`, if package.json has nothing to lock.
+    pub fn load_lockfile_from_cwd_or_exit<const ATTEMPT_OTHER: bool>(
+        &mut self,
+        nothing: &str,
+    ) -> lockfile::LoadResult<'_> {
+        let Some(parts) = self.load_lockfile_or_exit_if_broken::<ATTEMPT_OTHER>() else {
+            // `bun install` saves no lockfile for a project with nothing to lock.
+            if let Some(empty) = ScratchManifests::empty_lockfile(self) {
+                *self.lockfile = empty;
+                return lockfile::LoadResult::NotFound;
+            }
+            if self.options.log_level != package_manager_options::LogLevel::Silent {
+                if nothing.is_empty() {
+                    Output::err_generic("missing lockfile", ());
+                } else {
+                    Output::err_generic("missing lockfile, {s}", (nothing,));
+                }
                 bun_core::note!("run 'bun install' first");
             }
-            lockfile::LoadResult::Err(cause) if !silent => cause.report(self.log_mut()),
-            _ => {}
+            Global::exit(1);
+        };
+        self.loaded_lockfile(parts)
+    }
+
+    /// For a command that has its own answer to a missing lockfile, which comes back as `NotFound`.
+    pub fn load_lockfile_from_cwd_if_any<const ATTEMPT_OTHER: bool>(
+        &mut self,
+    ) -> lockfile::LoadResult<'_> {
+        match self.load_lockfile_or_exit_if_broken::<ATTEMPT_OTHER>() {
+            Some(parts) => self.loaded_lockfile(parts),
+            None => lockfile::LoadResult::NotFound,
         }
-        Global::exit(1);
     }
 
     pub(crate) fn crash(&mut self) -> ! {
@@ -2003,6 +2060,8 @@ pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8
 struct PackageJsonWalk<'a> {
     cwd: &'a [u8],
     next_dir: Option<&'a [u8]>,
+    /// Passes over a package.json in a shared directory without the warning.
+    quiet: bool,
     /// `<dir>/package.json` for the directory that `next` returned last. It's a `Vec` because the
     /// cwd alone can fill a path buffer.
     path: Vec<u8>,
@@ -2013,6 +2072,7 @@ impl<'a> PackageJsonWalk<'a> {
         Self {
             cwd,
             next_dir: Some(cwd),
+            quiet: false,
             path: Vec::with_capacity(cwd.len() + b"/package.json".len()),
         }
     }
@@ -2036,10 +2096,12 @@ impl<'a> PackageJsonWalk<'a> {
                 && dir.len() != self.cwd.len()
                 && is_shared_directory(dir)
             {
-                bun_core::warn!(
-                    "ignoring package.json in <b>{}<r>: directory is writable by other users",
-                    bstr::BStr::new(dir),
-                );
+                if !self.quiet {
+                    bun_core::warn!(
+                        "ignoring package.json in <b>{}<r>: directory is writable by other users",
+                        bstr::BStr::new(dir),
+                    );
+                }
                 continue;
             }
             return Some((dir, opened));
@@ -2350,6 +2412,41 @@ pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
         &mut None,
     )
     .map(|(project, _)| project)
+}
+
+/// Returns the nearest directory above `dir` whose project has a lockfile or something to lock.
+fn project_above<'a>(dir: &'a [u8], cache: &mut WorkspacePackageJSONCache) -> Option<&'a [u8]> {
+    const TO_LOCK: [&[u8]; 4] = [
+        b"dependencies",
+        b"devDependencies",
+        b"optionalDependencies",
+        b"peerDependencies",
+    ];
+    let mut walk = PackageJsonWalk::new(dir);
+    walk.next_dir = bun_core::dirname(dir);
+    // `init` is the one that warns about a package.json in a shared directory.
+    walk.quiet = true;
+    while let Some((above, opened)) = walk.next(bun_sys::O::RDONLY) {
+        if opened.is_err_and(|err| !err.is_unreadable_file(&walk.path) && !err.is_directory()) {
+            continue;
+        }
+        let package_json = cache
+            .get_with_path(&mut bun_ast::Log::init(), &walk.path, Default::default())
+            .unwrap();
+        let has_something_to_lock = match package_json {
+            Ok(json) => {
+                json.root.get(b"workspaces").is_some()
+                    || (TO_LOCK.iter())
+                        .any(|key| json.root.get(key).is_some_and(|it| it.property_count() > 0))
+            }
+            // This file could be the project's package.json.
+            Err(_) => true,
+        };
+        if has_something_to_lock || Lockfile::exists_in(above) {
+            return Some(above);
+        }
+    }
+    None
 }
 
 /// Returns `&'static mut PackageManager` — the process-singleton (held in

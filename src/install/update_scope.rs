@@ -13,6 +13,7 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, reachable};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::UpdateTargetWorkspace;
+use crate::package_manager::workspace_manifests::ScratchManifests;
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
 use crate::package_manager_real::install_with_manager::loaded_lockfile_name;
@@ -303,18 +304,15 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
     if !manager.options.do_.load_lockfile() {
         missing(silent, subject);
     }
-    let load_result = manager.load_lockfile_from_cwd::<true>();
+    let load_result = manager.load_lockfile_from_cwd_if_any::<true>();
     let lockfile_name = loaded_lockfile_name(&load_result);
-    match load_result {
-        crate::lockfile::LoadResult::Ok(_) => lockfile_name,
-        crate::lockfile::LoadResult::NotFound => missing(silent, subject),
-        crate::lockfile::LoadResult::Err(cause) => {
-            if !silent {
-                cause.report(manager.log_mut());
-            }
-            Global::exit(1);
-        }
+    if matches!(load_result, crate::lockfile::LoadResult::NotFound) {
+        let Some(empty) = ScratchManifests::empty_lockfile(manager) else {
+            missing(silent, subject);
+        };
+        *manager.lockfile = empty;
     }
+    lockfile_name
 }
 
 /// Turns patterns and group selectors into the concrete names the named path expects.

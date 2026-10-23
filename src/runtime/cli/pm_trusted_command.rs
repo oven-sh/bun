@@ -23,7 +23,6 @@ use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::AutoAbsPath;
 
 use crate::cli::Command;
-use crate::package_manager_command::PackageManagerCommand;
 
 type TrustedDependenciesSet =
     ArrayHashMap<install::TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
@@ -279,10 +278,8 @@ impl UntrustedCommand {
 
         // `load_lockfile` mutably borrows `pm.lockfile`, so `pm` is reached through `pm_raw` while it lives.
         let pm_raw: *mut PackageManager = pm;
-        let log_level = pm.options.log_level;
         let configured_linker = pm.options.node_linker;
-        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
+        let load_lockfile = pm.load_lockfile_from_cwd_or_exit::<true>("nothing to list");
         let linker = load_lockfile.node_linker(configured_linker);
         // SAFETY: `update_lockfile_if_needed` never dereferences the lockfile through `load_lockfile`.
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
@@ -431,8 +428,7 @@ impl TrustCommand {
         let dry_run = pm.options.dry_run;
         let configured_linker = pm.options.node_linker;
         let max_concurrent = pm.options.max_concurrent_lifecycle_scripts;
-        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
+        let load_lockfile = pm.load_lockfile_from_cwd_or_exit::<true>("nothing to trust");
         let linker = load_lockfile.node_linker(configured_linker);
         // SAFETY: `update_lockfile_if_needed` never dereferences the lockfile through `load_lockfile`.
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };

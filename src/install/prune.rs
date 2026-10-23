@@ -19,7 +19,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry 
 use crate::isolated_install::{Store, build_whole_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
+use crate::lockfile::{Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
 use crate::package_install::{StagingLock, StagingPath};
@@ -275,31 +275,9 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let dry_run = manager.options.dry_run;
 
     let configured_linker = manager.options.node_linker;
-    let loaded = {
-        let load = manager.load_lockfile_from_cwd::<false>();
-        match &load {
-            LoadResult::NotFound => Err(None),
-            LoadResult::Err(cause) => Err(Some(cause.value.name())),
-            LoadResult::Ok(_) => Ok(load.node_linker(configured_linker)),
-        }
-    };
-    let linker = match loaded {
-        Ok(linker) => linker,
-        Err(None) => {
-            if !quiet {
-                Output::err_generic("missing lockfile, nothing to prune", ());
-                bun_core::note!("run 'bun install' first");
-            }
-            Global::exit(1);
-        }
-        Err(Some(name)) => {
-            if !quiet {
-                Output::err_generic("failed to load lockfile: {s}", (name,));
-                print_log_errors(manager.log_mut());
-            }
-            Global::exit(1);
-        }
-    };
+    let linker = manager
+        .load_lockfile_from_cwd_or_exit::<false>("nothing to prune")
+        .node_linker(configured_linker);
 
     manager.options.enable.set(Enable::FROZEN_LOCKFILE, true);
     manager.summary = exit_unless_lockfile_matches_package_json(manager, "prune")?;

@@ -1142,10 +1142,32 @@ describe("bun pm cache pack", () => {
   });
 
   test.concurrent("needs a lockfile", async () => {
-    using box = sandbox();
+    using box = sandbox({ project: { "package.json": JSON.stringify({ dependencies: { "no-deps": "1.0.0" } }) } });
     const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
     expect(r.err).toContain("error: missing lockfile, nothing to pack");
     expect(existsSync(join(box.project, "cache.pack"))).toBeFalse();
+    expect(r.code).toBe(1);
+  });
+
+  // `bun install` saves no lockfile for a project without dependencies, so the pack has no package in it.
+  test.concurrent("packs nothing for a project without dependencies, which has no lockfile", async () => {
+    using box = sandbox();
+    const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
+    expect(r.err).toBe("");
+    expect(r.out).toContain("Packed 0 packages (0 files, 0 KB) into cache.pack ");
+    expect(r.code).toBe(0);
+
+    const unpacked = await bun(box, ["pm", "cache", "unpack", "cache.pack"]);
+    expect(unpacked.err).toBe("");
+    expect(unpacked.code).toBe(0);
+    expect(entryNames(box.cache)).toEqual([]);
+  });
+
+  test.concurrent("needs a lockfile outside a project too", async () => {
+    using box = sandbox();
+    const r = await bun(box, ["pm", "cache", "pack", "cache.pack"], { cwd: box.victim });
+    expect(r.err).toContain("error: missing lockfile, nothing to pack\nnote: run 'bun install' first\n");
+    expect(readdirSync(box.victim)).toEqual(["keep.txt"]);
     expect(r.code).toBe(1);
   });
 });

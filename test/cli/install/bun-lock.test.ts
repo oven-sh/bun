@@ -1879,9 +1879,388 @@ describe.concurrent("a bun.lock that does not parse", () => {
 
   it("bun pm ls", async () => {
     const { out, err, exitCode } = await run("unparsable-lockfile-pm-ls", "pm", "ls");
-    expect(err).toMatchInlineSnapshot(`"error: failed to parse lockfile: ParserError"`);
+    expect(err).toMatchInlineSnapshot(`
+      "1 | this is not a lockfile
+          ^
+      error: Unexpected this
+          at bun.lock:1:1
+      error: failed to parse lockfile: ParserError"
+    `);
     expect(out).toMatchInlineSnapshot(`""`);
     expect(exitCode).toBe(1);
+  });
+
+  // Some of these commands print their name first, on stdout or on stderr. The error is the same for all of them.
+  it.each([
+    "audit",
+    "why no-deps",
+    "pm hash",
+    "pm licenses",
+    "pm untrusted",
+    "pm trust --all",
+    "pm cache pack cache.pack",
+    "prune",
+    "dedupe",
+  ])("bun %s", async command => {
+    const { err, exitCode } = await run("unparsable-lockfile-" + command.replaceAll(" ", "-"), ...command.split(" "));
+    expect(err).toEndWith(
+      "1 | this is not a lockfile\n    ^\nerror: Unexpected this\n    at bun.lock:1:1\nerror: failed to parse lockfile: ParserError",
+    );
+    expect(exitCode).toBe(1);
+  });
+});
+
+// `bun install` saves no bun.lock for a project that has nothing to lock. The commands that read the lockfile treat
+// that project as one with nothing installed, which is what a bun.lock with `"packages": {}` says.
+describe.concurrent("no bun.lock in a project without dependencies", () => {
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(out, cwd), err: normalizeBunSnapshot(err, cwd), exitCode };
+  }
+
+  const packageJson = JSON.stringify({ name: "no-dependencies", version: "1.0.0" });
+  const banner = (command: string) => `bun ${command} <version> (<revision>)`;
+  const ok = (out: string, err = "") => ({ out, err, exitCode: 0 });
+  const failed = (err: string, out = "") => ({ out, err, exitCode: 1 });
+  const missingLockfile = (nothing: string) => `error: missing lockfile, ${nothing}\nnote: run 'bun install' first`;
+  const noVulnerabilities = "\n\nNo vulnerabilities found (checked 0 packages)";
+  const noDuplicates =
+    "\n🎉 No duplicates — checked 1 package in bun.lock, every one already resolves to a single version";
+  const zeroHash = "0000000000000000-0000000000000000-0000000000000000-0000000000000000";
+  const installedNothing = "No packages! Deleted empty lockfile";
+
+  // This is why the advice to run `bun install` first can't be followed here.
+  it("bun install saves no bun.lock and leaves an empty node_modules", async () => {
+    using dir = tempDir("no-dependencies-install", { "package.json": packageJson });
+    expect(await bun(String(dir), "install")).toEqual(ok(`${banner("install")}\n done`, installedNothing));
+    expect(await readdirSorted(String(dir))).toEqual(["node_modules", "package.json"]);
+    expect(await readdirSorted(join(String(dir), "node_modules"))).toEqual([]);
+  });
+
+  // Each row is a command, its output, and its output after `bun install` if the empty node_modules changes it.
+  type Output = Awaited<ReturnType<typeof bun>>;
+  const nodeModulesNotFound = failed("error: node_modules not found, nothing to list\nnote: run 'bun install' first");
+  const commands: [string, Output, Output?][] = [
+    ["audit", ok(banner("audit") + noVulnerabilities)],
+    ["audit --json", ok("{}")],
+    ["audit fix", ok(banner("audit fix") + noVulnerabilities)],
+    ["outdated", ok(banner("outdated"))],
+    ["pm ls", ok("")],
+    ["pm ls --all", ok("")],
+    ["list", ok("")],
+    ["pm hash", ok(zeroHash)],
+    ["pm hash-string", ok("")],
+    ["pm hash-print", ok(zeroHash)],
+    [
+      "pm untrusted",
+      ok(
+        "Found 0 untrusted dependencies with scripts.\n\n" +
+          'This means all packages with scripts are in "trustedDependencies" or none of your dependencies have scripts.\n\n' +
+          "For more information, visit https://bun.com/docs/install/lifecycle#trusteddependencies",
+        banner("pm untrusted"),
+      ),
+    ],
+    [
+      "prune",
+      ok(`${banner("prune")}\n\nDone! No node_modules folder (nothing to prune)`),
+      ok(`${banner("prune")}\n\nDone! Checked 0 installed packages across 1 folder (nothing to prune)`),
+    ],
+    ["dedupe", ok(banner("dedupe") + noDuplicates)],
+    ["dedupe --check", ok(banner("dedupe") + noDuplicates)],
+    ["update --interactive", ok(`${banner("update --interactive")}\n\nChecked 0 dependencies, nothing to update`)],
+    ["update --dev", ok(`${banner("update")}\n\nChecked 0 dependencies, none selected by --dev (no changes)`)],
+    [
+      "update --filter=no-dependencies --dev",
+      ok(`${banner("update")}\n\nChecked 0 dependencies, none selected by --dev (no changes)`),
+    ],
+    // Without node_modules this advice can be followed, because `bun install` creates the folder.
+    [
+      "pm licenses",
+      nodeModulesNotFound,
+      ok(`${banner("pm licenses")}\n\nNo packages to list (checked 0 packages in bun.lock)`),
+    ],
+    ["pm licenses --json", nodeModulesNotFound, ok("{}")],
+    // These commands fail because nothing is installed, and they say so.
+    [
+      "pm trust --all",
+      failed(
+        `${banner("pm trust")}\nerror: 0 scripts ran. This means all dependencies are already trusted or none have scripts.`,
+      ),
+    ],
+    ["why no-deps", failed("error: No packages matching 'no-deps' found in lockfile")],
+    ["pm why no-deps", failed("error: No packages matching 'no-deps' found in lockfile")],
+    ["update no-*", failed('error: no packages in bun.lock match "no-*"', banner("update"))],
+    ["patch --commit no-deps", failed("error: package no-deps not found", banner("patch"))],
+  ];
+
+  describe.each([
+    ["before", {}],
+    ["after", { node_modules: {} }],
+  ])("%s bun install", (when, installed) => {
+    it.each(commands)("bun %s", async (command, output, outputAfterInstall = output) => {
+      using dir = tempDir("no-dependencies", { "package.json": packageJson, ...installed });
+      expect(await bun(String(dir), ...command.split(" "))).toEqual(when === "after" ? outputAfterInstall : output);
+      expect(existsSync(join(String(dir), "bun.lock"))).toBeFalse();
+    });
+  });
+
+  // `bun update --recursive` installs after it has read the lockfile, as `bun update` does, and so it runs scripts.
+  it.each(["update --recursive", "update --filter=*", "update"])("bun %s runs the install", async command => {
+    using dir = tempDir("no-dependencies-update", {
+      "package.json": JSON.stringify({
+        name: "no-dependencies",
+        scripts: { postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', '')"` },
+      }),
+    });
+    const { err, exitCode } = await bun(String(dir), ...command.split(" "));
+    expect(err).toStartWith(installedNothing);
+    expect(await readdirSorted(String(dir))).toEqual(["node_modules", "package.json", "postinstall.txt"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("bun update --recursive --dry-run installs nothing and runs no script", async () => {
+    using dir = tempDir("no-dependencies-update", {
+      "package.json": JSON.stringify({
+        name: "no-dependencies",
+        scripts: { postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', '')"` },
+      }),
+    });
+    const { exitCode } = await bun(String(dir), "update", "--recursive", "--dry-run");
+    expect(await readdirSorted(String(dir))).toEqual(["package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The usual way into this state is to remove the last dependency.
+  it.each(["hoisted", "isolated"] as const)("after bun remove of the last dependency (%s linker)", async linker => {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+    await write(packageJson, JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }));
+    await runBunInstall(env, packageDir);
+
+    const removed = await bun(packageDir, "remove", "no-deps");
+    expect(removed.err).toContain("package.json has no dependencies! Deleted empty lockfile");
+    expect(existsSync(join(packageDir, "bun.lock"))).toBeFalse();
+
+    expect(await bun(packageDir, "outdated")).toEqual(ok(banner("outdated")));
+    // The isolated linker leaves the package in its store, and `bun prune` is the command that removes it.
+    const pruned = await bun(packageDir, "prune");
+    expect(pruned).toEqual(
+      ok(
+        `${banner("prune")}\n\n` +
+          (linker === "isolated"
+            ? "- no-deps@1.0.0\n1 package removed (checked 1 installed package)"
+            : "Done! Checked 0 installed packages across 1 folder (nothing to prune)"),
+      ),
+    );
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(linker === "isolated" ? [".bun"] : []);
+  });
+
+  // A missing bun.lock is still an error if there is something to lock.
+  it.each([
+    ["audit", missingLockfile("nothing to audit")],
+    ["outdated", missingLockfile("nothing outdated")],
+    ["pm ls", missingLockfile("nothing to list")],
+    ["pm hash", missingLockfile("nothing to hash")],
+    ["pm licenses", missingLockfile("nothing to list")],
+    ["pm untrusted", missingLockfile("nothing to list")],
+    ["pm trust --all", missingLockfile("nothing to trust")],
+    ["pm cache pack cache.pack", missingLockfile("nothing to pack")],
+    ["why no-deps", "error: missing lockfile\nnote: run 'bun install' first"],
+    ["prune", missingLockfile("nothing to prune")],
+    ["dedupe", missingLockfile("nothing to dedupe")],
+    ["update --recursive", missingLockfile("nothing to update")],
+    ["update --interactive", missingLockfile("nothing to update")],
+    ["update --dev", "error: no bun.lock to match --dev against\n    bun install"],
+    [
+      "patch --commit no-deps",
+      "error: Cannot find lockfile. Install packages with `bun install` before patching them.",
+    ],
+  ])("bun %s needs a bun.lock when package.json has a dependency", async (command, error) => {
+    using dir = tempDir("never-installed", {
+      "package.json": JSON.stringify({ name: "never-installed", dependencies: { "no-deps": "1.0.0" } }),
+    });
+    const { err, exitCode } = await bun(String(dir), ...command.split(" "));
+    expect(err).toEndWith(error);
+    expect(exitCode).toBe(1);
+    expect(await readdirSorted(String(dir))).toEqual(["package.json"]);
+  });
+
+  // A command only reports that nothing is installed if the root package.json shows that by itself. In three of
+  // these rows it refuses where `bun install` saves no lockfile, on purpose: the workspaces may be missing from
+  // disk, and an empty file or a list may be what is left of a package.json.
+  const folder = { "folder/package.json": JSON.stringify({ name: "folder", version: "1.0.0" }) };
+  const member = { "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }) };
+  const pnpmWorkspace = { "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n' };
+  const nothingOutdated = missingLockfile("nothing outdated");
+  // This error can be followed: with `{}` in the file, the command reports that nothing is installed.
+  const emptyFile =
+    "error: failed to parse '<dir>/package.json': file is empty\n" +
+    "note: restore package.json, or write {} to start without dependencies";
+  // Each row is a name, the files, whether `bun install` saves a bun.lock, and the error of a command that needs one.
+  const manifests: [string, Record<string, string>, boolean, string?][] = [
+    ["an empty object", { "package.json": "{}" }, false],
+    ["empty dependencies", { "package.json": JSON.stringify({ name: "root", dependencies: {} }) }, false],
+    ["overrides only", { "package.json": JSON.stringify({ name: "root", overrides: { "no-deps": "1.0.0" } }) }, false],
+    [
+      "trustedDependencies only",
+      { "package.json": JSON.stringify({ name: "root", trustedDependencies: ["no-deps"] }) },
+      false,
+    ],
+    ["scripts only", { "package.json": JSON.stringify({ private: true, scripts: { build: "echo built" } }) }, false],
+    ["the module type only", { "package.json": JSON.stringify({ type: "module" }) }, false],
+    ["an empty file", { "package.json": "" }, false, emptyFile],
+    ["a list", { "package.json": "[]" }, false, nothingOutdated],
+    [
+      "a workspaces pattern that matches nothing",
+      { "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }) },
+      false,
+      nothingOutdated,
+    ],
+    [
+      "a pnpm-workspace.yaml that names no workspace",
+      { "package.json": JSON.stringify({ name: "root" }), "pnpm-workspace.yaml": "catalog:\n  no-deps: 1.0.0\n" },
+      false,
+      nothingOutdated,
+    ],
+    [
+      "a workspace",
+      { "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }), ...member },
+      true,
+      nothingOutdated,
+    ],
+    [
+      "a workspace named by pnpm-workspace.yaml",
+      { "package.json": JSON.stringify({ name: "root" }), ...pnpmWorkspace, ...member },
+      true,
+      nothingOutdated,
+    ],
+    [
+      "an optional peer named only in peerDependenciesMeta",
+      { "package.json": JSON.stringify({ name: "root", peerDependenciesMeta: { "no-deps": { optional: true } } }) },
+      true,
+      nothingOutdated,
+    ],
+    ...["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].map(
+      (group): [string, Record<string, string>, boolean, string] => [
+        `a folder in ${group}`,
+        { "package.json": JSON.stringify({ name: "root", [group]: { folder: "file:folder" } }), ...folder },
+        true,
+        nothingOutdated,
+      ],
+    ),
+  ];
+  describe.each(manifests)("package.json with %s", (_, files, savesLockfile, error) => {
+    it(`bun install saves ${savesLockfile ? "a" : "no"} bun.lock`, async () => {
+      using dir = tempDir("lock-or-not", files);
+      await runBunInstall(env, String(dir), { savesLockfile });
+      expect(existsSync(join(String(dir), "bun.lock"))).toBe(savesLockfile);
+    });
+
+    it(`bun outdated ${error ? "fails" : "finds nothing"} without a bun.lock`, async () => {
+      using dir = tempDir("lock-or-not", files);
+      expect(await bun(String(dir), "outdated")).toEqual(
+        error ? failed(error, banner("outdated")) : ok(banner("outdated")),
+      );
+      // A command that only reads does not write what an install copies from pnpm-workspace.yaml into package.json.
+      expect(await file(join(String(dir), "package.json")).text()).toBe(files["package.json"]);
+    });
+  });
+
+  // A folder below a project may belong to it, so a command there does not report that nothing is installed. The
+  // project above is one with a lockfile, with dependencies or with workspaces.
+  const rootOnly = JSON.stringify({ name: "root" });
+  const project = {
+    "package.json": JSON.stringify({ name: "root", dependencies: { folder: "file:folder" } }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      workspaces: { "": { name: "root", dependencies: { folder: "file:folder" } } },
+      packages: { folder: ["folder@file:folder", {}] },
+    }),
+    ...folder,
+  };
+  const projectAbove = (dir: string) =>
+    "error: missing lockfile\n" +
+    `note: <dir>/package.json has no dependencies, and a project is above it in ${normalizeBunSnapshot(dir)}`;
+
+  it.each<[string, Record<string, string>]>([
+    ["a bun.lock", { "package.json": rootOnly, "bun.lock": "{}" }],
+    ["a package-lock.json", { "package.json": rootOnly, "package-lock.json": "{}" }],
+    ["dependencies", { "package.json": project["package.json"], ...folder }],
+    ["workspaces", { "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }) }],
+  ])("bun audit names the project above a folder if that project has %s", async (_, above) => {
+    using dir = tempDir("below-a-project", { ...above, "src/package.json": JSON.stringify({ name: "src" }) });
+    expect(await bun(join(String(dir), "src"), "audit")).toEqual(failed(projectAbove(String(dir)), banner("audit")));
+  });
+
+  it.each(['{"type":"module"}', '{"private":true,"scripts":{"build":"echo built"}}', "{}"])(
+    "bun audit names the project above a folder whose package.json is %s",
+    async packageJson => {
+      using dir = tempDir("below-a-project", { ...project, "src/package.json": packageJson });
+      expect(await bun(join(String(dir), "src"), "audit")).toEqual(failed(projectAbove(String(dir)), banner("audit")));
+    },
+  );
+
+  // A package.json above that has nothing to lock and no lockfile next to it is no such project.
+  it.each(['{"name":"src"}', '{"type":"module"}', "{}"])(
+    "bun audit finds nothing in a folder below a package.json without dependencies: %s",
+    async packageJson => {
+      using dir = tempDir("below-a-folder", {
+        "package.json": JSON.stringify({ name: "above", dependencies: {} }),
+        "src/package.json": packageJson,
+      });
+      expect(await bun(join(String(dir), "src"), "audit")).toEqual(ok(banner("audit") + noVulnerabilities));
+    },
+  );
+
+  // `bun install` reads the workspaces of a pnpm-workspace.yaml and saves a lockfile, so its advice holds here.
+  it("bun audit asks for bun install if a pnpm-workspace.yaml is next to the package.json of the folder", async () => {
+    using dir = tempDir("below-a-project", {
+      ...project,
+      "src/package.json": JSON.stringify({ type: "module" }),
+      "src/pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+      "src/packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+    });
+    expect(await bun(join(String(dir), "src"), "audit")).toEqual(
+      failed(missingLockfile("nothing to audit"), banner("audit")),
+    );
+  });
+
+  // In these projects `bun install` fails or installs something, so a clean audit would be wrong.
+  it.each<[string, Record<string, string>]>([
+    ["a package.json that does not parse", { "package.json": '{ "name": "root", ' }],
+    [
+      "a pnpm-workspace.yaml that does not parse",
+      {
+        "package.json": JSON.stringify({ name: "root" }),
+        "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n  bad: [unclosed\n',
+        "packages/member/package.json": JSON.stringify({ name: "member", dependencies: { "no-deps": "1.0.0" } }),
+      },
+    ],
+    ["a workspace that is not on disk", { "package.json": JSON.stringify({ name: "root", workspaces: ["member"] }) }],
+    ["dependencies that are a list", { "package.json": JSON.stringify({ name: "root", dependencies: [] }) }],
+    [
+      "a dependency whose version is a number",
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": 1 } }) },
+    ],
+    [
+      "a dependency without a name",
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "": "1.0.0" } }) },
+    ],
+    [
+      "trustedDependencies that are a string",
+      { "package.json": JSON.stringify({ name: "root", trustedDependencies: "no-deps" }) },
+    ],
+    ["overrides that are a string", { "package.json": JSON.stringify({ name: "root", overrides: "no-deps" }) }],
+  ])("bun audit does not report %s as clean", async (_, files) => {
+    using dir = tempDir("not-empty", files);
+    expect(await bun(String(dir), "audit")).toEqual(failed(missingLockfile("nothing to audit"), banner("audit")));
   });
 });
 

@@ -1076,40 +1076,77 @@ pub struct SignOptions<'a> {
 // guessBucket / guessRegion
 // ──────────────────────────────────────────────────────────────────────────
 
-/// This is not used for signing but for console.log output, is just nice to have
-pub fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
-    // check if is amazonaws.com
-    if strings::index_of(endpoint, b".amazonaws.com").is_some() {
-        // check if is .s3. virtual host style
-        if let Some(end) = strings::index_of(endpoint, b".s3.") {
-            // its https://bucket-name.s3.region-code.amazonaws.com/key-name
-            let Some(start) = strings::index_of(endpoint, b"/") else {
-                return Some(&endpoint[0..end]);
-            };
-            return Some(
-                endpoint
-                    .get(start + 1..end)
-                    .unwrap_or_else(|| &endpoint[0..end]),
-            );
+impl S3Credentials {
+    #[inline]
+    fn endpoint_bucket(&self) -> Option<&[u8]> {
+        if self.virtual_hosted_style && !self.endpoint.is_empty() {
+            guess_bucket(&self.endpoint)
+        } else {
+            None
         }
-    } else if let Some(r2_start) = strings::index_of(endpoint, b".r2.cloudflarestorage.com") {
-        // check if is <BUCKET>.<ACCOUNT_ID>.r2.cloudflarestorage.com
-        let end = strings::index_of(endpoint, b".")?; // actually unreachable
-        if end > 0 && r2_start == end {
-            // its https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+    }
+
+    /// For `Bun.inspect`: the bucket in a virtual-hosted endpoint host, else the `bucket` option.
+    #[inline]
+    pub fn configured_bucket(&self) -> Option<&[u8]> {
+        if let Some(bucket) = self.endpoint_bucket() {
+            return Some(bucket);
+        }
+        (!self.bucket.is_empty()).then_some(&*self.bucket)
+    }
+
+    /// For `S3File.bucket`: the `bucket` option first, so a guess from the host never replaces it.
+    #[inline]
+    pub fn bucket_for<'a>(&'a self, path: impl FnOnce() -> &'a [u8]) -> Option<&'a [u8]> {
+        if !self.bucket.is_empty() {
+            return Some(&*self.bucket);
+        }
+        // A virtual-hosted path is all key.
+        if self.virtual_hosted_style {
+            return self.endpoint_bucket();
+        }
+        let path = path();
+        let path = path.strip_prefix(b"/").unwrap_or(path);
+        let end = strings::index_of_char_usize(path, b'/')?;
+        (end > 0).then_some(&path[..end])
+    }
+}
+
+/// The bucket in the host of a virtual-hosted `endpoint` (`host[:port][/prefix]`). Not for signing.
+fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
+    let host = strings::split_once_char(endpoint, b'/').map_or(endpoint, |(host, _)| host);
+    let host = strings::split_once_char(host, b':').map_or(host, |(host, _)| host);
+    // One trailing dot is the fully qualified form of the same host.
+    let host = host.strip_suffix(b".").unwrap_or(host);
+    let bucket = if let Some(rest) = host
+        .strip_suffix(b".amazonaws.com")
+        .or_else(|| host.strip_suffix(b".amazonaws.com.cn"))
+    {
+        // <bucket>.s3[.dualstack][.<region>], https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
+        match rest.strip_suffix(b".s3") {
+            Some(bucket) => bucket,
+            None => {
+                let (rest, _) = strings::rsplit_once_char(rest, b'.')?;
+                rest.strip_suffix(b".dualstack")
+                    .unwrap_or(rest)
+                    .strip_suffix(b".s3")?
+            }
+        }
+    } else {
+        // <bucket>.<account>[.<jurisdiction>]. The account endpoint has no bucket label.
+        let rest = host.strip_suffix(b".r2.cloudflarestorage.com")?;
+        let (bucket, rest) = strings::split_once_char(rest, b'.')?;
+        let named = match strings::split_once_char(rest, b'.') {
+            Some((_, jurisdiction)) => !strings::contains_char(jurisdiction, b'.'),
+            // https://developers.cloudflare.com/r2/reference/data-location/#available-jurisdictions
+            None => !matches!(rest, b"eu" | b"fedramp" | b"us"),
+        };
+        if !named {
             return None;
         }
-        // ok its virtual host style
-        let Some(start) = strings::index_of(endpoint, b"/") else {
-            return Some(&endpoint[0..end]);
-        };
-        return Some(
-            endpoint
-                .get(start + 1..end)
-                .unwrap_or_else(|| &endpoint[0..end]),
-        );
-    }
-    None
+        bucket
+    };
+    (!bucket.is_empty()).then_some(bucket)
 }
 
 pub fn guess_region(endpoint: &[u8]) -> &[u8] {

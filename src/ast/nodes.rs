@@ -712,24 +712,6 @@ pub struct ArrayBinding {
     pub default_value: Option<ExprNodeIndex>,
 }
 
-/// TLA => Top Level Await
-#[derive(Copy, Clone)]
-pub struct TlaCheck {
-    pub depth: u32,
-    pub parent: crate::base::IndexInt,
-    pub import_record_index: crate::base::IndexInt,
-}
-
-impl Default for TlaCheck {
-    fn default() -> Self {
-        Self {
-            depth: 0,
-            parent: Index::INVALID.get(),
-            import_record_index: Index::INVALID.get(),
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct Span {
     pub text: ArenaStr,

@@ -18711,5 +18711,89 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
+  },
+  "names-below-the-type-arguments-of-an-import-type-that-nothing-reads": {
+    "files": {
+      "use.ts": "type Member = import(\"./box\").Box<{ a: MissingA; m(x: MissingB): MissingC; [k: string]: MissingD }>;\ntype Signature = import(\"./box\").Box<(x: MissingE, ...rest: MissingF[]) => MissingG>;\ntype Nested = import(\"./box\").Box<{ a: import(\"./box\").NotGeneric<string>; b: import(\"./nope\").T }[]>;\ntype Mapped = import(\"./box\").Alias<Array<{ [K in \"a\"]: MissingH }>>;\ntype Constraint = import(\"./box\").Box<<U extends MissingI>(x: U) => void>;\ntype Circular = import(\"./box\").Box<<U extends U>(x: U) => void>;\ntype Implicit = import(\"./box\").Box<{ a; m(x, ...rest): void }>;\ntype Query = import(\"./box\").Box<{ a: typeof missingJ; b: typeof import(\"./box\").f<MissingK> }>;\ntype Indexes = import(\"./box\").Box<{ [k: string]: string; [l: string]: number }>;\ntype Mode = import(\"./box\").Box<{ a: import(\"./box\", { with: { \"resolution-mode\": \"bogus\" } }).NotGeneric }>;\nexport declare const all: [Member, Signature, Nested, Mapped, Constraint, Circular, Implicit, Query, Indexes, Mode];\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"}}\n"
+    }
+  },
+  "names-in-the-type-arguments-that-an-import-type-resolves": {
+    "files": {
+      "use.ts": "type Argument = import(\"./box\").Box<MissingA>;\ntype Element = import(\"./box\").Box<MissingB[]>;\ntype Tuple = import(\"./box\").Box<[MissingC]>;\ntype Union = import(\"./box\").Box<MissingD | string>;\ntype Reference = import(\"./box\").Box<Array<MissingE>>;\ntype Key = import(\"./box\").Box<{ [K in MissingF]: string }>;\ntype Query = import(\"./box\").Box<typeof missingG>;\ntype Module = import(\"./box\").Box<import(\"./nope\").T>;\ntype Count = import(\"./box\").Box<import(\"./box\").NotGeneric<string>>;\nexport declare const all: [Argument, Element, Tuple, Union, Reference, Key, Query, Module, Count];\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"}}\n"
+    }
+  },
+  "names-below-the-type-arguments-of-an-import-type-whose-member-is-read": {
+    "files": {
+      "use.ts": "declare const member: import(\"./box\").Box<{ read: MissingA; unread: MissingB }>;\nexport const read = member.value.read;\ndeclare const signature: import(\"./box\").Box<{ call(x: MissingC): MissingD; never(x: MissingE): void }>;\nexport const result = signature.value.call(null as never);\ndeclare const implicit: import(\"./box\").Box<(x, y: typeof missingF) => void>;\nimplicit.value(1, 2);\ndeclare const constraint: import(\"./box\").Box<{ read: <U extends U>() => void; unread: <V extends V>() => void }>;\nconstraint.value.read();\ntype Source = import(\"./box\").Box<{ a: string }>;\ntype Target = import(\"./box\").Box<{ a: import(\"./nope\").T }>;\nexport const compared: Target = null! as Source;\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"}}\n"
+    }
+  },
+  "type-arguments-of-a-type-query-below-the-type-arguments-of-an-import-type": {
+    "files": {
+      "use.ts": "declare function one<T>(x: T): T;\ndeclare function two<T, U>(x: T, y: U): T;\ntype Direct = import(\"./box\").Box<typeof one<{ a: MissingA }>>;\ntype Unread = import(\"./box\").Box<{ m: typeof one<{ a: MissingB }> }>;\ntype Read = import(\"./box\").Box<{ m: typeof one<{ a: MissingC }> }>;\ntype Arity = import(\"./box\").Box<typeof two<{ a: MissingD }>>;\ntype Circular = import(\"./box\").Box<typeof one<{ a: <U extends U>() => void }>>;\ntype Indexes = import(\"./box\").Box<typeof one<{ [k: string]: string; [l: string]: number }>>;\ntype Implicit = import(\"./box\").Box<typeof one<{ a; m(x): void }>>;\ntype Nested = import(\"./box\").Box<typeof one<import(\"./box\").Box<{ a: MissingE }>>>;\ndeclare const read: Read;\nexport const member = read.value.m;\nexport declare const all: [Direct, Unread, Arity, Circular, Indexes, Implicit, Nested];\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"}}\n"
+    }
+  },
+  "unused-declarations-named-below-the-type-arguments-of-an-import-type": {
+    "files": {
+      "other.ts": "export type Other = string;\n",
+      "use.ts": "import type { Other } from \"./other\";\nimport { type Other as Renamed } from \"./other\";\nimport type { Other as Argument } from \"./other\";\ntype Unread = string;\ntype Read = string;\ntype Lazy = string;\ntype Predicate = string;\ntype Direct = string;\nexport type Member = import(\"./box\").Box<{ local: Unread }>;\nexport type Signature = import(\"./box\").Box<(x: string) => Other>;\nexport type Imported = import(\"./box\").Box<{ value: Renamed }>;\nexport type Resolved = import(\"./box\").Box<Argument | Direct[] | { value: Unread }>;\nexport type Template = import(\"./box\").Box<Array<{ a: Lazy }>>;\nexport type Guard = import(\"./box\").Box<{ is: (x: unknown) => x is Predicate }>;\ndeclare const read: import(\"./box\").Box<{ value: Read; other: Unread }>;\nexport const value = read.value.value;\ndeclare const guard: Guard;\nexport const is = guard.value.is;\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"noUnusedLocals\":true,\"noUnusedParameters\":true}}\n"
+    }
+  },
+  "names-below-the-type-arguments-of-an-import-type-read-by-an-earlier-and-a-later-file": {
+    "files": {
+      "early.ts": "const early = a.value.read;\n",
+      "use.ts": "declare const a: import(\"./box\").Box<{ read: MissingA }>;\ndeclare const b: import(\"./box\").Box<{ read: MissingB }>;\n",
+      "late.ts": "const late = b.value.read;\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"},\"files\":[\"early.ts\",\"use.ts\",\"late.ts\"]}\n"
+    }
+  },
+  "unused-declarations-named-below-the-type-arguments-of-an-import-type-that-another-file-reads": {
+    "files": {
+      "early.ts": "export const early = a.value.read;\n",
+      "use.ts": "type Early = number;\ntype Late = number;\ndeclare global {\n  const a: import(\"./box\").Box<{ read: Early }>;\n  const b: import(\"./box\").Box<{ read: Late }>;\n}\nexport {};\n",
+      "late.ts": "export const late = b.value.read;\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"noUnusedLocals\":true},\"files\":[\"early.ts\",\"use.ts\",\"late.ts\"]}\n"
+    }
+  },
+  "type-arguments-of-a-typeof-import-type-that-fit-no-signature": {
+    "files": {
+      "use.ts": "export type None = typeof import(\"./box\").f<MissingA, string>;\nexport type Below = typeof import(\"./box\").f<{ a: MissingB }>;\nexport type Fits = typeof import(\"./box\").f<MissingC>;\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"}}\n"
+    }
+  },
+  "declarations-that-are-checked-once-with-the-first-one-below-the-type-arguments-of-an-import-type": {
+    "files": {
+      "use.ts": "type Used = string;\nexport type Infer<T> = T extends [import(\"./box\").Box<infer U extends { a: Used }>, infer U extends { a: string }] ? U : never;\nexport type Differ<T> = T extends [import(\"./box\").Box<infer V extends string>, infer V extends number] ? V : never;\nexport type Indexes = import(\"./box\").Box<{ a: Merged }>;\ninterface Merged { [k: string]: string }\ninterface Merged { [l: string]: number }\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\",\"noUnusedLocals\":true}}\n"
+    }
+  },
+  "names-below-the-type-arguments-of-an-import-type-in-a-jsdoc-comment": {
+    "files": {
+      "map.js": "/**\n * @template K\n * @template V\n */\nclass TupleMap {\n  /** @param {K} k @param {V} v */\n  set(k, v) {}\n}\nmodule.exports = TupleMap;\n",
+      "use.js": "/** @typedef {import(\"./map\")<string, { a: MissingA }>} Literal */\n/** @typedef {import(\"./map\")<string, (x: MissingB) => void>} Signature */\n/** @typedef {import(\"./map\")<string, MissingC>} Argument */\n/** @type {Literal | Signature | Argument | undefined} */\nlet cache;\nmodule.exports = { cache };\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport type Alias<T> = { value: T };\nexport type NotGeneric = string;\nexport declare function f<T>(x: T): T;\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"commonjs\",\"moduleResolution\":\"bundler\",\"allowJs\":true,\"checkJs\":true}}\n"
+    }
+  },
+  "an-import-type-of-an-alias-that-is-also-a-value-below-the-type-arguments-of-an-import-type": {
+    "files": {
+      "box.ts": "export interface Box<T> { value: T }\n",
+      "m.ts": "import type { Box } from \"./box\";\nconst Box = 1;\nexport { Box };\n",
+      "use.ts": "type Below = import(\"./box\").Box<{ a: import(\"./m\").Box<string>; b: typeof import(\"./m\").Box<string> }>;\ntype Signature = import(\"./box\").Box<(x: import(\"./m\").Box<string>) => void>;\nexport declare const all: [Below, Signature];\n",
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"noEmit\":true,\"types\":[],\"lib\":[\"es5\"],\"skipLibCheck\":true,\"module\":\"esnext\",\"moduleResolution\":\"bundler\"}}\n"
+    }
   }
 }

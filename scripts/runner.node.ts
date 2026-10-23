@@ -54,6 +54,7 @@ import {
 import {
   escapeCodeBlock,
   escapeHtml,
+  getAnsi,
   getBranch,
   getBuildLabel,
   getBuildMetadata,
@@ -67,13 +68,15 @@ import {
   isGithubAction,
   markBuildkiteStepReported,
   parseJunitFileSuites,
+  parseTestStdout,
   printEnvironment,
   reportAnnotationToBuildkite,
   startGroup,
   stripAnsi,
-  unescapeGitHubAction,
   uploadArtifact,
   type JunitFileSuite,
+  type TestEntry,
+  type TestError,
 } from "./buildkite.ts";
 
 const isX64 = process.arch === "x64";
@@ -2132,27 +2135,6 @@ interface TestResult {
   duration?: number;
 }
 
-interface TestEntry {
-  url?: string | undefined;
-  file: string | undefined;
-  test: string;
-  status: string;
-  errors?: TestError[];
-  duration?: number | undefined;
-}
-
-/** A `::error` workflow command printed by `bun test`; its properties are strings as printed. */
-interface TestError {
-  url?: string | undefined;
-  file: string | undefined;
-  line: string | undefined;
-  col: string | undefined;
-  name: string | undefined;
-  stack: string;
-  /** the name of the test the error belongs to */
-  test?: string;
-}
-
 interface SpawnBunTestOptions {
   cwd: string;
   args?: string[];
@@ -2283,119 +2265,6 @@ function pipeTestStdout(io: NodeJS.WritableStream): ((chunk: string) => void) & 
     if (text) io.write(text);
   };
   return write;
-}
-
-interface TestOutput {
-  stdout: string;
-  tests: TestEntry[];
-  errors: TestError[];
-}
-
-function parseTestStdout(stdout: string, testPath?: string): TestOutput {
-  const tests: TestEntry[] = [];
-  const errors: TestError[] = [];
-
-  let lines: string[] = [];
-  let skipCount = 0;
-  let testErrors: TestError[] = [];
-  let done: boolean | undefined;
-  for (const chunk of stdout.split("\n")) {
-    const string = stripAnsi(chunk);
-
-    if (!string.startsWith("::")) {
-      lines.push(chunk);
-
-      if (string.startsWith("✓") || string.startsWith("»") || string.startsWith("✎")) {
-        skipCount++;
-      } else {
-        // If there are more than 3 consecutive non-failing tests,
-        // omit the non-failing tests between them.
-        if (skipCount > 3) {
-          const removeStart = lines.length - skipCount;
-          const removeCount = skipCount - 2;
-          const omitLine = `${getAnsi("gray")}... omitted ${removeCount} tests ...${getAnsi("reset")}`;
-          lines.splice(removeStart, removeCount, omitLine);
-        }
-        skipCount = 0;
-      }
-    }
-
-    // Once the summary is printed, exit early so tests aren't double counted.
-    // This needs to be changed if multiple files are run in a single test run.
-    if (done || string.startsWith("::endgroup")) {
-      done ||= true;
-      continue;
-    }
-
-    if (string.startsWith("::error")) {
-      const eol = string.indexOf("::", 8);
-      const message = unescapeGitHubAction(string.substring(eol + 2));
-      const { file, line, col, title }: Record<string, string | undefined> = Object.fromEntries(
-        string
-          .substring(8, eol)
-          .split(",")
-          .map(entry => entry.split("=")),
-      );
-
-      const errorPath = file || testPath;
-      const error: TestError = {
-        url: errorPath === undefined ? undefined : getFileUrl(errorPath, line),
-        file: errorPath,
-        line,
-        col,
-        name: title,
-        stack: `${title}\n${message}`,
-      };
-
-      errors.push(error);
-      testErrors.push(error);
-      continue;
-    }
-
-    for (const { emoji, text } of [
-      { emoji: "✓", text: "pass" },
-      { emoji: "✗", text: "fail" },
-      { emoji: "»", text: "skip" },
-      { emoji: "✎", text: "todo" },
-    ]) {
-      if (!string.startsWith(emoji)) {
-        continue;
-      }
-
-      const eol = string.lastIndexOf(" [") || undefined;
-      const test = string.substring(1 + emoji.length, eol);
-      const duration = eol ? string.substring(eol + 2, string.lastIndexOf("]")) : undefined;
-
-      tests.push({
-        url: testPath === undefined ? undefined : getFileUrl(testPath),
-        file: testPath,
-        test,
-        status: text,
-        errors: testErrors,
-        duration: parseDuration(duration),
-      });
-
-      for (let error of testErrors) {
-        error.test = test;
-      }
-      testErrors = [];
-    }
-  }
-
-  let preview;
-  const removeCount = lines.length - 100;
-  if (removeCount > 10) {
-    const omitLine = `${getAnsi("gray")}... omitted ${removeCount} lines ...${getAnsi("reset")}\n`;
-    preview = [omitLine, ...lines.slice(-100)].join("\n");
-  } else {
-    preview = lines.join("\n");
-  }
-
-  return {
-    tests,
-    errors,
-    stdout: preview,
-  };
 }
 
 async function spawnBunInstall(
@@ -3058,34 +2927,6 @@ function reportOutputToGitHubAction(name: string, value: string | number): void 
   const delimeter = Math.random().toString(36).substring(2, 15);
   const content = `${name}<<${delimeter}\n${value}\n${delimeter}\n`;
   appendFileSync(outputPath, content);
-}
-
-function getAnsi(color: string): string {
-  switch (color) {
-    case "red":
-      return "\x1b[31m";
-    case "green":
-      return "\x1b[32m";
-    case "yellow":
-      return "\x1b[33m";
-    case "blue":
-      return "\x1b[34m";
-    case "reset":
-      return "\x1b[0m";
-    case "gray":
-      return "\x1b[90m";
-    default:
-      return "";
-  }
-}
-
-function parseDuration(duration: string | number | undefined): number | undefined {
-  const match = /(\d+\.\d+)(m?s)/.exec(String(duration));
-  if (!match) {
-    return undefined;
-  }
-  const [, value, unit] = match;
-  return parseFloat(value!) * (unit === "ms" ? 1 : 1000);
 }
 
 function isExecutable(execPath: string): boolean {

@@ -16720,6 +16720,37 @@ describe.concurrent("a relative --cwd is applied once", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `..` doesn't fail when it is applied twice, or not at all. The command then runs in the project above the named
+  // one, or in the project below it, where it was started.
+  it.each([
+    [["update", "--cwd", ".."], "bun update <version> (<revision>)\n\n+ named-dep@named-dep\n\n1 package installed"],
+    [["--cwd=..", "update"], "bun update <version> (<revision>)\n\n+ named-dep@named-dep\n\n1 package installed"],
+    [["why", "named-dep", "--cwd", ".."], "named-dep@named-dep\n  └─ named (requires file:./named-dep)"],
+    [["--cwd=..", "why", "named-dep"], "named-dep@named-dep\n  └─ named (requires file:./named-dep)"],
+  ])("bun %j, with a project above the named one and a project below it", async (cmd, expected) => {
+    const project = (name: string) => ({
+      "package.json": JSON.stringify({ name, dependencies: { [`${name}-dep`]: `file:./${name}-dep` } }),
+      [`${name}-dep`]: { "package.json": JSON.stringify({ name: `${name}-dep`, version: "1.0.0" }) },
+    });
+    using dir = tempDir("install-cwd-parent", {
+      ...project("above"),
+      named: { ...project("named"), below: project("below") },
+    });
+    const above = String(dir);
+    const named = join(above, "named");
+    const below = join(named, "below");
+    expect((await bunIn(named, ["install"])).exitCode).toBe(0);
+    await rm(join(named, "node_modules"), { recursive: true });
+
+    const { stdout, stderr, exitCode } = await bunIn(below, cmd);
+    expect({ stdout: normalizeBunSnapshot(stdout), stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+    for (const other of [above, below]) expect(await exists(join(other, "node_modules"))).toBeFalse();
+  });
+
   // With no package.json anywhere above, both write one and start over.
   it.each(["link", "unlink"])("bun --cwd=fresh %s", async subcommand => {
     using dir = tempDir("install-cwd-relative-link", { "fresh/.keep": "" });

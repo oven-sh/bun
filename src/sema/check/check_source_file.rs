@@ -653,9 +653,16 @@ impl<'s> Checker<'_, 's> {
             && hir.is_in_ambient_or_type_node(hir.node(name))
     }
 
+    /// True if what the walk records for the end of `checkSourceFile` is about the file being checked. A query runs
+    /// parts of the walk for another file, or for this one after its check, and those record nothing, as in
+    /// `check_node_deferred`.
+    fn records_for_end_of_check(&self, file: FileId) -> bool {
+        self.task.file == Some(file) && !self.is_type_checked && !self.is_checking_in_flow_loop
+    }
+
     /// Records that the check of `e`'s parent returns before it checks `e`.
     pub(super) fn leave_unvisited(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() && !self.is_checking_in_flow_loop {
+        if e.is_some() && self.records_for_end_of_check(file) {
             let start = self.start_of(file, e);
             self.unvisited_exprs.push((start, e));
         }
@@ -694,7 +701,7 @@ impl<'s> Checker<'_, 's> {
                     }
                     let (name, prop) = (hir[p].value, &hir[p]);
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
-                        if !self.is_checking_in_flow_loop {
+                        if self.records_for_end_of_check(file) {
                             self.renamed_binding_elements_in_types.push(p);
                             if let PropKey::Computed(key) = prop.key {
                                 self.unvisited_exprs.push((prop.key_pos, key));

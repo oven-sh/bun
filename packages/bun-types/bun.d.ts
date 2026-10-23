@@ -5754,6 +5754,9 @@ declare module "bun" {
   /**
    * Absolute path of the script that launched Bun
    *
+   * An empty string when no script launched Bun, such as under `bun bake`, where the program is
+   * built into Bun and `app/server.ts` is imported, not run.
+   *
    * @example "/never-gonna-give-you-up.js"
    */
   const main: string;

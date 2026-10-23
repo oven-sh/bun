@@ -24,6 +24,35 @@ describe("css", () => {
     },
   });
 
+  itBundled("css-module/AttributeSelectorNamespacePrefix", {
+    files: {
+      "index.module.css": /* css */ `
+      @namespace xl "urn:example:xlink";
+      .a[xl|href="x"] {
+        color: red;
+      }
+      :global([xl|href="y"]) .b {
+        color: blue;
+      }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.module.css"],
+    onAfterBundle(api) {
+      const css = api.readFile("/out/index.module.css").replace(/\.([ab])_[A-Za-z0-9_-]+/g, ".$1_HASH");
+      expect(css).toEqualIgnoringWhitespace(`
+      /* index.module.css */
+      @namespace xl "urn:example:xlink";
+      .a_HASH[xl|href="x"] {
+        color: red;
+      }
+      [xl|href="y"] .b_HASH {
+        color: #00f;
+      }
+      `);
+    },
+  });
+
   itBundled("css-module/BundleTwoFilesWithoutCodeSplitting", {
     files: {
       "/foo-entry.js": `

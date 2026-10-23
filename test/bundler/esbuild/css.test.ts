@@ -61,6 +61,48 @@ describe("bundler", () => {
     },
   });
 
+  const namespacedAttributeSelectors = /* css */ `
+    @namespace xl "urn:example:xlink";
+    [xl|href$=".pdf"] { color: red }
+    [href$=".pdf"] { color: gray }
+    [*|href^="http"] { color: blue }
+    use[xl|href="#i"] { color: green }
+    a[xl|href] { color: black }
+  `;
+
+  itBundled("css/AttributeSelectorNamespacePrefix", {
+    files: {
+      "/entry.css": namespacedAttributeSelectors,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        @namespace xl "urn:example:xlink";
+        [xl|href$=".pdf"] { color: red; }
+        [href$=".pdf"] { color: gray; }
+        [*|href^="http"] { color: #00f; }
+        use[xl|href="#i"] { color: green; }
+        a[xl|href] { color: #000; }
+      `);
+    },
+  });
+
+  itBundled("css/AttributeSelectorNamespacePrefixMinified", {
+    files: {
+      "/entry.css": namespacedAttributeSelectors,
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(
+          `@namespace xl "urn:example:xlink";[xl|href$=".pdf"]{color:red}[href$=\\.pdf]{color:gray}[*|href^="http"]{color:#00f}use[xl|href="#i"]{color:green}a[xl|href]{color:#000}`,
+        );
+    },
+  });
+
   itBundled("css/CSSAtImportMissing", {
     files: {
       "/entry.css": `@import "./missing.css";`,

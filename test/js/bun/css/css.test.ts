@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -5340,6 +5340,119 @@ describe("css tests", () => {
     minify_test('[foo="123"] {color:red}', '[foo="123"]{color:red}');
     minify_test('[foo="\\\\"] {color:red}', "[foo=\\\\]{color:red}");
     minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
+
+    // `[xl|href="x"]` matches `href` in the `xl` namespace and `[*|href="x"]` matches it in any
+    // namespace. `[href="x"]` matches `href` only in no namespace, so the prefix must survive.
+    {
+      const xl = '@namespace xl "urn:example:xlink";';
+      for (const prefix of ["xl|", "*|"]) {
+        for (const operator of ["=", "~=", "|=", "^=", "*=", "$="]) {
+          for (const flag of ["", " i", " s"]) {
+            const selector = `[${prefix}href${operator}"x"${flag}]`;
+            minify_test(`${xl} ${selector} {color:red}`, `${xl}${selector}{color:red}`);
+            cssTest(`${xl} ${selector} {color:red}`, `${xl} ${selector} { color: red; }`);
+          }
+        }
+      }
+
+      cssTest(
+        `
+        ${xl}
+        [xl|href$=".pdf"] { color: red }
+        [*|href^="http"] { color: blue }
+        use[xl|href="#i"] { color: green }
+        a[xl|href] { color: black }
+        `,
+        `
+        ${xl}
+        [xl|href$=".pdf"] { color: red; }
+        [*|href^="http"] { color: #00f; }
+        use[xl|href="#i"] { color: green; }
+        a[xl|href] { color: #000; }
+        `,
+      );
+
+      // Two selectors that differ only in the prefix are two selectors.
+      minify_test(
+        `${xl} [xl|href="a"] {color:red} [href="a"] {background:blue}`,
+        `${xl}[xl|href="a"]{color:red}[href=a]{background:#00f}`,
+      );
+      minify_test(
+        `${xl} [xl|href="a"] {color:red} [href="a"] {color:blue}`,
+        `${xl}[xl|href="a"]{color:red}[href=a]{color:#00f}`,
+      );
+      cssTest(
+        `${xl} [xl|href="a"] {color:red} [href="a"] {color:blue}`,
+        `${xl} [xl|href="a"] { color: red; } [href="a"] { color: #00f; }`,
+      );
+      minify_test(
+        `${xl} [href="e"] {color:red} .z {top:0} [xl|href="e"] {color:blue}`,
+        `${xl}[href=e]{color:red}.z{top:0}[xl|href="e"]{color:#00f}`,
+      );
+      minify_test(
+        `@namespace x "urn:x"; @namespace y "urn:y"; [x|foo="a"] {color:red} [y|foo="a"] {color:red} [*|foo="a"] {color:red} [foo="a"] {color:red}`,
+        `@namespace x "urn:x";@namespace y "urn:y";[x|foo="a"],[y|foo="a"],[*|foo="a"],[foo=a]{color:red}`,
+      );
+      // The same namespaced selector twice is still one selector.
+      minify_test(
+        `${xl} [xl|href="x"] {color:red} [xl|href="x"] {background:blue}`,
+        `${xl}[xl|href="x"]{color:red;background:#00f}`,
+      );
+      minify_test(`${xl} [xl|href="x"] {color:red} [xl|href="x"] {color:red}`, `${xl}[xl|href="x"]{color:red}`);
+
+      // Positions where a compound selector can be written.
+      minify_test(`${xl} .a { &[xl|href="x"] {color:red} }`, `${xl}.a{&[xl|href="x"]{color:red}}`);
+      minify_test(`${xl} .a { [xl|href="x"] & {color:red} }`, `${xl}.a{[xl|href="x"] &{color:red}}`);
+      minify_test(
+        `${xl} @scope ([xl|href="x"]) to ([*|href^="y"]) { a {color:red} }`,
+        `${xl}@scope([xl|href="x"]) to ([*|href^="y"]){a{color:red}}`,
+      );
+      minify_test(`${xl} :not([xl|href="x"]) {color:red}`, `${xl}:not([xl|href="x"]){color:red}`);
+      minify_test(
+        `${xl} a:is([xl|href="x"], [*|href="y"]) {color:red}`,
+        `${xl}a:is([xl|href="x"],[*|href="y"]){color:red}`,
+      );
+      minify_test(`${xl} a:where([xl|href="x"]) {color:red}`, `${xl}a:where([xl|href="x"]){color:red}`);
+      minify_test(`${xl} a:has([xl|href="x"]) {color:red}`, `${xl}a:has([xl|href="x"]){color:red}`);
+      minify_test(`${xl} :host([xl|href="x"]) {color:red}`, `${xl}:host([xl|href="x"]){color:red}`);
+      minify_test(`${xl} ::slotted([xl|href="x"]) {color:red}`, `${xl}::slotted([xl|href="x"]){color:red}`);
+      minify_test(`${xl} ::cue(v[xl|href="x"]) {color:red}`, `${xl}::cue(v[xl|href="x"]){color:red}`);
+      minify_test(
+        `${xl} :nth-child(2n of [xl|href="x"]) {color:red}`,
+        `${xl}:nth-child(2n of [xl|href="x"]){color:red}`,
+      );
+      minify_test(
+        `${xl} @namespace svg "http://www.w3.org/2000/svg"; svg|a[xl|href~="w"] {color:red}`,
+        `${xl}@namespace svg "http://www.w3.org/2000/svg";svg|a[xl|href~="w"]{color:red}`,
+      );
+      minify_test(`${xl} [xl|href="x"]::before {color:red}`, `${xl}[xl|href="x"]:before{color:red}`);
+
+      // Lowering for an old target copies the selector. The copy keeps the prefix too.
+      prefix_test(
+        `@namespace x "urn:x"; [x|type="a"] {color:red} [x|type="b"] {color:red}`,
+        `@namespace x "urn:x"; [x|type="a"], [x|type="b"] { color: red; }`,
+        { ie: 11 << 16 },
+      );
+      prefix_test(
+        `@namespace x "urn:x"; .a { &[x|foo^="bar"] {color:red} }`,
+        `@namespace x "urn:x"; .a[x|foo^="bar"] { color: red; }`,
+        { ie: 11 << 16 },
+      );
+      prefix_test(
+        `@namespace x "urn:x"; :not([x|foo="a"], .b) {color:red}`,
+        `@namespace x "urn:x"; :not(:is([x|foo="a"], .b)) { color: red; }`,
+        { ie: 11 << 16 },
+      );
+
+      // A name with an uppercase letter and no prefix prints the short value when minified.
+      // lightningcss prints `[Foo="bar"]` here. A name with a prefix keeps the quotes.
+      minify_test('[Foo="bar"] {color:red}', "[Foo=bar]{color:red}");
+      minify_test('[viewBox="abc"] {color:red}', "[viewBox=abc]{color:red}");
+      minify_test('[tYPE="a"] {color:red}', "[tYPE=a]{color:red}");
+      minify_test(`${xl} [xl|Href="x"] {color:red}`, `${xl}[xl|Href="x"]{color:red}`);
+      minify_test("[|y=z] {color:red}", "[y=z]{color:red}");
+    }
+
     minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
     minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");
     minify_test(".test .foo {color:red}", ".test .foo{color:red}");
@@ -5950,6 +6063,140 @@ describe("css tests", () => {
         Token::SquareBracketBlock,
       ))`,
     );
+  });
+
+  describe("namespace", () => {
+    minify_test("@namespace url(http://toto.example.org);", '@namespace "http://toto.example.org";');
+    minify_test('@namespace "http://toto.example.org";', '@namespace "http://toto.example.org";');
+    minify_test('@namespace toto "http://toto.example.org";', '@namespace toto "http://toto.example.org";');
+    minify_test("@namespace toto url(http://toto.example.org);", '@namespace toto "http://toto.example.org";');
+
+    cssTest(
+      `
+      @namespace "http://example.com/foo";
+
+      x {
+        color: red;
+      }
+    `,
+      `
+      @namespace "http://example.com/foo";
+
+      x {
+        color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      @namespace toto "http://toto.example.org";
+
+      toto|x {
+        color: red;
+      }
+
+      [toto|att=val] {
+        color: blue
+      }
+    `,
+      `
+      @namespace toto "http://toto.example.org";
+
+      toto|x {
+        color: red;
+      }
+
+      [toto|att="val"] {
+        color: #00f;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      @namespace "http://example.com/foo";
+
+      |x {
+        color: red;
+      }
+
+      [|att=val] {
+        color: blue
+      }
+    `,
+      `
+      @namespace "http://example.com/foo";
+
+      |x {
+        color: red;
+      }
+
+      [att="val"] {
+        color: #00f;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      @namespace "http://example.com/foo";
+
+      *|x {
+        color: red;
+      }
+
+      [*|att=val] {
+        color: blue
+      }
+    `,
+      `
+      @namespace "http://example.com/foo";
+
+      *|x {
+        color: red;
+      }
+
+      [*|att="val"] {
+        color: #00f;
+      }
+    `,
+    );
+
+    test('ERROR: .foo { color: red } @namespace "http://example.com/foo";', () => {
+      expect(() => minify_test_with_options('.foo { color: red } @namespace "http://example.com/foo";', "")).toThrow(
+        "@namespace rules must come before any other rules except @charset, @import, and @layer",
+      );
+    });
+
+    // `bun pm diff` parses and prints CSS with no minify pass, then compares the two prints.
+    test.concurrent("bun pm diff shows a dropped namespace prefix as a change", async () => {
+      const xl = '@namespace xl "urn:example:xlink";\n';
+      using dir = tempDir("css-namespace-pm-diff", {
+        "a/dropped.css": `${xl}use[xl|href="#i"]{color:green}\n`,
+        "b/dropped.css": `${xl}use[href="#i"] { color: green }\n`,
+        "a/kept.css": `${xl}use[xl|href="#i"]{color:green}\n`,
+        "b/kept.css": `${xl}use[xl|href="#i"] { color: green }\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", "./a", "./b", "--json"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const files = JSON.parse(stdout).files.map((file: { path: string; formattingOnly: boolean }) => ({
+        path: file.path,
+        formattingOnly: file.formattingOnly,
+      }));
+      expect(files).toEqual([
+        { path: "dropped.css", formattingOnly: false },
+        { path: "kept.css", formattingOnly: true },
+      ]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("media", () => {

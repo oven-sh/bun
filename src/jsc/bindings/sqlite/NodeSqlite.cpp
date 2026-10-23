@@ -8,9 +8,6 @@
 // those APIs runtime-gate on the dlsym result and point at
 // Database.setCustomSQLite(). On Linux/Windows the bundled amalgamation is
 // linked.
-#ifndef LAZY_LOAD_SQLITE
-#define LAZY_LOAD_SQLITE 0
-#endif
 
 // The bundled amalgamation's version, for process.versions.sqlite before any
 // library is loaded. On the LAZY_LOAD_SQLITE (macOS) branch SQLITE_VERSION

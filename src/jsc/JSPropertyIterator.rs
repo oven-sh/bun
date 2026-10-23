@@ -80,12 +80,6 @@ impl IntoIterObject for *mut JSObject {
         self
     }
 }
-impl IntoIterObject for NonNull<JSObject> {
-    #[inline]
-    fn into_iter_object(self) -> *mut JSObject {
-        self.as_ptr()
-    }
-}
 impl IntoIterObject for &JSObject {
     #[inline]
     fn into_iter_object(self) -> *mut JSObject {

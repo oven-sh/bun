@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
@@ -726,5 +726,136 @@ console.log("✓ Both import types work correctly");
       expect(entryCode).toContain('\\\"index\\\":\\\"./index.html\\\"');
       expect(entryCode).toContain('\\\"files\\\":[');
     },
+  });
+
+  // The script of a page is a browser build, whatever the target of the server is. Its
+  // resolver reads the target of the page, not the target the server was built for.
+  const runsThePage = `
+    import page from "./client.html";
+    await import(new URL(page.files.find(file => file.loader === "js").path, import.meta.url).href);
+  `;
+  const pageHtml = `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`;
+
+  for (const target of ["bun", "node"] as const) {
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`html-import/page-reads-browser-maps/${target}/${backend}`, {
+        outdir: "out/",
+        target,
+        backend,
+        files: {
+          "/server.js": `
+            import map from "browser-map";
+            console.log("server " + JSON.stringify(map));
+            ${runsThePage}
+          `,
+          "/client.html": pageHtml,
+          "/client.js": `
+            import map from "browser-map";
+            console.log("page " + JSON.stringify(map));
+          `,
+          "/node_modules/browser-map/package.json": JSON.stringify({
+            name: "browser-map",
+            version: "1.0.0",
+            main: "./index.js",
+            browser: { "./impl.js": "./impl-browser.js", "./server-only.js": false },
+          }),
+          "/node_modules/browser-map/index.js": `
+            import impl from "./impl.js";
+            import * as serverOnly from "./server-only.js";
+            export default { impl, serverOnly: typeof serverOnly.value };
+          `,
+          "/node_modules/browser-map/impl.js": `export default "impl";`,
+          "/node_modules/browser-map/impl-browser.js": `export default "impl-browser";`,
+          "/node_modules/browser-map/server-only.js": `export const value = "server only";`,
+        },
+        entryPoints: ["/server.js"],
+        run: {
+          stdout: [
+            `server {"impl":"impl","serverOnly":"string"}`,
+            `page {"impl":"impl-browser","serverOnly":"undefined"}`,
+          ].join("\n"),
+        },
+      });
+    }
+  }
+
+  for (const backend of ["api", "cli"] as const) {
+    // The shape of #24077: a dependency of the page that calls `require("fs")`.
+    itBundled(`html-import/page-gets-the-polyfill-of-a-node-builtin/${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: {
+        "/server.js": `
+          import builtins from "uses-builtins";
+          console.log("server " + JSON.stringify(builtins));
+          ${runsThePage}
+        `,
+        "/client.html": pageHtml,
+        "/client.js": `
+          import builtins from "uses-builtins";
+          console.log("page " + JSON.stringify(builtins));
+        `,
+        "/node_modules/uses-builtins/package.json": JSON.stringify({
+          name: "uses-builtins",
+          version: "1.0.0",
+          main: "./index.js",
+        }),
+        "/node_modules/uses-builtins/index.js": `
+          var fs = require("fs");
+          var Url = require("url");
+          module.exports = { readFile: typeof fs.readFileSync, parse: typeof Url.parse };
+        `,
+      },
+      entryPoints: ["/server.js"],
+      run: {
+        stdout: [
+          `server {"readFile":"function","parse":"function"}`,
+          `page {"readFile":"undefined","parse":"function"}`,
+        ].join("\n"),
+      },
+    });
+  }
+
+  // `--main-fields` is for the server. The page has the default list of a browser build, and with
+  // a default list `require()` of a package that has "module" and "main" gets "main".
+  test("html-import/page-has-the-default-main-fields", async () => {
+    using dir = tempDir("html-import-page-main-fields", {
+      "server.js": runsThePage,
+      "client.html": pageHtml,
+      "client.js": `
+        const required = require("module-and-main");
+        console.log("page " + JSON.stringify(required));
+        export {};
+      `,
+      "node_modules/module-and-main/package.json": JSON.stringify({
+        name: "module-and-main",
+        version: "1.0.0",
+        main: "./main.js",
+        module: "./module.js",
+      }),
+      "node_modules/module-and-main/main.js": `module.exports = "main";`,
+      "node_modules/module-and-main/module.js": `export default "module";`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "--main-fields=main", "./server.js", "--outdir=out"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect({ buildErrors, buildExitCode }).toEqual({ buildErrors: "", buildExitCode: 0 });
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join("out", "server.js")],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `page "main"\n`, stderr: "", exitCode: 0 });
   });
 });

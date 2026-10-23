@@ -2004,11 +2004,8 @@ pub mod bv2_impl {
             if ct.options.react_compiler.is_ssr() {
                 ct.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
             }
-            ct.options.main_fields = Target::Browser
-                .default_main_fields()
-                .iter()
-                .map(|s| s.as_bytes().to_vec().into_boxed_slice())
-                .collect();
+            // `--main-fields` is for the graph that the user builds. The page gets the browser's list.
+            ct.options.main_fields = Box::default();
             ct.options.conditions =
                 options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?;
 

@@ -203,7 +203,7 @@ impl Framework {
             }
             Self::resolve_helper(
                 &self.built_in_modules,
-                client,
+                server,
                 &mut fsr.entry_server,
                 &mut had_errors,
                 b"server side entrypoint",

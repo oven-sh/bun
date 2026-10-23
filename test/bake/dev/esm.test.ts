@@ -1,7 +1,13 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
 import { isWindows } from "harness";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import {
+  devTest,
+  emptyHtmlFile,
+  minimalFramework,
+  platformPackagesFor,
+  platformPackagesResolved,
+} from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,
@@ -450,6 +456,125 @@ devTest("browser field is used", {
   async test(dev) {
     await using c = await dev.client();
     await c.expectMessage("PASS");
+  },
+});
+
+// The server and SSR graphs run in Bun, so a package's "browser" field and
+// "browser" map are not for them. The client graph keeps both.
+devTest("each graph resolves packages for the platform that runs it", {
+  framework: {
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client-entry.ts" }],
+    serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+  },
+  files: {
+    ...platformPackagesFor("server"),
+    ...platformPackagesFor("ssr"),
+    ...platformPackagesFor("client"),
+    ...platformPackagesFor("shared"),
+    "client-entry.ts": `
+      import client from "./client";
+      import shared from "./shared";
+      console.log(client, shared);
+    `,
+    "routes/index.ts": `
+      import server from "../server";
+      import ssr from "../ssr" with { bunBakeGraph: "ssr" };
+      export default function (req, meta) {
+        return Response.json({ server, ssr, clientBundles: meta.modules });
+      }
+    `,
+    "routes/shared.ts": `
+      import shared from "../shared";
+      export default function (req, meta) {
+        return Response.json({ shared, clientBundles: meta.modules });
+      }
+    `,
+  },
+  async test(dev) {
+    // The bundle has the source of each package file that the client graph resolved.
+    const clientFiles = async (bundles: string[]) => {
+      const bundle = await dev.fetch(bundles[0]).text();
+      return [...new Set(bundle.match(/(?<![\w\/-])(client|shared)-[\w-]+\/\w+\.js/g))].sort();
+    };
+    const forBrowser = [
+      ...platformPackagesResolved("client", "browser"),
+      ...platformPackagesResolved("shared", "browser"),
+    ].sort();
+
+    const index = await dev.fetch("/").json();
+    expect(index).toEqual({
+      server: platformPackagesResolved("server", "bun"),
+      ssr: platformPackagesResolved("ssr", "bun"),
+      clientBundles: [expect.any(String)],
+    });
+    expect(await clientFiles(index.clientBundles)).toEqual(forBrowser);
+
+    // The client graph has read the package.json files of the shared packages,
+    // so the cache has their "browser" field when the server graph reads them.
+    const shared = await dev.fetch("/shared").json();
+    expect(shared).toEqual({
+      shared: platformPackagesResolved("shared", "bun"),
+      clientBundles: [expect.any(String)],
+    });
+    expect(await clientFiles(shared.clientBundles)).toEqual(forBrowser);
+  },
+});
+
+// The server entry point and the server components runtime of a framework run
+// in Bun. The "browser" map is read whatever the first resolver of the file is.
+devTest("a framework's server modules resolve for bun", {
+  framework: {
+    fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "framework-server" }],
+    serverComponents: {
+      separateSSRGraph: false,
+      serverRuntimeImportSource: "framework-server",
+      serverRegisterClientReferenceExport: "registerClientReference",
+    },
+  },
+  files: {
+    "node_modules/framework-server/package.json": JSON.stringify({
+      name: "framework-server",
+      version: "1.0.0",
+      main: "./main.js",
+      browser: { "./main.js": "./browser.js" },
+    }),
+    ...Object.fromEntries(
+      ["main.js", "browser.js"].map(file => [
+        `node_modules/framework-server/${file}`,
+        `
+          export const render = (req, meta) => new Response("${file} renders a reference from " + meta.pageModule.default);
+          export const registerClientReference = () => "${file}";
+        `,
+      ]),
+    ),
+    "component.ts": `
+      "use client";
+      export const component = 1;
+    `,
+    "routes/index.ts": `
+      export { component as default } from "../component";
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("main.js renders a reference from main.js");
+  },
+});
+
+// A server graph is built for bun, and bun also looks for `.node` files.
+devTest("a server route resolves an import of a .node file without its extension", {
+  framework: minimalFramework,
+  files: {
+    // Resolved when the route is bundled, and never loaded: it is not an addon.
+    "addon.node": "not an addon",
+    "routes/index.ts": `
+      export default function (req, meta) {
+        const load = () => require("../addon");
+        return new Response(typeof load);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("function");
   },
 });
 

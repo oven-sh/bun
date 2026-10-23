@@ -479,10 +479,6 @@ pub struct Resolver<'a> {
     pub care_about_bin_folder: bool,
     pub care_about_scripts: bool,
 
-    /// Read the "browser" field in package.json files?
-    /// For Bun's runtime, we don't.
-    pub(crate) care_about_browser_field: bool,
-
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
@@ -621,7 +617,6 @@ impl<'a> Resolver<'a> {
             timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
-            care_about_browser_field: from.care_about_browser_field,
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
@@ -914,6 +909,13 @@ impl<'a> Resolver<'a> {
         self.env_loader.map(|p| unsafe { p.as_ref() })
     }
 
+    /// Whether package.json "browser" maps apply. Only a browser build reads them.
+    /// Not a stored flag: `opts` is replaced when a transpiler changes its target.
+    #[inline]
+    fn care_about_browser_field(&self) -> bool {
+        self.opts.target == options::Target::Browser
+    }
+
     #[inline]
     pub(crate) fn use_package_manager(&self) -> bool {
         // TODO: make this configurable. the rationale for disabling
@@ -943,7 +945,6 @@ impl<'a> Resolver<'a> {
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
 
-        let care_about_browser_field = opts.target == options::Target::Browser;
         Resolver {
             // allocator dropped
             // Route through the per-monomorphization singleton so this field and
@@ -956,7 +957,6 @@ impl<'a> Resolver<'a> {
             fs: _fs,
             log,
             extension_order: options::ExtOrder::DefaultDefault,
-            care_about_browser_field,
             care_about_bin_folder: false,
             care_about_scripts: false,
             debug_logs: None,
@@ -1928,7 +1928,7 @@ impl<'a> Resolver<'a> {
                 // The importer's package.json "browser" map wins over the builtin
                 // polyfill. The lookup uses the bare name so it matches the same
                 // spellings the polyfill table below does.
-                let browser_map_overrides_builtin = self.care_about_browser_field
+                let browser_map_overrides_builtin = self.care_about_browser_field()
                     && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
                     if info
                         .get_enclosing_browser_scope()
@@ -2122,7 +2122,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Check the "browser" map
-        if self.care_about_browser_field {
+        if self.care_about_browser_field() {
             // ".." segments can reach the filesystem root, which has no parent.
             let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
             if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
@@ -2277,7 +2277,7 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        if self.care_about_browser_field {
+        if self.care_about_browser_field() {
             // Support remapping one package path to another via the "browser" field
             if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
                 if let Some(package_json) = browser_scope.package_json() {
@@ -2375,7 +2375,7 @@ impl<'a> Resolver<'a> {
                     return ResultUnion::Success(result);
                 }
 
-                if res.package_json.is_some() && self.care_about_browser_field {
+                if res.package_json.is_some() && self.care_about_browser_field() {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
                         None => match self.read_dir_info(result.path_pair.primary.name().dir) {
@@ -5265,7 +5265,7 @@ impl<'a> Resolver<'a> {
             dec_ret!(MatchStatus::NotFound);
         };
 
-        if self.care_about_browser_field {
+        if self.care_about_browser_field() {
             // Potentially remap using the "browser" field
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
                 if let Some(browser_json) = browser_scope.package_json() {
@@ -5525,7 +5525,7 @@ impl<'a> Resolver<'a> {
             path = &path_buf[..path.len() + 1];
         }
 
-        if self.care_about_browser_field {
+        if self.care_about_browser_field() {
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
                 const FIELD_REL_PATH: &[u8] = b"index";
 

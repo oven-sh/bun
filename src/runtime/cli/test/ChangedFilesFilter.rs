@@ -131,8 +131,12 @@ pub(crate) fn filter<'a>(
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
+    // The scan resolves for bun, as the tests do. `init` derives the conditions,
+    // the loaders and the extension order from the target, so the target goes in here.
+    let mut scan_args = ctx.args.clone();
+    scan_args.target = Some(bun_options_types::schema::api::Target::Bun);
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, scan_args, Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -143,7 +147,6 @@ pub(crate) fn filter<'a>(
             }
         },
     );
-    scan_transpiler.options.target = bun_ast::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
     scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;
@@ -152,13 +155,13 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.ignore_module_resolution_errors = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
+    // `init` turns both on for the bun target. The scan keeps every import, and
+    // no environment variable becomes a define.
+    scan_transpiler.options.minify_syntax = false;
+    scan_transpiler.options.env.behavior = bun_bundler::options::EnvBehavior::Disable;
+    scan_transpiler.sync_resolver_opts();
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
-    // `Transpiler::init` already projected resolver.opts, so sync only the
-    // fields we changed above.
-    scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
-    scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
-    scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at

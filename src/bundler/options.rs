@@ -205,50 +205,6 @@ pub(crate) use bun_ast::Target;
 // module-level name for callers that pre-date it.
 pub use bun_ast::target::TARGET_MAP;
 
-pub(crate) const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
-    b"browser",
-    b"module",
-    b"main",
-    // https://github.com/jsforum/jsforum/issues/5
-    // Older packages might use jsnext:main in place of module
-    b"jsnext:main",
-];
-
-// Note that this means if a package specifies "module" and "main", the ES6
-// module will not be selected. This means tree shaking will not work when
-// targeting node environments.
-//
-// Some packages incorrectly treat the "module" field as "code for the browser". It
-// actually means "code for ES6 environments" which includes both node and the browser.
-//
-// For example, the package "@firebase/app" prints a warning on startup about
-// the bundler incorrectly using code meant for the browser if the bundler
-// selects the "module" field instead of the "main" field.
-//
-// This is unfortunate but it's a problem on the side of those packages.
-// They won't work correctly with other popular bundlers (with node as a target) anyway.
-const DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] =
-    &[TARGET_MAIN_FIELD_NAMES[2], TARGET_MAIN_FIELD_NAMES[1]];
-
-// Note that this means if a package specifies "main", "module", and
-// "browser" then "browser" will win out over "module". This is the
-// same behavior as webpack: https://github.com/webpack/webpack/issues/4674.
-//
-// This is deliberate because the presence of the "browser" field is a
-// good signal that this should be preferred. Some older packages might only use CJS in their "browser"
-// but in such a case they probably don't have any ESM files anyway.
-const DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[
-    TARGET_MAIN_FIELD_NAMES[0],
-    TARGET_MAIN_FIELD_NAMES[1],
-    TARGET_MAIN_FIELD_NAMES[3],
-    TARGET_MAIN_FIELD_NAMES[2],
-];
-const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
-    TARGET_MAIN_FIELD_NAMES[1],
-    TARGET_MAIN_FIELD_NAMES[2],
-    TARGET_MAIN_FIELD_NAMES[3],
-];
-
 /// Bundler-only `Target` methods. Extension trait per PORTING.md crate-tier
 /// rule — the canonical `Target` lives in `bun_options_types` (lower tier) and
 /// cannot depend on `bake_types` / `StringHashMap`. Re-exported through
@@ -257,21 +213,6 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
 pub trait TargetExt: Copy {
     fn bake_graph(self) -> crate::bake_types::Graph;
     fn out_extensions(self) -> StringHashMap<&'static [u8]>;
-
-    // Original comment:
-    // The neutral target is for people that don't want esbuild to try to
-    // pick good defaults for their platform. In that case, the list of main
-    // fields is empty by default. You must explicitly configure it yourself.
-    // array.set(Target.neutral, &listc);
-    fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        EnumMap::from_fn(|k| match k {
-            Target::Node => DEFAULT_MAIN_FIELDS_NODE,
-            Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
-            Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
-            Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
-            Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
-        })
-    }
 
     fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
         EnumMap::from_fn(|k| match k {
@@ -1245,6 +1186,7 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
+    /// The user's `--main-fields`. Empty: the resolver gets the default list of `target`.
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
@@ -1269,13 +1211,12 @@ pub struct BundleOptions<'a> {
     pub(crate) defines_loaded: bool,
     pub env: Env,
     /// The raw `TransformOptions` as passed to `from_api`. Kept around because a
-    /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
-    /// `configure_defines`, runtime VM/server config) re-read the original
+    /// handful of places (jsx auto-detect, `configure_defines`, runtime
+    /// VM/server config) re-read the original
     /// user-supplied flags after projection. `Arc` so `for_worker` is a
     /// pointer-clone instead of a deep clone of the (large) struct —
     /// workers never mutate it.
     pub transform_options: std::sync::Arc<api::TransformOptions>,
-    pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
     pub load_tsconfig_json: bool,
     pub(crate) load_package_json: bool,
@@ -1514,7 +1455,6 @@ impl<'a> BundleOptions<'a> {
             defines_loaded: self.defines_loaded,
             env: self.env.clone(),
             transform_options: std::sync::Arc::clone(&self.transform_options),
-            polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
@@ -1761,7 +1701,7 @@ impl<'a> BundleOptions<'a> {
             production: false,
             output_format: Format::Esm,
             tsconfig_override: None,
-            main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
+            main_fields: transform.main_fields.clone().into_boxed_slice(),
             allow_unresolved: AllowUnresolved::All,
             entry_naming: Box::default(),
             asset_naming: Box::default(),
@@ -1772,7 +1712,6 @@ impl<'a> BundleOptions<'a> {
             extra_cjs_extensions: Box::default(),
             import_path_format: ImportPathFormat::Relative,
             defines_loaded: false,
-            polyfill_node_globals: false,
             transform_only: false,
             load_tsconfig_json: true,
             load_package_json: true,
@@ -1866,11 +1805,6 @@ impl<'a> BundleOptions<'a> {
                 .collect();
         }
 
-        if let Some(t) = transform.target {
-            opts.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
-            opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
-        }
-
         {
             // conditions:
             // 1. defaults
@@ -1918,14 +1852,6 @@ impl<'a> BundleOptions<'a> {
             _ => {}
         }
 
-        if !transform.main_fields.is_empty() {
-            opts.main_fields = transform
-                .main_fields
-                .iter()
-                .map(|s| Box::<[u8]>::from(s.as_ref()))
-                .collect();
-        }
-
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
         let top_level_dir = fs.top_level_dir();
@@ -1966,8 +1892,6 @@ impl<'a> BundleOptions<'a> {
             opts.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
         }
-
-        opts.polyfill_node_globals = opts.target == Target::Browser;
 
         if let Some(tsconfig) = &transform.tsconfig_override {
             opts.tsconfig_override = Some(tsconfig.clone());

@@ -21,22 +21,26 @@ impl Framework {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
+        // `init` derives the loaders, the extension order and more from the target,
+        // so the target goes in here. An assignment afterwards leaves those stale.
+        let target = match renderer {
+            Graph::Client => bun_schema::api::Target::browser,
+            Graph::Server | Graph::Ssr => bun_schema::api::Target::bun,
+        };
+
         // The caller (`DevServer::init`) hands us an uninitialized slot, so
         // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
         // `&mut Transpiler` for the field assignments below.
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            // `TransformOptions::default()`: every `Option` is `None`, every
-            // slice empty, every scalar zero/false.
-            bun_schema::api::TransformOptions::default(),
+            bun_schema::api::TransformOptions {
+                target: Some(target),
+                ..Default::default()
+            },
             None,
         )?);
 
-        out.options.target = match renderer {
-            Graph::Client => bun_ast::Target::Browser,
-            Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
-        };
         out.options.public_path = match renderer {
             Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
             Graph::Server | Graph::Ssr => Box::default(),
@@ -101,6 +105,9 @@ impl Framework {
                 bun_bundler::options::SourceMapOption::from_api(Some(bundler_options.source_map))
             }
         };
+        // `init` sets `load_all` for the bun target, which makes every environment
+        // variable a define. A bake graph inlines only what the config asks for.
+        out.options.env.behavior = bun_schema::api::DotEnvBehavior::disable;
         if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.clone().unwrap_or_default();

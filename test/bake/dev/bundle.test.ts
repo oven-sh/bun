@@ -1904,6 +1904,23 @@ devTest("inlined env var survives a runtime process.env write to a proxy variabl
   },
 });
 
+// Without `env = "inline"`, no environment variable is a define of the server graph.
+devTest("a server route reads process.env when it runs", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        Reflect.set(process.env, "BAKE_ENV_PROBE", "set when the route ran");
+        return new Response(process.env.BAKE_ENV_PROBE);
+      }
+    `,
+  },
+  env: { BAKE_ENV_PROBE: "set when the server started" },
+  async test(dev) {
+    await dev.fetch("/").equals("set when the route ran");
+  },
+});
+
 // An unresolved CSS url() is passed to the directory watcher. The HTML scanner joins a rooted src to the project root.
 devTest("recovers from an unresolved css url() and html script src longer than the path buffer", {
   files: {

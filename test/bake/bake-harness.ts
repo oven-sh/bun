@@ -61,6 +61,52 @@ export const minimalFramework: Bake.Framework = {
   },
 };
 
+// [package.json fields next to "main", the file bun resolves, the file a browser resolves]
+const platformPackages = {
+  "browser-string": [{ browser: "./browser.js" }, "main.js", "browser.js"],
+  "browser-map": [{ browser: { "./main.js": "./browser.js" } }, "main.js", "browser.js"],
+  // main.js exports what node.js exports, or its own path when node.js is empty.
+  "browser-false": [{ browser: { "./node.js": false } }, "node.js", "main.js"],
+  // The bun target reads "main" before "jsnext:main".
+  "jsnext-main": [{ "jsnext:main": "./jsnext.js" }, "main.js", "jsnext.js"],
+} as const;
+
+/**
+ * Packages that send a server and a browser to different files. Each file
+ * exports its own path, and `<graph>.ts` exports the paths that its graph got.
+ *
+ * Each graph gets its own copies. The package.json cache keeps only the main
+ * fields of the first resolver that reads a file (#14253).
+ */
+export function platformPackagesFor(graph: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const names = Object.keys(platformPackages).map(shape => `${graph}-${shape}`);
+  for (const [shape, [fields, ...resolved]] of Object.entries(platformPackages)) {
+    const name = `${graph}-${shape}`;
+    const ownPath = (file: string) => JSON.stringify(`${name}/${file}`);
+    files[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", main: "./main.js", ...fields });
+    for (const file of resolved) {
+      files[`node_modules/${name}/${file}`] = `export const file = ${ownPath(file)};`;
+    }
+    if (shape === "browser-false") {
+      files[`node_modules/${name}/main.js`] =
+        `import { file as nodeFile } from "./node.js";\nexport const file = nodeFile ?? ${ownPath("main.js")};`;
+    }
+  }
+  files[`${graph}.ts`] = [
+    ...names.map((name, i) => `import { file as file${i} } from "${name}";`),
+    `export default [${names.map((_, i) => `file${i}`).join(", ")}];`,
+  ].join("\n");
+  return files;
+}
+
+/** What `<graph>.ts` of `platformPackagesFor` exports when its graph resolves for `platform`. */
+export function platformPackagesResolved(graph: string, platform: "bun" | "browser"): string[] {
+  return Object.entries(platformPackages).map(
+    ([shape, [, bun, browser]]) => `${graph}-${shape}/${platform === "bun" ? bun : browser}`,
+  );
+}
+
 export const imageFixtures = {
   bun: imageFixture("test/integration/sharp/bun.png"),
   bun2: imageFixture("test/bundler/fixtures/with-assets/img.png"),

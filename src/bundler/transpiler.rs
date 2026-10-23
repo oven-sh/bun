@@ -563,10 +563,11 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// The resolver
+    /// Projects `self.options` into `self.resolver.opts` again. The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
-    /// rather than `Clone`. Called after `init_transpiler` mutates
-    /// `self.options` so the resolver sees the same conditions/target/public_path.
+    /// rather than `Clone`. Call it after a write to `self.options` that the
+    /// resolver reads (target, conditions, externals, public path): the
+    /// resolver keeps no other copy of them.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
     }
@@ -1043,14 +1044,20 @@ fn resolver_bundle_options_subset(
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,
         main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),
-        // `auto_main` is projected as a
-        // bool: it's "default" iff the user did not pass `--main-fields`
-        // (`from_api` overwrites `main_fields` only when
-        // `transform.main_fields` is non-empty — options.rs:2231).
-        main_fields: src.main_fields.clone(),
-        main_fields_is_default: src.transform_options.main_fields.is_empty(),
+        // What the resolver derives from the target is derived here, from `src.target`,
+        // so it is right again after every `sync_resolver_opts()`.
+        main_fields: if src.main_fields.is_empty() {
+            src.target
+                .default_main_fields()
+                .iter()
+                .map(|field| Box::from(field.as_bytes()))
+                .collect()
+        } else {
+            src.main_fields.clone()
+        },
+        main_fields_is_default: src.main_fields.is_empty(),
         mark_builtins_as_external: src.mark_builtins_as_external,
-        polyfill_node_globals: src.polyfill_node_globals,
+        polyfill_node_globals: src.target == options::Target::Browser,
         install_preference: src.install_preference,
         preserve_symlinks: src.preserve_symlinks,
         rewrite_jest_for_tests: src.rewrite_jest_for_tests,

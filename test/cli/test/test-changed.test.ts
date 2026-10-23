@@ -49,11 +49,12 @@ function initRepo(cwd: string) {
 async function runTestChanged(
   cwd: string,
   extra: string[] = [],
+  env: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--changed", ...extra],
     cwd,
-    env: gitEnv,
+    env: { ...gitEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -391,6 +392,62 @@ describe.concurrent("bun test --changed", () => {
     const { stderr, exitCode } = await runTestChanged(String(dir));
     const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The scan resolves as the test run does: for bun. A "browser" field and a
+  // "browser" map in package.json are for a browser build.
+  test("package.json browser fields do not redirect the module graph", async () => {
+    const testFile = (name: string, specifier: string) =>
+      `import { test, expect } from "bun:test";\nimport { which } from "${specifier}";\ntest("${name}", () => expect(which).toBe("${name}"));\n`;
+    using dir = tempDir("test-changed-browser-fields", {
+      "package.json": JSON.stringify({
+        name: "browser-fields",
+        type: "module",
+        browser: { "./mapped.ts": "./mapped.browser.ts", "./disabled.ts": false },
+      }),
+      // `./lib` is a directory import: its package.json names the entry point.
+      "lib/package.json": JSON.stringify({ main: "./main.ts", browser: "./browser.ts" }),
+      "lib/main.ts": `export const which = "main";\n`,
+      "lib/browser.ts": `export const which = "browser";\n`,
+      "mapped.ts": `export const which = "mapped";\n`,
+      "mapped.browser.ts": `export const which = "mapped.browser";\n`,
+      "disabled.ts": `export const which = "disabled";\n`,
+      "main.test.ts": testFile("main", "./lib"),
+      "mapped.test.ts": testFile("mapped", "./mapped.ts"),
+      "disabled.test.ts": testFile("disabled", "./disabled.ts"),
+      "unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    for (const file of ["lib/main.ts", "mapped.ts", "disabled.ts"]) {
+      appendFileSync(join(String(dir), file), "// touched\n");
+    }
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    const testNames = ["main.test.ts", "mapped.test.ts", "disabled.test.ts", "unrelated.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(["disabled.test.ts", "main.test.ts", "mapped.test.ts"]);
+    expect(stderr).toContain("3 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // The scan does not decide which imports run. It keeps an import that a
+  // constant or an environment variable turns off.
+  test("an import behind a false condition still selects its test", async () => {
+    using dir = tempDir("test-changed-conditional-import", {
+      "package.json": JSON.stringify({ name: "conditional-import", type: "module" }),
+      "by-constant.ts": `export const v = 1;\n`,
+      "by-env.ts": `export const v = 1;\n`,
+      "constant.test.ts": `import { test } from "bun:test";\nconst enabled = false;\nif (enabled) await import("./by-constant");\ntest("constant", () => {});\n`,
+      "env.test.ts": `import { test } from "bun:test";\nif (process.env.SCAN_PROBE !== "off") await import("./by-env");\ntest("env", () => {});\n`,
+      "unrelated.test.ts": `import { test } from "bun:test";\ntest("unrelated", () => {});\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "by-constant.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "by-env.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir), [], { SCAN_PROBE: "off" });
+    const testNames = ["constant.test.ts", "env.test.ts", "unrelated.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(["constant.test.ts", "env.test.ts"]);
     expect(exitCode).toBe(0);
   });
 

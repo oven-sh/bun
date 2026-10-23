@@ -425,8 +425,14 @@ describe.concurrent("a stream that a native consumer takes", () => {
       const body = response.body!;
       await using child = echo(response);
       const output = child.stdout.getReader();
-      // The child has the first chunk before the connection goes away.
-      const first = await output.read();
+      const decoder = new TextDecoder();
+      let stdout = "";
+      // The child has the whole first chunk before the connection goes away.
+      while (stdout.length < "first ".length) {
+        const { done, value } = await output.read();
+        if (done) break;
+        stdout += decoder.decode(value, { stream: true });
+      }
       upstream.drop();
       const [error, rest, exitCode] = await Promise.all([
         finished(body).catch(error => error),
@@ -435,11 +441,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
       ]);
       expect(error.code).toBe("ECONNRESET");
       expect(state(body)).toEqual(errored);
-      expect({ stdout: new TextDecoder().decode(first.value), ended: rest.done, exitCode }).toEqual({
-        stdout: "first ",
-        ended: true,
-        exitCode: 0,
-      });
+      expect({ stdout, ended: rest.done, exitCode }).toEqual({ stdout: "first ", ended: true, exitCode: 0 });
     });
 
     test("an S3 stream errors when its object is missing", async () => {

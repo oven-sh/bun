@@ -1120,3 +1120,46 @@ for (const [topology, list] of Object.entries(cells))
         expect(Bun.deepEquals(got, want) ? got : { ...got, stderr }).toEqual(want);
       });
   });
+
+// A Worker belongs to the graph whose code made it. The error that ended it, with no 'error' listener
+// on the Worker, is that graph's uncaught error and not the host's.
+test("a worker's unobserved error goes to the onError of the graph that made the worker", async () => {
+  using fixture = tempDir("module-graph-worker-error-", {
+    "app.mjs": String.raw`
+      export function start(name) {
+        return new Worker("data:text/javascript," + encodeURIComponent('setTimeout(() => { throw new Error("' + name + '") }, 1)'));
+      }
+    `,
+    "host.mjs": String.raw`
+      const seen = [];
+      const note = who => error =>
+        seen.push(who + ": " + error.message.split("\n").filter(line => /^(Uncaught error in worker|error: )/.test(line)).join(" / "));
+      process.on("uncaughtException", note("host"));
+      const graph = new Bun.ModuleGraph({ onError: (error, kind) => note("graph " + kind)(error) });
+      const app = await graph.import(import.meta.dir + "/app.mjs");
+      // 'close' follows the worker's error on the thread that made the worker.
+      const closed = worker => new Promise(resolve => worker.addEventListener("close", resolve));
+      await Promise.all([
+        closed(graph.run(() => app.start("WORKER-OF-THE-GRAPH"))),
+        closed((await import("./app.mjs")).start("WORKER-OF-THE-HOST")),
+      ]);
+      console.log(JSON.stringify(seen.sort()));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(fixture), "host.mjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      JSON.stringify([
+        "graph uncaughtException: Uncaught error in worker / error: WORKER-OF-THE-GRAPH",
+        "host: Uncaught error in worker / error: WORKER-OF-THE-HOST",
+      ]) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

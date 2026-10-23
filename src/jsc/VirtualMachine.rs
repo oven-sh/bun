@@ -2141,6 +2141,13 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    /// An error nothing else took is a worker's own global scope's to handle before it is counted,
+    /// sets the exit code and ends the worker. True: the error needs nothing further.
+    #[inline]
+    fn worker_scope_handles(&mut self, err: JSValue) -> bool {
+        self.worker.is_some() && crate::web_worker::offer_error_to_global_scope(self, err)
+    }
+
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
@@ -2161,6 +2168,9 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+            if self.worker_scope_handles(err) {
+                return true;
+            }
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -2185,7 +2195,7 @@ impl VirtualMachine {
             panic!("Uncaught exception while handling uncaught exception");
         }
         self.is_handling_uncaught_exception = true;
-        let handled = Bun__handleUncaughtException(
+        let mut handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
             if is_rejection { 1 } else { 0 },
@@ -2210,6 +2220,9 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
+            handled = self.worker_scope_handles(err);
+        }
+        if !handled {
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
@@ -4501,6 +4514,10 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+            if self.worker_scope_handles(reason) {
+                let _ = self.event_loop_mut().drain_microtasks();
+                return;
+            }
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;
@@ -4583,6 +4600,10 @@ impl VirtualMachine {
                     return;
                 }
             }
+        }
+        if self.worker_scope_handles(reason) {
+            drain(self);
+            return;
         }
         self.unhandled_error_counter += 1;
         (self.on_unhandled_rejection)(self, global_object, reason);

@@ -3340,3 +3340,41 @@ test("a ShadowRealm in a worker can import node:worker_threads", async () => {
   expect(stdout).toBe("true\n");
   expect(exitCode).toBe(0);
 });
+
+// The Web Worker's own default for an 'error' nobody took (test/js/web/workers/worker.test.ts) and
+// its cancelable 'error' on the worker's global scope are not node:worker_threads': the
+// EventEmitter reports once, and only process.on('uncaughtException') keeps a worker running.
+test("an uncaught error in a worker: reported once with no 'error' listener, and not cancelable in the worker", async () => {
+  const run = async (source: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const [unobserved, cancelling] = await Promise.all([
+    run(`const { Worker } = require("node:worker_threads");
+         new Worker('throw new Error("NODE-WORKER-UNCAUGHT")', { eval: true });`),
+    run(`const { Worker } = require("node:worker_threads");
+         const worker = new Worker(
+           'addEventListener("error", event => { event.preventDefault(); require("node:worker_threads").parentPort.postMessage("cancelable: " + event.cancelable); }); setTimeout(() => { throw new Error("NODE-WORKER-UNCAUGHT") }, 1);',
+           { eval: true },
+         );
+         worker.on("message", message => console.log(message));
+         worker.on("error", err => console.log("error:", err.message));
+         worker.on("exit", code => console.log("exit", code));`),
+  ]);
+  expect({
+    reports: unobserved.stderr.split("error: NODE-WORKER-UNCAUGHT").length - 1,
+    header: unobserved.stderr.includes("Uncaught error in worker"),
+    exitCode: unobserved.exitCode,
+  }).toEqual({ reports: 1, header: false, exitCode: 1 });
+  expect(cancelling).toEqual({
+    stdout: "cancelable: false\nerror: NODE-WORKER-UNCAUGHT\nexit 1\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

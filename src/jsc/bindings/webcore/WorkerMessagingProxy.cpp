@@ -31,17 +31,18 @@
 #include "GlobalEventScope.h"
 #include "CloseEvent.h"
 #include "ErrorCode.h"
-#include "ErrorEvent.h"
 #include "EventNames.h"
 #include "MessageEvent.h"
 #include "MessagePort.h"
+#include "ModuleGraph.h"
 #include "SerializedScriptValue.h"
 #include "VectorSizeLimit.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
@@ -453,40 +454,35 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
     }
 }
 
-void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message, RefPtr<SerializedScriptValue>&& errorForDefaultReport)
+// Parent thread: where an error the worker thread posted reaches the Worker object. With no 'error'
+// listener it is the uncaught error of whoever owns the Worker: printed with exit code 1, or one
+// level up when the owner is itself a worker
+// (https://html.spec.whatwg.org/multipage/webappapis.html#report-an-exception).
+void WorkerMessagingProxy::deliverErrorToWorkerObject(Worker& workerObject, ScriptExecutionContext& context, const String& message, JSC::JSValue error)
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy(), errorForDefaultReport = WTF::move(errorForDefaultReport)](ScriptExecutionContext& context) {
+    if (workerObject.dispatchErrorEvent(message, error) != Worker::ErrorDelivery::Untaken)
+        return;
+
+    auto* globalObject = context.globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!error) {
+        // The thrown value stayed on the worker's thread; what the worker printed of it did not.
+        auto& name = workerObject.name();
+        error = JSC::ErrorInstance::create(globalObject, name.isEmpty() ? makeString("Uncaught error in worker\n"_s, message) : makeString("Uncaught error in worker \""_s, name, "\"\n"_s, message), JSC::ErrorType::Error, {}, String(), String());
+    }
+    Bun::ModuleGraphContextScope ownerContext(*workerObject.scriptExecutionContext());
+    Bun__reportUnhandledError(globalObject, JSC::JSValue::encode(error));
+    CLEAR_IF_EXCEPTION(scope);
+}
+
+void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
-        bool hadListener = workerObject->hasEventListeners(eventNames().errorEvent);
-        ErrorEvent::Init init;
-        init.message = message;
-        init.cancelable = true;
-        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-
-        // Default action for a Web Worker error nobody listened for: report it as an uncaught error
-        // in this (the parent) context, so it prints and sets the exit code, and a parent that is
-        // itself a worker repeats this one level up (https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2).
-        // node:worker_threads always has a listener (its JS wrapper re-emits on the EventEmitter).
-        if (protectedThis->m_options.kind != WorkerOptions::Kind::Web || hadListener || workerObject->wasTerminated())
-            return;
-        auto* globalObject = context.globalObject();
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSC::JSValue reported;
-        if (errorForDefaultReport) {
-            reported = errorForDefaultReport->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
-            if (scope.exception()) [[unlikely]] {
-                if (!scope.clearExceptionExceptTermination())
-                    return;
-                reported = {};
-            }
-        }
-        if (!reported)
-            reported = JSC::createError(globalObject, message);
-        Bun__reportUnhandledError(globalObject, JSC::JSValue::encode(reported));
-        CLEAR_IF_EXCEPTION(scope);
+        protectedThis->deliverErrorToWorkerObject(*workerObject, context, message, {});
     });
 }
 
@@ -525,26 +521,19 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
             if (auto* errorObject = deserialized.getObject())
                 errorObject->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, errorCode));
         }
-        ErrorEvent::Init init;
-        init.error = deserialized;
-        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+        protectedThis->deliverErrorToWorkerObject(*workerObject, context, String(), deserialized);
     });
 }
 
 void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, JSC::JSValue error)
 {
     switch (m_options.kind) {
-    case WorkerOptions::Kind::Web: {
-        auto& vm = JSC::getVM(&workerGlobalObject);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto serialized = SerializedScriptValue::create(workerGlobalObject, error, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
-        CLEAR_IF_EXCEPTION(scope);
-        postMessageErrorToWorkerObject(String { message }, WTF::move(serialized));
+    case WorkerOptions::Kind::Web:
+        postMessageErrorToWorkerObject(String { message });
         return;
-    }
     case WorkerOptions::Kind::Node:
         if (!postSerializedErrorToWorkerObject(workerGlobalObject, error))
-            postMessageErrorToWorkerObject(String { message }, nullptr);
+            postMessageErrorToWorkerObject(String { message });
         return;
     }
 }

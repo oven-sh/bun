@@ -141,6 +141,23 @@ void Worker::dispatchCloseEvent(Event& event)
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
+Worker::ErrorDelivery Worker::dispatchErrorEvent(const String& message, JSC::JSValue error)
+{
+    if (wasTerminated())
+        return ErrorDelivery::Dropped;
+    auto* context = scriptExecutionContext();
+    if (!context || context->isJSExecutionForbidden())
+        return ErrorDelivery::Dropped;
+    if (!hasEventListeners(eventNames().errorEvent))
+        return ErrorDelivery::Untaken;
+    ErrorEvent::Init init;
+    init.message = message;
+    init.error = error;
+    init.cancelable = true;
+    EventTargetWithInlineData::dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    return ErrorDelivery::Taken;
+}
+
 // ---- Worker-thread side: hooks the native thread object calls, and the script-facing functions that
 //      run inside a worker (parentPort.postMessage, workerData, receiveMessageOnPort, ...).
 
@@ -193,18 +210,39 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
     proxy->parentContextWillDestroy();
 }
 
-// An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
-// it to the Worker object.
+// An uncaught error inside the worker goes to 'error' listeners on its own global scope first.
+// Returns whether one of them cancelled it.
+static bool fireErrorAtGlobalScope(Zig::GlobalObject& globalObject, const String& message, JSC::JSValue error, Event::IsCancelable cancelable)
+{
+    ErrorEvent::Init init;
+    init.message = message;
+    init.error = error;
+    init.cancelable = cancelable == Event::IsCancelable::Yes;
+    init.bubbles = false;
+    Ref event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+    globalObject.globalEventScope->dispatchEvent(event);
+    return event->defaultPrevented();
+}
+
+// The worker can still run: a listener that cancels the event has handled the error, and the
+// Worker object is not told (https://html.spec.whatwg.org/multipage/webappapis.html#report-an-exception).
+extern "C" bool WebWorker__offerErrorToGlobalScope(Zig::GlobalObject* globalObject, const BunString* message, JSC::EncodedJSValue errorValue)
+{
+    return fireErrorAtGlobalScope(*globalObject, message->toWTFString(BunString::ZeroCopy), JSC::JSValue::decode(errorValue), Event::IsCancelable::Yes);
+}
+
+extern "C" void WebWorker__postErrorToWorkerObject(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
+{
+    proxy->postErrorToWorkerObject(*globalObject, message.transferToWTFString(), JSC::JSValue::decode(errorValue));
+}
+
+// An error no listener can take: the entry did not load, or it was raised while another error was
+// being handled. The global scope hears of it and the Worker object is told.
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSC::JSValue error = JSC::JSValue::decode(errorValue);
     String messageStr = message.transferToWTFString();
-    ErrorEvent::Init init;
-    init.message = messageStr;
-    init.error = error;
-    init.cancelable = false;
-    init.bubbles = false;
-    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    fireErrorAtGlobalScope(*globalObject, messageStr, error, Event::IsCancelable::No);
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 

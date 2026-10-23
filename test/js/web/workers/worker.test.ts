@@ -438,126 +438,146 @@ describe("web worker", () => {
       expect(err.message).toBe(`BuildMessage: ModuleNotFound resolving "${specifier}" (entry point)`);
     });
 
-    // With no 'error' listener on the Worker object the error is reported as uncaught in the parent
-    // (printed, exit code 1) instead of vanishing. Each body is a different producer inside the worker.
-    for (const [name, body] of [
-      ["throw at evaluation", `throw new Error("WEB-WORKER-UNCAUGHT")`],
-      ["rejection at evaluation", `Promise.reject(new Error("WEB-WORKER-UNCAUGHT"))`],
-      [
-        "throw in a timer",
-        `setInterval(() => {}, 1000); setTimeout(() => { throw new Error("WEB-WORKER-UNCAUGHT") }, 1)`,
-      ],
-      [
-        "rejection in a timer",
-        `setInterval(() => {}, 1000); setTimeout(() => { Promise.reject(new Error("WEB-WORKER-UNCAUGHT")) }, 1)`,
-      ],
-    ]) {
-      test.concurrent(`with no listener is reported to the parent (${name})`, async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", `new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(body)}));`],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toContain("error: WEB-WORKER-UNCAUGHT");
-        expect(exitCode).toBe(1);
+    // Runs `source` as the parent. Each scenario gets a process of its own: an unobserved worker
+    // error ends it.
+    async function runParent(source: string, cwd?: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
       });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const dataUrl = (body: string) => "data:text/javascript," + encodeURIComponent(body);
+    // Parent source: starts one worker per scenario and prints what each one's Worker object saw.
+    const observeWorkers = `
+      async function observe(scenarios, listen) {
+        const seen = {};
+        await Promise.all(Object.entries(scenarios).map(([name, url]) => new Promise(resolve => {
+          const worker = new Worker(url);
+          const mine = (seen[name] = { messages: [], errors: 0 });
+          worker.onmessage = event => mine.messages.push(event.data);
+          listen?.(worker, mine);
+          worker.addEventListener("close", event => { mine.close = event.code; resolve(); });
+        })));
+        console.log(JSON.stringify(seen));
+      }`;
+    const countErrors = `(worker, mine) => worker.addEventListener("error", () => mine.errors++)`;
+    async function observe(scenarios: Record<string, string>, listen?: string, cwd?: string) {
+      const { stdout, stderr, exitCode } = await runParent(
+        `${observeWorkers}
+         await observe(${JSON.stringify(scenarios)}${listen ? ", " + listen : ""});`,
+        cwd,
+      );
+      return { seen: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode };
     }
 
-    test.concurrent("with no listener is caught by the parent's process.on('uncaughtException')", async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.on("uncaughtException", err => console.log("caught", err.constructor.name, err.message));
-           const w = new Worker("data:text/javascript," + encodeURIComponent('throw new TypeError("WEB-WORKER-UNCAUGHT")'));
-           w.addEventListener("close", e => console.log("worker closed", e.code));`,
+    // A worker that dies of an error nobody took is its owner's uncaught error: printed, exit code 1.
+    describe("with no listener", () => {
+      test.concurrent.each([
+        ["a throw at evaluation", `throw new Error("WEB-WORKER-UNCAUGHT")`],
+        ["a rejection at evaluation", `Promise.reject(new Error("WEB-WORKER-UNCAUGHT"))`],
+        ["a throw in a timer", `setTimeout(() => { throw new Error("WEB-WORKER-UNCAUGHT") }, 1)`],
+        [
+          "a rejection in a timer",
+          `setInterval(() => {}, 1000); setTimeout(() => { Promise.reject(new Error("WEB-WORKER-UNCAUGHT")) }, 1)`,
         ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("WEB-WORKER-UNCAUGHT");
-      expect(stdout).toContain("caught TypeError WEB-WORKER-UNCAUGHT");
-      expect(stdout).toContain("worker closed 1");
-      if (exitCode !== 0) expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    });
-
-    // A worker whose own nested worker dies with no listener sees that as its own uncaught error, so
-    // the report repeats one level up until something listens or the main thread prints it.
-    test.concurrent("with no listener on a nested worker propagates to that worker's parent", async () => {
-      using dir = tempDir("worker-nested-error", {
-        "inner.js": `setTimeout(() => { throw new Error("WEB-WORKER-NESTED-UNCAUGHT") }, 1);`,
-        "middle.js": `new Worker(new URL("inner.js", import.meta.url).href);`,
-        "main-no-listener.js": `new Worker(new URL("middle.js", import.meta.url).href);`,
-        "main-listener.js": `const w = new Worker(new URL("middle.js", import.meta.url).href);
-          w.addEventListener("error", e => console.log("main saw", e.message.includes("WEB-WORKER-NESTED-UNCAUGHT")));
-          w.addEventListener("close", e => console.log("middle closed", e.code));`,
-      });
-      const run = async (entry: string) => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), entry],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode };
-      };
-      // Nobody listens anywhere: the main thread prints it and exits 1.
-      {
-        const { stderr, exitCode } = await run("main-no-listener.js");
-        expect(stderr).toContain("error: WEB-WORKER-NESTED-UNCAUGHT");
+        [
+          "an error its own listener saw and did not cancel",
+          `self.addEventListener("error", () => {}); setTimeout(() => { throw new Error("WEB-WORKER-UNCAUGHT") }, 1)`,
+        ],
+        [
+          "an error its own onerror returned false for",
+          `self.onerror = () => false; setTimeout(() => { throw new Error("WEB-WORKER-UNCAUGHT") }, 1)`,
+        ],
+      ])("%s is printed by the parent, which exits 1", async (_, body) => {
+        const { stderr, exitCode } = await runParent(`new Worker(${JSON.stringify(dataUrl(body))});`);
+        expect(stderr.split("\n")[0]).toBe("error: Uncaught error in worker");
+        expect(stderr).toContain("WEB-WORKER-UNCAUGHT");
         expect(exitCode).toBe(1);
-      }
-      // The main thread listens on the middle worker: it receives inner's error as middle's, and
-      // middle itself exits 1 because the error was uncaught there.
-      {
-        const { stdout, stderr, exitCode } = await run("main-listener.js");
-        expect(stderr).not.toContain("WEB-WORKER-NESTED-UNCAUGHT");
-        expect(stdout).toContain("main saw true");
-        expect(stdout).toContain("middle closed 1");
-        if (exitCode !== 0) expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
-      }
-    });
-
-    test.concurrent("with a listener present is not reported as unhandled", async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.on("uncaughtException", err => { console.log("caught"); process.exitCode = 2; });
-           const w = new Worker("data:text/javascript," + encodeURIComponent('throw new Error("WEB-WORKER-UNCAUGHT")'));
-           w.addEventListener("error", e => console.log("listener saw", e.message.includes("WEB-WORKER-UNCAUGHT"), "cancelable", e.cancelable));
-           w.addEventListener("close", e => console.log("worker closed", e.code));`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("WEB-WORKER-UNCAUGHT");
-      expect(stdout).toContain("listener saw true cancelable true");
-      expect(stdout).not.toContain("caught");
-      expect(stdout).toContain("worker closed 1");
-      if (exitCode !== 0) expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    });
 
-    test.concurrent("with no listener is not reported after terminate()", async () => {
-      // Whether each in-flight error task lands before or after terminate(), it must never surface
-      // as an unhandled exception on the parent.
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
+      test.concurrent("an entry point that does not resolve is printed by the parent, which exits 1", async () => {
+        const { stderr, exitCode } = await runParent(`new Worker("/does/not/exist/entry.js", { name: "resizer" });`);
+        expect(stderr.split("\n").slice(0, 2)).toEqual([
+          `error: Uncaught error in worker "resizer"`,
+          `BuildMessage: ModuleNotFound resolving "/does/not/exist/entry.js" (entry point)`,
+        ]);
+        expect(exitCode).toBe(1);
+      });
+
+      test.concurrent("the parent's process.on('uncaughtException') takes it", async () => {
+        const { stdout, stderr, exitCode } = await runParent(
+          `process.on("uncaughtException", (err, origin) => console.log(JSON.stringify({ origin, name: err.constructor.name, lines: err.message.split("\\n").filter(line => /^[A-Za-z]/.test(line)), stack: typeof err.stack })));
+           const worker = new Worker(${JSON.stringify(dataUrl(`throw new TypeError("WEB-WORKER-UNCAUGHT")`))});
+           worker.addEventListener("close", event => console.log("worker closed", event.code));`,
+        );
+        expect(stderr).toBe("");
+        expect(stdout.split("\n")).toEqual([
+          JSON.stringify({
+            origin: "uncaughtException",
+            name: "Error",
+            lines: ["Uncaught error in worker", "TypeError: WEB-WORKER-UNCAUGHT"],
+            stack: "undefined",
+          }),
+          "worker closed 1",
+          "",
+        ]);
+        expect(exitCode).toBe(0);
+      });
+
+      // The one form that sends the thrown value as a clone without node:worker_threads' own
+      // listener: the clone is what is reported.
+      test.concurrent("new Worker(url, options, nodeWorker) reports the thrown value", async () => {
+        const { stdout, stderr, exitCode } = await runParent(
+          `process.on("uncaughtException", err => console.log(JSON.stringify({ name: err.constructor.name, message: err.message, code: err.code })));
+           new Worker(${JSON.stringify(dataUrl(`throw Object.assign(new RangeError("WEB-WORKER-UNCAUGHT"), { code: "E_WORKER" })`))}, {}, {});`,
+        );
+        expect(stderr).toBe("");
+        expect(stdout).toBe(
+          JSON.stringify({ name: "RangeError", message: "WEB-WORKER-UNCAUGHT", code: "E_WORKER" }) + "\n",
+        );
+        expect(exitCode).toBe(0);
+      });
+
+      // A worker whose own nested worker dies sees that as its own uncaught error, so the report
+      // repeats one level up until something takes it or the main thread prints it.
+      test.concurrent("on a nested worker it is that worker's own uncaught error", async () => {
+        using dir = tempDir("worker-nested-error", {
+          "inner.js": `setTimeout(() => { throw new Error("WEB-WORKER-NESTED-UNCAUGHT") }, 1);`,
+          "middle.js": `new Worker(new URL("inner.js", import.meta.url).href);`,
+          "middle-cancels.js": `self.addEventListener("error", event => { event.preventDefault(); postMessage("middle took: " + event.message.includes("WEB-WORKER-NESTED-UNCAUGHT")); });
+            new Worker(new URL("inner.js", import.meta.url).href);`,
+        });
+        const run = (middle: string, listen: boolean) =>
+          runParent(
+            `const worker = new Worker(${JSON.stringify(middle)});
+             worker.onmessage = event => console.log(event.data);
+             ${listen ? `worker.addEventListener("error", event => console.log("main saw", event.message.includes("WEB-WORKER-NESTED-UNCAUGHT")));` : ""}
+             worker.addEventListener("close", event => console.log("middle closed", event.code));`,
+            String(dir),
+          );
+        const [nobody, main, middle] = await Promise.all([
+          run("./middle.js", false),
+          run("./middle.js", true),
+          run("./middle-cancels.js", false),
+        ]);
+        expect(nobody.stderr.split("\n")[0]).toBe("error: Uncaught error in worker");
+        expect(nobody.stderr).toContain("WEB-WORKER-NESTED-UNCAUGHT");
+        expect(nobody.exitCode).toBe(1);
+        expect(main).toEqual({ stdout: "main saw true\nmiddle closed 1\n", stderr: "", exitCode: 0 });
+        expect(middle).toEqual({ stdout: "middle took: true\nmiddle closed 0\n", stderr: "", exitCode: 0 });
+      });
+
+      test.concurrent("it is not reported after terminate()", async () => {
+        // Whether each in-flight error task lands before or after terminate(), it must never surface
+        // as an unhandled exception on the parent.
+        const result = await runParent(
           `process.on("uncaughtException", err => { console.error("UNHANDLED", err.message); process.exitCode = 2; });
-           const src = "data:text/javascript," + encodeURIComponent('throw new Error("POST-TERMINATE")');
+           const src = ${JSON.stringify(dataUrl(`throw new Error("POST-TERMINATE")`))};
            const N = 32;
            let closed = 0;
            const { promise, resolve } = Promise.withResolvers();
@@ -568,33 +588,182 @@ describe("web worker", () => {
            }
            await promise;
            console.log("done");`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+        );
+        expect(result).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("POST-TERMINATE");
-      expect(stdout).toContain("done");
-      if (exitCode !== 0) expect(stderr).toBe("");
+
+      // The first thread to read sub/ logs the warning of its tsconfig.json: here that is a worker.
+      test.concurrent.each([
+        ["with an 'error' listener", countErrors],
+        ["with none", undefined],
+      ])("a worker that did not fail posts no 'error' to a parent %s", async (_, listen) => {
+        using dir = tempDir("worker-healthy-log", {
+          "tsconfig.base.json": `{"compilerOptions":{"baseUrl":"."}}`,
+          "sub/tsconfig.json": `{"extends":"../tsconfig.base.json","compilerOptions":{"paths":{"lib":["sub/lib.ts"]}}}`,
+          "sub/lib.ts": `export const x = 1;`,
+          "sub/worker.ts": `postMessage("ran");`,
+          "exits.ts": `process.exit(3);`,
+        });
+        expect(await observe({ warned: "./sub/worker.ts", exited: "./exits.ts" }, listen, String(dir))).toEqual({
+          seen: {
+            warned: { messages: ["ran"], errors: 0, close: 0 },
+            exited: { messages: [], errors: 0, close: 3 },
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
+    // Being registered is what takes the error, as for node:worker_threads' 'error': the listener
+    // does not have to cancel the event.
+    test.concurrent("a registered listener takes it, whatever it does with the event", async () => {
+      const { stdout, stderr, exitCode } = await runParent(
+        `const failing = ${JSON.stringify(dataUrl(`throw new Error("WEB-WORKER-UNCAUGHT")`))};
+         const onRequest = ${JSON.stringify(dataUrl(`onmessage = () => { throw new Error("WEB-WORKER-UNCAUGHT") }`))};
+         const seen = {};
+         const start = (name, url, attach) => new Promise(resolve => {
+           const worker = new Worker(url);
+           seen[name] = [];
+           attach(worker, event => seen[name].push({ named: event.message.includes("WEB-WORKER-UNCAUGHT"), error: event.error, cancelable: event.cancelable }));
+           worker.addEventListener("close", resolve);
+         });
+         await Promise.all([
+           start("addEventListener", failing, (worker, record) => worker.addEventListener("error", record)),
+           start("once", failing, (worker, record) => worker.addEventListener("error", record, { once: true })),
+           start("onerror", failing, (worker, record) => { worker.onerror = record; }),
+           start("onerror returning false", failing, (worker, record) => { worker.onerror = event => (record(event), false); }),
+           start("preventDefault", failing, (worker, record) => worker.addEventListener("error", event => (record(event), event.preventDefault()))),
+           // Presence is read when the error arrives, not when the worker is made.
+           start("registered late", onRequest, (worker, record) => worker.addEventListener("open", () => { worker.addEventListener("error", record); worker.postMessage("go"); })),
+         ]);
+         console.log(JSON.stringify(seen));`,
+      );
+      const one = [{ named: true, error: null, cancelable: true }];
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        "addEventListener": one,
+        "once": one,
+        "onerror": one,
+        "onerror returning false": one,
+        "preventDefault": one,
+        "registered late": one,
+      });
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("node:worker_threads with no listener prints and exits 1 (control)", async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const { Worker } = require("node:worker_threads");
-           new Worker('throw new Error("NODE-WORKER-UNCAUGHT")', { eval: true });`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+    // The worker's global scope hears of an uncaught error first. A listener there that cancels the
+    // event has handled it: the Worker object is not told and the worker keeps running.
+    describe("handled in the worker", () => {
+      // What the handler schedules runs: the worker was not stopped.
+      const handle = `postMessage("handled, cancelable: " + event.cancelable); setTimeout(() => postMessage("still running"), 1);`;
+      const handlers = {
+        "preventDefault()": `self.addEventListener("error", event => { ${handle} event.preventDefault(); });`,
+        "onerror returning true": `self.onerror = event => { ${handle} return true; };`,
+      };
+      const producers = {
+        "throw in a timer": `setTimeout(() => { throw new Error("WEB-WORKER-HANDLED") }, 1);`,
+        "rejection at evaluation": `Promise.reject(new Error("WEB-WORKER-HANDLED"));`,
+        "throw at evaluation": `throw new Error("WEB-WORKER-HANDLED");`,
+      };
+      const scenarios: Record<string, string> = {};
+      for (const [handler, install] of Object.entries(handlers))
+        for (const [producer, fail] of Object.entries(producers))
+          scenarios[`${handler}, ${producer}`] = dataUrl(`${install} ${fail}`);
+      const handled = Object.fromEntries(
+        Object.keys(scenarios).map(name => [
+          name,
+          { messages: ["handled, cancelable: true", "still running"], errors: 0, close: 0 },
+        ]),
+      );
+
+      test.concurrent.each([
+        ["no 'error' listener", undefined],
+        ["an 'error' listener", countErrors],
+      ])("is not reported to a parent with %s", async (_, listen) => {
+        expect(await observe(scenarios, listen)).toEqual({ seen: handled, stderr: "", exitCode: 0 });
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("NODE-WORKER-UNCAUGHT");
-      expect(exitCode).toBe(1);
+
+      test.concurrent("only a cancelled event counts", async () => {
+        const worker = (install: string) =>
+          dataUrl(`${install} setTimeout(() => { throw new Error("WEB-WORKER-NOT-HANDLED") }, 1);`);
+        const forwarded = (close: number) => ({ messages: ["seen"], errors: 1, named: true, close });
+        expect(
+          await observe(
+            {
+              "listener that does not cancel": worker(`self.addEventListener("error", () => postMessage("seen"));`),
+              "onerror returning false": worker(`self.onerror = () => { postMessage("seen"); return false; };`),
+              "listener that throws": worker(
+                `self.addEventListener("error", event => { postMessage("seen"); event.preventDefault(); throw new Error("from the listener"); });`,
+              ),
+              // The listener chose the exit code; the error it did not cancel is still reported.
+              "listener that exits": worker(
+                `self.addEventListener("error", () => { postMessage("seen"); process.exit(3); });`,
+              ),
+            },
+            `(worker, mine) => worker.addEventListener("error", event => { mine.errors++; mine.named = event.message.includes("WEB-WORKER-NOT-HANDLED"); })`,
+          ),
+        ).toEqual({
+          seen: {
+            "listener that does not cancel": forwarded(1),
+            "onerror returning false": forwarded(1),
+            "listener that throws": forwarded(1),
+            "listener that exits": forwarded(3),
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
+    describe("under bun test", () => {
+      async function runTests(files: Record<string, string>) {
+        using dir = tempDir("worker-error-bun-test", files);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "./worker.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { output: stdout + stderr, exitCode };
+      }
+      const awaitClose = (expected: string) => `
+        import { test, expect } from "bun:test";
+        import { once } from "node:events";
+        test("a worker runs", async () => {
+          const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+          const events = [];
+          worker.onmessage = event => events.push(event.data);
+          const [close] = await once(worker, "close");
+          expect([...events, close.code]).toEqual(${expected});
+        });`;
+
+      test.concurrent("a worker's unobserved error fails the test that started it", async () => {
+        const { output, exitCode } = await runTests({
+          "worker.mjs": `setTimeout(() => { throw new Error("WEB-WORKER-UNCAUGHT") }, 1);`,
+          "worker.test.ts": awaitClose(`[1]`),
+        });
+        expect(output).toContain("error: Uncaught error in worker");
+        expect(output).toContain("(fail) a worker runs");
+        expect(exitCode).toBe(1);
+      });
+
+      test.concurrent("a worker handles its error, and expect().toThrow() in a worker still collects one", async () => {
+        const { output, exitCode } = await runTests({
+          "worker.mjs": `
+            import { expect } from "bun:test";
+            expect(() => { Promise.reject(new Error("collected")); throw new Error("thrown"); }).toThrow("thrown");
+            postMessage("collected");
+            self.addEventListener("error", event => { event.preventDefault(); postMessage("handled"); });
+            setTimeout(() => { throw new Error("WEB-WORKER-HANDLED") }, 1);`,
+          "worker.test.ts": awaitClose(`["collected", "handled", 0]`),
+        });
+        expect(output).toContain("(pass) a worker runs");
+        expect(output).not.toContain("WEB-WORKER-HANDLED");
+        expect(exitCode).toBe(0);
+      });
     });
   });
 

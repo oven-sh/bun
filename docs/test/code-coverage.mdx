@@ -369,7 +369,7 @@ Bun does not report:
 - A branch in the value of a `case`, such as the `&&` in `case a && b:`. The `case` itself is a branch of its `switch`.
 - The branches of a file built with `bun build --target=bun` and a source map. Bun still reports its lines.
 
-The count of a branch without code of its own, such as a missing `else`, is how often Bun reached the decision, minus the other branches. In two cases that reads as taken when it was not:
+The count of a branch without code of its own, such as a missing `else`, is how often Bun reached the decision, minus the other branches. That can read as taken when it was not. The two common cases:
 
 - The condition throws, as in `if (check()) return;` where `check()` throws.
 - A call right before the decision throws. Bun counts code in blocks that run together, and still reports the rest of the block as run.

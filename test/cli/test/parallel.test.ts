@@ -704,6 +704,43 @@ test("--parallel --coverage prints merged text table", async () => {
   expect(exitCode).toBe(0);
 });
 
+// On Windows a write to fd 3 breaks libuv's IPC framing and the worker is killed.
+test.skipIf(isWindows)(
+  "--parallel --coverage drops a report with a branch on a line the file does not have",
+  async () => {
+    using dir = tempDir("parallel-coverage-branch-line", {
+      "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs"; import {join} from "path";
+      const u32 = (...values) => Buffer.from(new Uint32Array(values).buffer);
+      // A file of one line, which ran, with one branch, which was not taken.
+      function coverageFile(name, lineOfBranch) {
+        const url = Buffer.from(join(import.meta.dir, name));
+        const firstLine = Buffer.from(new BigUint64Array([1n]).buffer);
+        const branches = u32(1, /* decision */ 1, /* index */ 0, lineOfBranch, /* hits */ 0);
+        const report = Buffer.concat([u32(url.length), url, u32(1), firstLine, firstLine, u32(1), u32(0), u32(0), branches]);
+        return Buffer.concat([u32(4 + report.length), Buffer.from([7]), u32(report.length), report]);
+      }
+      test("a", () => {
+        writeSync(3, coverageFile("has-the-line.js", 0));
+        writeSync(3, coverageFile("does-not.js", 1000));
+      });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--coverage", "--coverage-reporter=text"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toMatch(/ has-the-line\.js +\| +100\.00 \| +100\.00 \| +0\.00 \| 1\n/);
+    expect(stderr).not.toContain("does-not.js");
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.each([
   ["lcov", "--parallel=2"],
   ["text", "--parallel=2"],

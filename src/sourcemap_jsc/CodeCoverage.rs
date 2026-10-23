@@ -249,7 +249,7 @@ pub mod wire {
             }
             Some((ranges, self.bitset(n)?))
         }
-        fn branches(&mut self) -> Option<Vec<(Branch, u32)>> {
+        fn branches(&mut self, line_count: usize) -> Option<Vec<(Branch, u32)>> {
             let n = self.len()?;
             let mut branches = Vec::with_capacity(n.min(self.0.len() / 16));
             for _ in 0..n {
@@ -258,6 +258,9 @@ pub mod wire {
                     index: self.u32()?,
                     line: self.u32()?,
                 };
+                if branch.line as usize >= line_count {
+                    return None;
+                }
                 branches.push((branch, self.u32()?));
             }
             Some(branches)
@@ -281,7 +284,7 @@ pub mod wire {
             .copy_from_slice(r.bytes(line_count * 4)?);
         let (functions, functions_which_have_executed) = r.ranges()?;
         let (stmts, stmts_which_have_executed) = r.ranges()?;
-        let branches = r.branches()?;
+        let branches = r.branches(line_count)?;
         if !r.0.is_empty() {
             return None;
         }

@@ -2707,6 +2707,8 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_func(&mut self, func: &G::Fn) {
+            // JSC compiles a function on its own, so in one it counts as it does anywhere else.
+            let was_inside_case_value = core::mem::replace(&mut self.is_inside_case_value, false);
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
@@ -2715,6 +2717,7 @@ pub(crate) mod __gated_printer {
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
+            self.is_inside_case_value = was_inside_case_value;
         }
 
         pub(crate) fn print_class(&mut self, class: &G::Class) {
@@ -4026,6 +4029,8 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                     }
 
+                    let was_inside_case_value =
+                        core::mem::replace(&mut self.is_inside_case_value, false);
                     self.print_fn_args(
                         if e.is_async { None } else { Some(expr.loc) },
                         &e.args,
@@ -4048,6 +4053,7 @@ pub(crate) mod __gated_printer {
                     if !was_printed {
                         self.print_block(e.body.loc, slice_of(e.body.stmts), None);
                     }
+                    self.is_inside_case_value = was_inside_case_value;
 
                     if wrap {
                         self.print(b")");

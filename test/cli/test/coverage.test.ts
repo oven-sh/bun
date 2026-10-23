@@ -1384,12 +1384,18 @@ export function switches(v, o) {
     }
     case 2:
   }
-  switch (v) { // [1,0,0,0,3]
+  switch (v) { // [1,0,0,0,0,0,3]
     case Kind.A:
       return;
     case o && o.a:
       break;
     case o?.a:
+      break;
+    case [o].find(x => x && x.b): // [2,1]
+      break;
+    case (function () {
+      return o || 1; // [1,2]
+    })():
       break;
     case (o ??= {}):
   }

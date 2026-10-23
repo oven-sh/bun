@@ -514,9 +514,11 @@ describe.concurrent("packageManager pin in package.json", () => {
   // a canary build swaps the stand-in for the fake release. Both must bring the
   // pin up to the version that is installed afterwards.
   const version = Bun.version;
-  const pinLine = (old: string) => `Updated packageManager in package.json to bun@${version} (was bun@${old})\n`;
+  // The lines name the package.json by its absolute path. The tests match on
+  // the tail after the path.
+  const pinLine = (old: string) => `package.json to bun@${version} (was bun@${old})\n`;
   const staleLine = (old: string, why: string) =>
-    `packageManager in package.json is bun@${old}, the installed version is bun@${version} (not updated: ${why})\n`;
+    `package.json is bun@${old}, the installed version is bun@${version} (not updated: ${why})\n`;
 
   let zipPath: string;
   beforeAll(async () => {
@@ -606,20 +608,52 @@ describe.concurrent("packageManager pin in package.json", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("leaves a pin that is not older than the installed version alone", async () => {
-    for (const before of [
-      pinned("bun@99.0.0"),
-      pinned(`bun@${version}`),
-      pinned("pnpm@9.0.0"),
-      pinned("bun@canary"),
-      `{ "engines": { "bun": ">=1.0.0" }, "name": "packageManager" }\n`,
-      `{ "name": "app" }\n`,
-    ]) {
-      const { stderr, exitCode, after } = await runUpgrade({ "package.json": before });
-      expect(stderr).not.toContain("packageManager");
-      expect(after["package.json"]).toBe(before);
-      expect(exitCode).toBe(0);
-    }
+  it.each([
+    ["bun@99.0.0", pinned("bun@99.0.0")],
+    [`bun@${version}`, pinned(`bun@${version}`)],
+    ["pnpm@9.0.0", pinned("pnpm@9.0.0")],
+    ["bun@canary", pinned("bun@canary")],
+    ["engines.bun only", `{ "engines": { "bun": ">=1.0.0" }, "name": "packageManager" }\n`],
+    ["no field", `{ "name": "app" }\n`],
+  ])("leaves the file alone: %s", async (_name, before) => {
+    const { stderr, exitCode, after } = await runUpgrade({ "package.json": before });
+    expect(stderr).not.toContain("packageManager");
+    expect(after["package.json"]).toBe(before);
+    expect(exitCode).toBe(0);
+  });
+
+  it("warns about a packageManager that is not a string and does not look further up", async () => {
+    const files = {
+      "package.json": pinned("bun@1.0.0"),
+      "packages/app/package.json": `{ "packageManager": { "name": "bun" } }\n`,
+    };
+    const { stderr, exitCode, after } = await runUpgrade(files, { cwd: "packages/app" });
+    expect(stderr).toContain("packageManager in ");
+    expect(stderr).toContain(" is not a string, it was not updated\n");
+    expect(after["package.json"]).toBe(files["package.json"]);
+    expect(after["packages/app/package.json"]).toBe(files["packages/app/package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // On POSIX the fake release is a shell script that prints any version, so the
+  // upgrade installs it and the pin is refreshed after the swap on every build
+  // type. On Windows the archive has to carry a real bun.exe, which reports its
+  // own version.
+  it.skipIf(isWindows)("updates the pin after installing a newer release", async () => {
+    const newer = join(tmpdirSync(), "release.zip");
+    await writeFakeReleaseZip(newer, "9.9.9");
+    const before = pinned("bun@1.0.0");
+    const { stderr, exitCode, after } = await runUpgrade(
+      { "package.json": before },
+      { tagName: "bun-v9.9.9", zip: newer },
+    );
+    expect(stderr).toContain("Updated packageManager in ");
+    expect(stderr).toContain("package.json to bun@9.9.9 (was bun@1.0.0)\n");
+    expect(stderr).toEndWith(
+      ` Upgraded.\n\nWelcome to Bun v9.9.9!\n\nWhat's new in Bun v9.9.9:\n\n    https://bun.com/blog/release-notes/bun-v9.9.9\n\nReport any bugs:\n\n    https://github.com/oven-sh/bun/issues\n\nCommit log:\n\n    https://github.com/oven-sh/bun/compare/bun-v${Bun.version}...bun-v9.9.9\n`,
+    );
+    expect(after["package.json"]).toBe(pinned("bun@9.9.9"));
+    expect(exitCode).toBe(0);
   });
 
   it("warns and keeps going when package.json does not parse", async () => {

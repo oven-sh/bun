@@ -48,10 +48,9 @@ pub(crate) fn refresh(start_dir: &[u8], installed: &[u8], write: Write) {
             }
         }
 
-        let parent = path::dirname::<path_platform::Auto>(dir);
-        if parent == dir {
+        let Some(parent) = bun_paths::dirname(dir) else {
             return;
-        }
+        };
         dir = parent;
     }
 }
@@ -88,12 +87,15 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
             return Walk::Done;
         }
     };
-    let Some(value) = document
-        .root
-        .get(b"packageManager")
-        .and_then(|value| value.as_string(&arena))
-    else {
+    let Some(value) = document.root.get(b"packageManager") else {
         return Walk::Continue;
+    };
+    let Some(value) = value.as_string(&arena) else {
+        bun_core::pretty_errorln!(
+            "<r><yellow>warn<r><d>:<r> packageManager in {} is not a string, it was not updated",
+            bstr::BStr::new(package_json_path.as_bytes())
+        );
+        return Walk::Done;
     };
 
     let Some(spec) = PackageManagerSpec::parse(value) else {
@@ -113,6 +115,7 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
         return Walk::Done;
     }
 
+    let path = bstr::BStr::new(package_json_path.as_bytes());
     let old = bstr::BStr::new(value);
     let new = bstr::BStr::new(installed);
     let skipped = match write {
@@ -122,7 +125,8 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
     };
     if let Some(reason) = skipped {
         bun_core::pretty_errorln!(
-            "<r><b>packageManager<r> in package.json is <blue>{}<r>, the installed version is <cyan>bun@{}<r> <d>(not updated: {})<r>",
+            "<r><b>packageManager<r> in {} is <blue>{}<r>, the installed version is <cyan>bun@{}<r> <d>(not updated: {})<r>",
+            path,
             old,
             new,
             reason
@@ -153,7 +157,8 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
         },
     ) {
         bun_core::pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> failed to save package.json: {}",
+            "<r><yellow>warn<r><d>:<r> failed to save {}: {}",
+            path,
             err.name()
         );
         return Walk::Done;
@@ -165,13 +170,15 @@ fn refresh_file(package_json_path: &ZStr, contents: &[u8], installed: &[u8], wri
         writer.ctx.written_without_trailing_zero(),
     ) {
         bun_core::pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> failed to write package.json: {}",
+            "<r><yellow>warn<r><d>:<r> failed to write {}: {}",
+            path,
             bstr::BStr::new(err.name())
         );
         return Walk::Done;
     }
     bun_core::pretty_errorln!(
-        "<r>Updated <b>packageManager<r> in package.json to <cyan>bun@{}<r> <d>(was {})<r>",
+        "<r>Updated <b>packageManager<r> in {} to <cyan>bun@{}<r> <d>(was {})<r>",
+        path,
         new,
         old
     );

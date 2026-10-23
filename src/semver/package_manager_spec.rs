@@ -9,8 +9,6 @@ pub struct PackageManagerSpec<'a> {
     pub name: &'a [u8],
     /// The version as written, without the `+<hash>` suffix. A range is kept so that a caller can report it.
     pub version_text: &'a [u8],
-    /// The bytes after `+`, when the field carries an integrity hash.
-    pub hash: Option<&'a [u8]>,
 }
 
 impl<'a> PackageManagerSpec<'a> {
@@ -23,15 +21,11 @@ impl<'a> PackageManagerSpec<'a> {
         if name.is_empty() || spec.is_empty() {
             return None;
         }
-        let (version_text, hash) = match strings::index_of_char_usize(spec, b'+') {
-            Some(plus) => (&spec[..plus], Some(&spec[plus + 1..])),
-            None => (spec, None),
+        let version_text = match strings::index_of_char_usize(spec, b'+') {
+            Some(plus) => &spec[..plus],
+            None => spec,
         };
-        Some(Self {
-            name,
-            version_text,
-            hash,
-        })
+        Some(Self { name, version_text })
     }
 
     #[inline]
@@ -60,7 +54,6 @@ mod tests {
         assert_eq!(spec.version_text, b"1.2.0");
         let version = spec.exact_version().unwrap();
         assert_eq!((version.major, version.minor, version.patch), (1, 2, 0));
-        assert_eq!(spec.hash, None);
     }
 
     #[test]
@@ -68,7 +61,6 @@ mod tests {
         let spec = parse(b"bun@1.2.0+sha256.abcd").unwrap();
         assert!(spec.is_bun());
         assert_eq!(spec.version_text, b"1.2.0");
-        assert_eq!(spec.hash, Some(&b"sha256.abcd"[..]));
         assert!(!spec.exact_version().unwrap().tag.has_build());
     }
 

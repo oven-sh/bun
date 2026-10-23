@@ -933,6 +933,9 @@ JSPromise* fromIterableCancelAlgorithm(JSGlobalObject* globalObject, JSReadableS
         auto* runtime = JSStreamsRuntime::from(globalObject);
         const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
         JSObject* iterator = context->iterator();
+        // JSC's wrapper tracks one step at a time, and a next() can still be pending here.
+        if (auto* wrapper = dynamicDowncast<JSAsyncFromSyncIterator>(iterator))
+            iterator = JSAsyncFromSyncIterator::create(vm, wrapper->structure(), wrapper->syncIterator(), wrapper->nextMethod(), wrapper->iterationMode());
         JSValue returnMethod = iterator->get(globalObject, vm.propertyNames->returnKeyword);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (returnMethod.isUndefinedOrNull())

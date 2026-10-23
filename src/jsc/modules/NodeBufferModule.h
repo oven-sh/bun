@@ -4,6 +4,7 @@
 
 #include "../bindings/JSBuffer.h"
 #include "ErrorCode.h"
+#include "GeneratedBlob.h"
 #include "JavaScriptCore/PageCount.h"
 #include "NodeValidator.h"
 #include "_NativeModule.h"
@@ -157,7 +158,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(JSC::Identifier::fromString(vm, "SlowBuffer"_s), slowBuffer);
     auto blobIdent = JSC::Identifier::fromString(vm, "Blob"_s);
 
-    JSValue blobValue = globalObject->JSBlobConstructor();
+    JSValue blobValue = Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSBlob>(globalObject);
     put(blobIdent, blobValue);
 
     put(JSC::Identifier::fromString(vm, "File"_s), globalObject->JSDOMFileConstructor());

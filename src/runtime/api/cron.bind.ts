@@ -6,13 +6,12 @@ export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",
   refCounted: true,
   finalize: true,
-  configurable: false,
   internalFields: ["callback", "pendingPromise", "cron"],
   proto: {
     cron: { internalField: "cron" },
-    ref: { ...chainable, rustName: "do_ref" },
+    ref: chainable,
     stop: chainable,
-    unref: { ...chainable, rustName: "do_unref" },
+    unref: chainable,
     "@@dispose": { ...chainable, rustName: "stop" },
   },
 });

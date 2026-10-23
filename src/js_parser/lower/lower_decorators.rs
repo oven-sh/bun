@@ -40,6 +40,9 @@ type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 struct LoweredClass {
     /// `var` statement for the temporaries the class body now refers to.
     temps: Option<Stmt>,
+    /// `let` statement for `inner_class_ref`. Block scoped, so that a class
+    /// evaluated in a loop gets a fresh binding each time.
+    inner_binding: Option<Stmt>,
     class_decorators: Option<ClassDecorators>,
 }
 
@@ -192,7 +195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn bump_name3(&self, a: &[u8], b: &[u8], c: &[u8]) -> &'a [u8] {
+    pub(crate) fn bump_name3(&self, a: &[u8], b: &[u8], c: &[u8]) -> &'a [u8] {
         let mut v = BumpVec::<u8>::with_capacity_in(a.len() + b.len() + c.len(), self.arena);
         v.extend_from_slice(a);
         v.extend_from_slice(b);
@@ -752,6 +755,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None);
         out.extend(lowered.temps);
+        out.extend(lowered.inner_binding);
         let Some(decorators) = lowered.class_decorators else {
             out.push(stmt);
             return;
@@ -775,21 +779,74 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name_from_context: Option<&'a [u8]>,
     ) -> Expr {
         let lowered = self.lower_class_body(class, expr.loc, name_from_context);
-        if let Some(decl) = lowered.temps
-            && let Some(stmt_list) = self.nearest_stmt_list_mut()
-        {
-            stmt_list.push(decl);
+        let has_own_stmt_list = !self.is_param_default_or_field_initializer();
+        if let Some(stmt_list) = self.nearest_stmt_list_mut() {
+            stmt_list.extend(lowered.temps);
+            if has_own_stmt_list {
+                stmt_list.extend(lowered.inner_binding);
+            }
         }
         let Some(decorators) = lowered.class_decorators else {
             return expr;
         };
         let decorated = self.use_ref(decorators.decorated, expr.loc);
-        Expr::join_all_with_comma(&[
+        let value = Expr::join_all_with_comma(&[
             decorators.evaluate,
             expr,
             decorators.run_extra_initializers,
             decorated,
-        ])
+        ]);
+        if has_own_stmt_list || !class.inner_class_ref.is_symbol() {
+            return value;
+        }
+
+        // `((_C) => value)()` gives each evaluation its own binding. Neither
+        // position allows `await` or `yield`, which an arrow would break.
+        let binding = self.b(
+            B::Identifier {
+                r#ref: class.inner_class_ref,
+            },
+            expr.loc,
+        );
+        let args = js_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter([G::Arg {
+            binding,
+            ..Default::default()
+        }]));
+        let body = self.s(S::Return { value: Some(value) }, expr.loc);
+        let target = self.new_expr(
+            E::Arrow {
+                args,
+                body: G::FnBody {
+                    loc: expr.loc,
+                    stmts: self.arena.alloc_slice_copy(&[body]).into(),
+                },
+                prefer_expr: true,
+                ..Default::default()
+            },
+            expr.loc,
+        );
+        self.new_expr(
+            E::Call {
+                target,
+                ..Default::default()
+            },
+            expr.loc,
+        )
+    }
+
+    /// Both run once per call or instance, and the nearest statement list is
+    /// outside the function or class they belong to.
+    fn is_param_default_or_field_initializer(&self) -> bool {
+        let mut scope = self.current_scope_ref();
+        loop {
+            match scope.kind {
+                js_ast::scope::Kind::FunctionArgs => return true,
+                // Set for a field's initializer, not for its key or decorators.
+                js_ast::scope::Kind::ClassBody => return scope.forbid_arguments,
+                _ if scope.kind_stops_hoisting() => return false,
+                _ => scope = scope.parent.unwrap(),
+            }
+        }
     }
 
     // ── Core lowering ────────────────────────────────────
@@ -1215,11 +1272,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice(),
                     None => name_from_context.unwrap_or(b""),
                 };
-                let decorated_ref = p.declared_temp(if js_lexer::is_identifier(name) {
-                    p.bump_name3(b"_", name, b"")
+                // A named class has the binding its body reads (`visit_class`).
+                let decorated_ref = if class.inner_class_ref.is_symbol() {
+                    class.inner_class_ref
                 } else {
-                    b"_class"
-                });
+                    p.declared_temp(if js_lexer::is_identifier(name) {
+                        p.bump_name3(b"_", name, b"")
+                    } else {
+                        b"_class"
+                    })
+                };
                 let this = p.new_expr(E::This {}, loc);
                 let name = p.new_expr(E::EString::init(name), loc);
                 let decorated = p.decorate_element(init_ref, 0.0, name, dec, this, None, loc);
@@ -1290,8 +1352,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 
+        let inner_binding = class.inner_class_ref.is_symbol().then(|| {
+            let binding = p.b(
+                B::Identifier {
+                    r#ref: class.inner_class_ref,
+                },
+                loc,
+            );
+            p.s(
+                S::Local {
+                    kind: js_ast::s::Kind::KLet,
+                    decls: DeclList::init_one(G::Decl {
+                        binding,
+                        value: None,
+                    }),
+                    ..Default::default()
+                },
+                loc,
+            )
+        });
+
         LoweredClass {
             temps: p.drain_capture_temp_decls(temps_before, loc),
+            inner_binding,
             class_decorators: class_decorators_result,
         }
     }

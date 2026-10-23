@@ -27,8 +27,8 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
-    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
-    WorkerExecArgvFlags,
+    CancelHotRunTimers, InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult,
+    VirtualMachine, WorkerExecArgvFlags,
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
@@ -1356,7 +1356,7 @@ fn body_mixin_get_blob(
 ) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::BodyMixin as _;
     if let Some(resp) = value.as_::<crate::webcore::Response>() {
-        // SAFETY: `as_` returned the live `m_ctx` payload of a JS-heap
+        // SAFETY: `as_` returned the live payload of a JS-heap
         // `Response` cell pinned by `value` for the duration of this call.
         return Ok(Some(
             unsafe { &mut *resp }.get_blob_without_call_frame(global)?,
@@ -1533,6 +1533,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
+    end_hot_run_timers,
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
@@ -1690,6 +1691,29 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
+}
+
+/// `RuntimeHooks::end_hot_run_timers`.
+///
+/// # Safety
+/// `vm` is the live per-thread VM, on the JS thread.
+unsafe fn end_hot_run_timers(vm: *mut VirtualMachine, cancel: CancelHotRunTimers) {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn contract.
+    unsafe {
+        let timer = ptr::addr_of_mut!((*state).timer);
+        if cancel != CancelHotRunTimers::None {
+            let hot_run = crate::timer::HotRun {
+                counter: (*vm).hot_reload_counter,
+                only_intervals: cancel == CancelHotRunTimers::Intervals,
+            };
+            crate::timer::All::cancel_timeout_objects(timer, vm, Some(&hot_run));
+        }
+        (*timer).first_id_of_hot_run = (*timer).last_id;
     }
 }
 

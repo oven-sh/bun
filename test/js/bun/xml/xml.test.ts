@@ -1,6 +1,7 @@
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // Hand-written coverage beyond the W3C conformance suite (xml-test-suite.test.ts):
 // the JS-facing API surface, the two result shapes, Bun-specific input types,
@@ -100,6 +101,18 @@ describe("input types", () => {
 
   test("Blob parses synchronously", () => {
     expect(XML.parse(new Blob([doc]))).toEqual(expected);
+  });
+
+  test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+    using dir = tempDir("xml-build-output", {
+      "entry.js": `import doc from "./doc.xml" with { type: "file" };\nconsole.log(doc);`,
+      "doc.xml": doc,
+    });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+    expect(XML.parse(assetOf(await Bun.build({ entrypoints })))).toEqual(expected);
+    const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+    expect(() => XML.parse(written)).toThrow("File blob cannot be used here");
   });
 
   test("nullish input throws TypeError; other values are stringified", () => {

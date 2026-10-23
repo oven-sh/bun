@@ -618,42 +618,41 @@ blockExoticSubdeps = true
 
   // bun.lock is not the project's word. The root asks for a range here, so a
   // row that binds that range to a tarball does not make the root its declarer.
+  // The nested range dedupes onto the root's copy, so the root's edge is the
+  // one that places the tarball and the one the message names.
   test.each([
-    ["a dependency", { dependencies: { lib: "^1.0.0" } }, "^1.0.0"],
-    ["a peer dependency", { peerDependencies: { lib: "^1.0.0" } }, "^1.0.0"],
-    ["a `catalog:` peer dependency", { peerDependencies: { lib: "catalog:" } }, "catalog:"],
-  ] as const)(
-    "blocks a lockfile entry that binds the range of the root and of %s to a tarball",
-    async (_, fields, literal) => {
-      await using registry = await serveRegistry([
-        { name: "lib", version: "1.0.0" },
-        { name: "plugin", version: "1.0.0", ...fields },
-      ]);
-      using dir = tempDir("block-exotic-lockfile-row", {
-        "package.json": JSON.stringify({
-          name: "root",
-          version: "1.0.0",
-          dependencies: { lib: "^1.0.0", plugin: "1.0.0" },
-        }),
-        "bunfig.toml": bunfigWithRegistry(registry.origin),
-      });
+    ["a dependency", { dependencies: { lib: "^1.0.0" } }],
+    ["a peer dependency", { peerDependencies: { lib: "^1.0.0" } }],
+    ["a `catalog:` peer dependency", { peerDependencies: { lib: "catalog:" } }],
+  ] as const)("blocks a lockfile entry that binds the range of the root and of %s to a tarball", async (_, fields) => {
+    await using registry = await serveRegistry([
+      { name: "lib", version: "1.0.0" },
+      { name: "plugin", version: "1.0.0", ...fields },
+    ]);
+    using dir = tempDir("block-exotic-lockfile-row", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { lib: "^1.0.0", plugin: "1.0.0" },
+      }),
+      "bunfig.toml": bunfigWithRegistry(registry.origin),
+    });
 
-      // Every package comes from the registry, so the first install is allowed.
-      expect(await install(String(dir))).toEqual({
-        stderr: expect.not.stringContaining("blockExoticSubdeps"),
-        exitCode: 0,
-      });
-      const lockfile = join(String(dir), "bun.lock");
-      const recorded = await Bun.file(lockfile).text();
-      const row = /"lib": \["lib@1\.0\.0", [^\n]*\],/;
-      expect(recorded).toMatch(row);
-      await Bun.write(lockfile, recorded.replace(row, `"lib": ["lib@${registry.origin}/lib.tgz", {}],`));
+    // Every package comes from the registry, so the first install is allowed.
+    expect(await install(String(dir))).toEqual({
+      stderr: expect.not.stringContaining("blockExoticSubdeps"),
+      exitCode: 0,
+    });
+    const lockfile = join(String(dir), "bun.lock");
+    const recorded = await Bun.file(lockfile).text();
+    const row = /"lib": \["lib@1\.0\.0", [^\n]*\],/;
+    expect(recorded).toMatch(row);
+    await Bun.write(lockfile, recorded.replace(row, `"lib": ["lib@${registry.origin}/lib.tgz", {}],`));
 
-      const { stderr, exitCode } = await install(String(dir), "--frozen-lockfile");
-      expect(stderr).toContain(`plugin@1.0.0 depends on lib@${literal} via remote_tarball source`);
-      expect(exitCode).toBe(1);
-    },
-  );
+    const { stderr, exitCode } = await install(String(dir), "--frozen-lockfile");
+    expect(stderr).toContain("root depends on lib@^1.0.0 via remote_tarball source");
+    expect(exitCode).toBe(1);
+  });
 
   test("blocks a tarball URL that a registry package depends on", async () => {
     await using registry = await serveRegistry(

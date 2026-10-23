@@ -4,6 +4,8 @@
 //! of the root and of workspace packages are exempt. Modeled on pnpm:
 //! https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
 
+use std::borrow::Cow;
+
 use bstr::BStr;
 use bun_collections::ArrayHashMap;
 use bun_core::{Output, fmt as bun_fmt, strings};
@@ -33,6 +35,54 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
     let resolutions = manager.lockfile.buffers.resolutions.as_slice();
     let dependencies = manager.lockfile.buffers.dependencies.as_slice();
 
+    // The package each dependency row belongs to.
+    let mut owner_of: Vec<PackageID> = vec![invalid_package_id; dependencies.len()];
+    for (pkg_id, deps) in pkg_dependencies.iter().enumerate() {
+        for dep_id in deps.begin()..deps.end() {
+            if let Some(owner) = owner_of.get_mut(dep_id as usize) {
+                *owner = pkg_id as PackageID;
+            }
+        }
+    }
+    let is_direct = |pkg_id: PackageID| {
+        matches!(
+            pkg_resolutions[pkg_id as usize].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        )
+    };
+
+    // An edge whose specifier names a source is judged as written. An edge
+    // with a plain range is judged only where the saved tree places it: a
+    // range that dedupes onto a package above it keeps its loaded binding,
+    // which can be a package the root moved away from.
+    let mut candidates: Vec<(PackageID, DependencyID)> = Vec::new();
+    for parent_id in 0..pkgs.len() as PackageID {
+        if is_direct(parent_id) {
+            continue;
+        }
+        let deps = pkg_dependencies[parent_id as usize];
+        for dep_id in deps.begin()..deps.end() {
+            if (dep_id as usize) < dependencies.len()
+                && !names_no_source(effective_version(manager, dep_id).tag)
+            {
+                candidates.push((parent_id, dep_id));
+            }
+        }
+    }
+    let hoisted = manager.lockfile.buffers.hoisted_dependencies.as_slice();
+    for tree in manager.lockfile.buffers.trees.as_slice() {
+        for &dep_id in tree.dependencies.get(hoisted) {
+            let Some(&parent_id) = owner_of.get(dep_id as usize) else {
+                continue;
+            };
+            if parent_id != invalid_package_id
+                && names_no_source(effective_version(manager, dep_id).tag)
+            {
+                candidates.push((parent_id, dep_id));
+            }
+        }
+    }
+
     // Dedupe by (parent_id, child_pkg_id) — the same resolved package can
     // appear as a dep of more than one parent and we only want to report
     // each distinct edge once.
@@ -40,116 +90,81 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
     let mut header_printed = false;
     let mut count: usize = 0;
 
-    for _parent_id in 0..pkgs.len() {
-        let parent_id: PackageID = _parent_id as PackageID;
-        let parent_res = &pkg_resolutions[parent_id as usize];
-
-        // Only transitive edges — skip root and workspace parents.
-        if parent_res.tag == ResolutionTag::Root || parent_res.tag == ResolutionTag::Workspace {
+    for (parent_id, dep_id) in candidates {
+        if (dep_id as usize) >= resolutions.len() {
+            continue;
+        }
+        let dep_pkg_id = resolutions[dep_id as usize];
+        if dep_pkg_id == invalid_package_id {
+            continue;
+        }
+        if (dep_pkg_id as usize) >= pkgs.len() {
             continue;
         }
 
-        let parent_deps = pkg_dependencies[parent_id as usize];
-        for _dep_id in parent_deps.begin()..parent_deps.end() {
-            let dep_id: DependencyID = _dep_id as DependencyID;
-            if (dep_id as usize) >= dependencies.len() {
-                continue;
-            }
-            if (dep_id as usize) >= resolutions.len() {
-                continue;
-            }
+        let dep = &dependencies[dep_id as usize];
+        let dep_res_tag = pkg_resolutions[dep_pkg_id as usize].tag;
+        let parent_res = &pkg_resolutions[parent_id as usize];
+        let direct = is_direct(parent_id);
+        let version = effective_version(manager, dep_id);
+        let literal_raw: &[u8] = version.literal.slice(string_buf);
 
-            let dep_pkg_id = resolutions[dep_id as usize];
-            if dep_pkg_id == invalid_package_id {
-                continue;
-            }
-            if (dep_pkg_id as usize) >= pkgs.len() {
-                continue;
-            }
+        let Some(verdict) = classify(dep_res_tag, version.tag, literal_raw) else {
+            continue;
+        };
 
-            let dep = &dependencies[dep_id as usize];
-            let dep_res_tag = pkg_resolutions[dep_pkg_id as usize].tag;
+        // A range names no source. It is allowed to bind to a package whose
+        // source the root or a workspace declares (a peer range on a tarball).
+        if names_no_source(version.tag) && project_names_source_of(manager, dep_pkg_id) {
+            continue;
+        }
 
-            // Consult the same override the resolver applied: gate and
-            // realname-keyed hash both mirror
-            // `enqueue_dependency_with_main_and_success_fn` (bun.lock.rs
-            // carries the same pair).
-            let name_hash = match dep.version.tag {
-                dependency::Tag::DistTag
-                | dependency::Tag::Git
-                | dependency::Tag::Github
-                | dependency::Tag::Npm
-                | dependency::Tag::Tarball
-                | dependency::Tag::Workspace => {
-                    StringBuilder::string_hash(dep.realname().slice(string_buf))
-                }
-                _ => dep.name_hash,
-            };
-            let overridable = !dep.behavior.is_workspace()
-                && (dep.version.tag != dependency::Tag::Npm || !dep.version.npm().is_alias);
-            let overridden = if overridable {
-                manager
-                    .lockfile
-                    .overrides
-                    .get(&manager.lockfile, dep_id, name_hash)
-            } else {
-                None
-            };
-            let version = overridden.as_ref().unwrap_or(&dep.version);
-            let literal_raw: &[u8] = version.literal.slice(string_buf);
+        let key = ((parent_id as u64) << 32) | (dep_pkg_id as u64);
+        let gop = bun_core::handle_oom(seen.get_or_put(key));
+        if gop.found_existing {
+            continue;
+        }
 
-            let Some(verdict) = classify(dep_res_tag, version.tag, literal_raw) else {
-                continue;
-            };
+        count += 1;
+        if silent {
+            continue;
+        }
 
-            // A range names no source. It is allowed to bind to a package whose
-            // source the root or a workspace declares (a peer range on a tarball).
-            if matches!(version.tag, dependency::Tag::Npm | dependency::Tag::DistTag)
-                && project_names_source_of(manager, dep_pkg_id)
-            {
-                continue;
-            }
+        if !header_printed {
+            header_printed = true;
+            Output::err_generic(
+                "<b>install.blockExoticSubdeps<r> is enabled, but the following transitive dependencies use non-registry sources:",
+                (),
+            );
+        }
 
-            let key = ((parent_id as u64) << 32) | (dep_pkg_id as u64);
-            let gop = bun_core::handle_oom(seen.get_or_put(key));
-            if gop.found_existing {
-                continue;
-            }
-
-            count += 1;
-            if silent {
-                continue;
-            }
-
-            if !header_printed {
-                header_printed = true;
-                Output::err_generic(
-                    "<b>install.blockExoticSubdeps<r> is enabled, but the following transitive dependencies use non-registry sources:",
-                    (),
-                );
-            }
-
-            let parent_name = pkg_names[parent_id as usize].slice(string_buf);
-            let dep_name = dep.name.slice(string_buf);
-            // Informational only; the verdict comes from `dep_res_tag`. The
-            // literal can print empty when the lockfile clone pass wiped it.
-            // Macro form so only the template is tag-rewritten and the
-            // untrusted interpolated bytes print verbatim.
+        let parent_name = pkg_names[parent_id as usize].slice(string_buf);
+        let dep_name = dep.name.slice(string_buf);
+        // Informational only; the verdict comes from `dep_res_tag`. The
+        // literal can print empty when the lockfile clone pass wiped it.
+        // Macro form so only the template is tag-rewritten and the
+        // untrusted interpolated bytes print verbatim.
+        if direct {
+            bun_core::pretty_error!("  <b>{}<r>", BStr::new(parent_name));
+        } else {
             bun_core::pretty_error!(
-                "  <b>{}<r><d>@{}<r> depends on <b>{}<r><d>@{}<r> via <yellow>{}<r> source",
+                "  <b>{}<r><d>@{}<r>",
                 BStr::new(parent_name),
                 parent_res.fmt(string_buf, bun_fmt::PathSep::Auto),
-                BStr::new(dep_name),
-                BStr::new(literal_raw),
-                verdict,
             );
-            // An override is looked up by this name, not by the dependency key.
-            let package_name = pkg_names[dep_pkg_id as usize].slice(string_buf);
-            if package_name != dep_name {
-                bun_core::pretty_error!(" <d>(package name: {})<r>", BStr::new(package_name));
-            }
-            bun_core::pretty_errorln!("");
         }
+        bun_core::pretty_error!(
+            " depends on <b>{}<r><d>@{}<r> via <yellow>{}<r> source",
+            BStr::new(dep_name),
+            BStr::new(literal_raw),
+            verdict,
+        );
+        // An override is looked up by this name, not by the dependency key.
+        let package_name = pkg_names[dep_pkg_id as usize].slice(string_buf);
+        if package_name != dep_name {
+            bun_core::pretty_error!(" <d>(package name: {})<r>", BStr::new(package_name));
+        }
+        bun_core::pretty_errorln!("");
     }
 
     if count > 0 && !silent {
@@ -159,6 +174,42 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
         Output::flush();
     }
     count
+}
+
+/// The version the resolver used for this edge: the root's override when one
+/// applies (gate and realname-keyed hash mirror
+/// `enqueue_dependency_with_main_and_success_fn`), else the edge's own.
+fn effective_version(
+    manager: &PackageManager,
+    dep_id: DependencyID,
+) -> Cow<'_, dependency::Version> {
+    let lockfile = &manager.lockfile;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
+    let name_hash = match dep.version.tag {
+        dependency::Tag::DistTag
+        | dependency::Tag::Git
+        | dependency::Tag::Github
+        | dependency::Tag::Npm
+        | dependency::Tag::Tarball
+        | dependency::Tag::Workspace => {
+            StringBuilder::string_hash(dep.realname().slice(string_buf))
+        }
+        _ => dep.name_hash,
+    };
+    let overridable = !dep.behavior.is_workspace()
+        && (dep.version.tag != dependency::Tag::Npm || !dep.version.npm().is_alias);
+    if overridable {
+        if let Some(version) = lockfile.overrides.get(lockfile, dep_id, name_hash) {
+            return Cow::Owned(version);
+        }
+    }
+    Cow::Borrowed(&dep.version)
+}
+
+/// A plain range or a dist-tag: the specifier names no source.
+fn names_no_source(tag: dependency::Tag) -> bool {
+    matches!(tag, dependency::Tag::Npm | dependency::Tag::DistTag)
 }
 
 /// Does the root or a workspace declare a non-registry source for package

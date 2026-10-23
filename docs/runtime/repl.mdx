@@ -148,7 +148,7 @@ The REPL supports Emacs-style line editing.
 
 ## History
 
-The REPL automatically saves history to `~/.bun_repl_history` (up to 1000 entries) and loads it at the start of each session. Use `Up`/`Down` to navigate.
+The REPL writes each entry to `~/.bun_repl_history` when you enter it. The history does not depend on how the session ends. Each session loads the most recent 1000 entries. Use `Up`/`Down` to navigate.
 
 To export your history to a different file, use `.save`:
 
